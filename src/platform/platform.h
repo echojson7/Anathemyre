@@ -1,0 +1,40 @@
+// Платформенный слой: окно, ввод, GL-контекст. Реализация на каждую ОС отдельно
+#ifndef ANA_PLATFORM_H
+#define ANA_PLATFORM_H
+
+#include "../core/types.h"
+
+typedef enum Key {
+    KEY_NONE = 0,
+    KEY_W, KEY_A, KEY_S, KEY_D, KEY_Q, KEY_E, KEY_R, KEY_F,
+    KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
+    KEY_SHIFT, KEY_SPACE, KEY_ESCAPE,
+    KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5,
+    KEY_COUNT
+} Key;
+
+enum { MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_RIGHT, MOUSE_COUNT };
+
+typedef struct Input {
+    bool key_down[KEY_COUNT];
+    bool key_pressed[KEY_COUNT];   // нажата в этом кадре
+    bool mouse_down[MOUSE_COUNT];
+    i32  mouse_x, mouse_y;
+    i32  mouse_dx, mouse_dy;
+    i32  wheel;                    // щелчки колеса за кадр
+    bool quit;
+} Input;
+
+typedef void (*PlatformProc)(void);
+
+bool         platform_init(const char *title, i32 width, i32 height, bool gl_debug);
+void         platform_shutdown(void);
+void         platform_poll(Input *in);
+void         platform_swap(void);
+void         platform_set_vsync(bool on);
+void         platform_window_size(i32 *w, i32 *h);
+PlatformProc platform_gl_proc(const char *name);
+// Папка исполняемого файла, без завершающего '/'
+bool         platform_exe_dir(char *buf, size_t size);
+
+#endif

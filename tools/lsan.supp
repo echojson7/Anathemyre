@@ -1,0 +1,8 @@
+# Утечки внутри драйвера OpenGL (Mesa/LLVM), не наш код
+leak:libLLVM
+leak:libgallium
+leak:swrast_dri
+leak:libGLX_mesa
+leak:libnvidia
+leak:radeonsi_dri
+leak:iris_dri

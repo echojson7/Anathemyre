@@ -1,0 +1,37 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang libclang-rt-18-dev libx11-dev xvfb xauth libgl1 libgl1-mesa-dri python3-pil
+
+      - name: Релиз, gcc, без предупреждений
+        run: make -j"$(nproc)" WERROR=1 CC=gcc
+
+      - name: Отладка с ASan/UBSan, clang
+        run: make debug -j"$(nproc)" WERROR=1 CC=clang
+
+      - name: Кадр под ASan (программный рендер)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          LSAN_OPTIONS: suppressions=tools/lsan.supp
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --shot build/shot.ppm --frames 20 | tee build/log.txt
+          ! grep -q "СБОЙ" build/log.txt
+          python3 -c "from PIL import Image; Image.open('build/shot.ppm').save('build/shot.png')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshot
+          path: build/shot.png
