@@ -14,4 +14,8 @@ git pull --ff-only origin "$BRANCH"
 
 JOBS=$(nproc 2>/dev/null || echo 4)
 make -j"$JOBS"
+# WSL2: без этого Mesa рисует на процессоре (llvmpipe), а не на видеокарте
+if [ -e /dev/dxg ] && [ -z "$GALLIUM_DRIVER" ]; then
+    export GALLIUM_DRIVER=d3d12
+fi
 exec ./build/anathemyre
