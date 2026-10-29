@@ -23,7 +23,7 @@
 // Арена у зала, перед его открытым краем
 #define ARENA_CENTER v3(14.0f, 0.0f, 34.0f)
 #define ARENA_SHOW_AFTER_BOUT_S 12.0f
-static const char *const FILTER_NAMES[RENDER_FILTERS] = { "без фильтра", "естественный", "охра", "закат", "плёнка" };
+static const char *const FILTER_NAMES[RENDER_FILTERS] = { "без фильтра", "первый", "естественный", "охра", "закат", "плёнка" };
 
 #define DAY_LENGTH_S 120.0f  // полные сутки, с; пока быстро, чтобы смену было видно
 
