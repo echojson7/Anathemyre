@@ -229,6 +229,7 @@ static Key map_key(KeySym ks)
     case XK_F3: return KEY_F3;
     case XK_F4: return KEY_F4;
     case XK_F5: return KEY_F5;
+    case XK_F10: return KEY_F10;
     default: return KEY_NONE;
     }
 }

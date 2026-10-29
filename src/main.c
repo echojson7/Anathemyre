@@ -51,6 +51,7 @@ typedef struct Options {
     u32         battle[2];   // полевой бой: бойцов в каждом отряде
     bool        battle_verify;
     u32         threads;     // 0 — по числу ядер
+    bool        bench;       // замер кадра сразу после старта, затем выход
 } Options;
 
 // Портрет: неподвижная фигура в покое, камера по кости головы спереди, чуть сверху
@@ -91,6 +92,56 @@ static void camera_update(RtsCamera *c, const Input *in, f32 dt)
     c->dist *= powf(0.88f, (f32)in->wheel);
     c->dist = clampf(c->dist, 4.0f, 120.0f);
     c->pitch = clampf(c->pitch, 0.08f, 1.45f);
+}
+
+// Замер кадра (F10 или --bench): камера у арены вплотную, утро, сутки стоят, vsync выкл.
+// BENCH_WARMUP_S на прогрев, затем BENCH_S секунд замера и итог в лог
+#define BENCH_WARMUP_S 2.0
+#define BENCH_S 10.0
+#define BENCH_MAX_FRAMES 200000
+#define BENCH_CAM ((RtsCamera){ .target = ARENA_CENTER, .yaw = -0.5f, .pitch = 0.42f, .dist = 4.0f })
+#define BENCH_TOD 0.31f
+
+typedef struct Bench {
+    bool on;
+    f64  start, measure_from;     // начало прогрева и замера
+    f64  last_now;                // начало предыдущего кадра замера, 0 — замер ещё не начат
+    u32  frames, cpu_frames;
+    f32 *frame_ms;                // BENCH_MAX_FRAMES из постоянной арены
+    f64  cpu_logic, cpu_submit, cpu_swap;
+    // Что вернуть после замера
+    RtsCamera cam;
+    f32  tod;
+    bool day_run, vsync, follow;
+} Bench;
+
+static int cmp_f32(const void *a, const void *b)
+{
+    f32 x = *(const f32 *)a, y = *(const f32 *)b;
+    return (x > y) - (x < y);
+}
+
+static void bench_report(Bench *b, f64 seconds, i32 ww, i32 wh)
+{
+    RenderStats st;
+    render_take_stats(&st);
+    u32 n = b->frames;
+    if (!n || !b->cpu_frames) return;
+    f64 sum = 0;
+    for (u32 i = 0; i < n; i++) sum += b->frame_ms[i];
+    qsort(b->frame_ms, n, sizeof *b->frame_ms, cmp_f32);
+    f64 k = 1000.0 / b->cpu_frames;
+    log_info("ЗАМЕР: окно %dx%d, %u кадров за %.1f с | кадр: среднее %.3f мс (%.0f к/с), медиана %.3f, худший 1%% %.3f",
+             ww, wh, n, seconds, sum / n, n / seconds, b->frame_ms[n / 2], b->frame_ms[MIN(n - 1, n * 99 / 100)]);
+    if (st.samples && st.gpu_total_ms > 0.0)
+        log_info("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | GPU %.3f: тени %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f",
+                 b->cpu_logic * k, b->cpu_submit * k, b->cpu_swap * k, st.gpu_total_ms, st.gpu_ms[PASS_SHADOW],
+                 st.gpu_ms[PASS_SCENE], st.gpu_ms[PASS_ATMOS], st.gpu_ms[PASS_STYLE], st.gpu_ms[PASS_BLIT]);
+    else
+        log_info("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | GPU: драйвер не отдаёт метки времени",
+                 b->cpu_logic * k, b->cpu_submit * k, b->cpu_swap * k);
+    log_info("ЗАМЕР: сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk",
+             st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0);
 }
 
 static V3 camera_eye(const RtsCamera *c)
@@ -153,7 +204,7 @@ static bool pick_ground(M4 view_proj, V3 eye, f32 nx, f32 ny, V3 *out)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench]");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
 }
@@ -165,6 +216,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         if (!strcmp(a, "--shot") && i + 1 < argc) o->shot_path = argv[++i];
         else if (!strcmp(a, "--frames") && i + 1 < argc) o->shot_frames = atoi(argv[++i]);
         else if (!strcmp(a, "--novsync")) o->no_vsync = true;
+        else if (!strcmp(a, "--bench")) o->bench = true;
         else if (!strcmp(a, "--follow")) o->follow = true;
         else if (!strcmp(a, "--tod") && i + 1 < argc) o->tod = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--inspect")) o->inspect = true;
@@ -373,7 +425,10 @@ int main(int argc, char **argv)
     bool day_run = true;
     u32 frame = 0;
 
-    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — инвентарь, P — персонаж, пробел — пауза, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F3 — vsync, F4 — остановить сутки, F5 — шейдеры");
+    Bench bench = { .frame_ms = ARENA_PUSH_ARRAY(&perm, f32, BENCH_MAX_FRAMES) };
+    bool bench_request = opt.bench && !opt.shot_path;
+
+    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — инвентарь, P — персонаж, пробел — пауза, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F3 — vsync, F4 — остановить сутки, F5 — шейдеры, F10 — замер кадра");
 
     while (!in.quit) {
         platform_poll(&in);
@@ -395,6 +450,26 @@ int main(int argc, char **argv)
             log_info("VSYNC: %s", vsync ? "вкл" : "выкл");
         }
 
+        if ((in.key_pressed[KEY_F10] || bench_request) && !bench.on && !opt.shot_path) {
+            bench_request = false;
+            bench.on = true;
+            bench.cam = cam;
+            bench.tod = tod;
+            bench.day_run = day_run;
+            bench.vsync = vsync;
+            bench.follow = opt.follow;
+            cam = BENCH_CAM;
+            tod = BENCH_TOD;
+            day_run = opt.follow = vsync = false;
+            platform_set_vsync(false);
+            bench.start = time_now();
+            bench.measure_from = bench.start + BENCH_WARMUP_S;
+            bench.last_now = 0;
+            bench.frames = bench.cpu_frames = 0;
+            bench.cpu_logic = bench.cpu_submit = bench.cpu_swap = 0;
+            log_info("ЗАМЕР: начат, %.0f с прогрева и %.0f с замера; камера у арены, управление камерой отключено", BENCH_WARMUP_S, BENCH_S);
+        }
+
         f64 now = time_now();
         f32 dt = opt.shot_path ? 1.0f / 60.0f : (f32)fmin(now - last, 0.05);
         last = now;
@@ -405,7 +480,7 @@ int main(int argc, char **argv)
         real_time += real_dt;
 
         f64 t_logic = time_now();
-        camera_update(&cam, &in, real_dt);
+        if (!bench.on) camera_update(&cam, &in, real_dt);
         crowd_update(&crowd, &rng, dt);
         arena_view_update(aview, arena, dt);
         i32 lead = MAX(0, squad_primary(squad));
@@ -546,7 +621,37 @@ int main(int argc, char **argv)
             break;
         }
         platform_swap();
-        cpu_swap += time_now() - t_swap;
+        f64 t_end = time_now();
+        cpu_swap += t_end - t_swap;
+
+        if (bench.on && now >= bench.measure_from) {
+            // Время кадра — от начала прошлого кадра до начала этого; счётчики рендера — с начала замера
+            if (bench.last_now == 0) {
+                render_take_stats(&(RenderStats){ 0 });
+            } else {
+                if (bench.frames < BENCH_MAX_FRAMES) bench.frame_ms[bench.frames++] = (f32)((now - bench.last_now) * 1000.0);
+                bench.cpu_frames++;
+                bench.cpu_logic += t_submit - t_logic;
+                bench.cpu_submit += t_swap - t_submit;
+                bench.cpu_swap += t_end - t_swap;
+            }
+            bench.last_now = now;
+            if (now - bench.measure_from >= BENCH_S) {
+                bench_report(&bench, now - bench.measure_from, ww, wh);
+                bench.on = false;
+                if (opt.bench) break;
+                cam = bench.cam;
+                tod = bench.tod;
+                day_run = bench.day_run;
+                opt.follow = bench.follow;
+                vsync = bench.vsync;
+                platform_set_vsync(vsync);
+                stat_t = time_now();
+                stat_frames = 0;
+                cpu_logic = cpu_submit = cpu_swap = 0;
+            }
+            continue;
+        }
 
         stat_frames++;
         if (now - stat_t >= 2.0) {
