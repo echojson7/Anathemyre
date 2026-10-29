@@ -18,6 +18,8 @@ typedef struct Settings {
     f32  sound_vol, music_vol;
     // Просьбы меню на этот кадр
     bool travel, humans, bench;
+    bool stand, stand_moved;  // стенд фигур: показан; показать ряд stand_row или убрать
+    u32  stand_row;
 } Settings;
 
 // Меню НАСТРОЙКИ. *in — ввод для мира и интерфейса: если мышь занята меню, клики из него убраны

@@ -25,7 +25,7 @@ typedef enum Material {
 } Material;
 
 #define BONE_NONE 255
-#define MESH_MAX_MORPHS 8  // веса морфов экземпляра — первые 8 чисел матрицы внешности (render.h, RENDER_LOOK_SLOT)
+#define MESH_MAX_MORPHS 10  // веса морфов экземпляра — первые 8 чисел матрицы внешности и m[11], m[15] (render.h, RENDER_LOOK_SLOT)
 
 typedef struct Vertex {
     f32 pos[3];

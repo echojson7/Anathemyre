@@ -2,7 +2,7 @@
 # Люди из MakeHuman (CC0) -> .mesh игры. Офлайн, в игре не нужен.
 # Морфы пола и сложения, руки вниз и ноги прямо (поза привязки игры), пальцы в хвате, рост 1.80 м,
 # раскраска по граням (кожа, губы, брови), волосы над кожей головы, глаза.
-# Три LOD по LOD_TRIS, упрощение своё, лицо дороже остального. Веса до 4 костей на вершину.
+# Пять LOD по LOD_TRIS, упрощение своё, лицо дороже остального. Веса до 4 костей на вершину.
 # Нужен только numpy.
 #   python3 -I tools/humanconv/humanconv.py <папка MakeHuman> <targets.npz> <data/meshes>
 # Папка MakeHuman: base.obj, default.mhskel, default_weights.mhw (makehuman/data из system assets)
@@ -14,26 +14,35 @@ import numpy as np
  TH_L, SH_L, FT_L, TH_R, SH_R, FT_R) = range(20)
 MAT_RUST, MAT_CLOTH, MAT_LEATHER, MAT_SKIN, MAT_METAL = 1, 3, 4, 7, 8  # как Material в src/render/mesh.h
 HEIGHT = 1.80
-# Треугольников тела на LOD0..2 (без оболочки волос)
-LOD_TRIS = (8500, 1800, 500)
+# Треугольников тела на LOD0..4 (без оболочки волос). LOD0 — для крупных планов (редактор, портреты, вплотную)
+LOD_TRIS = (16000, 8500, 1800, 500, 320)
+NL = len(LOD_TRIS)
 
 # Сложение и цвета как у нашей тройки (src/main.c human_shape), чтобы сравнивать честно
+# Пропорции (переработка 2026-10-29, замеры при росте 1.80 м): голова около 7.7 высоты тела у мужчин и 7.65 у женщин
+# (у MakeHuman 7.1 — голова крупная), талия в профиль 21 см у мужчины и 18 см у женщины (была тоньше, чем видно спереди)
+# Руки до нормы: локоть на 0.635 роста, запястье на 0.49, размах около роста (было 0.67 и 0.52, размах 1.67 м)
+HEAD_SMALLER = {'head/head-scale-vert-decr': 0.5, 'head/head-scale-horiz-decr': 0.3, 'head/head-scale-depth-decr': 0.4}
+ARMS = {'measure/measure-upperarm-length-incr': 0.6, 'measure/measure-lowerarm-length-decr': 0.4}
 PEOPLE = [
     dict(name='mh_male', gender=1.0, muscle=0.8, weight=0.5, beard=False,
          skin=(0.52, 0.37, 0.28), hcol=(0.10, 0.08, 0.06),
-         mods={'torso/torso-muscle-pectoral-incr': 0.5,
-               'measure/measure-upperarm-length-decr': 0.4, 'measure/measure-lowerarm-length-decr': 0.4}),
-    # Песочные часы: талия узкая, бёдра и плечи шире, грудь больше и ближе друг к другу, лобок ниже
+         mods=dict(HEAD_SMALLER, **{'torso/torso-muscle-pectoral-incr': 0.5, 'measure/measure-waist-circ-incr': 0.3, **ARMS})),
+    # Женщина: талия уже бёдер, но без «галифе»: бёдра 35 см (были 40), ляжки на 8% тоньше, колени и икры суше;
+    # плечи 45 см по дельтам (были как у мужчины, 49); грудь ближе друг к другу, лобок ниже
     dict(name='mh_female', gender=0.0, muscle=0.5, weight=0.55, beard=False,
          skin=(0.60, 0.45, 0.36), hcol=(0.20, 0.13, 0.08),
-         cup=0.65, firm=0.7, waist_depth=0.2,
-         mods={'measure/measure-waist-circ-decr': 1.0, 'bodyshapes/bodyshapes-elvs-fem-neat-hourglass': 0.8,
-               'measure/measure-hips-circ-incr': 0.1, 'buttocks/buttocks-volume-decr': 1.0, 'measure/measure-shoulder-dist-incr': 0.35,
+         cup=0.65, firm=0.7,
+         mods={'head/head-scale-vert-decr': 0.3, 'head/head-scale-horiz-decr': 0.35, 'head/head-scale-depth-decr': 0.3,
+               'bodyshapes/bodyshapes-elvs-fem-neat-hourglass': 0.5, 'hip/hip-scale-horiz-decr': 0.4, 'measure/measure-hips-circ-decr': 0.15,
+               'measure/measure-thigh-circ-decr': 0.15, 'armslegs/l-upperleg-fat-decr': 0.2, 'armslegs/r-upperleg-fat-decr': 0.2,
+               'measure/measure-knee-circ-decr': 0.4, 'measure/measure-calf-circ-decr': 0.3,
+               'buttocks/buttocks-volume-decr': 1.0, 'measure/measure-shoulder-dist-decr': 0.6,
+               'measure/measure-upperarm-length-incr': 0.5, 'measure/measure-lowerarm-length-incr': 0.2,
                'breast/breast-dist-decr': 0.15, 'pelvis/bulge-decr': 1.0}),
     dict(name='mh_thin', gender=1.0, muscle=0.45, weight=0.15, beard=True,
          skin=(0.38, 0.26, 0.19), hcol=(0.07, 0.06, 0.05),
-         mods={'torso/torso-muscle-pectoral-incr': 0.4,
-               'measure/measure-upperarm-length-decr': 0.4, 'measure/measure-lowerarm-length-decr': 0.4}),
+         mods=dict(HEAD_SMALLER, **{'torso/torso-muscle-pectoral-incr': 0.4, 'measure/measure-waist-circ-incr': 0.2, **ARMS})),
 ]
 # Ступни у всех чуть меньше: в позах сидя и на корточках родные ступни MakeHuman слишком бросаются в глаза
 for _p in PEOPLE:
@@ -96,16 +105,21 @@ def morph(base, Z, p):
 
 # Морфы внешности: у каждого свой поток сдвигов вершин, игра смешивает их весами экземпляра
 # (порядок как LOOK_* в src/game/look.h)
+# Лицо — только местные морфы: морфы расы MakeHuman меняли и рост, и плечи, и голову
+_eyes = lambda d: {'eyes/%s-%s' % (s, k): w for s in 'lr' for k, w in d.items()}
 MORPHS = (
     dict(weight=1.0),                  # полнее
     dict(weight=0.0),                  # худее
     dict(muscle=1.0),                  # сильнее
     dict(muscle=0.0),                  # слабее
     dict(age=1.0),                     # старше: 1 — глубокая старость
-    dict(race={'african': 1.0}),       # черты лица: широкий нос, полные губы
-    dict(race={'asian': 1.0}),         # черты лица: узкие глаза, плоское лицо
-    dict(mods={'chin/chin-width-incr': 0.7, 'chin/chin-bones-incr': 0.6, 'head/head-square': 0.6,
-               'nose/nose-volume-incr': 0.4}),  # тяжёлая челюсть, крупный нос
+    dict(mods={'nose/nose-volume-incr': 0.5, 'nose/nose-scale-horiz-incr': 0.5, 'nose/nose-scale-vert-incr': 0.3,
+               'nose/nose-scale-depth-incr': 0.4}),  # нос крупнее; минус — мельче
+    dict(mods=_eyes({'eye-height2-decr': 0.7, 'eye-height1-decr': 0.3, 'eye-corner2-up': 0.6,
+                     'eye-epicanthus-in': 0.5})),  # разрез уже, внешний угол выше; минус — круглее
+    dict(mods={'chin/chin-width-incr': 0.7, 'chin/chin-bones-incr': 0.6, 'head/head-square': 0.6}),  # тяжёлая челюсть
+    dict(mods={'mouth/mouth-upperlip-volume-incr': 0.8, 'mouth/mouth-lowerlip-volume-incr': 0.8,
+               'mouth/mouth-scale-horiz-incr': 0.25}),  # губы полнее; минус — тоньше
 )
 # Класс оттенка вершины: игра перекрашивает кожу и волосы под экземпляр
 TINT_NONE, TINT_SKIN, TINT_HAIR = 0, 1, 2
@@ -313,17 +327,6 @@ def posed(p, base, faces, Z, skel, W, fit=None):
         fit = (y0, HEIGHT / (v[used, 1].max() - y0))
     o = np.array([0.0, fit[0], 0.0])
     v, J = (v - o) * fit[1], {k: (x - o) * fit[1] for k, x in J.items()}
-    if p.get('waist_depth'):
-        # Талия глубже при виде сбоку (ширина спереди та же): растяжение по Z от середины живот-спина
-        tw = np.zeros(len(v))
-        for b in ('spine01', 'spine02', 'spine03', 'spine04', 'spine05', 'pelvis.L', 'pelvis.R', 'root'):
-            for i, w in W.get(b, ()):
-                tw[i] += w
-        yw = J['spine03____head'][1] + 0.03
-        band = (tw > 0.9) & (np.abs(v[:, 1] - yw) < 0.02)
-        zc = (v[band, 2].max() + v[band, 2].min()) / 2
-        k = p['waist_depth'] * np.exp(-((v[:, 1] - yw) / 0.07) ** 2) * np.clip(tw, 0, 1)
-        v[:, 2] = zc + (v[:, 2] - zc) * (1 + k)
     return v, J, fit
 
 
@@ -378,12 +381,17 @@ def build(p, base, faces, Z, skel, W):
     # Губы по весам круговой мышцы рта, брови над глазами
     lips = (get('oris01', 'oris03.L', 'oris03.R', 'oris05', 'oris07.L', 'oris07.R') > 0.8) & (n[:, 2] > 0.2)
     col[lips] = skin * np.array([0.93, 0.84, 0.82])
+    # Размеры на голове ниже — для головы MakeHuman без уменьшения (макушка на 11.25 см над глазом): hk — во сколько раз голова меньше
+    hd = (bone == HEAD) & isbody
+    top_y = y[hd].max()
+    hk = (top_y - J['eye.L____head'][1]) / 0.1125
     brows = np.zeros(nv, bool)
     for sd, sg in (('L', 1), ('R', -1)):
         e = J['eye.%s____head' % sd]
-        dx = (x - e[0]) * sg
+        dx = (x - e[0]) * sg / hk
         arch = 0.004 * (1 - ((dx - 0.004) / 0.022) ** 2)
-        brow = (bone == HEAD) & (dx > -0.016) & (dx < 0.026) & (y > e[1] + 0.012 + arch) & (y < e[1] + 0.021 + arch) \
+        dy = (y - e[1]) / hk
+        brow = (bone == HEAD) & (dx > -0.016) & (dx < 0.026) & (dy > 0.012 + arch) & (dy < 0.021 + arch) \
             & (z > e[2] - 0.005) & (n[:, 2] > 0.3)
         col[brow] = skin * 0.25 + hcol * 0.75
         brows |= brow
@@ -393,22 +401,20 @@ def build(p, base, faces, Z, skel, W):
         mouth = J['oris01____head'] if 'oris01____head' in J else J['jaw____tail']
         jaw = (bone == HEAD) | (bone == NECK)
         neck_y = J['neck02____head'][1]
-        beard = jaw & (y < eye_y - 0.045) & (y > neck_y - 0.01 + 0.06 * np.clip(-(z - mouth[2]) / 0.07, 0, 1)) \
+        beard = jaw & (y < eye_y - 0.045 * hk) & (y > neck_y - 0.01 * hk + 0.06 * hk * np.clip(-(z - mouth[2]) / (0.07 * hk), 0, 1)) \
             & (z > J['head____head'][2] - 0.005) & ~lips
         v[beard] += n[beard] * 0.003
         col[beard] = skin * 0.15 + hcol * 0.85
     # Линия роста волос: высоко надо лбом, ниже у висков, у затылка до шеи; уши открыты
-    hd = (bone == HEAD) & isbody
-    top_y = y[hd].max()
-    crown = hd & (y > top_y - 0.12)
+    crown = hd & (y > top_y - 0.12 * hk)
     zc = (z[crown].min() + z[crown].max()) / 2
-    side = hd & (y > top_y - 0.19) & (y < top_y - 0.10)
+    side = hd & (y > top_y - 0.19 * hk) & (y < top_y - 0.10 * hk)
     ear = side & (ax > 0.93 * ax[side].max())
     ear_c = np.array([ax[ear].mean(), y[ear].mean(), z[ear].mean()])
-    tz = np.clip((z - zc + 0.05) / 0.13, 0, 1)
+    tz = np.clip((z - zc + 0.05 * hk) / (0.13 * hk), 0, 1)
     tz = tz * tz * (3 - 2 * tz)
-    line = top_y - 0.20 + 0.118 * tz - 0.012 * np.clip(ax / 0.07, 0, 1) * tz
-    ear_d = ((ax - ear_c[0]) / 0.03) ** 2 + ((y - ear_c[1]) / 0.04) ** 2 + ((z - ear_c[2]) / 0.032) ** 2
+    line = top_y + hk * (-0.20 + 0.118 * tz - 0.012 * np.clip(ax / (0.07 * hk), 0, 1) * tz)
+    ear_d = ((ax - ear_c[0]) / (0.03 * hk)) ** 2 + ((y - ear_c[1]) / (0.04 * hk)) ** 2 + ((z - ear_c[2]) / (0.032 * hk)) ** 2
     hair_t = hd & (ear_d > 1) & (y > line)
     hair_k = np.where(hair_t, np.clip((y - line) / 0.015, 0, 1), 0.0)
     # Кожа головы — щетина: причёски отдельными сетками поверх (garments, hair/)
@@ -493,13 +499,13 @@ def build(p, base, faces, Z, skel, W):
     wv = np.where(bone == HEAD, 40.0, np.where(bone == NECK, 8.0, 1.0))
     lods = []
     # LOD0 тоже упрощается, но с полной окраской
-    (T0, P0), = decimate(vl, T0, P0, [LOD_TRIS[0]], wv)
-    n0 = normals(vl, T0)
-    n0[np.unique(eyes)] = n[np.unique(eyes)]
-    md = mdelta(T0, n0)
-    src = [(T0, n0, md)]
-    parts = [split(vl, n0, T0, P0, pal, sk, md)]
-    lods.append(merge(parts))
+    src = []
+    for T0, P0 in decimate(vl, T0, P0, list(LOD_TRIS[:2]), wv):
+        n0 = normals(vl, T0)
+        n0[np.unique(eyes)] = n[np.unique(eyes)]
+        md = mdelta(T0, n0)
+        src.append((T0, n0, md))
+        lods.append(merge([split(vl, n0, T0, P0, pal, sk, md)]))
 
     # Дальние LOD: своё упрощение с учётом швов окраски (decimate). Окраска проще:
     # кожа, губы, брови, борода, волосы — окраска кожи головы.
@@ -514,8 +520,8 @@ def build(p, base, faces, Z, skel, W):
     fpid = fpid.ravel()
     fe = vote(fpid[eyes])
     Tf, Pf = refine(vote(fpid[body]).reshape(4, nf0).T)
-    eye_n = (64, 40)
-    body_l = decimate(vl, Tf, Pf, [LOD_TRIS[l + 1] - eye_n[l] for l in range(2)], wv)
+    eye_n = (64, 40, 24)
+    body_l = decimate(vl, Tf, Pf, [LOD_TRIS[l + 2] - eye_n[l] for l in range(NL - 2)], wv)
     eye_l = decimate(vl, tri(eyes), np.concatenate([fe, fe]), list(eye_n), wv)
     for (tb, pb), (te, pe) in zip(body_l, eye_l):
         t, fp = np.concatenate([tb, te]), np.concatenate([pb, pe])
@@ -523,7 +529,7 @@ def build(p, base, faces, Z, skel, W):
         md = mdelta(t, nt)
         src.append((tb, nt, md))
         lods.append(merge([split(vl, nt, t, fp, fpal, sk, md)]))
-    gear, hair, under = garments(dict(vl=vl, sk=sk, bone=bone, J=J, src=src, ear_d=ear_d, hd=hd, top_y=top_y, line=line,
+    gear, hair, under = garments(dict(vl=vl, sk=sk, bone=bone, J=J, src=src, ear_d=ear_d, hd=hd, top_y=top_y, hk=hk, line=line,
                                       hcol=hcol, female=p['gender'] < 0.5))
     # Бельё — часть сетки тела: лишнего вызова отрисовки нет
     lods = [merge([(tuple(m[:-1]), m[-1]), (tuple(u[:-1]), u[-1])]) for m, u in zip(lods, under)]
@@ -532,11 +538,11 @@ def build(p, base, faces, Z, skel, W):
 
 # Одежда и броня: имя файла -> вещь игры (src/game/look.h, GEAR_*)
 GEAR = ('rags', 'quilt', 'jacket', 'plate', 'bucket', 'greaves', 'wrap', 'boots', 'mitts', 'pack', 'belt', 'pants')
-GEAR_SEGS = (16, 10, 6)  # сегментов по кругу у жёстких вещей на LOD0..2
+GEAR_SEGS = (20, 16, 10, 6, 5)  # сегментов по кругу у жёстких вещей на LOD0..4
 # Причёски: имя файла -> вид у тела этого пола (src/game/look.c, g_hair_file)
 HAIR_FEMALE = ('tail', 'bun', 'braid', 'crop')
 HAIR_MALE = ('crop', 'shag', 'tied')
-LOCKS = (1.0, 0.5, 0.0)  # доля прядей на LOD0..2
+LOCKS = (1.0, 1.0, 0.5, 0.0, 0.0)  # доля прядей на LOD0..4
 
 
 def tube(path, up, w, h, sides):
@@ -705,7 +711,7 @@ def garments(ctx):
         dg = np.bincount(uk.ravel(), minlength=nv)
         free = (dg > 0)[:, None].copy()
         free[e[cnt[inv.ravel()] == 1].ravel()] = False
-        for i in range(relax * 3 >> l):
+        for i in range(relax * 3 >> max(l - 1, 0)):
             lap = np.stack([nsum(p[:, c], uk, nv) for c in range(3)], 1) / np.maximum(dg, 1)[:, None] - p
             p = np.where(free, p + 0.5 * lap, p)
             p += nb * np.maximum(0.0, 0.7 * ob - ((p - vb) * nb).sum(1))[:, None]
@@ -718,7 +724,7 @@ def garments(ctx):
                 A['g%d' % i] = g[0](p)  # полосы — по месту ткани после сглаживания, иначе идут волной
         for i, (g, _, _, top) in enumerate(layers):
             # Полосы уже ребра: режутся по обоим краям каждой полосы, а не по полю
-            for c in (g[1](A['g%d' % i]) if type(g) is tuple else [0.0]) if l <= top else ():
+            for c in (g[1](A['g%d' % i]) if type(g) is tuple else [0.0]) if l <= top + 1 else ():
                 I, O, ea, eb, w = cuts(F, A['g%d' % i] - c)
                 grow(A, ea, eb, w)
                 F = np.concatenate([I, O])
@@ -898,7 +904,7 @@ def garments(ctx):
            (inside(arm, Y - elbow - 0.035), (0.30, 0.31, 0.26), MAT_CLOTH, 1),
            (inside(trunk & (Z > 0), np.minimum(0.045 - np.abs(sL * X - 0.09), 0.04 - np.abs(Y - chest - 0.05))), (0.33, 0.34, 0.28), MAT_CLOTH, 0),
            (inside(trunk, Y - clav + 0.015), (0.29, 0.30, 0.25), MAT_CLOTH, 1)]
-    out['rags'] = [[shell(l, s, 0.007, ((0.38, 0.39, 0.32), MAT_CLOTH), lay, relax=3)] for l in range(3)]
+    out['rags'] = [[shell(l, s, 0.007, ((0.38, 0.39, 0.32), MAT_CLOTH), lay, relax=3)] for l in range(NL)]
 
     # Комбинезон: выцветший серо-синий от ворота до щиколоток, молния, резиновые накладки на коленях и локтях; трафарет на спине и груди
     s = field(soft(trunk | arm | thigh | shin | np.isin(bone, [NECK])), lin(Y - ankle - 0.07),
@@ -908,10 +914,10 @@ def garments(ctx):
            (inside(arm, np.minimum(0.04 - np.abs(Y - elbow), (-nrm0[:, 2] - 0.25) * 0.2)), RUBBER, MAT_LEATHER, 1),
            (inside(trunk, 0.015 - np.abs(Y - hip - 0.13)), (0.18, 0.20, 0.22), MAT_CLOTH, 1)]
     out['quilt'] = []
-    for l in range(3):
+    for l in range(NL):
         sh = shell(l, s, np.where(thigh | shin, 0.014, 0.012), ((0.17, 0.19, 0.21), MAT_CLOTH), lay, relax=6)
         parts = [sh]
-        if l < 2:
+        if l < 3:
             rng = np.random.default_rng(11)
             c, n = surf(sh, np.array([0.0, chest + 0.02, 0.0]), np.array([0, 0, -1.0]))
             pv, pt = glyph(rng, c, n, 0.075, cols=2)
@@ -928,10 +934,10 @@ def garments(ctx):
            (inside(fa | hand, wrist + 0.06 - Y), (0.05, 0.05, 0.045), MAT_LEATHER, 1),
            (inside(trunk & (Z > 0), 0.008 - AX), (0.05, 0.05, 0.045), MAT_LEATHER, 0)]
     out['jacket'] = []
-    for l in range(3):
+    for l in range(NL):
         sh = shell(l, s, 0.014, (RUBBER, MAT_LEATHER), lay, relax=3)
         parts = [sh]
-        for y in (np.linspace(waist + 0.04, clav - 0.06, 4) if l == 0 else ()):
+        for y in (np.linspace(waist + 0.04, clav - 0.06, 4) if l < 2 else ()):
             c, n = surf(sh, np.array([0.0, y, 0.0]), np.array([0, 0, 1.0]))
             pv, pt = box(c + n * 0.003, (0.028, 0.012, 0.008), 0.0)
             parts.append(stuck(pv, pt, (0.33, 0.32, 0.29), MAT_METAL, c))
@@ -945,10 +951,10 @@ def garments(ctx):
     lp = [(stripe(lambda P: P[:, 1] + P[:, 2] * 0.8 - sL * P[:, 0] * 0.4, 0.045, 0.016), (0.47, 0.41, 0.22), MAT_RUST, 1),
           (0.45 - sp, (0.15, 0.15, 0.13), MAT_RUST, 1)]
     out['plate'] = []
-    for l in range(3):
+    for l in range(NL):
         sh = shell(l, s, 0.035, ((0.19, 0.21, 0.18), MAT_RUST), lay, 0.5, relax=10, flat=slab)
         parts = [sh, shell(l, sp, 0.05, ((0.19, 0.21, 0.18), MAT_RUST), lp, 0.5, relax=8)]
-        if l < 2:
+        if l < 3:
             rng = np.random.default_rng(7)
             c, n = surf(sh, np.array([-sL * 0.06, chest + 0.03, 0.0]), np.array([0, 0, 1.0]))
             pv, pt = glyph(rng, c, n, 0.07, cols=2)
@@ -956,7 +962,7 @@ def garments(ctx):
             c, n = surf(sh, np.array([0.0, chest, 0.0]), np.array([0, 0, -1.0]))
             pv, pt = glyph(rng, c, n, 0.11)
             parts.append(stuck(pv, pt, PAINT, MAT_RUST, c))
-        if l == 0:
+        if l < 2:
             for sgz in (1.0, -1.0):
                 for x, y in ((0.12, waist + 0.08), (-0.12, waist + 0.08), (0.10, clav - 0.03), (-0.10, clav - 0.03)):
                     c, n = surf(sh, np.array([x, y, 0.0]), np.array([0, 0, sgz]))
@@ -965,7 +971,7 @@ def garments(ctx):
         out['plate'].append(parts)
 
     # Трубные поножи: половинки труб спереди голени с фланцами по краям, примотаны кабелем в двух местах
-    out['greaves'] = [[] for _ in range(3)]
+    out['greaves'] = [[] for _ in range(NL)]
     for sd_ in ('L', 'R'):
         K, A = j('lowerleg01.' + sd_), j('foot.' + sd_)
         a, b = K + (A - K) * 0.12, A + (K - A) * 0.18
@@ -988,16 +994,16 @@ def garments(ctx):
         fr = mid & (np.abs(ga_all) < 1.2)
         r = np.percentile(np.linalg.norm(rad[fr] - f * sh_, axis=1), 97) + 0.03
         half = 1.35
-        for l in range(3):
-            pv, pt = pipe(c0, c0 + (b - a), f, r, half, 2, (10, 6, 4)[l], 0.004)
+        for l in range(NL):
+            pv, pt = pipe(c0, c0 + (b - a), f, r, half, 2, (14, 10, 6, 4, 4)[l], 0.004)
             out['greaves'][l].append(rigid_part(pv, pt, (0.20, 0.13, 0.08), MAT_RUST, bn, leg))
-            if l < 2:
+            if l < 3:
                 for u0 in (0.0, 0.93):
-                    pv, pt = pipe(c0 + (b - a) * u0, c0 + (b - a) * (u0 + 0.07), f, r + 0.005, half + 0.04, 2, (10, 6)[l], 0.009)
+                    pv, pt = pipe(c0 + (b - a) * u0, c0 + (b - a) * (u0 + 0.07), f, r + 0.005, half + 0.04, 2, (14, 10, 6)[l], 0.009)
                     out['greaves'][l].append(rigid_part(pv, pt, (0.13, 0.11, 0.09), MAT_METAL, bn, leg))
             for u in (0.3, 0.7):
                 # Кабель по кругу: спереди по трубе, сзади по икре
-                g = np.sort(np.concatenate([np.linspace(-np.pi, np.pi, (13, 7, 5)[l]), [-half, half]]))
+                g = np.sort(np.concatenate([np.linspace(-np.pi, np.pi, (17, 13, 7, 5, 5)[l]), [-half, half]]))
                 o = a + (b - a) * u
                 near = mid & (np.abs(t - u * L) < 0.04)
                 ga, rn = ga_all[near], rn_all[near]
@@ -1008,7 +1014,7 @@ def garments(ctx):
                 # По трубе до её краёв, дальше натянут к икре
                 rr = np.where(np.abs(g) <= half + 1e-6, np.maximum(pr, skin), skin)
                 path = o + (np.outer(cg, f) + np.outer(np.sin(g), sd)) * rr[:, None]
-                pv, pt = tube(path, path - o, np.full(len(g), 0.008), np.full(len(g), 0.007), 4 if l < 2 else 3)
+                pv, pt = tube(path, path - o, np.full(len(g), 0.008), np.full(len(g), 0.007), 4 if l < 3 else 3)
                 out['greaves'][l].append(rigid_part(pv, pt, RUBBER, MAT_LEATHER, bn, leg))
 
     # Респиратор: резиновая полумаска от переносицы до подбородка, фильтр-банка впереди, ремень вокруг головы
@@ -1016,10 +1022,10 @@ def garments(ctx):
     s = field(soft(face), lin(eye - 0.022 - Y))
     sb = field(soft(hd & (ctx['ear_d'][:nvl] > 1.2)), lin(0.006 - np.abs(Y - eye + 0.035)))
     out['wrap'] = []
-    for l in range(3):
+    for l in range(NL):
         sh = shell(l, s, 0.009, (RUBBER, MAT_LEATHER), relax=4)
         c, n = surf(sh, np.array([0.0, eye - 0.068, 0.0]), np.array([0, -0.3, 1.0]) / np.hypot(0.3, 1.0))
-        pv, pt = cyl(c - n * 0.004, c + n * 0.03, 0.024, (12, 8, 6)[l])
+        pv, pt = cyl(c - n * 0.004, c + n * 0.03, 0.024, (16, 12, 8, 6, 5)[l])
         col = np.tile((0.24, 0.25, 0.19), (len(pv), 1))
         out['wrap'].append([sh, shell(l, sb, 0.004, (RUBBER, MAT_LEATHER), relax=1), rigid_part(pv, pt, col, MAT_METAL, HEAD, hd)])
 
@@ -1083,16 +1089,16 @@ def garments(ctx):
         pt = orient(pv, pt)
         low = pv[:, 1] < bot + 0.022
         return pv, pt, low
-    out['boots'] = [[] for _ in range(3)]
-    for l in range(3):
+    out['boots'] = [[] for _ in range(NL)]
+    for l in range(NL):
         out['boots'][l].append(shell(l, s, 0.03, (BOOT, MAT_LEATHER), lay, relax=6))
         for bn in (FT_L, FT_R):
             q = used[bone[used] == bn]
-            n_, sg_ = (12, 8, 5)[l], (12, 8, 6)[l]
+            n_, sg_ = (16, 12, 8, 5, 4)[l], (16, 12, 8, 6, 5)[l]
             pv, pt, low = last(q, n_, sg_, 0.009)
             col = np.where(low[:, None], np.array(SOLE), np.array((0.085, 0.065, 0.045)))
             out['boots'][l].append(rigid_part(pv, pt, col, MAT_LEATHER, bn, bone == bn))
-            if l < 2:
+            if l < 3:
                 pv, pt, _ = last(q, n_, sg_, 0.012, t0=0.72)
                 out['boots'][l].append(rigid_part(pv, pt, (0.26, 0.25, 0.22), MAT_METAL, bn, bone == bn))
 
@@ -1100,7 +1106,7 @@ def garments(ctx):
     s = field(soft(hand | fa), lin(wrist + 0.11 - Y))
     off = np.where(hand, 0.004, 0.006 + 0.09 * np.clip(Y - wrist - 0.02, 0, None))
     lay = [(Y - wrist - 0.095, (0.17, 0.16, 0.13), MAT_LEATHER, 1)]
-    out['mitts'] = [[shell(l, s, off, ((0.10, 0.10, 0.085), MAT_LEATHER), lay, relax=2)] for l in range(3)]
+    out['mitts'] = [[shell(l, s, off, ((0.10, 0.10, 0.085), MAT_LEATHER), lay, relax=2)] for l in range(NL)]
 
     # Пояс: стропа с пряжкой, подсумки и шланг петлёй у бедра сзади
     belt_y = hip + 0.075
@@ -1113,18 +1119,18 @@ def garments(ctx):
         k = np.where(band)[0][np.argmin(np.abs(np.angle(np.exp(1j * (ang[band] - a)))))]
         return np.hypot(X[k], Z[k])
     out['belt'] = []
-    for l in range(3):
+    for l in range(NL):
         parts = [shell(l, s, 0.03, ((0.22, 0.22, 0.16), MAT_CLOTH), lay, relax=1)]
         for a in (-1.1, 1.1, 2.6):
             r = rad_at(a) + 0.052
             pv, pt = box(np.array([np.sin(a) * r, belt_y - 0.03, np.cos(a) * r]), (0.075, 0.09, 0.045), a)
             parts.append(rigid_part(pv, pt, (0.20, 0.20, 0.15), MAT_CLOTH, PELVIS, band))
-        n_ = (12, 7, 4)[l]
+        n_ = (16, 12, 7, 4, 3)[l]
         tt = np.linspace(0, 1, n_)
         aa = 2.6 - 0.75 * tt
         rr = np.array([rad_at(q) for q in aa]) + 0.045
         path = np.stack([np.sin(aa) * rr, belt_y - 0.075 - 0.13 * np.sin(np.pi * tt), np.cos(aa) * rr], 1)
-        pv, pt = tube(path, np.stack([np.sin(aa), 0 * aa, np.cos(aa)], 1), np.full(n_, 0.022), np.full(n_, 0.022), (6, 5, 3)[l])
+        pv, pt = tube(path, np.stack([np.sin(aa), 0 * aa, np.cos(aa)], 1), np.full(n_, 0.022), np.full(n_, 0.022), (8, 6, 5, 3, 3)[l])
         rib = np.repeat(np.arange(n_), len(pv) // n_) % 2
         col = np.where(rib[:, None] == 0, np.array(RUBBER), np.array((0.11, 0.105, 0.095)))
         parts.append(rigid_part(pv, pt, col, MAT_LEATHER, PELVIS, band))
@@ -1138,7 +1144,7 @@ def garments(ctx):
     top = ctx['top_y'] + 0.022 - hc[1]
     lo, hi = eye - 0.012 - hc[1], eye + 0.008 - hc[1]
     out['bucket'] = []
-    for l in range(3):
+    for l in range(NL):
         sg = 8
         prof = [(0.0, 1.06), (0.012, 1.04), (lo, 1.0), (lo, 1.0), (hi, 1.0), (hi, 1.0), (hi + 0.012, 1.0), (hi + 0.012, 1.0),
                 (hi + 0.022, 1.0), (hi + 0.022, 1.0), (top - 0.085, 0.94), (top - 0.045, 0.80), (top - 0.015, 0.52), (top, 0.0)]
@@ -1154,15 +1160,15 @@ def garments(ctx):
         parts.append(rigid_part(pv, pt, RUBBER, MAT_LEATHER, HEAD, hd))
         for sx in (-1, 1):
             a = mo + np.array([sx * 0.03, -0.01, 0.0])
-            pv, pt = cyl(a, a + np.array([sx * 0.03, -0.022, 0.022]), 0.02, (10, 7, 5)[l])
+            pv, pt = cyl(a, a + np.array([sx * 0.03, -0.022, 0.022]), 0.02, (12, 10, 7, 5, 4)[l])
             parts.append(rigid_part(pv, pt, (0.24, 0.25, 0.19), MAT_METAL, HEAD, hd))
-        if l == 0:
+        if l < 2:
             for k in range(8):
                 g = 2 * np.pi * k / 8
                 c = hc + np.array([np.sin(g) * rx * 1.085, hi + 0.017, np.cos(g) * rz * 1.085])
                 pv, pt = box(c, (0.01, 0.01, 0.01), g)
                 parts.append(rigid_part(pv, pt, (0.20, 0.19, 0.17), MAT_METAL, HEAD, hd))
-        if l < 2:
+        if l < 3:
             c = hc + np.array([sL * rx * 1.08 * np.cos(np.pi / 8), (hi + 0.022 + top - 0.085) / 2, 0.0])
             pv, pt = glyph(np.random.default_rng(3), c, np.array([sL, 0, 0.0]), 0.05)
             parts.append(rigid_part(pv, pt, PAINT, MAT_RUST, HEAD, hd))
@@ -1173,8 +1179,8 @@ def garments(ctx):
     bz = Z[back].min()
     s = field(soft(trunk), lin(0.02 - np.abs(AX - 0.105)), lin(Y - chest))
     out['pack'] = []
-    for l in range(3):
-        sg = (10, 7, 5)[l]
+    for l in range(NL):
+        sg = (12, 10, 7, 5, 4)[l]
         parts = [shell(l, s, 0.03, (RUBBER, MAT_LEATHER), relax=1)]
         z0 = bz - 0.035
         for x in (-0.11, 0.11):
@@ -1191,7 +1197,7 @@ def garments(ctx):
         for x in (-0.11, 0.11):
             pv, pt = cyl(np.array([x - 0.012, 1.43, z0 - 0.085]), np.array([x + 0.012, 1.43, z0 - 0.085]), 0.066, sg)
             parts.append(rigid_part(pv, pt, (0.12, 0.12, 0.11), MAT_METAL, CHEST, back))
-        if l < 2:
+        if l < 3:
             pv, pt = glyph(np.random.default_rng(5), np.array([0.0, 1.43, z0 - 0.085 - 0.062]), np.array([0, 0, -1.0]), 0.05, cols=2)
             parts.append(rigid_part(pv, pt, PAINT, MAT_METAL, CHEST, back))
         out['pack'].append(parts)
@@ -1206,7 +1212,7 @@ def garments(ctx):
            (inside(np.isin(bone, [PELVIS, SPINE]) & (Z > 0), np.minimum(0.004 - AX, Y - hip + 0.06)), (0.10, 0.10, 0.08), MAT_CLOTH, 0)]
     # Штанина свободная и книзу шире, как у брезента; ботинки и поножи сидят поверх
     off = np.where((thigh | shin) | (Y < hip), 0.012 + 0.011 * np.clip((hip - Y) / (hip - ankle), 0, 1), 0.005)
-    out['pants'] = [[shell(l, s, off, ((0.16, 0.165, 0.125), MAT_CLOTH), lay, relax=6)] for l in range(3)]
+    out['pants'] = [[shell(l, s, off, ((0.16, 0.165, 0.125), MAT_CLOTH), lay, relax=6)] for l in range(NL)]
 
     # Бельё из небелёного холста: трусы с широкой тёмной резинкой; у мужчин короткие штанины и шов спереди,
     # у женщин вырез по бедру и лиф на лямках, перекрещенных на спине (не полоса без лямок)
@@ -1246,7 +1252,7 @@ def garments(ctx):
         return ((pv, normals(pv, pt), np.tile(LINEN, (k_, 1)), np.full(k_, MAT_CLOTH), np.full(k_, TINT_NONE), sk[q[ring]], d), pt)
 
     under = []
-    for l in range(3):
+    for l in range(NL):
         parts = [shell(l, sb, 0.003, (LINEN, MAT_CLOTH), lb, 0.8)]
         if ctx['female']:
             nip = J['breast.L____tail']
@@ -1259,7 +1265,7 @@ def garments(ctx):
             lw = [(inside(Y < lo + 0.012, lo + 0.012 - Y), BAND, MAT_CLOTH, 1)]
             parts.append(shell(l, sbra, 0.003, (LINEN, MAT_CLOTH), lw, 0.8))
             for sg in (1.0, -1.0):
-                parts.append(strap(sg, abs(nip[0]), nip[1] + 0.015, lo + 0.03, (24, 12, 6)[l]))
+                parts.append(strap(sg, abs(nip[0]), nip[1] + 0.015, lo + 0.03, (32, 24, 12, 6, 4)[l]))
         under.append(merge(parts))
     return ({g: [merge(parts) for parts in out[g]] for g in GEAR}, hairdos(ctx, shell, soft, lin, field, stripe), under)
 
@@ -1280,8 +1286,9 @@ def hairdos(ctx, shell, soft, lin, field, stripe):
     used = np.unique(src[0][0])
     qi = used[np.isin(bone[used], [HEAD, NECK])]
     crown = np.array([0.0, top_y, (Z[scalp].min() + Z[scalp].max()) / 2 - 0.02])
-    back = hd & (Y > top_y - 0.12) & (Y < top_y - 0.08)
-    tie = np.array([0.0, top_y - 0.095, Z[back].min() - 0.004])
+    hk = ctx['hk']
+    back = hd & (Y > top_y - 0.12 * hk) & (Y < top_y - 0.08 * hk)
+    tie = np.array([0.0, top_y - 0.095 * hk, Z[back].min() - 0.004])
 
     def near(p):
         k = np.linalg.norm(vl[qi][None] - p[:, None], axis=2).argmin(1)
@@ -1347,10 +1354,10 @@ def hairdos(ctx, shell, soft, lin, field, stripe):
         # Толщина объёма: у собранных прижата к голове, у распущенных пышнее к макушке
         th = {'crop': 0.007 + 0.007 * up_k, 'shag': 0.012 + 0.012 * up_k, 'tied': 0.005 + 0.004 * up_k}.get(st, 0.005 + 0.005 * up_k)
         lods = []
-        for l in range(3):
+        for l in range(NL):
             parts = [shell(l, s, th, (hcol * 0.8, MAT_CLOTH), [], 0.7, relax=3, tint=TINT_HAIR)]
             nl = LOCKS[l]
-            segs = (5, 3, 2)[l]
+            segs = (6, 5, 3, 2, 2)[l]
             if nl and st == 'crop':
                 parts += locks(rng, int(120 * nl), th, segs, (0.035, 0.055), (0.016, 0.026), 0.003, tang(crown, 0.25), 0.8, 0.001, 0.002)
             elif nl and st == 'shag':
@@ -1361,7 +1368,7 @@ def hairdos(ctx, shell, soft, lin, field, stripe):
             if st in ('tail', 'tied'):
                 # Хвост: жгут от узла вниз по спине, перевязь у узла
                 ln = 0.30 if st == 'tail' else 0.08
-                ts = np.linspace(0, 1, (8, 5, 3)[l])
+                ts = np.linspace(0, 1, (10, 8, 5, 3, 3)[l])
                 pa = tie + np.stack([0 * ts, -ln * ts * ts * 0.9 - 0.012 * ts, -0.035 * np.sin(np.pi * ts) - 0.01 * ts], 1)
                 # Ядро и пряди вокруг: пышнее у узла, к концу расходятся кистью
                 u = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pa, axis=0), axis=1))])
@@ -1369,7 +1376,7 @@ def hairdos(ctx, shell, soft, lin, field, stripe):
                 w = 0.06 * (0.8 + 0.6 * np.sin(np.pi * u) ** 0.7) * (1 - 0.8 * u ** 3) * (1 if st == 'tail' else 0.8)
                 pv, pt = tube(pa, np.tile([0, 0, -1.0], (len(pa), 1)), w * 0.85, w * 0.8, sg)
                 parts.append(part(pv, pt, np.tile(hcol * 0.85, (len(pv), 1))))
-                nk = (7, 4, 0)[l]
+                nk = (9, 7, 4, 0, 0)[l]
                 for j in range(nk):
                     a = 2 * np.pi * (j + 0.5 * rng.random()) / max(nk, 1) + 1.2 * ts
                     r = w * (0.35 + 0.3 * ts)
@@ -1382,7 +1389,7 @@ def hairdos(ctx, shell, soft, lin, field, stripe):
                 parts.append(part(pv, pt, np.tile((0.12, 0.09, 0.07), (len(pv), 1))))
             elif st == 'braid':
                 # Коса: жгут с перехватами, сплетение — чередование оттенка звеньев
-                kk = (13, 7, 4)[l]
+                kk = (17, 13, 7, 4, 4)[l]
                 ts = np.linspace(0, 1, kk * 2 + 1)
                 pa = tie + np.stack([0.004 * np.sin(ts * 9), -0.30 * ts, -0.03 * np.sin(np.pi * ts) - 0.015 * ts], 1)
                 w = (0.034 - 0.016 * ts) * np.where(np.arange(len(ts)) % 2 == 0, 0.7, 1.0)
@@ -1391,7 +1398,7 @@ def hairdos(ctx, shell, soft, lin, field, stripe):
                 parts.append(part(pv, pt, hcol * np.where((seg // 2) % 2 == 0, 0.85, 1.05)[:, None]))
             elif st == 'bun':
                 # Пучок: сплюснутый шар над узлом
-                prof = [(0.036 * np.sin(t), np.cos(t)) for t in np.linspace(-np.pi / 2, np.pi / 2, (7, 5, 3)[l])]
+                prof = [(0.036 * np.sin(t), np.cos(t)) for t in np.linspace(-np.pi / 2, np.pi / 2, (9, 7, 5, 3, 3)[l])]
                 pv, pt = lathe(tie + np.array([0, 0.02, -0.025]), prof, sg, 0.045, 0.04)
                 parts.append(part(pv, pt, np.tile(hcol * 0.95, (len(pv), 1))))
             lods.append(merge(parts))
@@ -1599,9 +1606,21 @@ def main():
             write_mesh('%s/%s.mesh' % (out, name), *mesh)
             V, T = mesh[0], mesh[-1]
             print('%-15s %5d вершин %6d треугольников' % (name, len(V), len(T)))
-        # Суставы для src/sim/body.c (g_body_bones): голова первой кости MH, что ведёт кость игры
-        for b, n in JOINT_SRC:
-            print('  %-11s {%7.3ff, %6.3ff, %6.3ff}' % ((b,) + tuple(J[n + '____head'])))
+        # Суставы тела для src/game/look.c (g_body_joints, порядок BONE_*): голова первой кости MH, что ведёт кость игры;
+        # мужские — и в src/sim/body.c (g_body_bones). Правые — зеркало левых
+        jt = {b: J[n + '____head'] for b, n in JOINT_SRC}
+        order = ['ROOT', 'PELVIS', 'SPINE', 'CHEST', 'NECK', 'HEAD'] + ['%s_%s' % (k, sd) for sd in 'LR' for k in ('CLAVICLE', 'UPPER_ARM', 'FOREARM', 'HAND')] \
+            + ['%s_%s' % (k, sd) for sd in 'LR' for k in ('THIGH', 'SHIN', 'FOOT')]
+        def at(b):
+            if b == 'ROOT':
+                return np.zeros(3)
+            if b.endswith('_R'):
+                return jt[b[:-2] + '_L'] * np.array([-1.0, 1.0, 1.0])
+            return jt[b]
+        print('  [%s] = {' % p['name'])
+        for i in range(0, len(order), 4):
+            print('    ' + ' '.join('{ %.3ff, %.3ff, %.3ff },' % tuple(np.round(at(b), 3) + 0.0) for b in order[i:i + 4]))
+        print('  },')
 
 if __name__ == '__main__':
     main()

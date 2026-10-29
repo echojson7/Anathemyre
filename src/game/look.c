@@ -1,6 +1,32 @@
 #include "look.h"
 
+#include "../render/mesh.h"
+
 const char *const g_body_file[BODY_KIND_COUNT] = { "mh_male", "mh_female", "mh_thin" };
+
+const V3 g_body_joints[BODY_KIND_COUNT][BONE_COUNT] = {
+    [BODY_MALE] = {
+        { 0.000f, 0.000f, 0.000f }, { 0.000f, 0.970f, 0.003f }, { 0.000f, 1.061f, -0.030f }, { 0.000f, 1.197f, -0.030f },
+        { 0.000f, 1.555f, 0.012f }, { 0.000f, 1.661f, 0.053f }, { 0.024f, 1.477f, 0.023f }, { 0.195f, 1.446f, 0.019f },
+        { 0.227f, 1.140f, 0.019f }, { 0.240f, 0.880f, 0.031f }, { -0.024f, 1.477f, 0.023f }, { -0.195f, 1.446f, 0.019f },
+        { -0.227f, 1.140f, 0.019f }, { -0.240f, 0.880f, 0.031f }, { 0.113f, 0.965f, -0.008f }, { 0.136f, 0.529f, 0.010f },
+        { 0.159f, 0.075f, 0.029f }, { -0.113f, 0.965f, -0.008f }, { -0.136f, 0.529f, 0.010f }, { -0.159f, 0.075f, 0.029f },
+    },
+    [BODY_FEMALE] = {
+        { 0.000f, 0.000f, 0.000f }, { 0.000f, 0.940f, 0.027f }, { 0.000f, 1.022f, -0.025f }, { 0.000f, 1.195f, 0.013f },
+        { 0.000f, 1.530f, -0.001f }, { 0.000f, 1.653f, 0.049f }, { 0.026f, 1.453f, 0.024f }, { 0.165f, 1.436f, 0.024f },
+        { 0.197f, 1.134f, 0.024f }, { 0.209f, 0.882f, 0.036f }, { -0.026f, 1.453f, 0.024f }, { -0.165f, 1.436f, 0.024f },
+        { -0.197f, 1.134f, 0.024f }, { -0.209f, 0.882f, 0.036f }, { 0.097f, 0.927f, 0.020f }, { 0.125f, 0.506f, 0.037f },
+        { 0.153f, 0.077f, 0.054f }, { -0.097f, 0.927f, 0.020f }, { -0.125f, 0.506f, 0.037f }, { -0.153f, 0.077f, 0.054f },
+    },
+    [BODY_THIN] = {
+        { 0.000f, 0.000f, 0.000f }, { 0.000f, 0.970f, 0.003f }, { 0.000f, 1.061f, -0.030f }, { 0.000f, 1.197f, -0.030f },
+        { 0.000f, 1.555f, 0.012f }, { 0.000f, 1.661f, 0.053f }, { 0.024f, 1.477f, 0.023f }, { 0.195f, 1.446f, 0.019f },
+        { 0.227f, 1.140f, 0.019f }, { 0.240f, 0.880f, 0.031f }, { -0.024f, 1.477f, 0.023f }, { -0.195f, 1.446f, 0.019f },
+        { -0.227f, 1.140f, 0.019f }, { -0.240f, 0.880f, 0.031f }, { 0.113f, 0.965f, -0.008f }, { 0.136f, 0.529f, 0.010f },
+        { 0.159f, 0.075f, 0.029f }, { -0.113f, 0.965f, -0.008f }, { -0.136f, 0.529f, 0.010f }, { -0.159f, 0.075f, 0.029f },
+    },
+};
 
 const char *const g_gear_file[GEAR_COUNT] = {
     "rags", "quilt", "jacket", "plate", "bucket", "greaves", "wrap", "boots", "mitts", "pack", "belt", "pants",
@@ -109,8 +135,8 @@ void look_make(CharLook *l, u32 body, u32 seed, f32 mass, f32 height, f32 streng
     // Большинство молодые и средних лет, каждый седьмой старый
     f32 a = hash01(&s);
     l->morph[LOOK_OLD] = a < 0.86f ? 0.3f * a : 0.35f + 2.0f * (a - 0.86f);
-    l->morph[LOOK_FACE_A] = 1.4f * (hash01(&s) - 0.5f);
-    l->morph[LOOK_FACE_B] = 1.4f * (hash01(&s) - 0.5f);
+    l->morph[LOOK_NOSE] = 1.2f * (hash01(&s) - 0.5f);
+    l->morph[LOOK_EYES] = 1.2f * (hash01(&s) - 0.5f);
     l->morph[LOOK_JAW] = body == BODY_FEMALE ? 0.8f * hash01(&s) - 0.6f : 1.2f * hash01(&s) - 0.4f;
     l->skin_t = (f32)((u32)(hash01(&s) * (f32)ARRAY_COUNT(g_skin)) % ARRAY_COUNT(g_skin)) / (f32)(ARRAY_COUNT(g_skin) - 1);
     // Волосы почти у всех тёмные, седина со старостью
@@ -122,6 +148,8 @@ void look_make(CharLook *l, u32 body, u32 seed, f32 mass, f32 height, f32 streng
     u32 nc = look_cuts(body);
     f32 c = hash01(&s);
     l->cut = body != BODY_FEMALE && c < 0.2f + 0.4f * l->morph[LOOK_OLD] ? 0 : (u8)(1 + (u32)(hash01(&s) * (f32)nc) % nc);
+    // Губы последними: кожа, волосы и причёска от того же зерна остались прежними
+    l->morph[LOOK_LIPS] = body == BODY_FEMALE ? 0.9f * hash01(&s) - 0.3f : hash01(&s) - 0.6f;
 }
 
 // Точка на ряду цветов: t 0..1 от первого до последнего, между соседними плавно
@@ -149,7 +177,8 @@ M4 look_matrix(const CharLook *l, u32 body)
 {
     M4 m = { 0 };
     body = body < BODY_KIND_COUNT ? body : BODY_MALE;
-    for (u32 k = 0; k < LOOK_MORPHS; k++) m.m[k] = l->morph[k];
+    // Веса морфов: первые 8 чисел, 9-й и 10-й — в свободных m[11] и m[15] (scene.vert)
+    for (u32 k = 0; k < LOOK_MORPHS; k++) m.m[k < 8 ? k : k == 8 ? 11 : 15] = l->morph[k];
     const V3 bs = g_base_skin[body], bh = g_base_hair[body];
     m.m[8] = l->skin.x / bs.x - 1.0f;
     m.m[9] = l->skin.y / bs.y - 1.0f;
@@ -159,4 +188,5 @@ M4 look_matrix(const CharLook *l, u32 body)
     m.m[14] = l->hair.z / bh.z - 1.0f;
     return m;
 }
+_Static_assert(LOOK_MORPHS <= MESH_MAX_MORPHS && MESH_MAX_MORPHS <= 10, "морфы внешности не влезают в матрицу");
 _Static_assert(GEAR_BELT - GEAR_WRAP == G_BELT - G_WRAP, "вещи G_WRAP..G_BELT идут подряд, как GEAR_WRAP..GEAR_BELT");

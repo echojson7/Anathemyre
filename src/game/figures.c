@@ -6,10 +6,12 @@
 #include "../core/jobs.h"
 #include "../core/prof.h"
 
-// Пороги детализации фигуры: диаметр её сферы на экране, пикселей. Больше первого — полный уровень
-static const f32 g_char_lod_px[CHAR_LODS - 1] = { 200.0f, 70.0f };
+// Пороги детализации фигуры: диаметр её сферы на экране, пикселей. Больше первого — уровень 0 (16 тыс. треугольников).
+// При 1440 строк и CAM_FOV это примерно 6, 13, 38 и 90 м: вплотную и в редакторе — 0, у камеры — 1, обычный вид — 2,
+// дальше — 3 и 4. На 1080 строк расстояния на четверть короче
+static const f32 g_char_lod_px[CHAR_LODS - 1] = { 420.0f, 200.0f, 70.0f, 30.0f };
 
-// Сетка и её грубые уровни из data/meshes/<stem>{,_lod1,_lod2}.mesh; пороги g_char_lod_px × scale
+// Сетка и её грубые уровни из data/meshes/<stem>{,_lod1.._lod4}.mesh; пороги g_char_lod_px × scale
 static bool load_lods(GpuMesh *full, GpuMesh *lods, MeshBuilder *mb, Arena *perm, const char *data_dir, const char *stem, f32 scale)
 {
     size_t mark = perm->used;
@@ -195,6 +197,7 @@ static bool fight_pose(const Field *fd, u32 i, PoseJob *j, M4 *drop)
     j->p.seed = walk.seed;
     j->p.height = walk.height;
     j->p.width = walk.width;
+    j->p.joints = walk.joints;
     if (!walk.weapon) j->p.weapon = 0;
     j->fight = true;
     if (dropped) weapon_ground_pose(dp, dy, drop);
@@ -215,6 +218,7 @@ static u32 arena_figures(Figures *f, const CharMeshes *m, const ArenaView *v, co
         V3 dp;
         f32 dyaw;
         bool dropped = fight_anim_pose(&v->fa[i], w, i, alpha, v->center, v->floor_y, time, &j->p, &j->act, &dp, &dyaw);
+        j->p.joints = g_body_joints[kind];
         j->fight = true;
         M4 *b = &f->arena[(set++) * RENDER_MAX_BONES];
         j->bones = b;
@@ -282,7 +286,7 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
                 .pos = b->pos, .heading = b->heading, .phase = b->phase, .walk = b->walk, .run = b->run,
                 .speed = b->speed, .time = v->time, .seed = p->seed[i],
                 .lean_fwd = b->lean_fwd, .lean_side = b->lean_side, .look = b->look, .idle = b->idle,
-                .height = p->height[i], .width = p->width[i],
+                .height = p->height[i], .width = p->width[i], .joints = g_body_joints[kind],
                 .weapon = armed ? (u8)(wid + 1) : 0, .torch = lit,
             };
             j->fight = false;
@@ -365,7 +369,7 @@ static PortraitKey g_portrait_key[RENDER_PORTRAIT_SLOTS];
 void figures_portraits_reset(void) { memset(g_portrait_key, 0, sizeof g_portrait_key); }
 
 // Неподвижная фигура в покое, камера по кости головы спереди, чуть сверху
-static void portrait(const FrameView *base, u32 slot, i32 size, const GpuMesh *body, const GpuMesh *weapon, u8 wid,
+static void portrait(const FrameView *base, u32 slot, i32 size, u32 kind, const GpuMesh *body, const GpuMesh *weapon, u8 wid,
                      f32 seed, f32 height, f32 width, M4 look, const GpuMesh *gear_row, const u8 *gear, u32 ngear, M4 *bones)
 {
     PortraitKey key;
@@ -374,7 +378,8 @@ static void portrait(const FrameView *base, u32 slot, i32 size, const GpuMesh *b
     memcpy(key.gear, gear, ngear);
     if (slot >= RENDER_PORTRAIT_SLOTS || !memcmp(&g_portrait_key[slot], &key, sizeof key)) return;
     g_portrait_key[slot] = key;
-    CharPose p = { .seed = seed, .height = height, .width = width, .calm = true, .weapon = weapon ? (u8)(wid + 1) : 0 };
+    CharPose p = { .seed = seed, .height = height, .width = width, .calm = true, .weapon = weapon ? (u8)(wid + 1) : 0,
+                   .joints = g_body_joints[kind] };
     character_pose(&p, NULL, bones);
     bones[RENDER_LOOK_SLOT] = look;
     DrawItem items[2 + GEAR_MAX_WORN] = { { .mesh = body, .bones = bones } };
@@ -397,7 +402,7 @@ void figures_portrait(Figures *f, const FrameView *base, const CharMeshes *m, co
     const CharSheet *cs = &p->sheet[i];
     const GpuMesh *wm = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? &m->weapon[cs->equip[SLOT_WEAPON].id] : NULL;
     u32 kind = p->variant[i];
-    portrait(base, slot, size, &m->body[kind], wm, cs->equip[SLOT_WEAPON].id, p->seed[i], p->height[i], p->width[i],
+    portrait(base, slot, size, kind, &m->body[kind], wm, cs->equip[SLOT_WEAPON].id, p->seed[i], p->height[i], p->width[i],
              p->look[i], m->gear + kind * GEAR_ROW, p->gear[i], p->ngear[i], f->portrait + (focus ? RENDER_MAX_BONES : 0));
 }
 
@@ -411,7 +416,7 @@ void figures_portrait_arena(Figures *f, const FrameView *base, const CharMeshes 
     CharLook lk;
     M4 lm = arena_view_look(s, ri, &lk);
     ng += look_hair(&lk, gear, ng);
-    portrait(base, slot, size, &m->body[kind], &m->weapon[d->weapon], d->weapon, seed,
+    portrait(base, slot, size, kind, &m->body[kind], &m->weapon[d->weapon], d->weapon, seed,
              d->height / 1.8f, 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), lm, m->gear + kind * GEAR_ROW, gear, ng,
              f->portrait + RENDER_MAX_BONES);
 }

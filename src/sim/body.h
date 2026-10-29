@@ -67,9 +67,9 @@ typedef struct BodyClass {
 
 // Поза привязки класса H, рост 1.80 м
 #define BODY_BASE_HEIGHT 1.80f
-#define BODY_HIP_Y   0.958f
-#define BODY_KNEE_Y  0.526f
-#define BODY_ANKLE_Y 0.074f
+#define BODY_HIP_Y   0.965f
+#define BODY_KNEE_Y  0.529f
+#define BODY_ANKLE_Y 0.075f
 #define BODY_HIP_X   0.113f  // у бедра; колено и лодыжка чуть шире (g_body_bones)
 
 #define BODY_MAX_HIT_CAPSULES 12
