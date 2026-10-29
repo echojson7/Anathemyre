@@ -22,11 +22,11 @@ ifeq ($(WERROR),1)
 WARN    += -Werror
 endif
 
-SRC_COMMON := $(wildcard src/*.c src/core/*.c src/render/*.c src/game/*.c src/sim/*.c src/ai/*.c src/world/*.c)
+SRC_COMMON := $(wildcard src/*.c src/core/*.c src/render/*.c src/game/*.c src/sim/*.c src/ai/*.c src/world/*.c src/audio/*.c)
 
 ifeq ($(TARGET_OS),windows)
 EXE      := .exe
-SRC      := $(SRC_COMMON) src/platform/platform_win32.c
+SRC      := $(SRC_COMMON) src/platform/platform_win32.c src/platform/audio_win32.c
 LDLIBS   := -lgdi32 -luser32 -lkernel32 -lm
 # Стандартный printf с %zu и %llu вместо старого msvcrt
 CSTD     += -D__USE_MINGW_ANSI_STDIO=1
@@ -36,7 +36,7 @@ CC       := x86_64-w64-mingw32-gcc
 endif
 else
 EXE      :=
-SRC      := $(SRC_COMMON) src/platform/platform_linux.c
+SRC      := $(SRC_COMMON) src/platform/platform_linux.c src/platform/audio_linux.c
 LDLIBS   := -lX11 -lm -ldl -pthread
 SANITIZE := -fsanitize=address,undefined -fno-omit-frame-pointer
 endif
