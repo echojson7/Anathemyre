@@ -13,7 +13,6 @@
 #include "game/battle.h"
 #include "game/character.h"
 #include "game/hud.h"
-#include "game/human.h"
 #include "game/squad.h"
 #include "game/testroom.h"
 #include "platform/platform.h"
@@ -379,17 +378,12 @@ int main(int argc, char **argv)
         perm.used = mark;
     }
 
-    // Мокап людей: мужчина, женщина, сухой бритый мужчина с бородой
-    static const HumanShape human_shape[3] = {
-        { 0.0f, 0.6f, 0.15f, { 0.52f, 0.37f, 0.28f }, { 0.10f, 0.08f, 0.06f }, { 0.30f, 0.29f, 0.27f }, 0, false },
-        { 1.0f, 0.3f, 0.25f, { 0.60f, 0.45f, 0.36f }, { 0.20f, 0.13f, 0.08f }, { 0.30f, 0.29f, 0.27f }, 2, false },
-        { 0.0f, 0.2f, 0.0f, { 0.38f, 0.26f, 0.19f }, { 0.07f, 0.06f, 0.05f }, { 0.30f, 0.29f, 0.27f }, 1, true },
-    };
-    // Рядом с каждым — человек из MakeHuman (tools/humanconv) того же сложения, для сравнения
+    // Люди из MakeHuman (tools/humanconv): у каждого три LOD рядом, для сравнения
     static const char *const mh_name[3] = { "mh_male", "mh_female", "mh_thin" };
-    GpuMesh human_mesh[6];
+    enum { HUMAN_N = 3 * CHAR_LODS };
+    GpuMesh human_mesh[HUMAN_N];
     u32 human_count = 0;
-    M4 *human_bones = ARENA_PUSH_ARRAY(&perm, M4, 6 * RENDER_MAX_BONES);
+    M4 *human_bones = ARENA_PUSH_ARRAY(&perm, M4, HUMAN_N * RENDER_MAX_BONES);
     mark = perm.used;
     bool humans_on = false, humans_flip = opt.humans;
 
@@ -476,26 +470,23 @@ int main(int argc, char **argv)
             opt.follow = !opt.follow;
             if (opt.follow) cam.dist = MIN(cam.dist, 8.0f);
         }
-        // Ряд людей для сравнения (наш мокап и MakeHuman); сетки строятся при первом показе
+        // Ряд людей для сравнения (MakeHuman, LOD0..2); сетки грузятся при первом показе
         if (humans_flip) {
             humans_flip = false;
             humans_on = !humans_on;
             g_cam_min_dist = humans_on ? 0.8f : 4.0f;
             mark = perm.used;
             bool build = humans_on && human_count == 0;
-            for (u32 k = 0; build && k < 6; k++) {
-                if (k % 2 == 0) {
-                    mb_init(&mb, &perm, 120000, 600000);
-                    human_build(&mb, &scratch, &human_shape[k / 2]);
-                } else {
-                    char path[700];
-                    snprintf(path, sizeof path, "%s/meshes/%s.mesh", data_dir, mh_name[k / 2]);
-                    if (!mb_load(&mb, &perm, path)) continue;
-                }
+            for (u32 k = 0; build && k < HUMAN_N; k++) {
+                char path[700], suf[16] = "";
+                u32 lod = k % CHAR_LODS;
+                if (lod) snprintf(suf, sizeof suf, "_lod%u", lod);
+                snprintf(path, sizeof path, "%s/meshes/%s%s.mesh", data_dir, mh_name[k / CHAR_LODS], suf);
+                if (!mb_load(&mb, &perm, path)) continue;
                 gpu_mesh_upload(&human_mesh[human_count], &mb);
                 log_info("ЧЕЛОВЕК %u: %u вершин, %u треугольников", k, mb.vcount, mb.icount / 3);
                 perm.used = mark;
-                f32 x = 0.3f + 0.9f * (f32)k;
+                f32 x = 0.3f + 2.4f * (f32)(k / CHAR_LODS) + 0.7f * (f32)lod;
                 for (u32 b = 0; b < RENDER_MAX_BONES; b++)
                     human_bones[human_count * RENDER_MAX_BONES + b] = m4_translate(v3(x, ground_height(x, 22.0f), 22.0f));
                 human_count++;
@@ -564,7 +555,7 @@ int main(int argc, char **argv)
             bool humans_want = humans_on;
             if (hud_debug_check(&hud, "ЛЮДИ ДЛЯ СРАВНЕНИЯ", &humans_want)) {
                 humans_flip = true;
-                if (humans_want) cam = (RtsCamera){ .target = { 2.55f, 0, 22 }, .yaw = 0.0f, .pitch = 0.15f, .dist = 5.0f };
+                if (humans_want) cam = (RtsCamera){ .target = { 3.4f, 0, 22 }, .yaw = 0.0f, .pitch = 0.15f, .dist = 6.5f };
             }
             u32 mins = (u32)(tod * 24.0f * 60.0f);
             snprintf(val, sizeof val, "%02u:%02u", mins / 60 % 24, mins % 60);
