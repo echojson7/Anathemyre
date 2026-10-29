@@ -1,0 +1,76 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang libclang-rt-18-dev libx11-dev xvfb xauth libgl1 libgl1-mesa-dri python3-pil
+
+      - name: Релиз, gcc, без предупреждений
+        run: make -j"$(nproc)" WERROR=1 CC=gcc
+
+      - name: Отладка с ASan/UBSan, clang
+        run: make debug -j"$(nproc)" WERROR=1 CC=clang
+
+      - name: Кадр под ASan (программный рендер)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          LSAN_OPTIONS: suppressions=tools/lsan.supp
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --shot build/shot.ppm --frames 20 | tee build/log.txt
+          ! grep -q "СБОЙ" build/log.txt
+          python3 -c "from PIL import Image; Image.open('build/shot.ppm').save('build/shot.png')"
+
+      - name: Бой под ASan, детерминизм полевого боя на 1/2/4/8 потоках
+        env:
+          LSAN_OPTIONS: suppressions=tools/lsan.supp
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          ./build/anathemyre_debug --arena-bench 100 | tail -3
+          ./build/anathemyre_debug --battle-bench 100 100 --battle-verify
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshot
+          path: build/shot.png
+
+  windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
+
+      - name: Кросс-сборка exe без предупреждений
+        run: |
+          make -j"$(nproc)" WERROR=1 TARGET_OS=windows
+          make debug -j"$(nproc)" WERROR=1 TARGET_OS=windows
+
+      - name: Только системные DLL
+        run: |
+          x86_64-w64-mingw32-objdump -p build/anathemyre.exe | grep "DLL Name" | tee build/dlls.txt
+          ! grep -viE "KERNEL32|USER32|GDI32|msvcrt" build/dlls.txt
+
+      - name: Пакет
+        run: |
+          mkdir -p pkg/anathemyre/build
+          cp build/anathemyre.exe pkg/anathemyre/build/
+          cp -r data pkg/anathemyre/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anathemyre-windows
+          path: pkg
