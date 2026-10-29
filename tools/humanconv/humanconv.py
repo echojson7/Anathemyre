@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # Люди из MakeHuman (CC0) -> .mesh игры. Офлайн, в игре не нужен.
 # Морфы пола и сложения, руки вниз и ноги прямо (поза привязки игры), рост 1.80 м,
-# раскраска вершин (кожа, бельё, губы, брови), волосы из оболочки helper-hair, глаза.
+# раскраска по граням (кожа, бельё, губы, брови), волосы над кожей головы, глаза.
+# Три LOD: исходная сетка MakeHuman (~27 тыс. треугольников), ~5 тыс. и ~1 тыс.
+# Нужен только numpy.
 #   python3 -I tools/humanconv/humanconv.py <папка MakeHuman> <targets.npz> <data/meshes>
 # Папка MakeHuman: base.obj, default.mhskel, default_weights.mhw (makehuman/data из system assets)
 import json, struct, sys
@@ -249,7 +251,8 @@ def build(p, base, faces, Z, skel, W):
         wt[n] = np.zeros(nv)
         wt[n][i] = w
 
-    # Сглаживание тела: веса новых вершин — среднее исходных
+    # Сглаживание тела для окраски: веса новых вершин — среднее исходных
+    vc, nv0 = v.copy(), len(v)
     v, body, E, F0 = subdivide(v, body)
     ext = lambda a: np.concatenate([a, a[E].mean(1), a[F0].mean(1)])
     acc = ext(acc)
@@ -346,69 +349,237 @@ def build(p, base, faces, Z, skel, W):
     if p['hair'] == 'bald':
         col = col * (1 - 0.35 * hair_k[:, None]) + hcol * 0.35 * hair_k[:, None]
 
-    # Цвет и материал по граням: край белья и губ чёткий, без размытия по треугольнику.
-    # Грань берёт самую частую окраску своих вершин, вершины делятся по окраске граней
-    _, pid = np.unique(np.concatenate([np.round(col, 4), mat[:, None]], 1), axis=0, return_inverse=True)
-    pid = pid.ravel()
-    q = pid[body]
-    fpid = q[np.arange(len(q)), (q[:, :, None] == q[:, None, :]).sum(2).argmax(1)]
-    key = body.astype(np.int64) * (pid.max() + 1) + fpid[:, None]
-    uk, kinv = np.unique(key.ravel(), return_inverse=True)
-    src = uk // (pid.max() + 1)
-    pal = np.zeros((pid.max() + 1, 4)); pal[pid] = np.concatenate([col, mat[:, None]], 1)
-    kp = pal[uk % (pid.max() + 1)]
-    bq = kinv.reshape(-1, 4)
-    verts = [(v[src], n[src], kp[:, :3], kp[:, 3].astype(int), bone[src])]
-    tris = [tri(bq)]
-    count = [len(src)]
-
-    def add_part(pv, pn, pc, pm, pb, f, ix):
-        # f — четырёхугольники в номерах исходной сетки (ix — их вершины) или готовые треугольники при ix=None
-        if ix is None:
-            t = f + count[0]
-        else:
-            remap = np.full(nv, -1); remap[ix] = np.arange(len(ix)) + count[0]
-            t = remap[tri(f)]
-        verts.append((pv, pn, pc, np.broadcast_to(pm, len(pv)), np.broadcast_to(pb, len(pv))))
-        tris.append(t)
-        count[0] += len(pv)
-
-    # Глаза: белок и тёмная радужка по направлению взгляда
+    # Окраска по граням: грань берёт самую частую окраску своих вершин.
+    # Сглаженная сетка нужна только для точной окраски; LOD0 — исходная сетка MakeHuman,
+    # её четырёхугольник берёт самую частую окраску своих четырёх дочерних граней
+    eyes = []
     for sd in ('l', 'r'):
+        # Глаза: белок и тёмная радужка по направлению взгляда
         f = faces['helper-%s-eye' % sd]
         ix = np.unique(f)
-        ev = v[ix]
-        d = ev - (ev.min(0) + ev.max(0)) / 2
-        en = d / np.linalg.norm(d, axis=1, keepdims=True)
-        ec = np.tile(np.array([0.46, 0.43, 0.39]), (len(ix), 1))
-        ec[en[:, 2] > 0.9] = (0.07, 0.05, 0.04)
-        add_part(ev, en, ec, MAT_SKIN, HEAD, f, ix)
+        d = v[ix] - (v[ix].min(0) + v[ix].max(0)) / 2
+        n[ix] = d / np.linalg.norm(d, axis=1, keepdims=True)
+        col[ix] = (0.46, 0.43, 0.39)
+        col[ix[n[ix, 2] > 0.9]] = (0.07, 0.05, 0.04)
+        mat[ix] = MAT_SKIN
+        eyes.append(f)
+    eyes = np.concatenate(eyes)
+    pal, pid = np.unique(np.concatenate([np.round(col, 4), mat[:, None]], 1), axis=0, return_inverse=True)
+    pid = pid.ravel()
+    vote = lambda q: q[np.arange(len(q)), (q[:, :, None] == q[:, None, :]).sum(2).argmax(1)]
+    nf0 = len(F0)
+    # LOD0 — исходная сетка MakeHuman. Четырёхугольник, где окраска дочерних граней разная,
+    # делится на четыре (линейно, без сглаживания); соседи с поделённым ребром — веером из центра.
+    # Номера вершин как у сглаженной сетки: точки рёбер nv0 + e, центры граней nv0 + len(E) + f
+    vl = np.concatenate([vc, vc[E].mean(1), vc[F0].mean(1)])
+    fe_ = np.sort(np.stack([F0, np.roll(F0, -1, 1)], 2).reshape(-1, 2), 1)
+    qe = np.unique(fe_, axis=0, return_inverse=True)[1].reshape(nf0, 4)
 
-    # Волосы: копия кожи головы выше линии роста, приподнятая над ней; к линии сходит на нет
+    def refine(c):
+        mixed = (c != c[:, :1]).any(1)
+        cut = np.zeros(len(E), bool); cut[qe[mixed].ravel()] = True
+        m = np.where(mixed)[0]
+        ts = [tri(body[k * nf0 + m]) for k in range(4)]
+        ps = [np.tile(c[m, k], 2) for k in range(4)]
+        side = cut[qe].any(1)
+        plain = ~mixed & ~side
+        ts.append(tri(F0[plain])); ps.append(np.tile(c[plain, 0], 2))
+        fan = np.where(~mixed & side)[0]
+        ctr = nv0 + len(E) + fan
+        for k in range(4):
+            a, b, e = F0[fan, k], F0[fan, (k + 1) % 4], qe[fan, k]
+            h = cut[e]
+            ts += [np.stack([ctr[~h], a[~h], b[~h]], 1), np.stack([ctr[h], a[h], nv0 + e[h]], 1), np.stack([ctr[h], nv0 + e[h], b[h]], 1)]
+            ps += [c[fan[~h], 0], c[fan[h], 0], c[fan[h], 0]]
+        return np.concatenate(ts), np.concatenate(ps)
+
+    epid = vote(pid[eyes])
+    T0, P0 = refine(vote(pid[body]).reshape(4, nf0).T)
+    T0 = np.concatenate([T0, tri(eyes)]); P0 = np.concatenate([P0, epid, epid])
+    n0 = normals(vl, T0)
+    n0[np.unique(eyes)] = n[np.unique(eyes)]
+
+    def ponytail(rings, segs):
+        back = hd & (y > top_y - 0.12) & (y < top_y - 0.08)
+        zb = z[back].min()
+        return tail(np.array([0.0, top_y - 0.095, zb + 0.004]), np.array([0.0, top_y - 0.33, zb - 0.012]), 0.026, 0.011, rings, segs)
+
+    lods = []
+    # LOD0: волосы — копия кожи головы выше линии роста, приподнятая над ней; к линии сходит на нет
+    parts = [split(vl, n0, T0, P0, pal, bone)]
     if p['hair'] != 'bald':
-        f = body[(hair_t[body]).all(1)]
+        f = tri(F0[hair_t[F0].all(1)])
         ix = np.unique(f)
+        remap = np.full(nv0, -1); remap[ix] = np.arange(len(ix))
         # Пряди: толщина и оттенок немного гуляют
         rng = np.random.default_rng(7)
         off = 0.0015 + ((0.006 if p['hair'] == 'short' else 0.004) + rng.uniform(-0.0015, 0.0015, len(ix))) * hair_k[ix]
-        hv = v[ix] + n[ix] * off[:, None]
+        hv = vl[ix] + n0[ix] * off[:, None]
         hb = np.where(hv[:, 1] < J['neck03____head'][1], NECK, HEAD)
         hc = hcol * rng.uniform(0.85, 1.15, (len(ix), 1))
-        add_part(hv, n[ix], hc, MAT_CLOTH, hb, f, ix)
+        parts.append(((hv, n0[ix], hc, np.full(len(ix), MAT_CLOTH), hb), remap[f]))
         if p['hair'] == 'long':
             # Собранные в хвост: узел на затылке и сужающийся жгут
-            back = hd & (y > top_y - 0.12) & (y < top_y - 0.08)
-            zb = z[back].min()
-            pv, pn, pt = tail(np.array([0.0, top_y - 0.095, zb + 0.004]), np.array([0.0, top_y - 0.33, zb - 0.012]), 0.026, 0.011)
-            add_part(pv, pn, np.tile(hcol, (len(pv), 1)), MAT_CLOTH, HEAD, pt, None)
+            pv, pn, pt = ponytail(9, 10)
+            parts.append(((pv, pn, np.tile(hcol, (len(pv), 1)), np.full(len(pv), MAT_CLOTH), np.full(len(pv), HEAD)), pt))
+    lods.append(merge(parts))
 
-    # Только вершины, на которые ссылаются треугольники
-    V = np.concatenate([a[0] for a in verts]); N = np.concatenate([a[1] for a in verts])
-    C = np.concatenate([a[2] for a in verts]); M = np.concatenate([a[3] for a in verts])
-    B = np.concatenate([a[4] for a in verts]); T = np.concatenate(tris)
+    # Дальние LOD: своё упрощение с учётом швов окраски (decimate). Окраска проще:
+    # кожа, бельё без резинки, борода, волосы — окраска кожи головы, глаза
+    fcol = np.where(under_m[:, None], under, skin)
+    fmat = np.where(under_m, MAT_CLOTH, MAT_SKIN)
+    if p['beard']:
+        fcol[beard] = skin * 0.15 + hcol * 0.85
+    if p['hair'] != 'bald':
+        fcol[hair_t] = hcol; fmat[hair_t] = MAT_CLOTH
+    ie = np.unique(eyes)
+    fcol[ie] = col[ie]; fmat[ie] = MAT_SKIN
+    fpal, fpid = np.unique(np.concatenate([np.round(fcol, 4), fmat[:, None]], 1), axis=0, return_inverse=True)
+    fpid = fpid.ravel()
+    fe = vote(fpid[eyes])
+    Tf, Pf = refine(vote(fpid[body]).reshape(4, nf0).T)
+    Tf = np.concatenate([Tf, tri(eyes)]); Pf = np.concatenate([Pf, fe, fe])
+    rs = ((5, 6), (4, 5))
+    tail_n = [(r - 1) * s * 2 if p['hair'] == 'long' else 0 for r, s in rs]
+    for (rings, segs), (t, fp) in zip(rs, decimate(vl, Tf, Pf, [5000 - tail_n[0], 1000 - tail_n[1]])):
+        parts = [split(vl, normals(vl, t), t, fp, fpal, bone)]
+        if p['hair'] == 'long':
+            pv, pn, pt = ponytail(rings, segs)
+            parts.append(((pv, pn, np.tile(hcol, (len(pv), 1)), np.full(len(pv), MAT_CLOTH), np.full(len(pv), HEAD)), pt))
+        lods.append(merge(parts))
+    return lods, J
+
+
+def decimate(v, T, fp, targets):
+    # Схлопывание рёбер по квадрикам (Garland–Heckbert), вершина уходит в соседа (half-edge).
+    # Швы окраски и края сетки: вершина шва идёт только вдоль шва, угол шва неподвижен,
+    # поэтому окраска не рвётся на треугольники. Для каждой цели — треугольники и их окраска
+    import heapq
+    from collections import defaultdict
+    nv = len(v)
+    vh = np.concatenate([v, np.ones((nv, 1))], 1)
+    alive = np.ones(len(T), bool)
+    vf = [set() for _ in range(nv)]
+    for f, t in enumerate(T):
+        for a in t:
+            vf[a].add(f)
+    Q = np.zeros((nv, 4, 4))
+    fn = np.cross(v[T[:, 1]] - v[T[:, 0]], v[T[:, 2]] - v[T[:, 0]])
+    area = np.linalg.norm(fn, axis=1)
+    nn = fn / np.maximum(area, 1e-20)[:, None]
+    pl = np.concatenate([nn, -(nn * v[T[:, 0]]).sum(1, keepdims=True)], 1)
+    fq = area[:, None, None] * pl[:, :, None] * pl[:, None, :]
+    for k in range(3):
+        np.add.at(Q, T[:, k], fq)
+    ef = defaultdict(list)
+    for f, t in enumerate(T):
+        for i in range(3):
+            a, b = int(t[i]), int(t[(i + 1) % 3])
+            ef[(min(a, b), max(a, b))].append(f)
+    seam = set()
+    for e, fs_ in ef.items():
+        if len(fs_) != 2 or fp[fs_[0]] != fp[fs_[1]]:
+            seam.add(e)
+            # Плоскость вдоль шва поперёк грани держит шов на месте
+            for f in fs_:
+                d = v[e[1]] - v[e[0]]
+                m = np.cross(d, nn[f]); m /= max(np.linalg.norm(m), 1e-20)
+                q = np.append(m, -m @ v[e[0]])
+                Q[list(e)] += 20.0 * (d @ d) * np.outer(q, q)
+    sn = defaultdict(set)
+    for a, b in seam:
+        sn[a].add(b); sn[b].add(a)
+
+    def nbr(a):
+        s = set()
+        for f in vf[a]:
+            s.update(T[f].tolist())
+        s.discard(a)
+        return s
+
+    def allowed(a):
+        # Куда можно увести вершину a
+        if a in sn:
+            return sn[a] if len(sn[a]) == 2 and len({fp[f] for f in vf[a]}) <= 2 else set()
+        return nbr(a)
+
+    def valid(a, b):
+        shared = [f for f in vf[a] if b in T[f]]
+        opp = {int(x) for f in shared for x in T[f] if x != a and x != b}
+        if nbr(a) & nbr(b) != opp:
+            return False
+        for f in vf[a]:
+            if b in T[f]:
+                continue
+            t = T[f].copy(); t[t == a] = b
+            n1 = np.cross(v[t[1]] - v[t[0]], v[t[2]] - v[t[0]])
+            l1 = np.linalg.norm(n1)
+            if l1 < 1e-12 or n1 @ nn[f] < 0.3 * l1:
+                return False
+        return True
+
+    ver = np.zeros(nv, int)
+    heap = []
+
+    def push(a):
+        c = sorted((vh[b] @ (Q[a] + Q[b]) @ vh[b], b) for b in allowed(a))
+        for cost, b in c[:4]:
+            if valid(a, b):
+                heapq.heappush(heap, (cost, a, b, ver[a]))
+                return
+
+    for a in range(nv):
+        if vf[a]:
+            push(a)
+    count = int(alive.sum())
+    out = []
+    for target in targets:
+        while count > target and heap:
+            _, a, b, va = heapq.heappop(heap)
+            if va != ver[a] or not vf[a] or b not in allowed(a) or not valid(a, b):
+                continue
+            for f in list(vf[a]):
+                if b in T[f]:
+                    alive[f] = False
+                    for x in T[f]:
+                        vf[x].discard(f)
+                    count -= 1
+                else:
+                    T[f][T[f] == a] = b
+                    vf[b].add(f)
+            vf[a] = set()
+            Q[b] += Q[a]
+            if a in sn:
+                for c in sn.pop(a):
+                    sn[c].discard(a)
+                    if c != b:
+                        sn[c].add(b); sn[b].add(c)
+                sn[b].discard(b)
+            for c in nbr(b) | {b}:
+                ver[c] += 1
+                push(c)
+        out.append((T[alive].copy(), fp[alive]))
+    return out
+
+
+def split(v, n, t, fp, pal, bone):
+    # Вершины делятся по окраске граней: край белья и губ чёткий, без размытия по треугольнику
+    K = len(pal)
+    uk, kinv = np.unique((t.astype(np.int64) * K + fp[:, None]).ravel(), return_inverse=True)
+    src, kp = uk // K, pal[uk % K]
+    return (v[src], n[src], kp[:, :3], kp[:, 3].astype(int), bone[src]), kinv.reshape(-1, 3)
+
+
+def merge(parts):
+    # Части в одну сетку; остаются только вершины, на которые ссылаются треугольники
+    base, ts = 0, []
+    for (pv, *_), t in parts:
+        ts.append(t + base); base += len(pv)
+    V, N, C, M, B = (np.concatenate([np.asarray(pa[0][k]) for pa in parts]) for k in range(5))
+    T = np.concatenate(ts)
     live = np.unique(T)
     remap = np.full(len(V), -1); remap[live] = np.arange(len(live))
-    return V[live], N[live], C[live], M[live], B[live], remap[T], J
+    return V[live], N[live], C[live], M[live], B[live], remap[T]
 
 
 def write_mesh(path, V, N, C, M, B, T):
@@ -430,10 +601,12 @@ def main():
     skel = json.load(open(mh + '/default.mhskel'))
     W = json.load(open(mh + '/default_weights.mhw'))['weights']
     for p in PEOPLE:
-        V, N, C, M, B, T, J = build(p, base, faces, Z, skel, W)
-        write_mesh('%s/%s.mesh' % (out, p['name']), V, N, C, M, B, T)
+        lods, J = build(p, base, faces, Z, skel, W)
+        for l, (V, N, C, M, B, T) in enumerate(lods):
+            name = p['name'] + ('_lod%d' % l if l else '')
+            write_mesh('%s/%s.mesh' % (out, name), V, N, C, M, B, T)
+            print('%-15s %5d вершин %6d треугольников' % (name, len(V), len(T)))
         j = lambda n: J[n + '____head']
-        print('%-10s %5d вершин %5d треугольников' % (p['name'], len(V), len(T)))
         print('  плечо %s  локоть %s  запястье %s' % tuple(np.round(j(b + '.L'), 3) for b in ('upperarm01', 'lowerarm01', 'wrist')))
         print('  бедро %s  колено %s  лодыжка %s' % tuple(np.round(j(b + '.L'), 3) for b in ('upperleg01', 'lowerleg01', 'foot')))
         print('  шея %.3f  голова %.3f  ключица %s' % (j('neck01')[1], j('head')[1], np.round(j('clavicle.L'), 3)))
