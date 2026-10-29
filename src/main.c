@@ -668,8 +668,8 @@ int main(int argc, char **argv)
         fv.shadow_center = cam.target;
         fv.time = sim_time;
         fv.frame = frame;
-        // Пиксельный растр на весь кадр: половина окна, апскейл ровно ×2; вблизи пиксель укрупняется по глубине (style.frag)
-        rs.internal_h = wh / 2;
+        // Полное разрешение окна; размер пикселя задаёт глубина по одному правилу (style.frag)
+        rs.internal_h = wh;
         render_frame(&fv, items, n, &rs, ww, wh);
         // Портреты: миниатюры отряда и крупно выбранный
         for (u32 i = 0; i <= squad->count; i++) {
