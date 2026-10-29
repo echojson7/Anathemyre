@@ -12,7 +12,7 @@ typedef struct Squad {
     u32       count;
     Player    body[SQUAD_MAX];
     CharSheet sheet[SQUAD_MAX];
-    u8        variant[SQUAD_MAX];   // одежда модели
+    u8        variant[SQUAD_MAX];   // тело (main.c, g_body_file)
     bool      selected[SQUAD_MAX];
     V3        order_pos;            // куда щёлкнули последним приказом: там метка
     f32       order_marker;         // сколько ещё секунд видна метка

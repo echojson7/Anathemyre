@@ -339,6 +339,19 @@ void render_shutdown(void)
     memset(&R, 0, sizeof R);
 }
 
+// Кости вершины с ненулевым весом, номера как в scene.vert
+static u32 vertex_bones(const MeshBuilder *mb, u32 i, u32 *out)
+{
+    if (!mb->skin) {
+        out[0] = MIN((u32)mb->v[i].bone, RENDER_MAX_BONES - 1u);
+        return 1;
+    }
+    u32 n = 0;
+    for (u32 k = 0; k < 4; k++)
+        if (mb->skin[i].weight[k]) out[n++] = MIN((u32)mb->skin[i].bone[k], RENDER_MAX_BONES - 1u);
+    return n;
+}
+
 bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
 {
     glCreateBuffers(1, &gm->vbo);
@@ -357,11 +370,25 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
     glVertexArrayAttribFormat(gm->vao, 2, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(Vertex, color));
     glVertexArrayAttribIFormat(gm->vao, 3, 2, GL_UNSIGNED_BYTE, offsetof(Vertex, mat));
     for (u32 i = 0; i < 4; i++) glVertexArrayAttribBinding(gm->vao, i, 0);
+    gm->skin_vbo = 0;
+    if (mb->skin) {
+        // Без этого потока вес первой кости в шейдере 0 (значение атрибута по умолчанию) — жёсткий скиннинг
+        glCreateBuffers(1, &gm->skin_vbo);
+        glNamedBufferStorage(gm->skin_vbo, (GLsizeiptr)(mb->vcount * sizeof(VertexSkin)), mb->skin, 0);
+        glVertexArrayVertexBuffer(gm->vao, 1, gm->skin_vbo, 0, sizeof(VertexSkin));
+        glEnableVertexArrayAttrib(gm->vao, 4);
+        glEnableVertexArrayAttrib(gm->vao, 5);
+        glVertexArrayAttribIFormat(gm->vao, 4, 4, GL_UNSIGNED_BYTE, offsetof(VertexSkin, bone));
+        glVertexArrayAttribFormat(gm->vao, 5, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(VertexSkin, weight));
+        glVertexArrayAttribBinding(gm->vao, 4, 1);
+        glVertexArrayAttribBinding(gm->vao, 5, 1);
+    }
     gm->index_count = mb->icount;
     gm->lod_next = NULL;
     gm->lod_px = 0.0f;
 
-    // Границы: сфера вокруг рамки вершин, для всей сетки и для каждой кости
+    // Границы: сфера вокруг рамки вершин, для всей сетки и для каждой кости.
+    // Вершина с весами входит в сферы всех своих костей: смесь поз лежит внутри их объединения
     V3 lo[RENDER_MAX_BONES + 1], hi[RENDER_MAX_BONES + 1];
     for (u32 b = 0; b <= RENDER_MAX_BONES; b++) {
         lo[b] = v3(FLT_MAX, FLT_MAX, FLT_MAX);
@@ -371,14 +398,15 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
     for (u32 i = 0; i < mb->vcount; i++) {
         const Vertex *v = &mb->v[i];
         V3 p = v3(v->pos[0], v->pos[1], v->pos[2]);
-        u32 bone = MIN((u32)v->bone, RENDER_MAX_BONES - 1u);  // как в scene.vert
-        u32 slots[2] = { bone, RENDER_MAX_BONES };
-        for (u32 k = 0; k < 2; k++) {
+        u32 slots[5];
+        u32 ns = vertex_bones(mb, i, slots);
+        slots[ns++] = RENDER_MAX_BONES;
+        for (u32 k = 0; k < ns; k++) {
             u32 b = slots[k];
             lo[b] = v3(fminf(lo[b].x, p.x), fminf(lo[b].y, p.y), fminf(lo[b].z, p.z));
             hi[b] = v3(fmaxf(hi[b].x, p.x), fmaxf(hi[b].y, p.y), fmaxf(hi[b].z, p.z));
+            if (b < RENDER_MAX_BONES) gm->bone_mask |= 1u << b;
         }
-        gm->bone_mask |= 1u << bone;
     }
     V4 sph[RENDER_MAX_BONES + 1];
     for (u32 b = 0; b <= RENDER_MAX_BONES; b++) {
@@ -388,8 +416,10 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
     for (u32 i = 0; i < mb->vcount; i++) {
         const Vertex *v = &mb->v[i];
         V3 p = v3(v->pos[0], v->pos[1], v->pos[2]);
-        u32 slots[2] = { MIN((u32)v->bone, RENDER_MAX_BONES - 1u), RENDER_MAX_BONES };
-        for (u32 k = 0; k < 2; k++) {
+        u32 slots[5];
+        u32 ns = vertex_bones(mb, i, slots);
+        slots[ns++] = RENDER_MAX_BONES;
+        for (u32 k = 0; k < ns; k++) {
             V4 *s = &sph[slots[k]];
             s->w = fmaxf(s->w, v3_len(v3_sub(p, v3(s->x, s->y, s->z))));
         }
