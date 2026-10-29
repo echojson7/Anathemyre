@@ -5,11 +5,22 @@
 #define ANA_COMBAT_H
 
 #include "../core/arena.h"
+#include "../core/grid.h"
 #include "items.h"
 
 #define COMBAT_HZ 20
 #define COMBAT_DT (1.0f / COMBAT_HZ)
 #define COMBAT_THINK_TICKS 5   // решения ИИ раз в 0.25 с
+#define COMBAT_NEAR_MAX 1024   // предел выборки соседей за один запрос
+#define COMBAT_MAX_TEAMS 30
+
+// Метки бойцов в сетке: мёртвые, выбывшие, остальные по командам
+#define TAG_DEAD 0
+#define TAG_OUT 1
+#define TAG_BIT(tag) (1u << (tag))
+#define TEAM_BIT(team) (1u << (2u + (team)))
+#define TAGS_ALIVE (~TAG_BIT(TAG_DEAD))
+#define TAGS_FIGHTING (~(TAG_BIT(TAG_DEAD) | TAG_BIT(TAG_OUT)))
 
 typedef enum Skill {
     SK_ATTACK, SK_DEFENSE, SK_DODGE,
@@ -119,6 +130,13 @@ typedef struct CombatWorld {
     // Журнал событий текущего тика и далее; читатель сам сбрасывает ev_count
     CombatEvent *ev;
     u32 ev_count, ev_cap, last_ev;
+
+    // Сетка соседей: строится по позициям в конце тика и после добавления бойцов
+    Grid grid;
+    bool grid_dirty;
+    u8  *grid_tag;       // метка в сетке, TAG_*
+    f32 *sep_x, *sep_z;  // сдвиг расталкивания за тик
+    u32 *strikes;        // кто наносит удар в этом тике
 } CombatWorld;
 
 void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap);
@@ -130,10 +148,17 @@ void combat_tick(CombatWorld *w);
 // Забрать состояние тела и навыки обратно в описание (после боя)
 void combat_store(const CombatWorld *w, u32 i, FighterDesc *d);
 
-// Сколько бойцов команды ещё в бою
 // Свёртка событий журнала в контрольную сумму (проверка детерминизма)
 u64 combat_hash_events(const CombatWorld *w, u64 h);
+// Сколько бойцов команды ещё в бою
 u32 combat_team_active(const CombatWorld *w, u8 team);
+// Перестроить сетку, если позиции менялись вне тика
+void combat_sync_grid(CombatWorld *w);
+// Кандидаты с метками из mask в радиусе r (по ячейкам, расстояние проверяет вызывающий);
+// out на COMBAT_NEAR_MAX. Метки сняты в конце прошлого тика
+u32 combat_near(const CombatWorld *w, f32 x, f32 z, f32 r, u32 mask, u32 *out);
+// Есть ли поблизости кто-то из меток mask (грубо, с запасом)
+bool combat_any_near(const CombatWorld *w, f32 x, f32 z, f32 r, u32 mask);
 f32 combat_reach(const CombatWorld *w, u32 i, u8 kind);
 f32 combat_arc(const CombatWorld *w, u32 i, u8 kind);      // полная дуга, рад
 f32 combat_vital_ratio(const CombatWorld *w, u32 i);       // худшая жизненная часть, 0..1

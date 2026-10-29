@@ -39,4 +39,18 @@ PlatformProc platform_gl_proc(const char *name);
 // Папка исполняемого файла, без завершающего '/'
 bool         platform_exe_dir(char *buf, size_t size);
 
+// Потоки и семафор для рабочих потоков. Создаются один раз при старте
+typedef struct PlatformThread PlatformThread;
+typedef struct PlatformSema PlatformSema;
+typedef void (*PlatformThreadFn)(void *arg);
+
+u32             platform_cpu_count(void);
+PlatformThread *platform_thread_start(PlatformThreadFn fn, void *arg);
+void            platform_thread_join(PlatformThread *t);
+PlatformSema   *platform_sema_create(void);
+void            platform_sema_destroy(PlatformSema *s);
+void            platform_sema_post(PlatformSema *s, u32 count);
+void            platform_sema_wait(PlatformSema *s);
+void            platform_cpu_relax(void);
+
 #endif

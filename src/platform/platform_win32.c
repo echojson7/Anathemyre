@@ -315,3 +315,73 @@ bool platform_exe_dir(char *buf, size_t size)
     *slash = 0;
     return true;
 }
+
+// ---------------------------------------------------------------- потоки
+
+struct PlatformThread {
+    HANDLE           handle;
+    PlatformThreadFn fn;
+    void            *arg;
+};
+
+u32 platform_cpu_count(void)
+{
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return si.dwNumberOfProcessors > 0 ? (u32)si.dwNumberOfProcessors : 1;
+}
+
+static DWORD WINAPI thread_entry(LPVOID p)
+{
+    PlatformThread *t = p;
+    t->fn(t->arg);
+    return 0;
+}
+
+PlatformThread *platform_thread_start(PlatformThreadFn fn, void *arg)
+{
+    PlatformThread *t = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof *t);
+    if (!t) return NULL;
+    t->fn = fn;
+    t->arg = arg;
+    t->handle = CreateThread(NULL, 0, thread_entry, t, 0, NULL);
+    if (!t->handle) {
+        HeapFree(GetProcessHeap(), 0, t);
+        return NULL;
+    }
+    return t;
+}
+
+void platform_thread_join(PlatformThread *t)
+{
+    if (!t) return;
+    WaitForSingleObject(t->handle, INFINITE);
+    CloseHandle(t->handle);
+    HeapFree(GetProcessHeap(), 0, t);
+}
+
+// Семафор — это сам HANDLE
+PlatformSema *platform_sema_create(void)
+{
+    return (PlatformSema *)CreateSemaphoreA(NULL, 0, 0x7fffffff, NULL);
+}
+
+void platform_sema_destroy(PlatformSema *s)
+{
+    if (s) CloseHandle((HANDLE)s);
+}
+
+void platform_sema_post(PlatformSema *s, u32 count)
+{
+    if (count) ReleaseSemaphore((HANDLE)s, (LONG)count, NULL);
+}
+
+void platform_sema_wait(PlatformSema *s)
+{
+    WaitForSingleObject((HANDLE)s, INFINITE);
+}
+
+void platform_cpu_relax(void)
+{
+    YieldProcessor();
+}

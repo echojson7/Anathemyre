@@ -31,6 +31,14 @@ jobs:
           ! grep -q "СБОЙ" build/log.txt
           python3 -c "from PIL import Image; Image.open('build/shot.ppm').save('build/shot.png')"
 
+      - name: Бой под ASan, детерминизм полевого боя на 1/2/4/8 потоках
+        env:
+          LSAN_OPTIONS: suppressions=tools/lsan.supp
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          ./build/anathemyre_debug --arena-bench 100 | tail -3
+          ./build/anathemyre_debug --battle-bench 100 100 --battle-verify
+
       - uses: actions/upload-artifact@v4
         with:
           name: screenshot

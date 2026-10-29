@@ -2,7 +2,10 @@
 
 #include <string.h>
 
+#include "../core/jobs.h"
+
 #define MAX_STRIKE_TARGETS 8
+#define GRID_SLACK 1.5f  // запас запроса: за тик сбитого с ног отбрасывает до 1.5 м
 
 enum { REACT_NONE, REACT_BLOCK, REACT_DODGE };
 
@@ -100,7 +103,10 @@ static f32 surround_factor(const CombatWorld *w, u32 i)
 {
     u32 n = 0;
     f32 fx = sinf(w->heading[i]), fz = cosf(w->heading[i]);
-    for (u32 j = 0; j < w->count; j++) {
+    u32 near[COMBAT_NEAR_MAX];
+    u32 nn = combat_near(w, w->x[i], w->z[i], 3.0f + GRID_SLACK, TAGS_FIGHTING & ~TEAM_BIT(w->team[i]), near);
+    for (u32 q = 0; q < nn; q++) {
+        u32 j = near[q];
         if (w->team[j] == w->team[i] || fs_out(w->state[j]) || fs_lying(w->state[j])) continue;
         f32 dx = w->x[j] - w->x[i], dz = w->z[j] - w->z[i];
         if (dx * dx + dz * dz > 9.0f || dx * fx + dz * fz < 0.0f) continue;
@@ -382,7 +388,10 @@ static void resolve_strike(CombatWorld *w, u32 i)
     u32 cand[MAX_STRIKE_TARGETS];
     f32 cang[MAX_STRIKE_TARGETS];
     u32 nc = 0;
-    for (u32 j = 0; j < w->count; j++) {
+    u32 near[COMBAT_NEAR_MAX];
+    u32 nn = combat_near(w, w->x[i], w->z[i], reach + GRID_SLACK, TAGS_ALIVE, near);
+    for (u32 q = 0; q < nn; q++) {
+        u32 j = near[q];
         if (j == i || w->state[j] == FS_DEAD) continue;
         if (kind == ATK_SWING && fs_lying(w->state[j])) continue;
         f32 dx = w->x[j] - w->x[i], dz = w->z[j] - w->z[i];
@@ -390,8 +399,13 @@ static void resolve_strike(CombatWorld *w, u32 i)
         f32 a = fabsf(angle_to(w, i, j));
         if (a > half_arc) continue;
         if (j == main_t) a = -1.0f;
-        u32 k = nc < MAX_STRIKE_TARGETS ? nc++ : MAX_STRIKE_TARGETS - 1;
-        if (k == MAX_STRIKE_TARGETS - 1 && a >= cang[k]) continue;
+        u32 k;
+        if (nc < MAX_STRIKE_TARGETS) {
+            k = nc++;
+        } else {
+            k = MAX_STRIKE_TARGETS - 1;
+            if (a > cang[k] || (a == cang[k] && j > cand[k])) continue;  // хуже худшего из взятых
+        }
         while (k > 0 && (cang[k - 1] > a || (cang[k - 1] == a && cand[k - 1] > j))) {
             cand[k] = cand[k - 1];
             cang[k] = cang[k - 1];
@@ -596,49 +610,98 @@ static void tick_move(CombatWorld *w, u32 i)
     }
 }
 
-// Расталкивание тел и ограда
-static void separate(CombatWorld *w)
+// Расталкивание тел: каждый считает свой сдвиг от соседей по позициям начала шага,
+// поэтому куски можно считать в любом порядке и в любом числе потоков
+static bool pinned(const CombatWorld *w, u32 i) { return w->state[i] == FS_DEAD || w->state[i] == FS_UNCONSCIOUS; }
+
+static void separate_job(void *ctx, u32 b, u32 e)
 {
+    CombatWorld *w = ctx;
     const f32 r2 = 0.6f;
-    for (u32 i = 0; i < w->count; i++) {
-        for (u32 j = i + 1; j < w->count; j++) {
-            f32 dx = w->x[j] - w->x[i], dz = w->z[j] - w->z[i];
-            f32 d2 = dx * dx + dz * dz;
-            if (d2 >= r2 * r2) continue;
-            f32 d = sqrtf(d2);
-            if (d < 1e-4f) { dx = 1.0f; dz = 0.0f; d = 1.0f; d2 = 0.0f; }
-            f32 push = (r2 - sqrtf(d2)) * 0.5f;
-            // Мёртвые и лежащие без сознания не сдвигаются
-            bool fi = w->state[i] == FS_DEAD || w->state[i] == FS_UNCONSCIOUS;
-            bool fj = w->state[j] == FS_DEAD || w->state[j] == FS_UNCONSCIOUS;
-            f32 ki = fi ? 0.0f : (fj ? 2.0f : 1.0f), kj = fj ? 0.0f : (fi ? 2.0f : 1.0f);
-            w->x[i] -= dx / d * push * ki;
-            w->z[i] -= dz / d * push * ki;
-            w->x[j] += dx / d * push * kj;
-            w->z[j] += dz / d * push * kj;
-        }
-    }
-    if (w->fence_r > 0.0f) {
-        f32 lim = w->fence_r - 0.3f;
-        for (u32 i = 0; i < w->count; i++) {
-            f32 d = sqrtf(w->x[i] * w->x[i] + w->z[i] * w->z[i]);
-            if (d > lim) {
-                w->x[i] *= lim / d;
-                w->z[i] *= lim / d;
+    u32 near[COMBAT_NEAR_MAX];
+    for (u32 i = b; i < e; i++) {
+        f32 sx = 0.0f, sz = 0.0f;
+        if (!pinned(w, i)) {
+            u32 nn = combat_near(w, w->x[i], w->z[i], r2, GRID_ALL_TAGS, near);
+            for (u32 q = 0; q < nn; q++) {
+                u32 j = near[q];
+                if (j == i) continue;
+                f32 dx = w->x[i] - w->x[j], dz = w->z[i] - w->z[j];
+                f32 d2 = dx * dx + dz * dz;
+                if (d2 >= r2 * r2) continue;
+                f32 d = sqrtf(d2);
+                // Совпали точно: разводим по номеру
+                if (d < 1e-4f) { dx = i < j ? -1.0f : 1.0f; dz = 0.0f; d = 1.0f; d2 = 0.0f; }
+                // Мёртвые и лежащие без сознания не сдвигаются, живой отходит за двоих
+                f32 k = pinned(w, j) ? 2.0f : 1.0f;
+                f32 push = (r2 - sqrtf(d2)) * 0.5f * k;
+                sx += dx / d * push;
+                sz += dz / d * push;
             }
+        }
+        w->sep_x[i] = sx;
+        w->sep_z[i] = sz;
+    }
+}
+
+static void separate_apply_job(void *ctx, u32 b, u32 e)
+{
+    CombatWorld *w = ctx;
+    f32 lim = w->fence_r - 0.3f;
+    for (u32 i = b; i < e; i++) {
+        w->x[i] += w->sep_x[i];
+        w->z[i] += w->sep_z[i];
+        if (w->fence_r <= 0.0f) continue;
+        f32 d = sqrtf(w->x[i] * w->x[i] + w->z[i] * w->z[i]);
+        if (d > lim) {
+            w->x[i] *= lim / d;
+            w->z[i] *= lim / d;
         }
     }
 }
 
+static void build_grid(CombatWorld *w)
+{
+    u32 ntags = 3;
+    for (u32 i = 0; i < w->count; i++) {
+        u8 s = w->state[i];
+        w->grid_tag[i] = s == FS_DEAD ? TAG_DEAD : (fs_out(s) ? TAG_OUT : (u8)(2u + w->team[i]));
+        if (w->grid_tag[i] + 1u > ntags) ntags = w->grid_tag[i] + 1u;
+    }
+    grid_build(&w->grid, w->x, w->z, w->grid_tag, ntags, w->count);
+    w->grid_dirty = false;
+}
+
+void combat_sync_grid(CombatWorld *w)
+{
+    if (w->grid_dirty) build_grid(w);
+}
+
+bool combat_any_near(const CombatWorld *w, f32 x, f32 z, f32 r, u32 mask)
+{
+    return (grid_tags(&w->grid, x, z, r) & mask) != 0;
+}
+
+u32 combat_near(const CombatWorld *w, f32 x, f32 z, f32 r, u32 mask, u32 *out)
+{
+    return grid_query(&w->grid, x, z, r, mask, out, COMBAT_NEAR_MAX);
+}
+
+// Порядок фаз: тело, таймеры состояний, удары по номеру бойца, шаг, расталкивание.
+// Всё, что пишет в чужих бойцов или в журнал, идёт в одном потоке по возрастанию номера.
 void combat_tick(CombatWorld *w)
 {
-    u32 strikes[256];
+    combat_sync_grid(w);
     u32 ns = 0;
     for (u32 i = 0; i < w->count; i++) tick_body(w, i);
-    for (u32 i = 0; i < w->count && ns < ARRAY_COUNT(strikes); i++) tick_state(w, i, strikes, &ns);
-    for (u32 k = 0; k < ns; k++) resolve_strike(w, strikes[k]);
+    for (u32 i = 0; i < w->count; i++) tick_state(w, i, w->strikes, &ns);
+    for (u32 k = 0; k < ns; k++) resolve_strike(w, w->strikes[k]);
     for (u32 i = 0; i < w->count; i++) tick_move(w, i);
-    separate(w);
+    // Сетка по позициям после шага: расталкивание и ИИ следующего тика читают её
+    build_grid(w);
+    jobs_for(w->count, 64, separate_job, w);
+    jobs_for(w->count, 256, separate_apply_job, w);
+    build_grid(w);
     w->tick++;
 }
 
@@ -663,6 +726,11 @@ void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap)
 #undef F
 #undef B
     w->ev = ARENA_PUSH_ARRAY(a, CombatEvent, ev_cap + 1);
+    w->sep_x = ARENA_PUSH_ARRAY(a, f32, cap);
+    w->sep_z = ARENA_PUSH_ARRAY(a, f32, cap);
+    w->strikes = ARENA_PUSH_ARRAY(a, u32, cap);
+    w->grid_tag = ARENA_PUSH_ARRAY(a, u8, cap);
+    grid_init(&w->grid, a, cap, 128 * 128 * 4, 2.0f);
 }
 
 void combat_reset(CombatWorld *w, u64 seed)
@@ -671,6 +739,7 @@ void combat_reset(CombatWorld *w, u64 seed)
     w->tick = 0;
     w->seed = seed;
     w->ev_count = 0;
+    w->grid_dirty = true;
 }
 
 u64 combat_hash_events(const CombatWorld *w, u64 h)
@@ -686,7 +755,7 @@ u64 combat_hash_events(const CombatWorld *w, u64 h)
 
 u32 combat_add(CombatWorld *w, const FighterDesc *d)
 {
-    if (w->count >= w->cap) return w->count - 1;
+    if (w->count >= w->cap || d->team >= COMBAT_MAX_TEAMS) return w->count - 1;
     u32 i = w->count++;
     w->x[i] = d->pos.x;
     w->z[i] = d->pos.z;
@@ -715,6 +784,7 @@ u32 combat_add(CombatWorld *w, const FighterDesc *d)
     w->weapon_q[i] = d->weapon_q;
     for (u32 s = 0; s < SLOT_COUNT; s++) w->armor[s][i] = d->armor[s];
     w->pause[i] = 0.5f + combat_roll(w, i, 0, 1);
+    w->grid_dirty = true;
     combat_set_state(w, i, FS_READY, 0.0f);
     check_body(w, i);
     return i;

@@ -313,3 +313,86 @@ bool platform_exe_dir(char *buf, size_t size)
     *slash = 0;
     return true;
 }
+
+// ---------------------------------------------------------------- потоки
+
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdlib.h>
+
+struct PlatformThread {
+    pthread_t        handle;
+    PlatformThreadFn fn;
+    void            *arg;
+};
+
+struct PlatformSema {
+    sem_t sem;
+};
+
+u32 platform_cpu_count(void)
+{
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return n > 0 ? (u32)n : 1;
+}
+
+static void *thread_entry(void *p)
+{
+    PlatformThread *t = p;
+    t->fn(t->arg);
+    return NULL;
+}
+
+PlatformThread *platform_thread_start(PlatformThreadFn fn, void *arg)
+{
+    PlatformThread *t = calloc(1, sizeof *t);
+    if (!t) return NULL;
+    t->fn = fn;
+    t->arg = arg;
+    if (pthread_create(&t->handle, NULL, thread_entry, t) != 0) {
+        free(t);
+        return NULL;
+    }
+    return t;
+}
+
+void platform_thread_join(PlatformThread *t)
+{
+    if (!t) return;
+    pthread_join(t->handle, NULL);
+    free(t);
+}
+
+PlatformSema *platform_sema_create(void)
+{
+    PlatformSema *s = calloc(1, sizeof *s);
+    if (s && sem_init(&s->sem, 0, 0) != 0) {
+        free(s);
+        return NULL;
+    }
+    return s;
+}
+
+void platform_sema_destroy(PlatformSema *s)
+{
+    if (!s) return;
+    sem_destroy(&s->sem);
+    free(s);
+}
+
+void platform_sema_post(PlatformSema *s, u32 count)
+{
+    while (count--) sem_post(&s->sem);
+}
+
+void platform_sema_wait(PlatformSema *s)
+{
+    while (sem_wait(&s->sem) != 0) {}  // EINTR — ждать дальше
+}
+
+void platform_cpu_relax(void)
+{
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#endif
+}

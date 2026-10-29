@@ -9,6 +9,7 @@
 #include "core/math3d.h"
 #include "core/rng.h"
 #include "game/arena.h"
+#include "game/battle.h"
 #include "game/character.h"
 #include "game/testroom.h"
 #include "platform/platform.h"
@@ -34,6 +35,9 @@ typedef struct Options {
     i32         follow;      // камера следует за фигурой с этим номером, -1 нет
     u32         arena_bench; // прогнать N боёв арены без окна
     u32         arena_log;   // сколько первых боёв печатать подробно
+    u32         battle[2];   // полевой бой: бойцов в каждом отряде
+    bool        battle_verify;
+    u32         threads;     // 0 — по числу ядер
 } Options;
 
 static void camera_update(RtsCamera *c, const Input *in, f32 dt)
@@ -78,6 +82,7 @@ static void usage(void)
 {
     puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--follow N] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
+    puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
 }
 
 static bool parse_args(int argc, char **argv, Options *o)
@@ -91,6 +96,11 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--res") && i + 1 < argc) o->internal_h = atoi(argv[++i]);
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
+        else if (!strcmp(a, "--battle-bench") && i + 2 < argc) {
+            o->battle[0] = (u32)atoi(argv[++i]);
+            o->battle[1] = (u32)atoi(argv[++i]);
+        } else if (!strcmp(a, "--battle-verify")) o->battle_verify = true;
+        else if (!strcmp(a, "--threads") && i + 1 < argc) o->threads = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--seed") && i + 1 < argc) o->seed = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(a, "--size") && i + 2 < argc) {
             o->width = atoi(argv[++i]);
@@ -143,6 +153,8 @@ int main(int argc, char **argv)
     };
     if (!parse_args(argc, argv, &opt)) return 1;
     if (opt.arena_bench) return arena_bench(opt.arena_bench, opt.seed, opt.arena_log);
+    if (opt.battle[0] || opt.battle[1])
+        return battle_bench(opt.battle[0], opt.battle[1], opt.seed, opt.threads, opt.battle_verify);
     log_info("АНАТЕМАЙР. ЭТАП 0. ЗЕРНО МИРА %llu", (unsigned long long)opt.seed);
 
     char data_dir[512];

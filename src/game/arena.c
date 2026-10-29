@@ -45,12 +45,11 @@ static u32 g_next_name;
 
 static f32 jitter(Rng *r, f32 base, f32 spread) { return clampf(base + rng_range(r, -spread, spread), 1.0f, 100.0f); }
 
-static void make_fighter(ArenaFighter *f, Rng *r, u32 tier)
+void arena_random_fighter(FighterDesc *d, Rng *r, u32 tier)
 {
     static const f32 tier_skill[3] = { 9.0f, 32.0f, 62.0f };
-    memset(f, 0, sizeof *f);
+    memset(d, 0, sizeof *d);
     f32 b = tier_skill[tier];
-    FighterDesc *d = &f->d;
     for (u32 s = 0; s < SK_COUNT; s++) d->skill[s] = jitter(r, b * 0.4f, 3.0f);
     d->skill[SK_ATTACK] = jitter(r, b, 5.0f);
     d->skill[SK_DEFENSE] = jitter(r, b, 5.0f);
@@ -81,7 +80,13 @@ static void make_fighter(ArenaFighter *f, Rng *r, u32 tier)
     d->mass = rng_range(r, 60.0f, 90.0f);
     d->height = rng_range(r, 1.70f, 1.90f);
     d->morale_base = rng_range(r, 50.0f, 65.0f) + 10.0f * (f32)tier;
-    memcpy(f->start, d->skill, sizeof f->start);
+}
+
+static void make_fighter(ArenaFighter *f, Rng *r, u32 tier)
+{
+    memset(f, 0, sizeof *f);
+    arena_random_fighter(&f->d, r, tier);
+    memcpy(f->start, f->d.skill, sizeof f->start);
     f->name = g_next_name++ % ARRAY_COUNT(g_names);
 }
 
@@ -191,7 +196,7 @@ static void count_event(Stats *st, const CombatEvent *e)
 }
 
 // Один бой: участники idx[0..n), команды по team[]; возвращает победившую команду или -1
-static i32 run_bout(CombatWorld *w, ArenaFighter *roster, const u32 *idx, const u8 *team, u32 n,
+static i32 run_bout(CombatWorld *w, FighterAI *ai, ArenaFighter *roster, const u32 *idx, const u8 *team, u32 n,
                     u64 seed, bool log, Stats *st, u64 *hash, f32 *dur, u64 *ticks)
 {
     combat_reset(w, seed);
@@ -216,7 +221,7 @@ static i32 run_bout(CombatWorld *w, ArenaFighter *roster, const u32 *idx, const 
     u32 end_tick = (u32)((BOUT_LIMIT_S + AFTER_BOUT_S) * COMBAT_HZ);
     u32 decided = 0;
     for (u32 t = 0; t < end_tick; t++) {
-        fighter_think_all(w);
+        fighter_think_all(ai, w);
         combat_tick(w);
         *hash = combat_hash_events(w, *hash);
         for (u32 k = 0; k < w->ev_count; k++) {
@@ -298,6 +303,8 @@ int arena_bench(u32 bouts, u64 seed, u32 log_bouts)
     if (!arena_init(&mem, MB(4))) return 1;
     CombatWorld w;
     combat_init(&w, &mem, 16, 4096);
+    FighterAI ai;
+    fighter_ai_init(&ai, &mem, 16);
     Rng rng;
     rng_seed(&rng, seed, 7);
     g_next_name = 0;
@@ -382,7 +389,7 @@ int arena_bench(u32 bouts, u64 seed, u32 log_bouts)
         }
         f32 dur;
         u64 bout_seed = seed * 0x9E3779B97F4A7C15ull + b * 0xBF58476D1CE4E5B9ull + 1;
-        i32 win = run_bout(&w, roster, idx, team, n, bout_seed, log, &st, &hash, &dur, &ticks);
+        i32 win = run_bout(&w, &ai, roster, idx, team, n, bout_seed, log, &st, &hash, &dur, &ticks);
         if (win < 0) st.draws++;
         if (group) {
             st.groups++;

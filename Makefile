@@ -37,7 +37,7 @@ endif
 else
 EXE      :=
 SRC      := $(SRC_COMMON) src/platform/platform_linux.c
-LDLIBS   := -lX11 -lm -ldl
+LDLIBS   := -lX11 -lm -ldl -pthread
 SANITIZE := -fsanitize=address,undefined -fno-omit-frame-pointer
 endif
 
