@@ -12,6 +12,7 @@
 #include "game/arena_view.h"
 #include "game/battle.h"
 #include "game/character.h"
+#include "game/field.h"
 #include "game/hud.h"
 #include "game/squad.h"
 #include "game/testroom.h"
@@ -49,6 +50,7 @@ typedef struct Options {
     f32         tod;         // время суток на старте: 0 полночь, 0.5 полдень
     bool        inspect;     // выбрать отряд и открыть осмотр (для снимков)
     u32         arena_bench; // прогнать N боёв арены без окна
+    u32         field_bench; // сценка атаки и нагрузка поля на N−1 тел без окна
     u32         arena_log;   // сколько первых боёв печатать подробно
     u32         battle[2];   // полевой бой: бойцов в каждом отряде
     bool        battle_verify;
@@ -241,6 +243,7 @@ static void usage(void)
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
+    puts("anathemyre --field-bench N [--seed N]   приказ атаки без окна, затем нагрузка поля на N тел");
 }
 
 static bool parse_args(int argc, char **argv, Options *o)
@@ -262,6 +265,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
+        else if (!strcmp(a, "--field-bench") && i + 1 < argc) o->field_bench = (u32)atoi(argv[++i]) + 1;
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--battle-bench") && i + 2 < argc) {
@@ -321,6 +325,7 @@ int main(int argc, char **argv)
     };
     if (!parse_args(argc, argv, &opt)) return 1;
     if (opt.move_bench) return player_bench(opt.move_trace);
+    if (opt.field_bench) return field_bench(opt.field_bench - 1, opt.seed);
     if (opt.arena_bench) return arena_bench(opt.arena_bench, opt.seed, opt.arena_log);
     if (opt.battle[0] || opt.battle[1])
         return battle_bench(opt.battle[0], opt.battle[1], opt.seed, opt.threads, opt.battle_verify);

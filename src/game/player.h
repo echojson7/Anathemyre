@@ -12,6 +12,9 @@ typedef f32 (*GroundFn)(f32 x, f32 z);
 // Режим передвижения, выбирается игроком для каждого
 typedef enum Gait { GAIT_WALK, GAIT_JOG, GAIT_RUN, GAIT_COUNT } Gait;
 
+// Кто правит телом: ходьба сама, поле боя гонит к цели, поле боя ведёт бой (ходьба стоит)
+enum { CTRL_FREE, CTRL_CHASE, CTRL_FIGHT };
+
 // Скорость режима для здорового среднего человека, м/с
 extern const f32 g_gait_speed[GAIT_COUNT];
 
@@ -29,6 +32,8 @@ typedef struct Player {
     f32  vmax;       // предел скорости на этот кадр, ставит отряд
     u8   gait;
     u16  group;      // номер приказа: кто идёт вместе, держит общий темп
+    u8   ctrl;       // CTRL_*
+    i32  slot;       // слот на поле боя, -1 — нет
     V3   target;
     bool moving;
     f32  marker;     // сколько ещё секунд видна метка цели

@@ -106,6 +106,7 @@ typedef struct CombatWorld {
     bool mercy;      // выбывших не добивают, сдачу принимают
     bool halted;     // бой остановлен: ИИ больше не атакует
     f32 fence_r;     // > 0: бой внутри круга этого радиуса
+    u32 foe[COMBAT_MAX_TEAMS];  // с кем враждует команда: биты команд; по умолчанию со всеми чужими
 
     // Горячие данные каждого тика
     f32 *x, *z, *heading;
@@ -116,6 +117,8 @@ typedef struct CombatWorld {
     i32 *target;
     f32 *since_hit;
     f32 *mvx, *mvz;  // желаемое движение от ИИ, длина <= 1
+    u8  *idle;       // спящий слот: телом правит ходьба снаружи, бой его не видит, не бьёт и не двигает
+    i32 *order;      // цель по приказу: ИИ бьёт только её, пока она в бою; -1 — выбирает сам
 
     // Тело
     f32 *hp[PART_COUNT];
@@ -139,9 +142,18 @@ typedef struct CombatWorld {
     u32 *strikes;        // кто наносит удар в этом тике
 } CombatWorld;
 
+// Враждует ли боец i с бойцом j (по командам)
+static inline bool combat_hostile(const CombatWorld *w, u32 i, u32 j) { return (w->foe[w->team[i]] >> w->team[j]) & 1u; }
+// Метки сетки для врагов команды team, кроме выбывших
+static inline u32 combat_foe_tags(const CombatWorld *w, u8 team) { return w->foe[team] << 2u; }
+
 void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap);
 void combat_reset(CombatWorld *w, u64 seed);
 u32  combat_add(CombatWorld *w, const FighterDesc *d);
+// Заново заполнить слот i из описания: тело, навыки, снаряжение, место; состояние — стойка
+void combat_load(CombatWorld *w, u32 i, const FighterDesc *d);
+// Вражда двух команд в обе стороны
+void combat_set_foes(CombatWorld *w, u8 a, u8 b, bool on);
 // Начать удар (вызывает ИИ): замах, бросок реакции цели
 void combat_begin_attack(CombatWorld *w, u32 i, u8 kind, u32 target, bool counter);
 void combat_tick(CombatWorld *w);
