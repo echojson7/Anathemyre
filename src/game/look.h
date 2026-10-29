@@ -1,5 +1,5 @@
 // Внешность человека: тип тела, веса морфов сетки, оттенки кожи и волос.
-// Считается из зерна и сложения, отдельно не хранится; рендер берёт матрицу из слота RENDER_LOOK_SLOT
+// Считается из зерна и сложения; у людей мира хранится в таблице (People.lk), редактор правит её там. Рендер берёт матрицу из слота RENDER_LOOK_SLOT
 #ifndef ANA_LOOK_H
 #define ANA_LOOK_H
 
@@ -18,8 +18,11 @@ enum { LOOK_FAT, LOOK_LEAN, LOOK_STRONG, LOOK_WEAK, LOOK_OLD, LOOK_FACE_A, LOOK_
 
 typedef struct CharLook {
     f32 morph[LOOK_MORPHS];
-    V3  skin, hair;
-    u8  cut;    // причёска: 0 — нет (щетина), иначе вид 1..HAIR_MAX у этого тела
+    V3  skin, hair;    // считаются из тонов ниже (look_paint)
+    f32 skin_t;        // тон кожи 0 бледная .. 1 тёмная
+    f32 hair_t;        // цвет волос по ряду оттенков 0..1
+    f32 gray;          // седина 0..1
+    u8  cut;           // причёска: 0 — нет (щетина), иначе вид 1..HAIR_MAX у этого тела
 } CharLook;
 
 // Одежда и броня: сетки поверх тела (data/meshes/gear, tools/humanconv GEAR), на том же наборе костей
@@ -47,6 +50,10 @@ u32 gear_random(u32 seed, u8 *out);
 
 // mass — кг, height — м, strength — навык силы 0..100
 void look_make(CharLook *l, u32 body, u32 seed, f32 mass, f32 height, f32 strength);
+// Цвета кожи и волос из тонов и седины
+void look_paint(CharLook *l);
+// Сколько причёсок у тела
+u32  look_cuts(u32 body);
 // Матрица для слота RENDER_LOOK_SLOT набора костей
 M4   look_matrix(const CharLook *l, u32 body);
 

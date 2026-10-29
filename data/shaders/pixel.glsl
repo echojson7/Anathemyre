@@ -12,6 +12,7 @@ layout(binding = 5) uniform usampler2D u_level_max;  // самый крупны�
 const int PIXEL_MAX_Q = 32;  // 8 пикселей
 const int PIXEL_MIN_Q = 5;   // вдали 1.25 и дальше не меняется
 const float PIXEL_KNEE = 1.75;  // с этого размера к камере пиксель растёт вдвое медленнее
+const float PIXEL_KNEE2 = 2.0;  // самый близкий порог (ближе ~5 м): рост ещё в 2.5 раза медленнее
 
 // Размер пикселя в точке, в четвертях пикселя кадра: растёт к камере, вдали PIXEL_MIN_Q (4, если пиксельность выключена)
 int level_at(ivec2 t)
@@ -21,6 +22,8 @@ int level_at(ivec2 t)
     float k = u_pix.x * pow(inv_d, u_pix.y);
     // Вблизи (k > PIXEL_KNEE, ближе ~6 м) рост вдвое медленнее: персонажи у камеры не крупнопиксельные
     k = k > PIXEL_KNEE ? PIXEL_KNEE + (k - PIXEL_KNEE) * 0.5 : k;
+    // Самый близкий порог на шаг мельче: при 1080p 4 м — 2 вместо 2.5, 3 м — 2.5 вместо 3, с 5 м как было
+    k = k > PIXEL_KNEE2 ? PIXEL_KNEE2 + (k - PIXEL_KNEE2) * 0.4 : k;
     float q = k >= 2.0 ? 2.0 * floor(2.0 * k + 0.5) : floor(4.0 * k + 0.5);
     if (u_pix_int != 0) return u_pix.x > 0.0 ? 4 << clamp(int(floor(log2(max(k, 1e-6)) + 0.5)), 0, 3) : 4;
     float lo = u_pix.x > 0.0 ? float(PIXEL_MIN_Q) : 4.0;

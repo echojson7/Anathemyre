@@ -12,9 +12,33 @@ vec3 world_at(vec2 uv, float d)
     return w.xyz / w.w;
 }
 
+// Нормаль по глубине соседних пикселей: по каждой оси берём соседа ближе по глубине, чтобы не перескочить
+// через край предмета. Не dFdx: при шейдинге блоками производная шагает через блок 2–4 пикселя и на краю
+// предмета смешивает две поверхности, нормаль выходит ложной и блок у края чернеет
+vec3 depth_normal(vec2 uv)
+{
+    vec2 res = vec2(textureSize(u_depth, 0));
+    ivec2 t = ivec2(uv * res), hi = ivec2(res) - 1;
+    float d = texelFetch(u_depth, t, 0).r;
+    vec3 C = world_at((vec2(t) + 0.5) / res, d);
+    vec3 a[2];
+    for (int i = 0; i < 2; i++) {
+        ivec2 e = ivec2(i == 0, i == 1);
+        ivec2 t0 = max(t - e, ivec2(0)), t1 = min(t + e, hi);
+        float d0 = texelFetch(u_depth, t0, 0).r, d1 = texelFetch(u_depth, t1, 0).r;
+        bool use1 = t0 == t || (t1 != t && abs(d1 - d) < abs(d0 - d));
+        ivec2 tn = use1 ? t1 : t0;
+        vec3 S = world_at((vec2(tn) + 0.5) / res, use1 ? d1 : d0);
+        a[i] = use1 ? S - C : C - S;
+    }
+    vec3 n = cross(a[0], a[1]);
+    // Тонкий предмет на фоне неба: соседей на поверхности нет, нормаль — к камере
+    return dot(n, n) > 1e-24 && !any(isinf(n)) ? normalize(n) : normalize(u_cam - C);
+}
+
 float ambient_occlusion(vec2 uv, vec3 P, float view_dist)
 {
-    vec3 N = normalize(cross(dFdx(P), dFdy(P)));
+    vec3 N = depth_normal(uv);
     if (dot(N, u_cam - P) < 0.0) N = -N;
     vec2 res = vec2(textureSize(u_depth, 0));
     float radius_px = clamp(0.9 * u_proj_scale / max(view_dist, 0.1), 2.0, 40.0);

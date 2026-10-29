@@ -13,8 +13,8 @@
 #define SHADOW_SIZE 2048
 #define SHADOW_EXTENT 45.0f   // полуразмер области теней, м
 // Размер пикселя по глубине (pixel.glsl): k = PIXEL_K * s^PIXEL_P, s — пикселей кадра на метр в точке.
-// Шаг 0.5 пикселя, ниже 2 — 0.25; ближе ~6 м рост вдвое медленнее (pixel.glsl PIXEL_KNEE).
-// При 1080p: 2 м — 4.5, 3 м — 3, 4 м — 2.5, 5–6 м — 2, 7 м — 1.75, 8 м — 1.5, с 9 м — 1.25 и дальше не меняется
+// Шаг 0.5 пикселя, ниже 2 — 0.25; ближе ~6 м рост вдвое медленнее, ближе ~5 м ещё медленнее (pixel.glsl PIXEL_KNEE, PIXEL_KNEE2).
+// При 1080p: 1 м — 4.5, 2 м — 3, 3 м — 2.5, 4–6 м — 2, 7 м — 1.75, 8 м — 1.5, с 9 м — 1.25 и дальше не меняется
 #define PIXEL_K 0.00728f
 #define PIXEL_P 1.1f
 
@@ -1247,7 +1247,9 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glDepthFunc(GL_LESS);
     if (timing) mark(3);
 
-    // 3. Атмосфера. Сначала объёмный свет в половинном разрешении, затем небо, туман и AO
+    // 3. Атмосфера. Сначала объёмный свет в половинном разрешении, затем небо, туман и AO.
+    // Карта блоков — в пикселях кадра, к целям половинного разрешения она не относится
+    if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
     glBindVertexArray(R.empty_vao);
@@ -1264,8 +1266,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindTextureUnit(2, R.shadow_tex);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (rs->ao_half) {
-        // AO в половинном разрешении; блоки сцены к этой цели не относятся
-        if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
+        // AO в половинном разрешении
         glBindFramebuffer(GL_FRAMEBUFFER, R.ao.fbo);
         glUseProgram(R.prog_ao);
         glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
@@ -1273,9 +1274,9 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         glUniform1i(U_A_FRAME, (GLint)fv->frame);
         glUniform1f(U_A_PROJ_SCALE, fv->proj.m[5] * 0.5f * (f32)ih);
         glDrawArrays(GL_TRIANGLES, 0, 3);
-        if (vrs) glEnable(GL_SHADING_RATE_IMAGE_NV);
     }
 
+    if (vrs) glEnable(GL_SHADING_RATE_IMAGE_NV);
     glBindFramebuffer(GL_FRAMEBUFFER, R.atmos.fbo);
     glViewport(0, 0, iw, ih);
     glUseProgram(R.prog_atmos);

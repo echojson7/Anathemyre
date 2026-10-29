@@ -40,6 +40,15 @@ vec3 texel_snap(vec3 p, vec3 n, float t)
     return d;
 }
 
+// Шов вдоль линий u = k·p: сила 0..1, h — полуширина спада, м. На квадратах размера t (t > 0) шов тоньше
+// квадрата пропал бы: центр квадрата не попадает в шов. Поэтому там темнеет ровно тот квадрат, через который
+// проходит линия, слабее во столько, во сколько квадрат шире шва (2h)
+float seam_line(float u, float p, float h, float t)
+{
+    if (t > 0.0) return mod(0.5 * t - u, p) < t ? min(2.0 * h / t, 1.0) : 0.0;
+    return 1.0 - smoothstep(0.0, h, abs(fract(u / p + 0.5) - 0.5) * p);
+}
+
 float sun_shadow(vec3 p, vec3 n)
 {
     vec3 off = p + n * 0.06 + u_sun_dir * 0.03;
@@ -123,8 +132,8 @@ void main()
         float big = fbm3(P * 0.18);
         float mid = fbm3(P * 1.1 + 4.0);
         // Опалубка: швы между плитами
-        vec2 pan = abs(fract(vec2(P.x + P.z, P.y) / vec2(1.6, 1.2)) - 0.5);
-        float seam = smoothstep(0.485, 0.5, max(pan.x, pan.y));
+        float st = snap ? base : 0.0;
+        float seam = max(seam_line(P.x + P.z, 1.6, 0.024, st), seam_line(P.y, 1.2, 0.018, st));
         // Потёки сверху вниз на стенах
         float streak = noise3(vec3(P.x * 3.0, P.y * 0.15, P.z * 3.0));
         float vertical = 1.0 - abs(N.y);
@@ -132,8 +141,7 @@ void main()
         albedo *= mix(1.0, 0.65 + 0.5 * streak, vertical * 0.8);
         albedo *= 1.0 - seam * 0.35 * vertical;
         // Плиты пола 4x4 м и пятна
-        vec2 tile = abs(fract(P.xz / 4.0) - 0.5);
-        float tseam = smoothstep(0.488, 0.5, max(tile.x, tile.y));
+        float tseam = max(seam_line(P.x, 4.0, 0.048, st), seam_line(P.z, 4.0, 0.048, st));
         float stain = smoothstep(0.45, 0.75, fbm3(vec3(P.xz * 0.35, 1.0)));
         albedo *= 1.0 - (tseam * 0.4 + stain * 0.3) * (1.0 - vertical);
         albedo *= 0.88 + 0.24 * mid;

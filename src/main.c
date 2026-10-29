@@ -17,6 +17,7 @@
 #include "game/bench.h"
 #include "game/camera.h"
 #include "game/controls.h"
+#include "game/editor.h"
 #include "game/field.h"
 #include "game/figures.h"
 #include "game/hud.h"
@@ -41,6 +42,7 @@ typedef struct Options {
     bool        follow;      // камера следует за своим персонажем
     f32         tod;         // время суток на старте: 0 полночь, 0.5 полдень
     bool        inspect;     // выбрать отряд и открыть осмотр (для снимков)
+    bool        editor;      // выбрать первого из отряда и открыть ВНЕШНОСТЬ (для снимков)
     i32         look_slot;   // для снимков: осмотреть чужого в слоте поля look_slot−1
     u32         arena_bench; // прогнать N боёв арены без окна
     u32         field_bench; // сценка атаки и нагрузка поля на N−1 тел без окна
@@ -94,7 +96,7 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--attack K] [--look-slot N] [--valley] [--threads N]");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--attack K] [--look-slot N] [--valley] [--threads N]");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
@@ -113,6 +115,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--follow")) o->follow = true;
         else if (!strcmp(a, "--tod") && i + 1 < argc) o->tod = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--inspect")) o->inspect = true;
+        else if (!strcmp(a, "--editor")) o->editor = true;
         else if (!strcmp(a, "--look-slot") && i + 1 < argc) o->look_slot = atoi(argv[++i]) + 1;
         else if (!strcmp(a, "--move-bench")) {
             o->move_bench = true;
@@ -308,6 +311,13 @@ int main(int argc, char **argv)
         hud_look(&hud, LOOK_SQUAD, 0);
         hud.win_inv = hud.win_char = true;
     }
+    Editor editor;
+    editor_init(&editor);
+    if (opt.editor) {
+        squad->selected[0] = true;
+        hud_look(&hud, LOOK_SQUAD, 0);
+        hud.win_look = true;
+    }
     if (opt.look_slot > 0 && (u32)opt.look_slot <= field->w.count) {
         hud_look(&hud, LOOK_FIELD, (u32)opt.look_slot - 1);
         hud.win_inv = hud.win_char = true;
@@ -352,9 +362,10 @@ int main(int argc, char **argv)
             humans_row_toggle(humans, &mb, &perm, data_dir, world_ground);
         }
         // Перенос отряда между лагерем и долиной (отладка; пешком тоже можно): камера за ним
+        bool jumped = false;   // фигуры ещё на старом месте: в этом кадре камера за ними не идёт
         if (set.travel) {
             set.travel = false;
-            if (world_travel(world)) {
+            if ((jumped = world_travel(world))) {
                 cam = !world_squad_in_valley(world) || opt.cam_set ? opt.cam : VALLEY_BENCH_CAM(valley->spawn);
                 cam_y = world_ground(cam.target.x, cam.target.z);
                 if (hud.look_kind != LOOK_SQUAD) hud_look(&hud, LOOK_SQUAD, 0);
@@ -410,15 +421,21 @@ int main(int argc, char **argv)
         ui_begin(ww, wh);
         Input hin = in;
         menu_input(&hud, &hin, &set, world, &cam, humans->on, &stats);
+        editor_input(&editor, &hud, &hin, world, &cam, humans->on);
         humans_flip |= set.humans;
         bench_request |= set.bench;
         set.humans = set.bench = false;
         HudWorld hw = { .squad = squad, .arena = world->arena, .aview = &world->aview, .field = field, .view = fig->view,
                         .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day };
         bool ui_busy = hud_input(&hud, &hin, &hw);
-        if (hud.focus >= 0) {
+        if (hud.focus >= 0 && !jumped) {
             V3 fp = fig->view[squad->member[hud.focus]].pos;
-            cam.target = v3(fp.x, 0, fp.z);
+            cam.target = v3(fp.x, cam.target.y, fp.z);
+        }
+        // Камера за тем, кого правят в окне ВНЕШНОСТЬ
+        if (editor_follow(&editor) >= 0 && !jumped) {
+            V3 fp = fig->view[editor_follow(&editor)].pos;
+            cam.target = v3(fp.x, cam.target.y, fp.z);
         }
         orders_input(&hud, &in, &hin, &hw, ui_busy, fv.cam_pos, ww, wh, world);
 
