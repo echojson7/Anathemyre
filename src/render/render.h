@@ -6,7 +6,7 @@
 #include "../core/math3d.h"
 #include "mesh.h"
 
-#define RENDER_MAX_BONES 16
+#define RENDER_MAX_BONES 24
 
 typedef struct GpuMesh {
     u32 vao, vbo, ibo;

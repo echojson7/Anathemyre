@@ -254,6 +254,9 @@ int main(int argc, char **argv)
             CharPose p = {
                 .pos = v3(crowd.x[i], 0.1f, crowd.z[i]), .heading = crowd.heading[i],
                 .phase = crowd.phase[i], .walk = crowd.walk[i], .time = sim_time, .seed = crowd.seed[i],
+                // Разброс сложения внутри класса H: рост ±6%, ширина ±8%
+                .height = 1.0f + 0.06f * sinf(crowd.seed[i] * 7.31f),
+                .width = 1.0f + 0.08f * sinf(crowd.seed[i] * 3.17f + 1.0f),
             };
             M4 *b = &bones[i * RENDER_MAX_BONES];
             character_pose(&p, b);

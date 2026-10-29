@@ -1,30 +1,9 @@
 #include "character.h"
 
-typedef struct BoneDef {
-    i32 parent;
-    V3  joint;  // сустав в позе привязки, пространство модели
-} BoneDef;
-
-#define HIP_Y   0.96f
-#define KNEE_Y  0.52f
-#define ANKLE_Y 0.09f
-#define HIP_X   0.10f
-
-static const BoneDef g_bones[BONE_COUNT] = {
-    [BONE_PELVIS]      = { -1, { 0.0f, 1.00f, 0.0f } },
-    [BONE_CHEST]       = { BONE_PELVIS, { 0.0f, 1.05f, 0.0f } },
-    [BONE_HEAD]        = { BONE_CHEST, { 0.0f, 1.50f, 0.0f } },
-    [BONE_UPPER_ARM_L] = { BONE_CHEST, { 0.21f, 1.44f, 0.0f } },
-    [BONE_FOREARM_L]   = { BONE_UPPER_ARM_L, { 0.24f, 1.16f, 0.0f } },
-    [BONE_UPPER_ARM_R] = { BONE_CHEST, { -0.21f, 1.44f, 0.0f } },
-    [BONE_FOREARM_R]   = { BONE_UPPER_ARM_R, { -0.24f, 1.16f, 0.0f } },
-    [BONE_THIGH_L]     = { BONE_PELVIS, { HIP_X, HIP_Y, 0.0f } },
-    [BONE_SHIN_L]      = { BONE_THIGH_L, { HIP_X, KNEE_Y, 0.0f } },
-    [BONE_FOOT_L]      = { BONE_SHIN_L, { HIP_X, ANKLE_Y, 0.0f } },
-    [BONE_THIGH_R]     = { BONE_PELVIS, { -HIP_X, HIP_Y, 0.0f } },
-    [BONE_SHIN_R]      = { BONE_THIGH_R, { -HIP_X, KNEE_Y, 0.0f } },
-    [BONE_FOOT_R]      = { BONE_SHIN_R, { -HIP_X, ANKLE_Y, 0.0f } },
-};
+#define HIP_Y   BODY_HIP_Y
+#define KNEE_Y  BODY_KNEE_Y
+#define ANKLE_Y BODY_ANKLE_Y
+#define HIP_X   BODY_HIP_X
 
 typedef struct Palette {
     V3 cloak, jacket, trousers, leather, boots, wrap, rust, dark_metal, lens;
@@ -111,7 +90,8 @@ static void arm(MeshBuilder *mb, const Palette *pal, bool left)
         V2 ring[] = { { 0.0f, 0.052f - (f32)i * 0.003f }, { 0.018f, 0.052f - (f32)i * 0.003f } };
         mb_lathe(mb, side_x(v3(0.245f, y, 0.004f), left), side_x(v3(0.25f, y - 1.0f, 0.04f), left), ring, 2, SEG, 1.0f, 1.0f);
     }
-    mb_set(mb, pal->leather, MAT_LEATHER, fore);
+    u8 hand = left ? BONE_HAND_L : BONE_HAND_R;
+    mb_set(mb, pal->leather, MAT_LEATHER, hand);
     caps(mb, side_x(v3(0.25f, 0.95f, 0.012f), left), side_x(v3(0.25f, 0.905f, 0.015f), left), 0.046f, 0.046f, 1.0f, 1.0f);
     box_at(mb, side_x(v3(0.252f, 0.85f, 0.025f), left), v3(0.045f, 0.10f, 0.085f), 0.05f, 0, 0.0f);
     box_at(mb, side_x(v3(0.25f, 0.79f, 0.03f), left), v3(0.04f, 0.04f, 0.075f), 0.25f, 0, 0.0f);
@@ -274,25 +254,25 @@ void character_build(MeshBuilder *mb, u32 variant)
     // Оружие в правой руке
     if (variant % 2 == 0) {
         // Длинный клинок из обрезка листа
-        mb_set(mb, pal->leather, MAT_LEATHER, BONE_FOREARM_R);
+        mb_set(mb, pal->leather, MAT_LEATHER, BONE_HAND_R);
         mb_cylinder(mb, v3(-0.25f, 0.93f, 0.05f), v3(-0.25f, 0.76f, 0.05f), 0.019f, 10);
-        mb_set(mb, pal->dark_metal, MAT_METAL, BONE_FOREARM_R);
+        mb_set(mb, pal->dark_metal, MAT_METAL, BONE_HAND_R);
         box_at(mb, v3(-0.25f, 0.755f, 0.05f), v3(0.035f, 0.025f, 0.16f), 0, 0, 0);
         mb_cylinder(mb, v3(-0.25f, 0.95f, 0.05f), v3(-0.25f, 0.93f, 0.05f), 0.028f, 10);
-        mb_set(mb, v3(0.36f, 0.35f, 0.33f), MAT_METAL, BONE_FOREARM_R);
+        mb_set(mb, v3(0.36f, 0.35f, 0.33f), MAT_METAL, BONE_HAND_R);
         box_at(mb, v3(-0.25f, 0.37f, 0.085f), v3(0.012f, 0.76f, 0.07f), -0.08f, 0, 0);
         box_at(mb, v3(-0.25f, -0.02f, 0.115f), v3(0.011f, 0.06f, 0.05f), -0.5f, 0, 0);
     } else {
         // Дубина из трубы с намотанной проволокой
-        mb_set(mb, pal->rust, MAT_RUST, BONE_FOREARM_R);
+        mb_set(mb, pal->rust, MAT_RUST, BONE_HAND_R);
         mb_cylinder(mb, v3(-0.25f, 0.96f, 0.03f), v3(-0.26f, 0.22f, 0.12f), 0.024f, 10);
         mb_cylinder(mb, v3(-0.26f, 0.40f, 0.098f), v3(-0.26f, 0.20f, 0.124f), 0.05f, 10);
-        mb_set(mb, pal->dark_metal, MAT_METAL, BONE_FOREARM_R);
+        mb_set(mb, pal->dark_metal, MAT_METAL, BONE_HAND_R);
         for (int i = 0; i < 4; i++) {
             f32 t = 0.22f + (f32)i * 0.045f;
             mb_cylinder(mb, v3(-0.26f, t + 0.01f, 0.098f + (0.4f - t) * 0.13f), v3(-0.26f, t, 0.1f + (0.4f - t) * 0.13f), 0.056f, 10);
         }
-        mb_set(mb, pal->leather, MAT_LEATHER, BONE_FOREARM_R);
+        mb_set(mb, pal->leather, MAT_LEATHER, BONE_HAND_R);
         mb_cylinder(mb, v3(-0.25f, 0.93f, 0.035f), v3(-0.252f, 0.76f, 0.055f), 0.03f, 10);
     }
 }
@@ -356,7 +336,7 @@ void character_pose(const CharPose *p, M4 *out)
     M4 local[BONE_COUNT];
     for (int i = 0; i < BONE_COUNT; i++) local[i] = m4_identity();
     local[BONE_PELVIS] = m4_rot_y(pelvis_yaw);
-    local[BONE_CHEST] = m4_mul(m4_rot_x(0.08f * w + 0.02f * breathe), m4_rot_y(-pelvis_yaw * 1.8f));
+    local[BONE_SPINE] = m4_mul(m4_rot_x(0.08f * w + 0.02f * breathe), m4_rot_y(-pelvis_yaw * 1.8f));
     f32 look = sinf(p->time * 0.31f + p->seed * 3.0f) * 0.55f * (1.0f - w);
     local[BONE_HEAD] = m4_mul(m4_rot_y(look + pelvis_yaw * 0.8f), m4_rot_x(-0.06f * w + 0.1f * (1.0f - w)));
 
@@ -387,11 +367,13 @@ void character_pose(const CharPose *p, M4 *out)
         local[thigh + 2] = m4_rot_x(-(tp + kn) + pitch * w);
     }
 
-    M4 root = m4_mul(m4_translate(p->pos), m4_mul(m4_rot_y(p->heading), m4_translate(v3(dx, dy, 0))));
+    f32 sh = p->height > 0.0f ? p->height : 1.0f;
+    f32 sw = p->width > 0.0f ? p->width : 1.0f;
+    M4 root = m4_mul(m4_translate(p->pos), m4_mul(m4_rot_y(p->heading), m4_mul(m4_scale(v3(sw, sh, sw)), m4_translate(v3(dx, dy, 0)))));
     M4 world[BONE_COUNT];
     for (int i = 0; i < BONE_COUNT; i++) {
-        const BoneDef *b = &g_bones[i];
-        V3 rel = b->parent < 0 ? b->joint : v3_sub(b->joint, g_bones[b->parent].joint);
+        const BoneDef *b = &g_body_bones[i];
+        V3 rel = b->parent < 0 ? b->joint : v3_sub(b->joint, g_body_bones[b->parent].joint);
         M4 parent = b->parent < 0 ? root : world[b->parent];
         world[i] = m4_mul(parent, m4_mul(m4_translate(rel), local[i]));
         out[i] = m4_mul(world[i], m4_translate(v3_mul(b->joint, -1.0f)));

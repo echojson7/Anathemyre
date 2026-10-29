@@ -22,7 +22,7 @@ ifeq ($(WERROR),1)
 WARN    += -Werror
 endif
 
-SRC_COMMON := $(wildcard src/*.c src/core/*.c src/render/*.c src/game/*.c)
+SRC_COMMON := $(wildcard src/*.c src/core/*.c src/render/*.c src/game/*.c src/sim/*.c)
 
 ifeq ($(TARGET_OS),windows)
 EXE      := .exe

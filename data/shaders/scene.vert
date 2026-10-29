@@ -5,7 +5,7 @@ layout(location = 2) in vec4 a_color;
 layout(location = 3) in uvec2 a_mat_bone;
 
 layout(location = 0) uniform mat4 u_view_proj;
-layout(location = 1) uniform mat4 u_bones[16];
+layout(location = 50) uniform mat4 u_bones[24];
 layout(location = 17) uniform int u_skinned;
 
 out vec3 v_world;
@@ -20,7 +20,7 @@ void main()
     vec3 n = a_nrm;
     if (u_skinned != 0) {
         // Жёсткий скиннинг: одна кость на вершину
-        mat4 b = u_bones[min(a_mat_bone.y, 15u)];
+        mat4 b = u_bones[min(a_mat_bone.y, 23u)];
         p = b * p;
         n = mat3(b) * n;
     }

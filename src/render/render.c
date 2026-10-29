@@ -11,11 +11,12 @@
 
 // Расположения uniform задаются явно в GLSL (layout(location = N))
 enum {
-    U_VIEW_PROJ = 0, U_BONES = 1, U_SKINNED = 17, U_LIGHT_VP = 18,
+    U_VIEW_PROJ = 0, U_SKINNED = 17, U_LIGHT_VP = 18,
     U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37,
     U_S_POST = 41, U_S_FRAME = 42,
+    U_BONES = 50,  // занимает 50..50+RENDER_MAX_BONES-1
 };
 
 // Метки времени GPU: кольцо из нескольких кадров, чтобы чтение не ждало GPU
