@@ -34,6 +34,8 @@ void         platform_shutdown(void);
 void         platform_poll(Input *in);
 void         platform_swap(void);
 void         platform_set_vsync(bool on);
+// Окно без рамки на весь монитор и обратно
+void         platform_set_fullscreen(bool on);
 void         platform_window_size(i32 *w, i32 *h);
 PlatformProc platform_gl_proc(const char *name);
 // Папка исполняемого файла, без завершающего '/'

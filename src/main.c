@@ -67,6 +67,7 @@ typedef struct Options {
     bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
     bool        pixel_int;   // пиксели только целых размеров 1, 2, 4, 8
     bool        ao_half;     // AO в половинном разрешении
+    bool        fullscreen;  // окно без рамки на весь монитор
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
     bool        valley;      // начать в долине (иначе переход из меню НАСТРОЙКИ)
@@ -337,6 +338,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
         else if (!strcmp(a, "--pixel-int")) o->pixel_int = true;
         else if (!strcmp(a, "--ao-half")) o->ao_half = true;
+        else if (!strcmp(a, "--fullscreen")) o->fullscreen = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--attack") && i + 1 < argc) o->attack = atoi(argv[++i]) + 1;
@@ -616,6 +618,8 @@ int main(int argc, char **argv)
     u32 fps_frames = 0;
     f64 cpu_logic = 0, cpu_submit = 0, cpu_swap = 0;
     bool vsync = !opt.no_vsync && opt.shot_path == NULL;
+    bool fullscreen = opt.fullscreen && opt.shot_path == NULL;
+    if (fullscreen) platform_set_fullscreen(true);
     f32 sim_time = 0, real_time = 0;
     f32 tod = opt.tod;
     u32 day = 1;
@@ -769,6 +773,7 @@ int main(int argc, char **argv)
                 platform_set_vsync(vsync);
                 log_info("VSYNC: %s", vsync ? "вкл" : "выкл");
             }
+            if (hud_debug_check(&hud, "ВО ВЕСЬ ЭКРАН", &fullscreen)) platform_set_fullscreen(fullscreen);
             if (hud_debug_check(&hud, "СУТКИ ИДУТ", &day_run)) log_info("СУТКИ: %s", day_run ? "идут" : "остановлены");
             if (hud_debug_check(&hud, "КАМЕРА СЛЕДУЕТ", &opt.follow) && opt.follow) cam.dist = MIN(cam.dist, 8.0f);
             bool humans_want = humans_on;
