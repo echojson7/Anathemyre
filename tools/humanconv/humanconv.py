@@ -35,6 +35,9 @@ PEOPLE = [
          mods={'torso/torso-muscle-pectoral-incr': 0.4,
                'measure/measure-upperarm-length-decr': 0.4, 'measure/measure-lowerarm-length-decr': 0.4}),
 ]
+# Ступни у всех чуть меньше: в позах сидя и на корточках родные ступни MakeHuman слишком бросаются в глаза
+for _p in PEOPLE:
+    _p['mods'].update({'armslegs/%s-foot-scale-%s-decr' % (s, a): w for s in 'lr' for a, w in (('depth', 0.38), ('horiz', 0.3))})
 
 
 def load_obj(path):
@@ -1086,11 +1089,11 @@ def garments(ctx):
         for bn in (FT_L, FT_R):
             q = used[bone[used] == bn]
             n_, sg_ = (12, 8, 5)[l], (12, 8, 6)[l]
-            pv, pt, low = last(q, n_, sg_, 0.011)
+            pv, pt, low = last(q, n_, sg_, 0.009)
             col = np.where(low[:, None], np.array(SOLE), np.array((0.085, 0.065, 0.045)))
             out['boots'][l].append(rigid_part(pv, pt, col, MAT_LEATHER, bn, bone == bn))
             if l < 2:
-                pv, pt, _ = last(q, n_, sg_, 0.0145, t0=0.72)
+                pv, pt, _ = last(q, n_, sg_, 0.012, t0=0.72)
                 out['boots'][l].append(rigid_part(pv, pt, (0.26, 0.25, 0.22), MAT_METAL, bn, bone == bn))
 
     # Резиновые краги: перчатки с широким раструбом до середины предплечья
