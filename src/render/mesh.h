@@ -40,6 +40,9 @@ typedef struct MeshBuilder {
 } MeshBuilder;
 
 bool mb_init(MeshBuilder *mb, Arena *arena, u32 vcap, u32 icap);
+// Готовая сетка из файла .mesh (tools/humanconv): "AMSH", версия 1, число вершин и индексов, Vertex[], u32[].
+// Буферы берутся из арены по размеру файла
+bool mb_load(MeshBuilder *mb, Arena *arena, const char *path);
 void mb_set(MeshBuilder *mb, V3 color, Material mat, u8 bone);
 
 // Единичный куб [-0.5, 0.5]^3, преобразованный матрицей; плоские нормали

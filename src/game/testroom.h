@@ -4,21 +4,18 @@
 
 #include "../core/rng.h"
 #include "../render/mesh.h"
+#include "player.h"
 
 #define TR_MAX_CHARS 16
 
-// Толпа в виде структуры массивов
+// Бродящие фигуры: тела те же, что у отряда (Player), ходят шагом от точки к точке
 typedef struct Crowd {
-    u32 count;
-    f32 x[TR_MAX_CHARS], z[TR_MAX_CHARS];
-    f32 heading[TR_MAX_CHARS];
-    f32 phase[TR_MAX_CHARS];
-    f32 walk[TR_MAX_CHARS];
-    f32 target_x[TR_MAX_CHARS], target_z[TR_MAX_CHARS];
-    f32 wait[TR_MAX_CHARS];
-    f32 seed[TR_MAX_CHARS];
-    u8  variant[TR_MAX_CHARS];
-    bool stationary[TR_MAX_CHARS];
+    u32    count;
+    Player body[TR_MAX_CHARS];
+    f32    wait[TR_MAX_CHARS];
+    f32    seed[TR_MAX_CHARS];
+    u8     variant[TR_MAX_CHARS];
+    bool   stationary[TR_MAX_CHARS];
 } Crowd;
 
 // Зал и обломки: отбрасывают тени
