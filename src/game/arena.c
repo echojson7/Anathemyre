@@ -333,7 +333,7 @@ bool arena_bout_tick(ArenaSession *s)
         if (s->decided && w->ev[k].kind == EV_DEATH) st->deaths_after++;
         if (s->log) print_event(s, &w->ev[k]);
     }
-    w->ev_count = 0;
+    combat_events_done(w);
     if (s->decided && t == s->decided + (u32)(BANDAGE_S * COMBAT_HZ))
         for (u32 k = 0; k < w->count; k++) w->bleed[k] = 0.0f;
     if (!s->decided) {

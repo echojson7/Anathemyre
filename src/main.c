@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "audio/audio.h"
 #include "core/arena.h"
 #include "core/clock.h"
 #include "core/log.h"
@@ -13,6 +14,7 @@
 #include "game/battle.h"
 #include "game/anim.h"
 #include "game/field.h"
+#include "game/sfx.h"
 #include "game/hud.h"
 #include "game/look.h"
 #include "game/squad.h"
@@ -34,7 +36,7 @@
 static const f32 g_char_lod_px[CHAR_LODS - 1] = { 200.0f, 70.0f };
 #define ARENA_SHOW_AFTER_BOUT_S 12.0f
 #define CAM_FOV 0.95f  // по вертикали, рад
-#define DAY_LENGTH_S 120.0f  // полные сутки, с; пока быстро, чтобы смену было видно
+#define DAY_LENGTH_S 240.0f  // полные сутки, с; пока быстро, чтобы смену было видно
 
 typedef struct RtsCamera {
     V3  target;
@@ -52,6 +54,7 @@ typedef struct Options {
     bool        follow;      // камера следует за своим персонажем
     f32         tod;         // время суток на старте: 0 полночь, 0.5 полдень
     bool        inspect;     // выбрать отряд и открыть осмотр (для снимков)
+    i32         look_slot;   // для снимков: осмотреть чужого в слоте поля look_slot−1
     u32         arena_bench; // прогнать N боёв арены без окна
     u32         field_bench; // сценка атаки и нагрузка поля на N−1 тел без окна
     i32         attack;      // для снимков: весь отряд сразу атакует бродящего номер attack−1
@@ -67,10 +70,13 @@ typedef struct Options {
     bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
     bool        pixel_int;   // пиксели только целых размеров 1, 2, 4, 8
     bool        ao_half;     // AO в половинном разрешении
+    bool        noise_tex;   // шум материалов из 3D-текстуры
     bool        fullscreen;  // окно без рамки на весь монитор
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
     bool        valley;      // начать в долине (иначе переход из меню НАСТРОЙКИ)
+    bool        mute;        // без звука
+    const char *sound_demo;  // сценка звука в WAV без окна
 } Options;
 
 // Вещи поверх тела: те же кости, что у тела
@@ -188,6 +194,101 @@ static u32 field_body_draw(const Field *f, u32 slot, CharPose *p, const GpuMesh 
         items[n++] = (DrawItem){ .mesh = weapon, .bones = b };
     }
     return n;
+}
+
+// Внешность чужого на поле по слоту: та же в мире и на портрете
+typedef struct SlotLook {
+    u8  variant;
+    f32 seed, height, width;
+    M4  look;
+    u8  gear[GEAR_MAX_WORN];   // одежда поверх тела
+    u8  ngear;
+} SlotLook;
+
+#define TORCH_LIGHTS_MAX 128
+
+// Факел зажигают с темнотой, каждый в свой момент: 0 погашен (рука опущена) .. 1 горит
+static f32 torch_lit(bool has, f32 seed, f32 night)
+{
+    if (!has) return 0.0f;
+    f32 th = 0.22f + 0.3f * (seed * 0.618034f - floorf(seed * 0.618034f));
+    f32 t = clampf((night - th) / 0.1f, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// Факел в левой руке по костям b: древко, пламя и свет, пока горит
+static u32 torch_draw(const M4 *b, f32 lit, f32 seed, f32 time, const GpuMesh *stick, const GpuMesh *flame,
+                      DrawItem *items, PointLight *lights, u32 *nl)
+{
+    u32 n = 0;
+    items[n++] = (DrawItem){ .mesh = stick, .bones = b };
+    if (lit < 0.05f) return n;
+    items[n++] = (DrawItem){ .mesh = flame, .bones = b, .no_shadow = true };
+    if (*nl >= TORCH_LIGHTS_MAX) return n;
+    // Пламя пляшет: яркость дрожит от двух частот и случайных провалов
+    f32 fl = 0.80f + 0.10f * sinf(time * 17.0f + seed) + 0.07f * sinf(time * 29.3f + seed * 3.1f) +
+             0.05f * sinf(time * 47.0f + seed * 7.7f);
+    PointLight *l = &lights[(*nl)++];
+    l->pos = v3_add(torch_flame_pos(b), v3(0.0f, 0.06f, 0.0f));
+    l->radius = 8.0f;
+    l->color = v3_mul(v3(1.0f, 0.50f, 0.18f), 2.6f * lit * fl);
+    l->cone = -1.0f;
+    l->dir = v3(0, -1, 0);
+    l->glow = 0.02f;
+    return n;
+}
+
+// Толпа на поле (бродящие, зрители арены): тела, оружие, факелы
+static u32 crowd_draw(const Crowd *c, const Field *f, f32 time, f32 night, const GpuMesh *body, const GpuMesh *gear,
+                      const GpuMesh *weapon,
+                      const GpuMesh *stick, const GpuMesh *flame, M4 *bones, M4 *drop_bones, DrawItem *items,
+                      PointLight *lights, u32 *nl)
+{
+    u32 n = 0;
+    for (u32 i = 0; i < c->count; i++) {
+        const Player *cp = &c->body[i];
+        const CharSheet *cs = &c->sheet[i];
+        bool armed = cs->equip[SLOT_WEAPON].kind == IK_WEAPON;
+        u8 wid = cs->equip[SLOT_WEAPON].id;
+        f32 lit = torch_lit(c->torch[i], c->seed[i], night);
+        CharPose p = {
+            .pos = cp->pos, .heading = cp->heading, .phase = cp->phase, .walk = cp->walk, .run = cp->run,
+            .speed = cp->speed, .time = time, .seed = c->seed[i],
+            .lean_fwd = cp->lean_fwd, .lean_side = cp->lean_side, .look = cp->look, .idle = cp->idle,
+            // Разброс сложения внутри класса H: рост ±6%, ширина ±8%
+            .height = 1.0f + 0.06f * sinf(c->seed[i] * 7.31f),
+            .width = 1.0f + 0.08f * sinf(c->seed[i] * 3.17f + 1.0f),
+            .weapon = armed ? (u8)(wid + 1) : 0, .torch = lit,
+        };
+        u32 kind = c->variant[i] % BODY_KINDS;
+        CharLook lk;
+        look_make(&lk, kind, i * 7919u + c->look_base, 72.0f * p.height * p.height * p.width * p.width, 1.8f * p.height,
+                  30.0f + 25.0f * sinf(c->seed[i] * 2.1f));
+        M4 *b = &bones[i * RENDER_MAX_BONES];
+        u8 worn[GEAR_MAX_WORN];
+        u32 nw = gear_random(c->gear_seed[i], worn);
+        n += field_body_draw(f, (u32)cp->slot, &p, &body[kind], armed ? &weapon[wid] : NULL, look_matrix(&lk, kind),
+                             gear + kind * GEAR_COUNT, worn, nw, b, drop_bones + (size_t)cp->slot * RENDER_MAX_BONES, items + n);
+        if (c->torch[i]) n += torch_draw(b, lit, c->seed[i], time, stick, flame, items + n, lights, nl);
+    }
+    return n;
+}
+
+// Запомнить внешность толпы по слотам поля
+static void crowd_looks(const Crowd *c, SlotLook *sl)
+{
+    for (u32 i = 0; i < c->count; i++) {
+        SlotLook *o = &sl[c->body[i].slot];
+        o->variant = (u8)(c->variant[i] % BODY_KINDS);
+        o->seed = c->seed[i];
+        o->height = 1.0f + 0.06f * sinf(o->seed * 7.31f);
+        o->width = 1.0f + 0.08f * sinf(o->seed * 3.17f + 1.0f);
+        CharLook lk;
+        look_make(&lk, o->variant, i * 7919u + c->look_base, 72.0f * o->height * o->height * o->width * o->width,
+                  1.8f * o->height, 30.0f + 25.0f * sinf(o->seed * 2.1f));
+        o->look = look_matrix(&lk, o->variant);
+        o->ngear = (u8)gear_random(c->gear_seed[i], o->gear);
+    }
 }
 
 // Ближе 4 м камера подходит только к ряду людей (меню НАСТРОЙКИ, крупные планы)
@@ -342,11 +443,12 @@ static bool pick_ground(M4 view_proj, V3 eye, f32 nx, f32 ny, V3 *out)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--attack K] [--valley]");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--attack K] [--look-slot N] [--valley]");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
     puts("anathemyre --field-bench N [--seed N]   приказ атаки без окна, затем нагрузка поля на N тел");
+    puts("anathemyre --sound-demo out.wav   сценка звука (ветер, шаги, бой, даль) в файл и замер микшера; --mute — играть без звука");
 }
 
 static bool parse_args(int argc, char **argv, Options *o)
@@ -360,6 +462,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--follow")) o->follow = true;
         else if (!strcmp(a, "--tod") && i + 1 < argc) o->tod = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--inspect")) o->inspect = true;
+        else if (!strcmp(a, "--look-slot") && i + 1 < argc) o->look_slot = atoi(argv[++i]) + 1;
         else if (!strcmp(a, "--move-bench")) {
             o->move_bench = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
@@ -367,9 +470,12 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--no-pixel")) o->no_pixel = true;
         else if (!strcmp(a, "--pixel-div") && i + 1 < argc) o->pixel_div = atoi(argv[++i]);
         else if (!strcmp(a, "--valley")) o->valley = true;
+        else if (!strcmp(a, "--mute")) o->mute = true;
+        else if (!strcmp(a, "--sound-demo") && i + 1 < argc) o->sound_demo = argv[++i];
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
         else if (!strcmp(a, "--pixel-int")) o->pixel_int = true;
         else if (!strcmp(a, "--ao-half")) o->ao_half = true;
+        else if (!strcmp(a, "--noise-tex")) o->noise_tex = true;
         else if (!strcmp(a, "--fullscreen")) o->fullscreen = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
@@ -435,6 +541,7 @@ int main(int argc, char **argv)
     if (!parse_args(argc, argv, &opt)) return 1;
     if (opt.move_bench) return player_bench(opt.move_trace);
     if (opt.field_bench) return field_bench(opt.field_bench - 1, opt.seed);
+    if (opt.sound_demo) return audio_demo(opt.sound_demo);
     if (opt.arena_bench) return arena_bench(opt.arena_bench, opt.seed, opt.arena_log);
     if (opt.battle[0] || opt.battle[1])
         return battle_bench(opt.battle[0], opt.battle[1], opt.seed, opt.threads, opt.battle_verify);
@@ -533,6 +640,14 @@ int main(int argc, char **argv)
         gpu_mesh_upload(&weapon_mesh[k], &mb);
         perm.used = mark;
     }
+    // Факел: древко и пламя отдельно, пламя рисуется, только пока горит
+    GpuMesh torch_mesh[2];
+    for (u32 k = 0; k < 2; k++) {
+        mb_init(&mb, &perm, 2000, 6000);
+        torch_build(&mb, k == 1);
+        gpu_mesh_upload(&torch_mesh[k], &mb);
+        perm.used = mark;
+    }
 
     // Люди из MakeHuman (tools/humanconv): у каждого три LOD рядом, для сравнения
     enum { HUMAN_N = BODY_KINDS * CHAR_LODS };
@@ -588,6 +703,10 @@ int main(int argc, char **argv)
 
     Crowd crowd;
     crowd_init(&crowd, &rng, CROWD_SIZE);
+    // Зрители арены — такие же люди, как бродящие: стоят на своих местах за оградой
+    Crowd *watchers = ARENA_PUSH_ARRAY(&perm, Crowd, 1);
+    crowd_init_still(watchers, aview->spos, aview->sh, aview->sseed, AV_SPECTATORS, ground_height);
+    M4 *watcher_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)TR_MAX_CHARS * RENDER_MAX_BONES);
     Mobs *mobs = ARENA_PUSH_ARRAY(&perm, Mobs, 1);
     mobs_init(mobs, &rng);
     M4 *mob_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)MOB_MAX * RENDER_MAX_BONES);
@@ -616,6 +735,43 @@ int main(int argc, char **argv)
     for (u32 i = 0; i < crowd.count; i++) field_add(field, &crowd.body[i], &crowd.sheet[i], (u8)(2 + i), 0);
     // Мобы — одна шайка: вступаются друг за друга
     for (u32 i = 0; i < mobs->count; i++) field_add(field, &mobs->body[i], &mobs->sheet[i], 1, FF_ASSIST);
+    // Зрители — одна толпа: не вступаются, только отбиваются. Скудель — один посёлок: за своих встают сторожа
+    for (u32 i = 0; i < watchers->count; i++) field_add(field, &watchers->body[i], &watchers->sheet[i], 2 + CROWD_SIZE, 0);
+    for (u32 i = 0; i < folk->count; i++)
+        field_add(field, &folk->body[i], &folk->sheet[i], 3 + CROWD_SIZE, folk->armed[i] ? FF_ASSIST : 0);
+    // Внешность чужих по слотам: для портретов
+    SlotLook *slot_look = ARENA_PUSH_ARRAY(&perm, SlotLook, field->w.count);
+    crowd_looks(&crowd, slot_look);
+    crowd_looks(watchers, slot_look);
+    for (u32 i = 0; i < mobs->count; i++) {
+        SlotLook *o = &slot_look[mobs->body[i].slot];
+        const CharSheet *cs = &mobs->sheet[i];
+        o->variant = (u8)(mobs->variant[i] % BODY_KINDS);
+        o->seed = mobs->seed[i];
+        o->height = cs->d.height / 1.8f;
+        o->width = 1.0f + 0.08f * sinf(o->seed * 3.17f + 1.0f);
+        CharLook lk;
+        look_make(&lk, o->variant, 2000u + i, cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
+        o->look = look_matrix(&lk, o->variant);
+        o->ngear = (u8)gear_from_sheet(cs, o->gear);
+    }
+    for (u32 i = 0; i < folk->count; i++) {
+        SlotLook *o = &slot_look[folk->body[i].slot];
+        o->variant = (u8)(folk->variant[i] % BODY_KINDS);
+        o->seed = folk->seed[i];
+        o->height = 1.0f + 0.06f * sinf(o->seed * 7.31f);
+        o->width = 1.0f + 0.08f * sinf(o->seed * 3.17f + 1.0f);
+        o->look = folk_look[i];
+        o->ngear = (u8)gear_random(i * 977u + 31u, o->gear);
+    }
+    PointLight *lights = ARENA_PUSH_ARRAY(&perm, PointLight, TORCH_LIGHTS_MAX);
+    // Звук: слушатель у камеры, шаги, бой поля и арены. Без звука снимки кадров и --mute
+    WorldSound *wsound = ARENA_PUSH_ARRAY(&perm, WorldSound, 1);
+    sfx_init(wsound, field, arena, ARENA_CENTER, ground_height);
+    // Банк собирается в своём потоке при старте; устройство открывается, только если звук включён
+    bool sound_ok = !opt.shot_path && audio_init(&perm), sound_on = sound_ok && !opt.mute;
+    f32 sound_vol = 0.8f;
+    if (sound_on) audio_start();
     // Оружие, выпавшее на землю, по слоту поля
     M4 *drop_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)field->w.count * RENDER_MAX_BONES);
     // На каждого: тело, кольцо, метка цели; плюс кольцо осматриваемого чужого и кольца целей атаки
@@ -634,6 +790,10 @@ int main(int argc, char **argv)
         hud_look(&hud, LOOK_SQUAD, 0);
         hud.win_inv = hud.win_char = true;
     }
+    if (opt.look_slot > 0 && (u32)opt.look_slot <= field->w.count) {
+        hud_look(&hud, LOOK_FIELD, (u32)opt.look_slot - 1);
+        hud.win_inv = hud.win_char = true;
+    }
     if (opt.attack > 0 && (u32)opt.attack <= crowd.count)
         for (u32 i = 0; i < squad->count; i++) {
             squad->selected[i] = true;
@@ -645,7 +805,7 @@ int main(int argc, char **argv)
 
     RtsCamera cam = opt.cam;
     RenderSettings rs = { .post = true, .pixel = !opt.no_pixel, .pixel_div = CLAMP(opt.pixel_div, 1, 3), .vrs = !opt.no_vrs,
-                          .pixel_int = opt.pixel_int, .ao_half = opt.ao_half };
+                          .pixel_int = opt.pixel_int, .ao_half = opt.ao_half, .noise_tex = opt.noise_tex };
 
     Input in;
     memset(&in, 0, sizeof in);
@@ -766,7 +926,8 @@ int main(int argc, char **argv)
 
         f64 t_logic = time_now();
         if (!bench.on) camera_update(&cam, &in, real_dt);
-        crowd_update(&crowd, &rng, dt);
+        crowd_update(&crowd, &rng, dt, testroom_ground);
+        crowd_update(watchers, &rng, dt, ground_height);
         town_folk_update(folk, &town_rng, dt, ground_height);
         mobs_update(mobs, &rng, dt);
         arena_view_update(aview, arena, dt);
@@ -809,6 +970,7 @@ int main(int argc, char **argv)
             }
             hud_debug_check(&hud, "ШЕЙДИНГ БЛОКАМИ", &rs.vrs);
             hud_debug_check(&hud, "AO ВПОЛОВИНУ", &rs.ao_half);
+            hud_debug_check(&hud, "ШУМ ИЗ ТЕКСТУРЫ", &rs.noise_tex);
             if (hud_debug_check(&hud, "VSYNC", &vsync)) {
                 platform_set_vsync(vsync);
                 log_info("VSYNC: %s", vsync ? "вкл" : "выкл");
@@ -844,6 +1006,14 @@ int main(int argc, char **argv)
             }
             if (hud_debug_button(&hud, "ЗАМЕР КАДРА")) bench_request = true;
             hud_debug_check(&hud, "ЖУРНАЛ", &hud.dbg.journal);
+            bool snd = sound_on;
+            if (hud_debug_check(&hud, "ЗВУК", &snd) && sound_ok) {
+                if (snd) audio_start();
+                sound_on = snd;
+                audio_volume(sound_vol, sound_on);
+            }
+            snprintf(val, sizeof val, "%.0f%%", (f64)(sound_vol * 100.0f));
+            if (hud_debug_slider(&hud, "ГРОМКОСТЬ", &sound_vol, 0.0f, 1.0f, val)) audio_volume(sound_vol, sound_on);
         }
         if (hud_debug_end(&hud)) {
             memset(hin.mouse_pressed, 0, sizeof hin.mouse_pressed);
@@ -859,9 +1029,12 @@ int main(int argc, char **argv)
             u8 pk;
             u32 pi;
             bool on_body = hud_pick(&hud, &hin, &hw, &pk, &pi);
+            bool any = false;
+            for (u32 i = 0; i < squad->count; i++) any |= squad->selected[i];
             if (on_body && pk == LOOK_FIELD) {
                 for (u32 i = 0; i < squad->count; i++)
                     if (squad->selected[i]) field_attack(field, (u32)squad->body[i].slot, pi);
+                if (any) audio_play_ui(SFX_UI_ORDER, 1.0f);
             } else if (!on_body || pk != LOOK_SQUAD) {
                 f32 nx = 2.0f * ((f32)in.mouse_x + 0.5f) / (f32)ww - 1.0f;
                 f32 ny = 1.0f - 2.0f * ((f32)in.mouse_y + 0.5f) / (f32)wh;
@@ -870,6 +1043,7 @@ int main(int argc, char **argv)
                     for (u32 i = 0; i < squad->count; i++)
                         if (squad->selected[i]) field_cancel(field, (u32)squad->body[i].slot, true);
                     squad_order_move(squad, hit);
+                    if (any) audio_play_ui(SFX_UI_TICK, 1.0f);
                 }
             }
         }
@@ -892,6 +1066,22 @@ int main(int argc, char **argv)
         }
         squad_update(squad, dt, ground_height);
         field_update(field, dt, ground_height);
+        if (sound_on) {
+            sfx_listener(wsound, fv.cam_pos, cam.target, cam.yaw, g_in_valley);
+            sfx_field(wsound, field);
+            if (!g_in_valley) sfx_arena(wsound, aview, arena);
+        }
+        if (day_run) {
+            tod += dt / DAY_LENGTH_S;
+            if (tod >= 1.0f) {
+                tod -= 1.0f;
+                day++;
+            }
+        }
+        Sky sky;
+        sky_at(tod, &sky);
+        // Свет кадра: фонари арены и факелы, кто их несёт
+        u32 nl = g_in_valley ? 0 : arena_view_lights(aview, sky.night, sim_time, lights);
 
         u32 n = 0;
         if (g_in_valley) n += valley_view_draw(valley, items);
@@ -899,62 +1089,57 @@ int main(int argc, char **argv)
             items[n++] = (DrawItem){ .mesh = &near_mesh };
             items[n++] = (DrawItem){ .mesh = &far_mesh, .no_shadow = true };
         }
-        for (u32 i = 0; !g_in_valley && i < crowd.count; i++) {
-            const Player *cp = &crowd.body[i];
-            const CharSheet *cs = &crowd.sheet[i];
-            bool armed = cs->equip[SLOT_WEAPON].kind == IK_WEAPON;
-            u8 wid = cs->equip[SLOT_WEAPON].id;
-            CharPose p = {
-                .pos = cp->pos, .heading = cp->heading, .phase = cp->phase, .walk = cp->walk, .run = cp->run,
-                .speed = cp->speed, .time = sim_time, .seed = crowd.seed[i],
-                .lean_fwd = cp->lean_fwd, .lean_side = cp->lean_side, .look = cp->look, .idle = cp->idle,
-                // Разброс сложения внутри класса H: рост ±6%, ширина ±8%
-                .height = 1.0f + 0.06f * sinf(crowd.seed[i] * 7.31f),
-                .width = 1.0f + 0.08f * sinf(crowd.seed[i] * 3.17f + 1.0f),
-                .weapon = armed ? (u8)(wid + 1) : 0,
-            };
-            u32 kind = crowd.variant[i] % BODY_KINDS;
-            CharLook lk;
-            f32 hm = 1.8f * p.height;
-            look_make(&lk, kind, i * 7919u + 101u, 72.0f * p.height * p.height * p.width * p.width, hm,
-                      30.0f + 25.0f * sinf(crowd.seed[i] * 2.1f));
-            u8 gear[GEAR_MAX_WORN];
-            u32 ng = gear_random(i * 131u + 9u, gear);
-            n += field_body_draw(field, (u32)cp->slot, &p, &body_mesh[kind], armed ? &weapon_mesh[wid] : NULL, look_matrix(&lk, kind),
-                                 gear_mesh + kind * GEAR_COUNT, gear, ng,
-                                 &bones[i * RENDER_MAX_BONES], drop_bones + (size_t)cp->slot * RENDER_MAX_BONES, items + n);
+        if (!g_in_valley) {
+            n += crowd_draw(&crowd, field, sim_time, sky.night, body_mesh, gear_mesh, weapon_mesh, &torch_mesh[0], &torch_mesh[1],
+                            bones, drop_bones, items + n, lights, &nl);
+            n += crowd_draw(watchers, field, sim_time, sky.night, body_mesh, gear_mesh, weapon_mesh, &torch_mesh[0], &torch_mesh[1],
+                            watcher_bones, drop_bones, items + n, lights, &nl);
         }
         if (!g_in_valley) items[n++] = (DrawItem){ .mesh = &town_mesh };
         // Жители посёлка: позу считаем только тем, кто рядом с кадром (тень в кадр может упасть и снаружи).
         // Дальние обновляют позу реже: от 20 м 120 раз в секунду, от 45 м 60 раз — глазу не видно
         for (u32 i = 0; !g_in_valley && i < folk->count; i++) {
             const Player *fp = &folk->body[i];
+            const CharSheet *cs = &folk->sheet[i];
             M4 *b = &folk_bones[i * RENDER_MAX_BONES];
-            if (!sphere_in_view(hw.view_proj, v3(fp->pos.x, fp->pos.y + 0.9f, fp->pos.z), 3.0f)) {
+            f32 lit = torch_lit(folk->torch[i], folk->seed[i], sky.night);
+            // Свет факела достаёт дальше тела: с горящим факелом проверяем шире
+            if (!sphere_in_view(hw.view_proj, v3(fp->pos.x, fp->pos.y + 0.9f, fp->pos.z), lit > 0.0f ? 8.0f : 3.0f)) {
                 folk_pose_age[i] = -1.0f;
                 continue;
             }
-            f32 dist = v3_len(v3_sub(fp->pos, fv.cam_pos));
-            f32 period = dist < 20.0f ? 0.0f : dist < 45.0f ? 1.0f / 120.0f : 1.0f / 60.0f;
-            bool stale = folk_pose_age[i] < 0.0f || (folk_pose_age[i] += real_dt) >= period;
-            // Сторожа у ворот с арматурой или рессорой на поясе
-            u8 wid = folk->variant[i] % 2 ? W_ARMATURA : W_RESSORA;
-            items[n++] = (DrawItem){ .mesh = &body_mesh[folk->variant[i] % BODY_KINDS], .bones = b };
-            u8 gear[GEAR_MAX_WORN];
-            n += push_gear(items + n, gear_mesh + (folk->variant[i] % BODY_KINDS) * GEAR_COUNT, gear, gear_random(i * 977u + 31u, gear), b);
-            if (folk->armed[i]) items[n++] = (DrawItem){ .mesh = &weapon_mesh[wid], .bones = b };
-            if (!stale) continue;
-            folk_pose_age[i] = 0.0f;
+            bool armed = cs->equip[SLOT_WEAPON].kind == IK_WEAPON;
+            u8 wid = cs->equip[SLOT_WEAPON].id;
+            const GpuMesh *body = &body_mesh[folk->variant[i] % BODY_KINDS];
+            const GpuMesh *gear_row = gear_mesh + (folk->variant[i] % BODY_KINDS) * GEAR_COUNT;
+            const SlotLook *o = &slot_look[fp->slot];
             CharPose p = {
                 .pos = fp->pos, .heading = fp->heading, .phase = fp->phase, .walk = fp->walk, .run = fp->run,
                 .speed = fp->speed, .time = sim_time, .seed = folk->seed[i],
                 .lean_fwd = fp->lean_fwd, .lean_side = fp->lean_side, .look = fp->look, .idle = fp->idle,
                 .height = 1.0f + 0.06f * sinf(folk->seed[i] * 7.31f),
                 .width = 1.0f + 0.08f * sinf(folk->seed[i] * 3.17f + 1.0f),
-                .weapon = folk->armed[i] ? (u8)(wid + 1) : 0,
+                .weapon = armed ? (u8)(wid + 1) : 0, .torch = lit,
             };
-            character_pose(&p, NULL, b);
-            b[RENDER_LOOK_SLOT] = folk_look[i];
+            if (field_awake(field, (u32)fp->slot)) {
+                // В бою поза каждый кадр, от поля боя
+                n += field_body_draw(field, (u32)fp->slot, &p, body, armed ? &weapon_mesh[wid] : NULL, folk_look[i], gear_row,
+                                     o->gear, o->ngear, b, drop_bones + (size_t)fp->slot * RENDER_MAX_BONES, items + n);
+                folk_pose_age[i] = -1.0f;
+            } else {
+                f32 dist = v3_len(v3_sub(fp->pos, fv.cam_pos));
+                f32 period = dist < 20.0f ? 0.0f : dist < 45.0f ? 1.0f / 120.0f : 1.0f / 60.0f;
+                bool stale = folk_pose_age[i] < 0.0f || (folk_pose_age[i] += real_dt) >= period;
+                items[n++] = (DrawItem){ .mesh = body, .bones = b };
+                n += push_gear(items + n, gear_row, o->gear, o->ngear, b);
+                if (armed) items[n++] = (DrawItem){ .mesh = &weapon_mesh[wid], .bones = b };
+                if (stale) {
+                    folk_pose_age[i] = 0.0f;
+                    character_pose(&p, NULL, b);
+                    b[RENDER_LOOK_SLOT] = folk_look[i];
+                }
+            }
+            if (folk->torch[i]) n += torch_draw(b, lit, folk->seed[i], sim_time, &torch_mesh[0], &torch_mesh[1], items + n, lights, &nl);
         }
         for (u32 i = 0; !g_in_valley && i < mobs->count; i++) {
             const Player *mp = &mobs->body[i];
@@ -965,6 +1150,7 @@ int main(int argc, char **argv)
                 .speed = mp->speed, .time = sim_time, .seed = mobs->seed[i], .height = cs->d.height / 1.8f,
                 .width = 1.0f + 0.08f * sinf(mobs->seed[i] * 3.17f + 1.0f),
                 .lean_fwd = mp->lean_fwd, .lean_side = mp->lean_side, .look = mp->look, .idle = mp->idle, .weapon = (u8)(wid + 1),
+                .torch = torch_lit(mobs->torch[i], mobs->seed[i], sky.night),
             };
             CharLook lk;
             look_make(&lk, mobs->variant[i] % BODY_KINDS, 2000u + i, cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
@@ -974,6 +1160,9 @@ int main(int argc, char **argv)
             n += field_body_draw(field, (u32)mp->slot, &p, &body_mesh[kind], &weapon_mesh[wid], look_matrix(&lk, kind),
                                  gear_mesh + kind * GEAR_COUNT, gear, ng, &mob_bones[i * RENDER_MAX_BONES],
                                  drop_bones + (size_t)mp->slot * RENDER_MAX_BONES, items + n);
+            if (mobs->torch[i])
+                n += torch_draw(&mob_bones[i * RENDER_MAX_BONES], p.torch, mobs->seed[i], sim_time, &torch_mesh[0], &torch_mesh[1],
+                                items + n, lights, &nl);
         }
         if (!g_in_valley) n += arena_view_draw(aview, arena, sim_time, body_mesh, gear_mesh, BODY_KINDS, weapon_mesh, arena_bones, items + n);
         for (u32 i = 0; i < squad->count; i++) {
@@ -1035,15 +1224,6 @@ int main(int argc, char **argv)
 
         f64 t_submit = time_now();
         cpu_logic += t_submit - t_logic;
-        if (day_run) {
-            tod += dt / DAY_LENGTH_S;
-            if (tod >= 1.0f) {
-                tod -= 1.0f;
-                day++;
-            }
-        }
-        Sky sky;
-        sky_at(tod, &sky);
         fv.sun_dir = sky.light_dir;
         fv.sun_color = sky.light_color;
         fv.sky_amb = sky.sky_amb;
@@ -1056,6 +1236,8 @@ int main(int argc, char **argv)
         }
         fv.zenith = sky.zenith;
         fv.shadow_center = cam.target;
+        fv.lights = lights;
+        fv.light_count = nl;
         fv.time = sim_time;
         fv.frame = frame;
         // Полное разрешение окна, размер пикселя задаёт глубина (pixel.glsl); либо весь кадр в 1/2, 1/3 окна
@@ -1077,35 +1259,12 @@ int main(int argc, char **argv)
                 continue;
             }
             if (focus && hud.look_kind == LOOK_FIELD && k < field->w.count) {
-                // Чужой на поле: бродящий или моб, чьё тело в этом слоте
+                // Чужой на поле: внешность та же, что в мире
                 const CharSheet *cs = field->sheet[k];
                 const GpuMesh *wm = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? &weapon_mesh[cs->equip[SLOT_WEAPON].id] : NULL;
-                f32 seed = 0.0f, height = cs->d.height / 1.8f, width = 1.0f;
-                u32 variant = 0;
-                u8 gear[GEAR_MAX_WORN];
-                u32 ng = gear_from_sheet(cs, gear);
-                CharLook lk;
-                look_make(&lk, 0, 0, cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
-                // Внешность та же, что в мире
-                for (u32 c = 0; c < crowd.count; c++)
-                    if (crowd.body[c].slot == (i32)k) {
-                        seed = crowd.seed[c];
-                        variant = crowd.variant[c] % BODY_KINDS;
-                        height = 1.0f + 0.06f * sinf(seed * 7.31f);
-                        width = 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f);
-                        look_make(&lk, variant, c * 7919u + 101u, 72.0f * height * height * width * width, 1.8f * height,
-                                  30.0f + 25.0f * sinf(seed * 2.1f));
-                        ng = gear_random(c * 131u + 9u, gear);
-                    }
-                for (u32 c = 0; c < mobs->count; c++)
-                    if (mobs->body[c].slot == (i32)k) {
-                        seed = mobs->seed[c];
-                        variant = mobs->variant[c] % BODY_KINDS;
-                        width = 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f);
-                        look_make(&lk, variant, 2000u + c, cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
-                    }
-                portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, &body_mesh[variant], wm, cs->equip[SLOT_WEAPON].id,
-                         seed, height, width, look_matrix(&lk, variant), gear_mesh + variant * GEAR_COUNT, gear, ng, pb);
+                const SlotLook *o = &slot_look[k];
+                portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, &body_mesh[o->variant], wm, cs->equip[SLOT_WEAPON].id,
+                         o->seed, o->height, o->width, o->look, gear_mesh + o->variant * GEAR_COUNT, o->gear, o->ngear, pb);
                 continue;
             }
             if (focus && (hud.look_kind != LOOK_SQUAD || k >= squad->count)) continue;
@@ -1192,6 +1351,7 @@ int main(int argc, char **argv)
         }
     }
 
+    audio_stop();
     ui_shutdown();
     render_shutdown();
     platform_shutdown();

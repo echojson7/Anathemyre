@@ -5,6 +5,7 @@
 
 #include "../core/rng.h"
 #include "../render/mesh.h"
+#include "../sim/inventory.h"
 #include "player.h"
 
 #define TOWN_MAX_SPOTS 64
@@ -38,6 +39,10 @@ typedef struct TownFolk {
     u8     kind[TOWN_MAX_FOLK];    // FolkKind
     u8     node[TOWN_MAX_FOLK], prev[TOWN_MAX_FOLK];
     bool   armed[TOWN_MAX_FOLK];
+    bool   torch[TOWN_MAX_FOLK];   // с темнотой зажигает факел
+    CharSheet sheet[TOWN_MAX_FOLK];
+    V3     home[TOWN_MAX_FOLK];    // стоящие после боя возвращаются на место
+    f32    home_h[TOWN_MAX_FOLK];
 } TownFolk;
 
 // Геометрия посёлка (отбрасывает тени) и места жителей
@@ -47,6 +52,7 @@ f32  town_ground(f32 x, f32 z, f32 base);
 // Выравнивание рельефа вокруг посёлка: 0 — ровно, 1 — дюны как обычно
 f32  town_flatten(f32 x, f32 z);
 void town_folk_init(TownFolk *f, const Town *t, Rng *rng, u32 walkers, u32 variants);
+// Телами, которыми правит поле боя (бой, погоня), не управляет: после боя стоящие идут на место
 void town_folk_update(TownFolk *f, Rng *rng, f32 dt, GroundFn ground);
 
 #endif

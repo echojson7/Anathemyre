@@ -12,7 +12,9 @@
 // Слот скиннинга оружия: сетка оружия построена в своей системе (рукоять в начале координат),
 // character_pose пишет сюда, где оно сейчас: в руке, на поясе, на спине
 #define CHAR_BONE_WEAPON BONE_COUNT
-#define CHAR_BONES (BONE_COUNT + 1)
+// Слот факела: в левом кулаке, древко по +Y
+#define CHAR_BONE_TORCH (BONE_COUNT + 1)
+#define CHAR_BONES (BONE_COUNT + 2)
 
 _Static_assert(CHAR_BONES <= 24, "скелет с оружием не влезает в RENDER_MAX_BONES");
 
@@ -33,6 +35,7 @@ typedef struct CharPose {
     f32 look;        // поворот головы к цели относительно взгляда, рад
     f32 idle;        // сколько стоит без движения, с: позы покоя только у давно стоящих
     u8  weapon;      // W_* + 1; 0 — без оружия
+    f32 torch;       // 0 рука опущена .. 1 факел поднят перед собой (левая рука)
     bool calm;       // без поз ожидания (портреты)
     const V3 *joints; // суставы этого тела в позе привязки, BONE_COUNT; NULL — g_body_bones
 } CharPose;
@@ -87,5 +90,9 @@ void weapon_ground_pose(V3 pos, f32 yaw, M4 *out_bones);
 
 // Оружие отдельной сеткой; кости — слот CHAR_BONE_WEAPON, рукоять в начале координат, острие по +Y
 void weapon_build(MeshBuilder *mb, u8 weapon);
+// Факел: древко с обмоткой (flame = false) или пламя отдельной сеткой; слот CHAR_BONE_TORCH
+void torch_build(MeshBuilder *mb, bool flame);
+// Где пламя факела в мире по костям позы
+V3   torch_flame_pos(const M4 *bones);
 
 #endif

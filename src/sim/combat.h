@@ -101,6 +101,10 @@ typedef struct FighterDesc {
     f32 heading;
 } FighterDesc;
 
+// Наблюдатель журнала (звук): получает события до очистки, сам бой о нём ничего не знает
+struct CombatWorld;
+typedef void (*CombatSink)(void *user, const struct CombatWorld *w);
+
 typedef struct CombatWorld {
     u32 cap, count;
     u64 seed;
@@ -136,6 +140,8 @@ typedef struct CombatWorld {
     // Журнал событий текущего тика и далее; читатель сам сбрасывает ev_count
     CombatEvent *ev;
     u32 ev_count, ev_cap, last_ev;
+    CombatSink sink;
+    void *sink_user;
 
     // Сетка соседей: строится по позициям в конце тика и после добавления бойцов
     Grid grid;
@@ -160,6 +166,8 @@ void combat_set_foes(CombatWorld *w, u8 a, u8 b, bool on);
 // Начать удар (вызывает ИИ): замах, бросок реакции цели
 void combat_begin_attack(CombatWorld *w, u32 i, u8 kind, u32 target, bool counter);
 void combat_tick(CombatWorld *w);
+// Журнал прочитан: показать его наблюдателю (если есть) и очистить
+void combat_events_done(CombatWorld *w);
 // Забрать состояние тела и навыки обратно в описание (после боя)
 void combat_store(const CombatWorld *w, u32 i, FighterDesc *d);
 

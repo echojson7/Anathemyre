@@ -1205,6 +1205,15 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         set_arm(&o, R, r);
     }
 
+    // Факел в левой руке: предплечье вперёд, древко стоит, пламя сбоку от лица; рука почти не машет.
+    // В стойке руки отдаются бою
+    f32 tw = smooth01(clampf(p->torch, 0.0f, 1.0f) * (1.0f - guard));
+    if (tw > 0.0f) {
+        ArmK k = get_arm(&o, L);
+        ArmK hold = { -0.30f + 0.15f * k.ux, 0.05f, 0.30f, -1.30f, 0.10f, 0.0f };
+        set_arm(&o, L, arm_lerp(k, hold, tw));
+    }
+
     // Бой поверх
     f32 chest_yaw = lo.chest_yaw;
     combat_layer(a, &o, &chest_yaw, p->seed);
@@ -1426,6 +1435,13 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     }
     Xf ww = xf_mul(&root, &weapon);
     out[CHAR_BONE_WEAPON] = xf_m4(&ww);
+    // Факел: древко в левом кулаке так же, как рукоять оружия в правом
+    Xf tg = grip_frame();
+    tg.t = v3_sub(g_body_sockets[SOCKET_HAND_L].pos, joint(BONE_HAND_L));
+    Xf torch = xf_mul(&wld[BONE_HAND_L], &tg);
+    if (a->severed & (1u << PART_ARM_L)) torch = (Xf){ v3(0, 0, 0), v3(0, 0, 0), v3(0, 0, 0), torch.t };
+    Xf tw_world = xf_mul(&root, &torch);
+    out[CHAR_BONE_TORCH] = xf_m4(&tw_world);
 
     // Отсечённая конечность: вершины стягиваются в точку сустава
     static const u8 limb_bones[PART_COUNT][3] = {
