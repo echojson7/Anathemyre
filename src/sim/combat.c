@@ -38,6 +38,12 @@ void combat_event(CombatWorld *w, u8 kind, u32 a, u32 b)
     e->b = (u16)b;
 }
 
+void combat_events_done(CombatWorld *w)
+{
+    if (w->sink && w->ev_count) w->sink(w->sink_user, w);
+    w->ev_count = 0;
+}
+
 void combat_set_state(CombatWorld *w, u32 i, u8 s, f32 dur)
 {
     w->state[i] = s;

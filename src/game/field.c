@@ -224,7 +224,7 @@ static void log_events(Field *f)
         default: break;
         }
     }
-    w->ev_count = 0;
+    combat_events_done(w);
 }
 
 // Правила поля после тика боя: кто просыпается, кто засыпает, чей приказ выполнен.
