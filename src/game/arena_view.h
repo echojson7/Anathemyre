@@ -6,6 +6,7 @@
 #include "../render/render.h"
 #include "arena.h"
 #include "character.h"
+#include "fight_anim.h"
 
 #define AV_SPECTATORS 14
 // Сколько элементов отрисовки и наборов костей нужно арене
@@ -18,14 +19,8 @@ typedef struct ArenaView {
     f32 acc;        // накопленное время до следующего тика боя
     bool in_bout;
 
-    // Бойцы текущего боя: прошлый тик для сглаживания и состояние анимации
-    f32 prev_x[ARENA_MAX_BOUT], prev_z[ARENA_MAX_BOUT], prev_h[ARENA_MAX_BOUT];
-    f32 phase[ARENA_MAX_BOUT], walk[ARENA_MAX_BOUT], move_dir[ARENA_MAX_BOUT];
-    f32 guard[ARENA_MAX_BOUT], block[ARENA_MAX_BOUT], dodge[ARENA_MAX_BOUT], stagger[ARENA_MAX_BOUT];
-    f32 down[ARENA_MAX_BOUT], down_dir[ARENA_MAX_BOUT], kneel[ARENA_MAX_BOUT], limp[ARENA_MAX_BOUT], crawl[ARENA_MAX_BOUT];
-    bool dropped[ARENA_MAX_BOUT];
-    V3  drop_pos[ARENA_MAX_BOUT];
-    f32 drop_yaw[ARENA_MAX_BOUT];
+    // Бойцы текущего боя: вид каждого (сглаживание, позы, выпавшее оружие)
+    FightAnim fa[ARENA_MAX_BOUT];
 
     // Зрители за оградой
     f32 sx[AV_SPECTATORS], sz[AV_SPECTATORS], sh[AV_SPECTATORS], sseed[AV_SPECTATORS];
@@ -37,7 +32,7 @@ void arena_view_init(ArenaView *v, V3 center, f32 floor_y);
 // Прогнать бои по реальному времени (тики COMBAT_HZ) и обновить анимацию
 void arena_view_update(ArenaView *v, ArenaSession *s, f32 dt);
 // Заполнить элементы отрисовки; bones — AV_BONE_SETS * RENDER_MAX_BONES матриц.
-// body — сетки тел без оружия (вариантов CHAR_VARIANTS), weapons — по W_COUNT
+// body — сетки тел без оружия (вариантов CHAR_VARIANTS), weapons — по W_COUNT (в руке или в ножнах — по позе)
 u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const GpuMesh *body, u32 variants,
                     const GpuMesh *weapons, M4 *bones, DrawItem *items);
 

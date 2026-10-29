@@ -4,6 +4,7 @@
 
 #include "../core/rng.h"
 #include "../render/mesh.h"
+#include "../sim/inventory.h"
 #include "player.h"
 
 #define TR_MAX_CHARS 16
@@ -17,6 +18,24 @@ typedef struct Crowd {
     u8     variant[TR_MAX_CHARS];
     bool   stationary[TR_MAX_CHARS];
 } Crowd;
+
+// Мобы: люди со снаряжением ходят кругом вокруг локации, на углах стоят;
+// одни шагом, другие трусцой, один бегом. Лист у каждого полный, как у своего отряда
+#define MOB_MAX 5
+#define MOB_ROUTE 6
+
+typedef struct Mobs {
+    u32       count;
+    Player    body[MOB_MAX];
+    CharSheet sheet[MOB_MAX];
+    u8        variant[MOB_MAX];
+    u8        next[MOB_MAX];     // следующая точка маршрута
+    f32       wait[MOB_MAX];     // стоит на месте ещё столько секунд
+    f32       seed[MOB_MAX];
+} Mobs;
+
+void mobs_init(Mobs *m, Rng *rng);
+void mobs_update(Mobs *m, Rng *rng, f32 dt);
 
 // Зал и обломки: отбрасывают тени
 void testroom_build_near(MeshBuilder *mb, Rng *rng);
