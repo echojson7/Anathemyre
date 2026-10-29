@@ -5,6 +5,7 @@
 #include "arena.h"
 #include "character.h"
 #include "squad.h"
+#include "town.h"
 
 // Цвета поверхностей (альбедо, линейные)
 #define C_CONCRETE v3(0.42f, 0.40f, 0.37f)
@@ -42,8 +43,8 @@ static f32 terrain_height(f32 x, f32 z, void *user)
         amp *= 0.5f;
         freq *= 2.1f;
     }
-    // Площадка у зала ровная, дальше дюны, у горизонта гряды
-    f32 flat = clampf((r - 45.0f) / 60.0f, 0.0f, 1.0f);
+    // Площадки у зала и посёлка ровные, дальше дюны, у горизонта гряды
+    f32 flat = fminf(clampf((r - 45.0f) / 60.0f, 0.0f, 1.0f), town_flatten(x, z));
     f32 far = clampf((r - 400.0f) / 900.0f, 0.0f, 1.0f);
     return -0.05f + flat * flat * (dunes - 0.6f) * 9.0f + far * dunes * 70.0f;
 }
@@ -238,7 +239,7 @@ f32 testroom_ground(f32 x, f32 z)
 {
     // Плита пола зала: верх на 0.1
     if (fabsf(x) <= 32.0f && z >= -28.0f && z <= 24.0f) return 0.1f;
-    return terrain_height(x, z, NULL);
+    return town_ground(x, z, terrain_height(x, z, NULL));
 }
 
 static void pick_target(Crowd *c, Rng *rng, u32 i)

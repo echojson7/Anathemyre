@@ -17,6 +17,7 @@
 #include "game/look.h"
 #include "game/squad.h"
 #include "game/testroom.h"
+#include "game/town.h"
 #include "platform/platform.h"
 #include "render/render.h"
 #include "render/ui.h"
@@ -24,6 +25,7 @@
 
 #define BODY_KINDS BODY_KIND_COUNT
 #define CROWD_SIZE 9
+#define TOWN_WALKERS 20
 // Арена у зала, перед его открытым краем
 #define ARENA_CENTER v3(14.0f, 0.0f, 34.0f)
 // Пороги детализации фигуры: диаметр её сферы на экране, пикселей. Больше первого — полный уровень
@@ -94,6 +96,19 @@ static void portrait(const FrameView *base, u32 slot, i32 size, const GpuMesh *b
     fv.view = m4_look_at(fv.cam_pos, v3_sub(head, v3_mul(up, 0.06f)), up);
     fv.proj = m4_perspective(0.55f, 1.0f, 0.05f, 20.0f);
     render_portrait(slot, size, &fv, m4_mul(fv.proj, fv.view), items, weapon ? 2 : 1);
+}
+
+// Сфера в пирамиде видимости: плоскости из строк view_proj (по столбцам)
+static bool sphere_in_view(M4 vp, V3 c, f32 r)
+{
+    const f32 *m = vp.m;
+    for (int i = 0; i < 6; i++) {
+        int row = i >> 1;
+        f32 s = (i & 1) ? -1.0f : 1.0f;
+        f32 a = m[3] + s * m[row], b = m[7] + s * m[4 + row], cc = m[11] + s * m[8 + row], d = m[15] + s * m[12 + row];
+        if (a * c.x + b * c.y + cc * c.z + d < -r * sqrtf(a * a + b * b + cc * cc)) return false;
+    }
+    return true;
 }
 
 // Внешность члена отряда: по номеру и сложению
@@ -412,6 +427,8 @@ int main(int argc, char **argv)
 
     // Геометрия мира
     MeshBuilder mb;
+    Town *town = ARENA_PUSH_ARRAY(&perm, Town, 1);
+    TownFolk *folk = ARENA_PUSH_ARRAY(&perm, TownFolk, 1);
     size_t mark = perm.used;
     GpuMesh near_mesh, far_mesh;
     mb_init(&mb, &perm, 400000, 1200000);
@@ -424,6 +441,16 @@ int main(int argc, char **argv)
     testroom_build_far(&mb, &rng);
     gpu_mesh_upload(&far_mesh, &mb);
     log_info("МИР: зал %u треугольников, рельеф и мегаструктуры %u", tris, mb.icount / 3);
+    perm.used = mark;
+    // Посёлок отдельной сеткой: вне кадра и вне области теней отсекается целиком.
+    // Свой поток случайных чисел, чтобы остальная сцена от него не зависела
+    Rng town_rng;
+    rng_seed(&town_rng, opt.seed, 7);
+    GpuMesh town_mesh;
+    mb_init(&mb, &perm, 400000, 1200000);
+    town_build(&mb, &town_rng, town);
+    gpu_mesh_upload(&town_mesh, &mb);
+    log_info("МИР: Скудель — %u треугольников, домов %u, прилавков %u", mb.icount / 3, town->houses, town->stalls);
     perm.used = mark;
 
     // Тела людей; грубые уровни лежат отдельно: остальной код видит только полный (body_mesh)
@@ -507,6 +534,21 @@ int main(int argc, char **argv)
     Mobs *mobs = ARENA_PUSH_ARRAY(&perm, Mobs, 1);
     mobs_init(mobs, &rng);
     M4 *mob_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)MOB_MAX * RENDER_MAX_BONES);
+    town_folk_init(folk, town, &town_rng, TOWN_WALKERS, BODY_KINDS);
+    log_info("СКУДЕЛЬ: жителей %u", folk->count);
+    M4 *folk_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)TOWN_MAX_FOLK * RENDER_MAX_BONES);
+    // Сколько секунд поза жителя не пересчитывалась; < 0 — его не было в кадре, считать сразу
+    f32 folk_pose_age[TOWN_MAX_FOLK];
+    for (u32 i = 0; i < TOWN_MAX_FOLK; i++) folk_pose_age[i] = -1.0f;
+    // Внешность жителей не меняется: считаем один раз
+    M4 *folk_look = ARENA_PUSH_ARRAY(&perm, M4, TOWN_MAX_FOLK);
+    for (u32 i = 0; i < folk->count; i++) {
+        u32 kind = folk->variant[i] % BODY_KINDS;
+        f32 hs = 1.0f + 0.06f * sinf(folk->seed[i] * 7.31f), ws = 1.0f + 0.08f * sinf(folk->seed[i] * 3.17f + 1.0f);
+        CharLook lk;
+        look_make(&lk, kind, i * 6151u + 5003u, 72.0f * hs * hs * ws * ws, 1.8f * hs, 30.0f + 25.0f * sinf(folk->seed[i] * 2.1f));
+        folk_look[i] = look_matrix(&lk, kind);
+    }
     // Свой отряд появляется у края зала, лицом к арене
     Squad *squad = ARENA_PUSH_ARRAY(&perm, Squad, 1);
     squad_init(squad, &rng, v3(9.0f, 0.0f, 22.0f), atan2f(ARENA_CENTER.x - 9.0f, ARENA_CENTER.z - 22.0f), ground_height);
@@ -523,7 +565,7 @@ int main(int argc, char **argv)
     M4 *squad_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)(SQUAD_MAX * 4 + 1) * RENDER_MAX_BONES);
     M4 *portrait_bones = ARENA_PUSH_ARRAY(&perm, M4, 2 * RENDER_MAX_BONES);
     M4 *bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)TR_MAX_CHARS * RENDER_MAX_BONES);
-    DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS * 2 + 2 + AV_DRAW_ITEMS + SQUAD_MAX * 5 + MOB_MAX * 2 + 1);
+    DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS * 2 + 2 + AV_DRAW_ITEMS + SQUAD_MAX * 5 + MOB_MAX * 2 + 1 + TOWN_MAX_FOLK * 2 + 1);
     Hud hud;
     hud_init(&hud);
     if (opt.inspect) {
@@ -628,6 +670,7 @@ int main(int argc, char **argv)
         f64 t_logic = time_now();
         if (!bench.on) camera_update(&cam, &in, real_dt);
         crowd_update(&crowd, &rng, dt);
+        town_folk_update(folk, &town_rng, dt, ground_height);
         mobs_update(mobs, &rng, dt);
         arena_view_update(aview, arena, dt);
         i32 lead = MAX(0, squad_primary(squad));
@@ -762,6 +805,36 @@ int main(int argc, char **argv)
                       30.0f + 25.0f * sinf(crowd.seed[i] * 2.1f));
             n += field_body_draw(field, (u32)cp->slot, &p, &body_mesh[kind], armed ? &weapon_mesh[wid] : NULL, look_matrix(&lk, kind),
                                  &bones[i * RENDER_MAX_BONES], drop_bones + (size_t)cp->slot * RENDER_MAX_BONES, items + n);
+        }
+        items[n++] = (DrawItem){ .mesh = &town_mesh };
+        // Жители посёлка: позу считаем только тем, кто рядом с кадром (тень в кадр может упасть и снаружи).
+        // Дальние обновляют позу реже: от 20 м 120 раз в секунду, от 45 м 60 раз — глазу не видно
+        for (u32 i = 0; i < folk->count; i++) {
+            const Player *fp = &folk->body[i];
+            M4 *b = &folk_bones[i * RENDER_MAX_BONES];
+            if (!sphere_in_view(hw.view_proj, v3(fp->pos.x, fp->pos.y + 0.9f, fp->pos.z), 3.0f)) {
+                folk_pose_age[i] = -1.0f;
+                continue;
+            }
+            f32 dist = v3_len(v3_sub(fp->pos, fv.cam_pos));
+            f32 period = dist < 20.0f ? 0.0f : dist < 45.0f ? 1.0f / 120.0f : 1.0f / 60.0f;
+            bool stale = folk_pose_age[i] < 0.0f || (folk_pose_age[i] += real_dt) >= period;
+            // Сторожа у ворот с арматурой или рессорой на поясе
+            u8 wid = folk->variant[i] % 2 ? W_ARMATURA : W_RESSORA;
+            items[n++] = (DrawItem){ .mesh = &body_mesh[folk->variant[i] % BODY_KINDS], .bones = b };
+            if (folk->armed[i]) items[n++] = (DrawItem){ .mesh = &weapon_mesh[wid], .bones = b };
+            if (!stale) continue;
+            folk_pose_age[i] = 0.0f;
+            CharPose p = {
+                .pos = fp->pos, .heading = fp->heading, .phase = fp->phase, .walk = fp->walk, .run = fp->run,
+                .speed = fp->speed, .time = sim_time, .seed = folk->seed[i],
+                .lean_fwd = fp->lean_fwd, .lean_side = fp->lean_side, .look = fp->look,
+                .height = 1.0f + 0.06f * sinf(folk->seed[i] * 7.31f),
+                .width = 1.0f + 0.08f * sinf(folk->seed[i] * 3.17f + 1.0f),
+                .weapon = folk->armed[i] ? (u8)(wid + 1) : 0,
+            };
+            character_pose(&p, NULL, b);
+            b[RENDER_LOOK_SLOT] = folk_look[i];
         }
         for (u32 i = 0; i < mobs->count; i++) {
             const Player *mp = &mobs->body[i];
