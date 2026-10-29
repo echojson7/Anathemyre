@@ -8,6 +8,7 @@
 
 typedef struct MemberDef {
     const char *name;
+    u8 body;            // 0 мужчина, 1 женщина, 2 худой (main.c, g_body_file)
     u8 tier, weapon, weapon_q;
     u8 armor[4];        // A_*, ARMOR_NONE — конец
     u8 gear[4];         // G_* для слотов лица, ног, рук, спины, пояса; G_COUNT — конец
@@ -19,13 +20,13 @@ typedef struct MemberDef {
 #define GOODS(id, n) { IK_GOODS, id, Q_SOUND, n }
 
 static const MemberDef g_start[] = {
-    { "ГОСТОМЫСЛ", 1, W_RESSORA, Q_SOUND, { A_RAGS, A_JACKET, END_A }, { G_WRAP, G_BOOTS, G_PACK, END_G },
+    { "ГОСТОМЫСЛ", 0, 1, W_RESSORA, Q_SOUND, { A_RAGS, A_JACKET, END_A }, { G_WRAP, G_BOOTS, G_PACK, END_G },
       { GOODS(G_WATER, 1), GOODS(G_RUSK, 6), GOODS(G_BANDAGE, 4), GOODS(G_TOKEN, 1) } },
-    { "НИКАНДР", 1, W_BAGOR, Q_WORN, { A_QUILT, A_BUCKET, END_A }, { G_MITTS, G_BELT, END_G },
+    { "НИКАНДР", 0, 1, W_BAGOR, Q_WORN, { A_QUILT, A_BUCKET, END_A }, { G_MITTS, G_BELT, END_G },
       { GOODS(G_WATER, 1), GOODS(G_MEAT, 3), GOODS(G_SCRAP, 2) } },
-    { "АППИЙ", 0, W_ARMATURA, Q_JUNK, { A_RAGS, END_A }, { G_BOOTS, END_G },
+    { "АППИЙ", 2, 0, W_ARMATURA, Q_JUNK, { A_RAGS, END_A }, { G_BOOTS, END_G },
       { GOODS(G_FUEL, 1), GOODS(G_PART, 1), GOODS(G_RUSK, 3) } },
-    { "ДОБРОГОСТ", 2, W_SEKACH, Q_MASTER, { A_QUILT, A_PLATE, A_GREAVES, END_A }, { G_BOOTS, G_MITTS, G_PACK, END_G },
+    { "КИНСЛАВА", 1, 2, W_SEKACH, Q_MASTER, { A_QUILT, A_PLATE, A_GREAVES, END_A }, { G_BOOTS, G_MITTS, G_PACK, END_G },
       { GOODS(G_WATER, 1), GOODS(G_BANDAGE, 6), GOODS(G_MEAT, 5), { IK_WEAPON, W_RESSORA, Q_WORN, 1 } } },
 };
 
@@ -58,7 +59,7 @@ void squad_init(Squad *s, Rng *rng, V3 origin, f32 heading, GroundFn ground)
     s->count = ARRAY_COUNT(g_start);
     for (u32 i = 0; i < s->count; i++) {
         member_init(&s->sheet[i], &g_start[i], rng);
-        s->variant[i] = (u8)i;
+        s->variant[i] = g_start[i].body;
         f32 x = origin.x + (f32)(i % 2) * 1.2f - 0.6f, z = origin.z - (f32)(i / 2) * 1.3f;
         player_init(&s->body[i], v3(x, ground(x, z), z), heading);
     }

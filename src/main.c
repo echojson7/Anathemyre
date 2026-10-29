@@ -20,7 +20,9 @@
 #include "render/ui.h"
 #include "world/sky.h"
 
-#define CHAR_VARIANTS 4
+// Тела людей (tools/humanconv): мужчина, женщина, худой мужчина; у каждого LOD0..2
+#define BODY_KINDS 3
+static const char *const g_body_file[BODY_KINDS] = { "mh_male", "mh_female", "mh_thin" };
 #define CROWD_SIZE 9
 // Арена у зала, перед его открытым краем
 #define ARENA_CENTER v3(14.0f, 0.0f, 34.0f)
@@ -79,7 +81,7 @@ static void portrait(const FrameView *base, u32 slot, i32 size, const GpuMesh *b
     character_pose(&p, NULL, bones);
     DrawItem items[2] = { { .mesh = body, .bones = bones }, { .mesh = weapon, .bones = bones } };
     M4 hb = bones[BONE_HEAD];
-    V3 head = m4_point(hb, v3(0, 1.62f, 0));
+    V3 head = m4_point(hb, v3(0, 1.70f, 0.03f));
     V3 fwd = v3_norm(m4_dir(hb, v3(0, 0, 1)));
     V3 up = v3_norm(m4_dir(hb, v3(0, 1, 0)));
     FrameView fv = *base;
@@ -373,25 +375,23 @@ int main(int argc, char **argv)
     log_info("МИР: зал %u треугольников, рельеф и мегаструктуры %u", tris, mb.icount / 3);
     perm.used = mark;
 
-    // Фигуры зала с оружием тестовой комнаты; бойцы и зрители арены без него
-    // Грубые уровни лежат отдельно: остальной код видит только полный (char_mesh, body_mesh)
-    GpuMesh char_mesh[CHAR_VARIANTS], body_mesh[CHAR_VARIANTS], weapon_mesh[W_COUNT];
-    GpuMesh char_lod[CHAR_VARIANTS][CHAR_LODS - 1], body_lod[CHAR_VARIANTS][CHAR_LODS - 1];
-    for (u32 v = 0; v < CHAR_VARIANTS; v++) {
-        for (u32 armed = 0; armed < 2; armed++) {
-            GpuMesh *full = armed ? &char_mesh[v] : &body_mesh[v];
-            GpuMesh *lods = armed ? char_lod[v] : body_lod[v];
-            for (u32 l = 0; l < CHAR_LODS; l++) {
-                GpuMesh *gm = l ? &lods[l - 1] : full;
-                mb_init(&mb, &perm, 40000, 120000);
-                character_build(&mb, v, armed, l);
-                gpu_mesh_upload(gm, &mb);
-                if (v == 0 && armed) log_info("ФИГУРА: уровень %u, %u вершин, %u треугольников", l, mb.vcount, mb.icount / 3);
-                if (l) gpu_mesh_set_lod(l == 1 ? full : &lods[l - 2], gm, g_char_lod_px[l - 1]);
-                perm.used = mark;
+    // Тела людей; грубые уровни лежат отдельно: остальной код видит только полный (body_mesh)
+    GpuMesh body_mesh[BODY_KINDS], body_lod[BODY_KINDS][CHAR_LODS - 1], weapon_mesh[W_COUNT];
+    for (u32 k = 0; k < BODY_KINDS; k++)
+        for (u32 l = 0; l < CHAR_LODS; l++) {
+            char path[700], suf[16] = "";
+            if (l) snprintf(suf, sizeof suf, "_lod%u", l);
+            snprintf(path, sizeof path, "%s/meshes/%s%s.mesh", data_dir, g_body_file[k], suf);
+            if (!mb_load(&mb, &perm, path)) {
+                render_shutdown();
+                platform_shutdown();
+                return 1;
             }
+            GpuMesh *gm = l ? &body_lod[k][l - 1] : &body_mesh[k];
+            gpu_mesh_upload(gm, &mb);
+            if (l) gpu_mesh_set_lod(l == 1 ? &body_mesh[k] : &body_lod[k][l - 2], gm, g_char_lod_px[l - 1]);
+            perm.used = mark;
         }
-    }
     for (u32 k = 0; k < W_COUNT; k++) {
         mb_init(&mb, &perm, 4000, 12000);
         weapon_build(&mb, (u8)k);
@@ -400,8 +400,7 @@ int main(int argc, char **argv)
     }
 
     // Люди из MakeHuman (tools/humanconv): у каждого три LOD рядом, для сравнения
-    static const char *const mh_name[3] = { "mh_male", "mh_female", "mh_thin" };
-    enum { HUMAN_N = 3 * CHAR_LODS };
+    enum { HUMAN_N = BODY_KINDS * CHAR_LODS };
     GpuMesh human_mesh[HUMAN_N];
     u32 human_count = 0;
     M4 *human_bones = ARENA_PUSH_ARRAY(&perm, M4, HUMAN_N * RENDER_MAX_BONES);
@@ -505,7 +504,7 @@ int main(int argc, char **argv)
                 char path[700], suf[16] = "";
                 u32 lod = k % CHAR_LODS;
                 if (lod) snprintf(suf, sizeof suf, "_lod%u", lod);
-                snprintf(path, sizeof path, "%s/meshes/%s%s.mesh", data_dir, mh_name[k / CHAR_LODS], suf);
+                snprintf(path, sizeof path, "%s/meshes/%s%s.mesh", data_dir, g_body_file[k / CHAR_LODS], suf);
                 if (!mb_load(&mb, &perm, path)) continue;
                 gpu_mesh_upload(&human_mesh[human_count], &mb);
                 log_info("ЧЕЛОВЕК %u: %u вершин, %u треугольников", k, mb.vcount, mb.icount / 3);
@@ -646,9 +645,9 @@ int main(int argc, char **argv)
             };
             M4 *b = &bones[i * RENDER_MAX_BONES];
             character_pose(&p, NULL, b);
-            items[n++] = (DrawItem){ .mesh = &char_mesh[crowd.variant[i]], .bones = b };
+            items[n++] = (DrawItem){ .mesh = &body_mesh[crowd.variant[i] % BODY_KINDS], .bones = b };
         }
-        n += arena_view_draw(aview, arena, sim_time, body_mesh, CHAR_VARIANTS, weapon_mesh, arena_bones, items + n);
+        n += arena_view_draw(aview, arena, sim_time, body_mesh, BODY_KINDS, weapon_mesh, arena_bones, items + n);
         for (u32 i = 0; i < squad->count; i++) {
             const Player *pl = &squad->body[i];
             const CharSheet *cs = &squad->sheet[i];
@@ -659,7 +658,7 @@ int main(int argc, char **argv)
                 .lean_fwd = pl->lean_fwd, .lean_side = pl->lean_side, .look = pl->look,
             };
             character_pose(&p, NULL, b);
-            items[n++] = (DrawItem){ .mesh = &body_mesh[squad->variant[i] % CHAR_VARIANTS], .bones = b };
+            items[n++] = (DrawItem){ .mesh = &body_mesh[squad->variant[i] % BODY_KINDS], .bones = b };
             if (cs->equip[SLOT_WEAPON].kind == IK_WEAPON)
                 items[n++] = (DrawItem){ .mesh = &weapon_mesh[cs->equip[SLOT_WEAPON].id], .bones = b };
             if (squad->selected[i]) {
@@ -713,7 +712,7 @@ int main(int argc, char **argv)
             if (focus && hud.look_kind == LOOK_ARENA) {
                 const FighterDesc *d = &arena->roster[k].d;
                 f32 seed = (f32)k * 13.7f + 3.0f;
-                portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, &body_mesh[k % CHAR_VARIANTS], &weapon_mesh[d->weapon],
+                portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, &body_mesh[k % BODY_KINDS], &weapon_mesh[d->weapon],
                          seed, d->height / 1.8f, 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), pb);
                 continue;
             }
@@ -721,7 +720,7 @@ int main(int argc, char **argv)
             const CharSheet *cs = &squad->sheet[k];
             const GpuMesh *wm = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? &weapon_mesh[cs->equip[SLOT_WEAPON].id] : NULL;
             portrait(&fv, focus ? HUD_PORTRAIT_FOCUS : i, focus ? HUD_PORTRAIT_FOCUS_PX : HUD_PORTRAIT_CARD_PX,
-                     &body_mesh[squad->variant[k] % CHAR_VARIANTS], wm, 7.0f + (f32)k * 5.3f, cs->d.height / 1.8f, 0.0f, pb);
+                     &body_mesh[squad->variant[k] % BODY_KINDS], wm, 7.0f + (f32)k * 5.3f, cs->d.height / 1.8f, 0.0f, pb);
         }
         ui_set_image(render_portrait_texture());
         ui_set_time(real_time);

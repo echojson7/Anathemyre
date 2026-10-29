@@ -625,6 +625,9 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         V3 hip = v3((left ? HIP_X : -HIP_X) + dx, HIP_Y + dy, dz);
         f32 tp, tr, kn;
         leg_ik(hip, target, &tp, &tr, &kn);
+        // Нога в позе привязки чуть разведена: её крен уже есть в сетке
+        const V3 hj = g_body_bones[left ? BONE_THIGH_L : BONE_THIGH_R].joint, aj = g_body_bones[left ? BONE_FOOT_L : BONE_FOOT_R].joint;
+        tr -= atan2f(aj.x - hj.x, hj.y - aj.y);
         f32 foot = -(tp + kn) - p->lean_fwd + pitch * w;
         // На коленях: бедро отвесно, голень назад по земле
         tp = lerpf(tp, -0.1f, kneel);
