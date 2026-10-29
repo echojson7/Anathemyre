@@ -212,6 +212,10 @@ static Key map_key(KeySym ks)
     case XK_r: case XK_R: return KEY_R;
     case XK_f: case XK_F: return KEY_F;
     case XK_i: case XK_I: return KEY_I;
+    case XK_z: case XK_Z: return KEY_Z;
+    case XK_x: case XK_X: return KEY_X;
+    case XK_c: case XK_C: return KEY_C;
+    case XK_g: case XK_G: return KEY_G;
     case XK_Up: return KEY_UP;
     case XK_Down: return KEY_DOWN;
     case XK_Left: return KEY_LEFT;

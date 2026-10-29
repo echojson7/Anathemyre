@@ -8,8 +8,9 @@
 #include "../sim/body.h"
 #include "../sim/items.h"
 
-// Длина полного цикла шага (два шага), м
+// Длина полного цикла шага (два шага) при ходьбе и при беге, м
 #define CHAR_STRIDE 1.15f
+#define CHAR_STRIDE_RUN 2.7f
 
 _Static_assert(BONE_COUNT <= 24, "скелет не влезает в RENDER_MAX_BONES");
 
@@ -18,6 +19,7 @@ typedef struct CharPose {
     f32 heading;     // поворот вокруг Y, 0 = смотрит в +Z
     f32 phase;       // фаза цикла шага, 0..1
     f32 walk;        // 0 стоит .. 1 идёт
+    f32 run;         // 0 шаг .. 1 бег (0.5 — трусца)
     f32 time;
     f32 seed;
     f32 height;      // множитель роста, 0 = 1
@@ -41,6 +43,11 @@ typedef struct CharAction {
     u8   severed;    // маска BodyPart: отсечённые конечности
     bool two_hand;   // древковое и тяжёлое держат двумя руками
 } CharAction;
+
+// Длина цикла шага для походки run
+static inline f32 char_stride(f32 run) { return lerpf(CHAR_STRIDE, CHAR_STRIDE_RUN, clampf(run, 0.0f, 1.0f)); }
+// Походка под скорость, м/с: до 1.6 шаг, к 4.8 полный бег
+static inline f32 char_run_from_speed(f32 v) { return clampf((v - 1.6f) / 3.2f, 0.0f, 1.0f); }
 
 // Вариант 0..N задаёт одежду; armed — встроенное оружие тестовой комнаты
 void character_build(MeshBuilder *mb, u32 variant, bool armed);

@@ -402,6 +402,13 @@ int main(int argc, char **argv)
             V3 hit;
             if (pick_ground(hw.view_proj, fv.cam_pos, nx, ny, &hit)) squad_order_move(squad, hit);
         }
+        // Z шаг, X трусца, C бег — выбранным; G — держать строй
+        if (!hud.inspect) {
+            if (in.key_pressed[KEY_Z]) squad_set_gait(squad, GAIT_WALK);
+            if (in.key_pressed[KEY_X]) squad_set_gait(squad, GAIT_JOG);
+            if (in.key_pressed[KEY_C]) squad_set_gait(squad, GAIT_RUN);
+            if (in.key_pressed[KEY_G]) squad->formation = !squad->formation;
+        }
         squad_update(squad, dt, ground_height);
 
         u32 n = 0;
@@ -425,7 +432,7 @@ int main(int argc, char **argv)
             const CharSheet *cs = &squad->sheet[i];
             M4 *b = squad_bones + (size_t)i * 3 * RENDER_MAX_BONES;
             CharPose p = {
-                .pos = pl->pos, .heading = pl->heading, .phase = pl->phase, .walk = pl->walk,
+                .pos = pl->pos, .heading = pl->heading, .phase = pl->phase, .walk = pl->walk, .run = pl->run,
                 .time = sim_time, .seed = 7.0f + (f32)i * 5.3f, .height = cs->d.height / 1.8f,
             };
             character_pose(&p, NULL, b);

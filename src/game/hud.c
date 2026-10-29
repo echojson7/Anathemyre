@@ -175,6 +175,14 @@ static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 
     return best < 1e9f;
 }
 
+// Режим передвижения видно и когда стоит: «БЕГ» — побежит по приказу
+static const char *move_state(const Player *p)
+{
+    static const char *go[GAIT_COUNT] = { "ИДЁТ ШАГОМ", "ТРУСИТ", "БЕЖИТ" };
+    static const char *mode[GAIT_COUNT] = { "СТОИТ  ШАГ", "СТОИТ  ТРУСЦА", "СТОИТ  БЕГ" };
+    return p->moving ? go[p->gait] : mode[p->gait];
+}
+
 static bool look_data(const Hud *h, const HudWorld *w, LookData *o)
 {
     memset(o, 0, sizeof *o);
@@ -183,7 +191,7 @@ static bool look_data(const Hud *h, const HudWorld *w, LookData *o)
         CharSheet *c = &w->squad->sheet[h->look];
         o->name = c->name;
         o->role = "ОТРЯД";
-        o->state = w->squad->body[h->look].moving ? "ИДЁТ" : "СТОИТ";
+        o->state = move_state(&w->squad->body[h->look]);
         memcpy(o->hp, c->d.hp, sizeof o->hp);
         o->blood = c->d.blood;
         o->blood_max = 100.0f * c->d.mass / 75.0f;
@@ -630,7 +638,7 @@ static void draw_card(const HudWorld *w, const Layout *L, u32 i)
     // Вместо портрета — фигура тела с ранами
     body_figure(x + 4, y + 5, 1, c->d.hp, c->d.fracture, c->d.severed);
     ui_text(x + 20, y + 5, sq->selected[i] ? C_SEL : C_TEXT, c->name);
-    ui_text(x + 20, y + 15, C_DIM, sq->body[i].moving ? "ИДЁТ" : "СТОИТ");
+    ui_text(x + 20, y + 15, C_DIM, move_state(&sq->body[i]));
     f32 r = vital_ratio(c->d.hp);
     f32 blood = c->d.blood / (100.0f * c->d.mass / 75.0f);
     bar(x + 20, y + 25, CARD_W - 26, 2, r, health_color(r));
@@ -673,7 +681,8 @@ void hud_draw(const Hud *h, const Input *in, const HudWorld *w)
         ui_frame(x0, y0, bw, bh, C_SEL);
     }
 
-    const char *hint = "ЛКМ ВЫБОР, РАМКА  ПКМ ИДТИ  I ОСМОТР  F СЛЕДОВАТЬ";
+    const char *hint = sq->formation ? "ЛКМ ВЫБОР, РАМКА  ПКМ ИДТИ  Z X C ШАГ ТРУСЦА БЕГ  G СТРОЙ: ДА  I ОСМОТР  F СЛЕДОВАТЬ"
+                                      : "ЛКМ ВЫБОР, РАМКА  ПКМ ИДТИ  Z X C ШАГ ТРУСЦА БЕГ  G СТРОЙ: НЕТ  I ОСМОТР  F СЛЕДОВАТЬ";
     ui_rect(3, 3, ui_text_width(hint) + 6, 12, C_SHADE);
     ui_text(6, 6, C_DIM, hint);
     for (u32 i = 0; i < sq->count; i++) draw_card(w, &L, i);
