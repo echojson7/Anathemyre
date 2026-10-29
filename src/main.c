@@ -422,6 +422,11 @@ int main(int argc, char **argv)
             V3 fp = fig->view[squad->member[hud.focus]].pos;
             cam.target = v3(fp.x, 0, fp.z);
         }
+        // Камера за тем, кого правят в окне ВНЕШНОСТЬ
+        if (editor_follow(&editor) >= 0) {
+            V3 fp = fig->view[editor_follow(&editor)].pos;
+            cam.target = v3(fp.x, 0, fp.z);
+        }
         orders_input(&hud, &in, &hin, &hw, ui_busy, fv.cam_pos, ww, wh, world);
 
         world_update(world, dt);

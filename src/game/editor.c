@@ -182,8 +182,6 @@ void editor_input(Editor *e, Hud *h, Input *in, World *w, RtsCamera *cam, bool h
     }
     if (was && !e->f.open) camera_close(humans_on);
     h->win_look = e->f.open;
-    if (e->f.open && who >= 0) {
-        V3 pos = w->people->body[who].pos;
-        cam->target = v3(pos.x, 0, pos.z);
-    }
 }
+
+i32 editor_follow(const Editor *e) { return e->f.open ? e->who : -1; }

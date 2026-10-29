@@ -20,8 +20,10 @@ typedef struct Editor {
 } Editor;
 
 void editor_init(Editor *e);
-// Между menu_input и hud_input. Пока окно открыто, камера вплотную у того, кого правят.
+// Между menu_input и hud_input. При открытии камера встаёт вплотную лицом к тому, кого правят.
 // Если мышь занята окном, клики из *in убраны
 void editor_input(Editor *e, Hud *h, Input *in, World *w, RtsCamera *cam, bool humans_on);
+// За кем держать камеру (номер в таблице людей), -1 — окно закрыто или править некого
+i32  editor_follow(const Editor *e);
 
 #endif
