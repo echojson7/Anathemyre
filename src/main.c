@@ -470,8 +470,8 @@ int main(int argc, char **argv)
         fv.shadow_center = cam.target;
         fv.time = sim_time;
         fv.frame = frame;
-        // Полное разрешение окна: пиксельность нарисована на поверхностях (см. scene.frag, TEXEL)
-        rs.internal_h = wh;
+        // Половина окна, апскейл ровно ×2: лёгкий экранный пиксель без мыла вдали; основная пиксельность на поверхностях (scene.frag, TEXEL)
+        rs.internal_h = wh / 2;
         render_frame(&fv, items, n, &rs, ww, wh);
         hud_draw(&hud, &in, &hw);
         ui_end();
