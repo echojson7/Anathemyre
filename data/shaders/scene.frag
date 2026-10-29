@@ -15,7 +15,7 @@ layout(location = 22) uniform vec3 u_sun_color;
 layout(location = 23) uniform float u_time;
 layout(location = 24) uniform vec3 u_sky_amb;
 layout(location = 25) uniform vec3 u_ground_amb;
-layout(location = 26) uniform int u_unlit;   // портреты интерфейса: чистый цвет без света и тени
+layout(location = 26) uniform int u_unlit;   // портреты интерфейса: свой неподвижный свет
 layout(binding = 0) uniform sampler2DShadow u_shadow;
 
 out vec4 o_color;
@@ -88,12 +88,11 @@ void main()
 {
     vec3 N = normalize(v_nrm);
     if (!gl_FrontFacing) N = -N;
-    // Пиксельность живёт на поверхностях: материал и свет считаются в центре квадрата TEXEL.
-    // Где квадрат мельче пикселя экрана, пиксель экрана и есть пиксель. Люди пикселизуются
-    // целиком спрайтом (render.c), поэтому квадратов на них нет
+    // Материал и свет считаются в центре квадрата TEXEL (как текстура низкого разрешения),
+    // одинаково на всех поверхностях. Где квадрат мельче пикселя кадра, пикселем служит пиксель кадра
     vec3 Nl = normalize(transpose(v_rot) * N);
     float mpp = max(length(dFdx(v_local)), length(dFdy(v_local)));
-    bool snap = u_skinned == 0 && mpp < TEXEL;
+    bool snap = mpp < TEXEL;
     vec3 dl = snap ? texel_snap(v_local, Nl, TEXEL) : vec3(0.0);
     vec3 P = v_local + dl;           // материал: прилипает к телу
     vec3 W = v_world + v_rot * dl;   // свет и тени
@@ -204,6 +203,7 @@ void main()
         float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
         col += (u_sky_amb + u_ground_amb) * rim * 0.35;
     }
-    if (u_unlit != 0) col = albedo + emissive;
+    // Портрет: неподвижный свет спереди-сверху-слева, без солнца и теней мира
+    if (u_unlit != 0) col = albedo * (0.25 + 0.75 * max(dot(N, normalize(vec3(-0.5, 0.7, 0.6))), 0.0)) + emissive;
     o_color = vec4(col, 1.0);
 }

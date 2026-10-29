@@ -566,8 +566,8 @@ int main(int argc, char **argv)
         fv.shadow_center = cam.target;
         fv.time = sim_time;
         fv.frame = frame;
-        // Полное разрешение окна: даль чёткая; пиксельность на поверхностях (scene.frag, TEXEL) и в спрайтах людей (render.c)
-        rs.internal_h = wh;
+        // Один пиксельный растр на весь кадр: половина окна, апскейл ровно ×2 (одинаково вблизи и вдали)
+        rs.internal_h = wh / 2;
         render_frame(&fv, items, n, &rs, ww, wh);
         // Портреты: миниатюры отряда и крупно выбранный
         for (u32 i = 0; i <= squad->count; i++) {

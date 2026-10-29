@@ -11,21 +11,13 @@
 #define SHADOW_SIZE 2048
 #define SHADOW_EXTENT 45.0f   // полуразмер области теней, м
 
-// Ближние персонажи рисуются спрайтами: пиксель спрайта ~1/FIG_PX м мира, на экране блок k×k пикселей.
-// В атлас спрайт идёт с запасом ×2 (FIG_SS), при выводе 2x2 сводятся в один пиксель: тонкие части не рвутся
-#define FIG_PX   16.0f
-#define FIG_SS   2
-#define FIG_MAX  32       // спрайтов за кадр, ближние
-#define FIG_CELL 128      // ячейка атласа, пикселей
-#define FIG_COLS 8
-
 // Расположения uniform задаются явно в GLSL (layout(location = N))
 enum {
     U_VIEW_PROJ = 0, U_SKINNED = 17, U_LIGHT_VP = 18, U_INST_BASE = 19,
     U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
-    U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_F_RECT = 44, U_F_CELL = 45, U_F_SCREEN = 46,
+    U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43,
 };
 
 // Буферы хранения (layout(binding = N) в scene.vert)
@@ -51,16 +43,7 @@ typedef struct PassView {
     V3      eye, fwd;   // для теней fwd нулевой: размер не зависит от дальности
     f32     px_k;       // пикселей на метр на единичной дальности (или просто на метр для теней)
     bool    full;       // всегда полный уровень детализации (портреты)
-    bool    no_figs;    // без элементов, ушедших в спрайты
 } PassView;
-
-// Спрайт персонажа: элементы first..last с общими костями, прямоугольник на экране и ячейка атласа
-typedef struct Figure {
-    u32 first, last;
-    f32 depth, k, cx, cy;  // дальность, размер блока, центр на экране
-    i32 half;              // полуразмер спрайта, пикселей спрайта
-    f32 x0, y0;            // левый нижний угол на экране, пиксели кадра
-} Figure;
 
 // Метки времени GPU: кольцо из нескольких кадров, чтобы чтение не ждало GPU
 #define TIMER_FRAMES 4
@@ -79,8 +62,6 @@ static struct {
     u32    shadow_fbo, shadow_tex;
     Target scene, rays, atmos, ldr;
     Target portrait;  // атлас портретов: ячейки RENDER_PORTRAIT_PX в ряд, HDR
-    u32    prog_figure;
-    Target figs;      // атлас спрайтов персонажей: FIG_COLS ячеек FIG_CELL в ряд, HDR и глубина
     u32    timer[TIMER_FRAMES][TIMER_MARKS];
     bool   timer_pending[TIMER_FRAMES];
     u32    timer_slot;
@@ -100,8 +81,6 @@ static u32  g_pose[RENDER_MAX_ITEMS];
 static Inst g_inst[2][RENDER_MAX_ITEMS];
 static u32  g_inst_pose[2 * RENDER_MAX_ITEMS];
 static M4   g_bones[RENDER_MAX_POSED * RENDER_MAX_BONES];
-static Figure g_fig[RENDER_MAX_ITEMS];
-static bool   g_in_fig[RENDER_MAX_ITEMS];
 
 static char *read_file(const char *path)
 {
@@ -187,8 +166,6 @@ bool render_reload_shaders(void)
     const char *atmos_fs[] = { "common.glsl", "atmos.frag" };
     const char *style_fs[] = { "common.glsl", "style.frag" };
     const char *upscale_fs[] = { "upscale.frag" };
-    const char *figure_vs[] = { "figure.vert" };
-    const char *figure_fs[] = { "figure.frag" };
 
     u32 scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, scene_fs, 2));
     u32 shadow = link(compile(GL_VERTEX_SHADER, "#define SHADOW_PASS\n", scene_vs, 1),
@@ -197,12 +174,10 @@ bool render_reload_shaders(void)
     u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 2));
     u32 style = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, style_fs, 2));
     u32 upscale = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, upscale_fs, 1));
-    u32 figure = link(compile(GL_VERTEX_SHADER, NULL, figure_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, figure_fs, 1));
     R.scratch->used = mark;
 
-    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, figure };
-    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style, &R.prog_upscale,
-                     &R.prog_figure };
+    u32 progs[] = { scene, shadow, rays, atmos, style, upscale };
+    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style, &R.prog_upscale };
     bool ok = true;
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) {
@@ -296,8 +271,7 @@ bool render_init(Arena *scratch, const char *data_dir)
         log_error("FBO: теневая карта неполна");
         return false;
     }
-    return target_make(&R.portrait, RENDER_PORTRAIT_PX * RENDER_PORTRAIT_SLOTS, RENDER_PORTRAIT_PX, GL_RGBA16F, true) &&
-           target_make(&R.figs, FIG_CELL * FIG_COLS, FIG_CELL * (FIG_MAX / FIG_COLS), GL_RGBA16F, true);
+    return target_make(&R.portrait, RENDER_PORTRAIT_PX * RENDER_PORTRAIT_SLOTS, RENDER_PORTRAIT_PX, GL_RGBA16F, true);
 }
 
 void render_shutdown(void)
@@ -307,7 +281,6 @@ void render_shutdown(void)
     target_free(&R.atmos);
     target_free(&R.ldr);
     target_free(&R.portrait);
-    target_free(&R.figs);
     if (R.shadow_fbo) glDeleteFramebuffers(1, &R.shadow_fbo);
     if (R.shadow_tex) glDeleteTextures(1, &R.shadow_tex);
     if (R.empty_vao) glDeleteVertexArrays(1, &R.empty_vao);
@@ -317,7 +290,7 @@ void render_shutdown(void)
     }
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
-    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style, R.prog_upscale, R.prog_figure };
+    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style, R.prog_upscale };
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
         if (progs[i]) glDeleteProgram(progs[i]);
     memset(&R, 0, sizeof R);
@@ -510,7 +483,6 @@ static u32 gather(const DrawItem *items, u32 count, const PassView *pv, bool sha
         const DrawItem *it = &items[i];
         if (shadow && it->no_shadow) continue;
         if (it->bones && g_pose[i] == NO_POSE) continue;
-        if (pv->no_figs && g_in_fig[i]) continue;
         if (!sphere_visible(&pv->fr, g_sphere[i])) continue;
         out[n++] = (Inst){ pick_lod(it->mesh, g_sphere[i], pv), it->bones ? g_pose[i] : NO_POSE };
     }
@@ -600,67 +572,6 @@ static M4 light_matrix(const FrameView *fv)
     return m4_mul(lp, lv);
 }
 
-static int fig_cmp(const void *pa, const void *pb)
-{
-    const Figure *a = pa, *b = pb;
-    return (a->depth > b->depth) - (a->depth < b->depth);
-}
-
-// Персонажи (элементы подряд с общими костями), которым на экране нужен спрайт: ближние FIG_MAX
-static u32 plan_figures(const DrawItem *items, u32 count, const PassView *pv, M4 vp, i32 iw, i32 ih)
-{
-    memset(g_in_fig, 0, sizeof(bool) * count);
-    u32 n = 0;
-    for (u32 i = 0; i < count;) {
-        u32 j = i + 1;
-        if (!items[i].bones || g_pose[i] == NO_POSE) {
-            i = j;
-            continue;
-        }
-        while (j < count && items[j].bones == items[i].bones) j++;
-        V3 c = v3(g_sphere[i].x, g_sphere[i].y, g_sphere[i].z);
-        f32 r = g_sphere[i].w;
-        for (u32 m = i + 1; m < j; m++)
-            r = fmaxf(r, v3_len(v3_sub(v3(g_sphere[m].x, g_sphere[m].y, g_sphere[m].z), c)) + g_sphere[m].w);
-        Figure f = { .first = i, .last = j - 1 };
-        i = j;
-        if (!sphere_visible(&pv->fr, (V4){ c.x, c.y, c.z, r })) continue;
-        f.depth = v3_dot(v3_sub(c, pv->eye), pv->fwd);
-        if (f.depth < r + 0.2f) continue;  // камера почти внутри: обычная отрисовка
-        f32 ppm = pv->px_k / f.depth;
-        f.k = floorf(ppm / FIG_PX);
-        if (f.k < 2.0f) continue;          // пиксель спрайта не крупнее пикселя кадра: обычная отрисовка
-        f32 r_px = r * pv->px_k / sqrtf(f.depth * f.depth - r * r) * 1.1f;
-        f.half = (i32)ceilf(r_px / f.k) + 1;
-        if (2 * f.half * FIG_SS > FIG_CELL) continue;
-        f32 w = vp.m[3] * c.x + vp.m[7] * c.y + vp.m[11] * c.z + vp.m[15];
-        f.cx = ((vp.m[0] * c.x + vp.m[4] * c.y + vp.m[8] * c.z + vp.m[12]) / w * 0.5f + 0.5f) * (f32)iw;
-        f.cy = ((vp.m[1] * c.x + vp.m[5] * c.y + vp.m[9] * c.z + vp.m[13]) / w * 0.5f + 0.5f) * (f32)ih;
-        g_fig[n++] = f;
-    }
-    qsort(g_fig, n, sizeof *g_fig, fig_cmp);
-    n = MIN(n, (u32)FIG_MAX);
-    for (u32 f = 0; f < n; f++)
-        for (u32 i = g_fig[f].first; i <= g_fig[f].last; i++) g_in_fig[i] = true;
-    return n;
-}
-
-// Проекция ячейки спрайта: центр персонажа встаёт на сетку блоков k, поэтому при движении
-// спрайт сдвигается целыми пикселями спрайта и не рябит
-static M4 figure_vp(Figure *f, M4 vp, i32 iw, i32 ih)
-{
-    f32 gx = roundf(f->cx / f->k) * f->k, gy = roundf(f->cy / f->k) * f->k;
-    f32 size = 2.0f * (f32)f->half * f->k;
-    f->x0 = gx - (f32)f->half * f->k;
-    f->y0 = gy - (f32)f->half * f->k;
-    M4 a = m4_identity();
-    a.m[0] = (f32)iw / size;
-    a.m[5] = (f32)ih / size;
-    a.m[12] = ((f32)iw + 2.0f * (gx - f->cx - f->x0)) / size - 1.0f;
-    a.m[13] = ((f32)ih + 2.0f * (gy - f->cy - f->y0)) / size - 1.0f;
-    return m4_mul(a, vp);
-}
-
 void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const RenderSettings *rs, i32 win_w, i32 win_h)
 {
     if (win_w <= 0 || win_h <= 0 || !R.prog_scene) return;
@@ -700,8 +611,6 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         .fwd = v3(-fv->view.m[2], -fv->view.m[6], -fv->view.m[10]),
         .px_k = fv->proj.m[5] * 0.5f * (f32)ih,
     };
-    u32 n_fig = plan_figures(items, count, &scene_view, vp, iw, ih);
-    scene_view.no_figs = true;
     u32 n_shadow = gather(items, count, &shadow_view, true, g_inst[0]);
     u32 n_scene = gather(items, count, &scene_view, false, g_inst[1]);
     u32 base_shadow = stream_insts(g_inst[0], &n_shadow);
@@ -727,8 +636,13 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glDisable(GL_POLYGON_OFFSET_FILL);
     if (timing) mark(1);
 
-    // 2. Сцена: сначала спрайты ближних персонажей в атлас, затем кадр, затем спрайты в кадр
+    // 2. Сцена в низком разрешении
+    glBindFramebuffer(GL_FRAMEBUFFER, R.scene.fbo);
+    glViewport(0, 0, iw, ih);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(R.prog_scene);
+    glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, vp.m);
     glUniformMatrix4fv(U_LIGHT_VP, 1, GL_FALSE, light_vp.m);
     glUniform3f(U_CAM_POS, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
     glUniform3f(U_SUN_DIR, L.x, L.y, L.z);
@@ -737,49 +651,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform3f(U_SKY_AMB, fv->sky_amb.x, fv->sky_amb.y, fv->sky_amb.z);
     glUniform3f(U_GROUND_AMB, fv->ground_amb.x, fv->ground_amb.y, fv->ground_amb.z);
     glBindTextureUnit(0, R.shadow_tex);
-    glBindFramebuffer(GL_FRAMEBUFFER, R.figs.fbo);
-    glEnable(GL_SCISSOR_TEST);
-    glClearColor(0, 0, 0, 0);
-    for (u32 f = 0; f < n_fig; f++) {
-        Figure *fg = &g_fig[f];
-        i32 x = (i32)(f % FIG_COLS) * FIG_CELL, y = (i32)(f / FIG_COLS) * FIG_CELL, size = 2 * fg->half * FIG_SS;
-        glViewport(x, y, size, size);
-        glScissor(x, y, size, size);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        M4 fvp = figure_vp(fg, vp, iw, ih);
-        glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, fvp.m);
-        // Детализация по размеру спрайта, а не кадра
-        PassView pv = scene_view;
-        pv.px_k *= FIG_SS / fg->k;
-        u32 m = 0;
-        for (u32 i = fg->first; i <= fg->last; i++)
-            if (g_pose[i] != NO_POSE) g_inst[0][m++] = (Inst){ pick_lod(items[i].mesh, g_sphere[i], &pv), g_pose[i] };
-        u32 base = stream_insts(g_inst[0], &m);
-        draw_insts(g_inst[0], m, base, 1);
-    }
-    glDisable(GL_SCISSOR_TEST);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, R.scene.fbo);
-    glViewport(0, 0, iw, ih);
-    glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, vp.m);
     draw_insts(g_inst[1], n_scene, base_scene, 1);
-    if (n_fig) {
-        glDisable(GL_CULL_FACE);
-        glUseProgram(R.prog_figure);
-        glBindVertexArray(R.empty_vao);
-        glUniform2f(U_F_SCREEN, (f32)iw, (f32)ih);
-        glBindTextureUnit(0, R.figs.color);
-        glBindTextureUnit(1, R.figs.depth);
-        for (u32 f = 0; f < n_fig; f++) {
-            const Figure *fg = &g_fig[f];
-            f32 size = 2.0f * (f32)fg->half * fg->k;
-            glUniform4f(U_F_RECT, fg->x0, fg->y0, size, size);
-            glUniform4f(U_F_CELL, (f32)((f % FIG_COLS) * FIG_CELL), (f32)((f / FIG_COLS) * FIG_CELL), fg->k, 0.0f);
-            glDrawArrays(GL_TRIANGLES, 0, 6);
-        }
-    }
     if (timing) mark(2);
 
     // 3. Атмосфера. Сначала объёмный свет в половинном разрешении, затем небо, туман и AO
@@ -861,7 +733,7 @@ void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, cons
 {
     if (slot >= RENDER_PORTRAIT_SLOTS || !R.prog_scene) return;
     size = CLAMP(size, 8, RENDER_PORTRAIT_PX);
-    // Шейдер сцены без света и тени: чистый цвет материалов
+    // Шейдер сцены со своим неподвижным светом, без солнца и теней мира
     i32 x = (i32)slot * RENDER_PORTRAIT_PX;
     glBindFramebuffer(GL_FRAMEBUFFER, R.portrait.fbo);
     glViewport(x, 0, size, size);
