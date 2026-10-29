@@ -41,6 +41,7 @@ typedef struct Options {
     RtsCamera   cam;
     u64         seed;
     bool        no_vsync;
+    u32         fps_cap;     // предел кадров без vsync, 0 — без предела
     bool        follow;      // камера следует за своим персонажем
     f32         tod;         // время суток на старте: 0 полночь, 0.5 полдень
     bool        inspect;     // выбрать отряд и открыть осмотр (для снимков)
@@ -133,7 +134,7 @@ static bool pick_ground(M4 view_proj, V3 eye, f32 nx, f32 ny, V3 *out)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
+    puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--fps N] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
 }
@@ -145,6 +146,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         if (!strcmp(a, "--shot") && i + 1 < argc) o->shot_path = argv[++i];
         else if (!strcmp(a, "--frames") && i + 1 < argc) o->shot_frames = atoi(argv[++i]);
         else if (!strcmp(a, "--novsync")) o->no_vsync = true;
+        else if (!strcmp(a, "--fps") && i + 1 < argc) o->fps_cap = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--follow")) o->follow = true;
         else if (!strcmp(a, "--tod") && i + 1 < argc) o->tod = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--inspect")) o->inspect = true;
@@ -203,7 +205,7 @@ int main(int argc, char **argv)
     platform_preinit();
     time_init();
     Options opt = {
-        .tod = 0.31f, .shot_frames = 90, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337,
+        .tod = 0.31f, .shot_frames = 90, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337, .fps_cap = 240,
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
@@ -340,14 +342,17 @@ int main(int argc, char **argv)
     f64 last = time_now();
     f64 stat_t = last;
     u32 stat_frames = 0;
-    f64 cpu_logic = 0, cpu_submit = 0, cpu_swap = 0;
-    bool vsync = !opt.no_vsync && opt.shot_path == NULL;
+    f64 cpu_logic = 0, cpu_submit = 0, cpu_swap = 0, cpu_wait = 0;
+    // Без vsync карта гонит тысячи кадров впустую и пищит дросселями, поэтому по умолчанию есть предел
+    enum { SYNC_VSYNC, SYNC_CAP, SYNC_FREE } sync = opt.no_vsync || opt.shot_path ? SYNC_CAP : SYNC_VSYNC;
+    if (sync == SYNC_CAP && opt.fps_cap == 0) sync = SYNC_FREE;
+    f64 next_frame = last;
     f32 sim_time = 0;
     f32 tod = opt.tod;
     bool day_run = true;
     u32 frame = 0;
 
-    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — осмотр, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F2 — разрешение, F3 — vsync, F4 — остановить сутки, F5 — шейдеры");
+    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — осмотр, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F2 — разрешение, F3 — vsync / предел кадров / без предела, F4 — остановить сутки, F5 — шейдеры");
 
     while (!in.quit) {
         platform_poll(&in);
@@ -368,9 +373,11 @@ int main(int argc, char **argv)
             if (opt.follow) cam.dist = MIN(cam.dist, 8.0f);
         }
         if (in.key_pressed[KEY_F3]) {
-            vsync = !vsync;
-            platform_set_vsync(vsync);
-            log_info("VSYNC: %s", vsync ? "вкл" : "выкл");
+            sync = (sync + 1) % 3;
+            if (sync == SYNC_CAP && opt.fps_cap == 0) sync = SYNC_FREE;
+            platform_set_vsync(sync == SYNC_VSYNC);
+            if (sync == SYNC_CAP) log_info("VSYNC: выкл, предел %u к/с", opt.fps_cap);
+            else log_info("VSYNC: %s", sync == SYNC_VSYNC ? "вкл" : "выкл, без предела");
         }
 
         f64 now = time_now();
@@ -484,7 +491,14 @@ int main(int argc, char **argv)
             break;
         }
         platform_swap();
-        cpu_swap += time_now() - t_swap;
+        f64 t_wait = time_now();
+        cpu_swap += t_wait - t_swap;
+        if (sync == SYNC_CAP && !opt.shot_path) {
+            // Отстав больше чем на кадр, не догоняем, а начинаем отсчёт заново
+            next_frame = fmax(next_frame + 1.0 / opt.fps_cap, t_wait - 1.0 / opt.fps_cap);
+            time_wait_until(next_frame);
+            cpu_wait += time_now() - t_wait;
+        }
 
         stat_frames++;
         if (now - stat_t >= 2.0) {
@@ -499,12 +513,12 @@ int main(int argc, char **argv)
                          st.gpu_ms[PASS_STYLE], st.gpu_ms[PASS_BLIT]);
             else
                 snprintf(gpu, sizeof gpu, "GPU: драйвер не отдаёт метки времени");
-            log_info("КАДР: %.2f мс, %.0f к/с | CPU: логика %.3f, отправка %.3f, swap %.3f | %s",
+            log_info("КАДР: %.2f мс, %.0f к/с | CPU: логика %.3f, отправка %.3f, swap %.3f, предел %.3f | %s",
                      (now - stat_t) * k, stat_frames / (now - stat_t),
-                     cpu_logic * k, cpu_submit * k, cpu_swap * k, gpu);
+                     cpu_logic * k, cpu_submit * k, cpu_swap * k, cpu_wait * k, gpu);
             stat_t = now;
             stat_frames = 0;
-            cpu_logic = cpu_submit = cpu_swap = 0;
+            cpu_logic = cpu_submit = cpu_swap = cpu_wait = 0;
         }
     }
 
