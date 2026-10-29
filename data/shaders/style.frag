@@ -5,6 +5,7 @@ in vec2 v_uv;
 layout(location = 41) uniform int u_post;
 layout(location = 42) uniform int u_frame;
 layout(binding = 0) uniform sampler2D u_src;
+layout(binding = 2) uniform usampler2D u_src_map;  // откуда пиксель берёт цвет, src_map.frag
 
 out vec4 o_color;
 
@@ -15,7 +16,7 @@ vec3 aces(vec3 x)
 
 void main()
 {
-    vec2 uv = (vec2(pixel_src(ivec2(gl_FragCoord.xy))) + 0.5) / vec2(textureSize(u_src, 0));
+    vec2 uv = (vec2(texelFetch(u_src_map, ivec2(gl_FragCoord.xy), 0).rg) + 0.5) / vec2(textureSize(u_src, 0));
     if (u_post == 0) {
         o_color = vec4(pow(aces(texture(u_src, uv).rgb * 1.2), vec3(1.0 / 2.2)), 1.0);
         return;

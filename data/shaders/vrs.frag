@@ -1,28 +1,19 @@
-// Карта частоты шейдинга (GL_NV_shading_rate_image): блок 2x2 или 4x4 шейдится один раз,
-// только если все его пиксели берут цвет из одного центра ячейки (pixel_src, pixel.glsl). Иначе — каждый пиксель
+// Карта частоты шейдинга (GL_NV_shading_rate_image): клетка карты — самая мелкая частота её блоков 4x4
 
-layout(location = 45) uniform ivec2 u_tile;  // клетка карты в пикселях кадра
+layout(location = 45) uniform ivec2 u_tile;      // клетка карты в блоках 4x4
+layout(binding = 3) uniform usampler2D u_block;  // vrs_block.frag
 
-out uint o_rate;  // 0 — каждый пиксель, 1 — 2x2, 2 — 4x4 (палитра в render.c)
+out uint o_rate;
 
 void main()
 {
-    ivec2 t0 = ivec2(gl_FragCoord.xy) * u_tile;
-    ivec2 size = textureSize(u_depth, 0);
-    int k = 4;
-    // Выровненные блоки 4x4, в них блоки 2x2: у всех пикселей блока pixel_src должен совпадать
-    for (int by = 0; by < u_tile.y && k > 1; by += 4)
-        for (int bx = 0; bx < u_tile.x && k > 1; bx += 4) {
-            ivec2 s4 = pixel_src(min(t0 + ivec2(bx, by), size - 1));
-            for (int cy = 0; cy < 4 && k > 1; cy += 2)
-                for (int cx = 0; cx < 4 && k > 1; cx += 2) {
-                    ivec2 s2 = pixel_src(min(t0 + ivec2(bx + cx, by + cy), size - 1));
-                    if (s2 != s4) k = min(k, 2);
-                    for (int i = 1; i < 4; i++) {
-                        ivec2 p = min(t0 + ivec2(bx + cx + (i & 1), by + cy + (i >> 1)), size - 1);
-                        if (pixel_src(p) != s2) k = 1;
-                    }
-                }
+    ivec2 b0 = ivec2(gl_FragCoord.xy) * u_tile;
+    ivec2 size = textureSize(u_block, 0);
+    uint r = 2u;
+    for (int y = 0; y < u_tile.y; y++)
+        for (int x = 0; x < u_tile.x; x++) {
+            ivec2 b = b0 + ivec2(x, y);
+            if (b.x < size.x && b.y < size.y) r = min(r, texelFetch(u_block, b, 0).r);
         }
-    o_rate = k == 4 ? 2u : (k == 2 ? 1u : 0u);
+    o_rate = r;
 }

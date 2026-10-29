@@ -61,10 +61,12 @@ typedef struct Target {
 static struct {
     Arena *scratch;
     char   data_dir[512];
-    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_vrs;
+    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_src_map, prog_vrs_block, prog_vrs;
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
     Target scene, rays, atmos, ldr;
+    Target src_map;   // откуда каждый пиксель берёт цвет (RG16UI), src_map.frag
+    Target block;     // частота шейдинга блоков 4x4 (R8UI)
     Target rate;      // карта частоты шейдинга (R8UI), клетка vrs_tile пикселей
     bool   vrs;       // есть GL_NV_shading_rate_image
     i32    vrs_tile[2];
@@ -173,7 +175,9 @@ bool render_reload_shaders(void)
     const char *rays_fs[] = { "common.glsl", "rays.frag" };
     const char *atmos_fs[] = { "common.glsl", "atmos.frag" };
     const char *style_fs[] = { "common.glsl", "pixel.glsl", "style.frag" };
-    const char *vrs_fs[] = { "pixel.glsl", "vrs.frag" };
+    const char *src_map_fs[] = { "pixel.glsl", "src_map.frag" };
+    const char *vrs_block_fs[] = { "vrs_block.frag" };
+    const char *vrs_fs[] = { "vrs.frag" };
     const char *upscale_fs[] = { "upscale.frag" };
 
     const char *vrs_def = R.vrs ? "#extension GL_NV_shading_rate_image : require\n#define VRS\n" : NULL;
@@ -189,12 +193,15 @@ bool render_reload_shaders(void)
     u32 rays = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, rays_fs, 2));
     u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 2));
     u32 style = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, style_fs, 3));
-    u32 vrs = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_fs, 2));
+    u32 src_map = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, src_map_fs, 2));
+    u32 vrs_block = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_block_fs, 1));
+    u32 vrs = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_fs, 1));
     u32 upscale = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, upscale_fs, 1));
     R.scratch->used = mark;
 
-    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, vrs };
-    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style, &R.prog_upscale, &R.prog_vrs };
+    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, src_map, vrs_block, vrs };
+    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style, &R.prog_upscale,
+                     &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs };
     bool ok = true;
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) {
@@ -312,6 +319,8 @@ void render_shutdown(void)
     target_free(&R.rays);
     target_free(&R.atmos);
     target_free(&R.ldr);
+    target_free(&R.src_map);
+    target_free(&R.block);
     target_free(&R.rate);
     target_free(&R.portrait);
     if (R.shadow_fbo) glDeleteFramebuffers(1, &R.shadow_fbo);
@@ -323,7 +332,8 @@ void render_shutdown(void)
     }
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
-    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style, R.prog_upscale, R.prog_vrs };
+    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style, R.prog_upscale,
+                    R.prog_src_map, R.prog_vrs_block, R.prog_vrs };
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
         if (progs[i]) glDeleteProgram(progs[i]);
     memset(&R, 0, sizeof R);
@@ -618,8 +628,10 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         target_make(&R.ldr, iw, ih, GL_RGBA8, false);
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        if (R.vrs && !target_make(&R.rate, (iw + R.vrs_tile[0] - 1) / R.vrs_tile[0], (ih + R.vrs_tile[1] - 1) / R.vrs_tile[1],
-                                  GL_R8UI, false))
+        target_make(&R.src_map, iw, ih, GL_RG16UI, false);
+        if (R.vrs && !(target_make(&R.block, (iw + 3) / 4, (ih + 3) / 4, GL_R8UI, false) &&
+                       target_make(&R.rate, (iw + R.vrs_tile[0] - 1) / R.vrs_tile[0], (ih + R.vrs_tile[1] - 1) / R.vrs_tile[1],
+                                   GL_R8UI, false)))
             R.vrs = false;
         log_info("РЕНДЕР: внутреннее разрешение %dx%d -> окно %dx%d", iw, ih, win_w, win_h);
     }
@@ -690,21 +702,33 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     f32 px_k = rs->pixel ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
     bool vrs = R.vrs && rs->vrs && rs->pixel;
     R.stat_vrs = vrs;
+    // По готовой глубине: откуда каждый пиксель берёт цвет, раз за кадр (фильтр и карта частоты)
+    glBindFramebuffer(GL_FRAMEBUFFER, R.src_map.fbo);
+    glDisable(GL_DEPTH_TEST);
+    glUseProgram(R.prog_src_map);
+    glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
+    glBindTextureUnit(1, R.scene.depth);
+    glBindVertexArray(R.empty_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
     if (vrs) {
-        // По готовой глубине: где фильтр сольёт пиксели в блоки, материалы и атмосфера считаются раз на блок
+        // Где фильтр сольёт пиксели в блоки, материалы и атмосфера считаются раз на блок
+        glBindFramebuffer(GL_FRAMEBUFFER, R.block.fbo);
+        glViewport(0, 0, R.block.w, R.block.h);
+        glUseProgram(R.prog_vrs_block);
+        glBindTextureUnit(2, R.src_map.color);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindFramebuffer(GL_FRAMEBUFFER, R.rate.fbo);
         glViewport(0, 0, R.rate.w, R.rate.h);
-        glDisable(GL_DEPTH_TEST);
         glUseProgram(R.prog_vrs);
-        glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
-        glUniform2i(U_V_TILE, R.vrs_tile[0], R.vrs_tile[1]);
-        glBindTextureUnit(1, R.scene.depth);
-        glBindVertexArray(R.empty_vao);
+        glUniform2i(U_V_TILE, R.vrs_tile[0] / 4, R.vrs_tile[1] / 4);
+        glBindTextureUnit(3, R.block.color);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glShadingRateImageBarrierNV(GL_TRUE);
-        glBindFramebuffer(GL_FRAMEBUFFER, R.scene.fbo);
-        glViewport(0, 0, iw, ih);
-        glEnable(GL_DEPTH_TEST);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, R.scene.fbo);
+    glViewport(0, 0, iw, ih);
+    glEnable(GL_DEPTH_TEST);
+    if (vrs) {
         glBindShadingRateImageNV(R.rate.color);
         glEnable(GL_SHADING_RATE_IMAGE_NV);
     }
@@ -768,6 +792,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
     glBindTextureUnit(0, R.atmos.color);
     glBindTextureUnit(1, R.scene.depth);
+    glBindTextureUnit(2, R.src_map.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (timing) mark(4);
 
