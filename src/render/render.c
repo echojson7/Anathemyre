@@ -176,6 +176,12 @@ bool render_reload_shaders(void)
 
     const char *vrs_def = R.vrs ? "#extension GL_NV_shading_rate_image : require\n#define VRS\n" : NULL;
     u32 scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, vrs_def, scene_fs, 2));
+    if (!scene && R.vrs) {
+        // Драйвер заявил расширение, но шейдер с ним не собрался: считаем каждый пиксель
+        log_error("РЕНДЕР: шейдинг блоками отключён, шейдер сцены без него");
+        R.vrs = false;
+        scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, scene_fs, 2));
+    }
     u32 shadow = link(compile(GL_VERTEX_SHADER, "#define SHADOW_PASS\n", scene_vs, 1),
                       compile(GL_FRAGMENT_SHADER, NULL, shadow_fs, 1));
     u32 rays = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, rays_fs, 2));
@@ -610,8 +616,9 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         target_make(&R.ldr, iw, ih, GL_RGBA8, false);
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        if (R.vrs)
-            target_make(&R.rate, (iw + R.vrs_tile[0] - 1) / R.vrs_tile[0], (ih + R.vrs_tile[1] - 1) / R.vrs_tile[1], GL_R8UI, false);
+        if (R.vrs && !target_make(&R.rate, (iw + R.vrs_tile[0] - 1) / R.vrs_tile[0], (ih + R.vrs_tile[1] - 1) / R.vrs_tile[1],
+                                  GL_R8UI, false))
+            R.vrs = false;
         log_info("РЕНДЕР: внутреннее разрешение %dx%d -> окно %dx%d", iw, ih, win_w, win_h);
     }
 
