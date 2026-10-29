@@ -74,6 +74,7 @@ static struct {
     u32    timer[TIMER_FRAMES][TIMER_MARKS];
     bool   timer_pending[TIMER_FRAMES];
     u32    timer_slot;
+    bool   timing;    // текущий кадр пишет метки времени
     f64    stat_ms[PASS_COUNT];
     u32    stat_samples;
     u32    bone_buf[STREAM_FRAMES], inst_buf[STREAM_FRAMES];
@@ -638,7 +639,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
 
     // Слот занят непрочитанным кадром: забираем или пропускаем замер
     timer_collect(R.timer_slot);
-    bool timing = !R.timer_pending[R.timer_slot];
+    bool timing = R.timing = !R.timer_pending[R.timer_slot];
     if (timing) mark(0);
 
     M4 vp = m4_mul(fv->proj, fv->view);
@@ -732,6 +733,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         glBindShadingRateImageNV(R.rate.color);
         glEnable(GL_SHADING_RATE_IMAGE_NV);
     }
+    if (timing) mark(2);
     glUseProgram(R.prog_scene);
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, vp.m);
     glUniformMatrix4fv(U_LIGHT_VP, 1, GL_FALSE, light_vp.m);
@@ -746,7 +748,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     draw_insts(g_inst[1], n_scene, base_scene, 1);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
-    if (timing) mark(2);
+    if (timing) mark(3);
 
     // 3. Атмосфера. Сначала объёмный свет в половинном разрешении, затем небо, туман и AO
     glDisable(GL_DEPTH_TEST);
@@ -782,7 +784,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindTextureUnit(3, R.rays.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
-    if (timing) mark(3);
+    if (timing) mark(4);
 
     // 4. Фильтр: виньетка, зерно, сканлайны, аберрация
     glBindFramebuffer(GL_FRAMEBUFFER, R.ldr.fbo);
@@ -794,7 +796,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindTextureUnit(1, R.scene.depth);
     glBindTextureUnit(2, R.src_map.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
-    if (timing) mark(4);
+    if (timing) mark(5);
 
     // 5. Апскейл до окна: крупный ровный пиксель
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -803,9 +805,15 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform2f(U_U_OUT, (f32)win_w, (f32)win_h);
     glBindTextureUnit(0, R.ldr.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
-    if (timing) {
-        mark(5);
+    if (timing) mark(6);
+}
+
+void render_frame_end(void)
+{
+    if (R.timing) {
+        mark(7);
         R.timer_pending[R.timer_slot] = true;
+        R.timing = false;
     }
     R.timer_slot = (R.timer_slot + 1) % TIMER_FRAMES;
     // Старые кадры, до которых очередь дойдёт не скоро, забираем сразу
