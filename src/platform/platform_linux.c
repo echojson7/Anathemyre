@@ -224,12 +224,6 @@ static Key map_key(KeySym ks)
     case XK_Shift_L: case XK_Shift_R: return KEY_SHIFT;
     case XK_space: return KEY_SPACE;
     case XK_Escape: return KEY_ESCAPE;
-    case XK_F1: return KEY_F1;
-    case XK_F2: return KEY_F2;
-    case XK_F3: return KEY_F3;
-    case XK_F4: return KEY_F4;
-    case XK_F5: return KEY_F5;
-    case XK_F10: return KEY_F10;
     default: return KEY_NONE;
     }
 }

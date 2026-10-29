@@ -84,12 +84,6 @@ static Key map_key(WPARAM vk)
     case VK_SHIFT: return KEY_SHIFT;
     case VK_SPACE: return KEY_SPACE;
     case VK_ESCAPE: return KEY_ESCAPE;
-    case VK_F1: return KEY_F1;
-    case VK_F2: return KEY_F2;
-    case VK_F3: return KEY_F3;
-    case VK_F4: return KEY_F4;
-    case VK_F5: return KEY_F5;
-    case VK_F10: return KEY_F10;
     default: return KEY_NONE;
     }
 }

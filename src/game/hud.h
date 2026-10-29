@@ -32,6 +32,15 @@ typedef struct Hud {
     f32  grab_x, grab_y;        // где взяли относительно угла окна
     f32  inv_x, inv_y;          // углы окон; < 0 — место по умолчанию
     f32  char_x, char_y;
+    // Отладочное меню (кнопка слева вверху): виджеты рисуются и читают мышь в одном вызове
+    struct {
+        bool open, drag, over, journal;  // journal — журнал справа от меню
+        f32  x, y, grab_x, grab_y;
+        f32  mx, my, row;      // мышь в слое окон; низ последней строки
+        f32  h;                // высота окна по прошлому кадру
+        bool lmb, down;
+        i32  slider, id;       // какой ползунок тянут; номер текущего виджета
+    } dbg;
 } Hud;
 
 // Что интерфейс видит в мире на этом кадре
@@ -53,6 +62,15 @@ void hud_draw(const Hud *h, const Input *in, const HudWorld *w);
 // Показать персонажа в панели выбранного (для снимков и горячих клавиш)
 void hud_look(Hud *h, u8 kind, u32 index);
 bool hud_window_open(const Hud *h);
+
+// Отладочное меню. Между ui_begin и hud_input: begin, виджеты, end.
+// end возвращает true, если мышь занята меню; тогда клики в мир и HUD не передавать.
+bool hud_debug_begin(Hud *h, const Input *in);
+bool hud_debug_check(Hud *h, const char *label, bool *v);       // true — переключили
+bool hud_debug_button(Hud *h, const char *label);               // true — нажали
+bool hud_debug_slider(Hud *h, const char *label, f32 *v, f32 lo, f32 hi, const char *value);
+void hud_debug_text(Hud *h, const char *label, const char *value);
+bool hud_debug_end(Hud *h);
 // Боец арены по номеру в ростере: номер в текущем бою или -1, позиция на ринге
 i32  hud_arena_fighter(const ArenaView *v, const ArenaSession *s, u32 roster);
 bool hud_arena_pos(const ArenaView *v, const ArenaSession *s, u32 roster, V3 *out);

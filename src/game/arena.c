@@ -1,10 +1,12 @@
 #include "arena.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "../core/arena.h"
 #include "../core/clock.h"
+#include "../core/log.h"
 #include "../core/rng.h"
 #include "../sim/combat.h"
 
@@ -130,6 +132,27 @@ const char *arena_roster_name(const ArenaSession *s, u32 roster)
     return roster < ARENA_ROSTER ? g_names[s->roster[roster].name] : "?";
 }
 
+// Строка журнала собирается кусками и уходит в журнал целиком
+static char g_ln[LOG_LINE_MAX];
+static size_t g_lp;
+
+static void ln_add(const char *fmt, ...) ANA_PRINTF(1, 2);
+static void ln_add(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int k = vsnprintf(g_ln + g_lp, sizeof g_ln - g_lp, fmt, ap);
+    va_end(ap);
+    if (k > 0) g_lp = MIN(g_lp + (size_t)k, sizeof g_ln - 1);
+}
+
+static void ln_flush(void)
+{
+    log_info("%s", g_ln);
+    g_lp = 0;
+    g_ln[0] = 0;
+}
+
 static void print_event(const ArenaSession *s, const CombatEvent *e)
 {
     char tb[16];
@@ -137,29 +160,29 @@ static void print_event(const ArenaSession *s, const CombatEvent *e)
     const char *a = arena_name(s, e->a), *b = arena_name(s, e->b);
     switch (e->kind) {
     case EV_HIT:
-        printf("[%s] %s → %s: %s, %s.", tb, a, b, g_attack_name[e->arg], g_part_name[e->part]);
-        if (e->cut >= 0.5f) printf(" РЕЗ %.0f.", (f64)e->cut);
-        if (e->blunt >= 0.5f) printf(" ДРОБЛ %.0f.", (f64)e->blunt);
-        if (e->pierce >= 0.5f) printf(" УКОЛ %.0f.", (f64)e->pierce);
-        if (e->flags & EVF_FRACTURE) printf(" ПЕРЕЛОМ.");
-        if (e->flags & EVF_SEVER) printf(" ОТСЕЧЕНИЕ.");
-        if (e->flags & EVF_STAGGER) printf(" ОШЕЛОМЛЁН.");
-        if (e->flags & EVF_ALLY) printf(" ПО СВОЕМУ.");
-        printf("\n");
+        ln_add("[%s] %s → %s: %s, %s.", tb, a, b, g_attack_name[e->arg], g_part_name[e->part]);
+        if (e->cut >= 0.5f) ln_add(" РЕЗ %.0f.", (f64)e->cut);
+        if (e->blunt >= 0.5f) ln_add(" ДРОБЛ %.0f.", (f64)e->blunt);
+        if (e->pierce >= 0.5f) ln_add(" УКОЛ %.0f.", (f64)e->pierce);
+        if (e->flags & EVF_FRACTURE) ln_add(" ПЕРЕЛОМ.");
+        if (e->flags & EVF_SEVER) ln_add(" ОТСЕЧЕНИЕ.");
+        if (e->flags & EVF_STAGGER) ln_add(" ОШЕЛОМЛЁН.");
+        if (e->flags & EVF_ALLY) ln_add(" ПО СВОЕМУ.");
+        ln_flush();
         break;
     case EV_BLOCK:
-        printf("[%s] %s: БЛОК ПРОТИВ %s.%s\n", tb, b, a, (e->flags & EVF_STAGGER) ? " ОШЕЛОМЛЁН." : "");
+        ln_add("[%s] %s: БЛОК ПРОТИВ %s.%s", tb, b, a, (e->flags & EVF_STAGGER) ? " ОШЕЛОМЛЁН." : ""); ln_flush();
         break;
-    case EV_DODGE:     printf("[%s] %s: УКЛОНИЛСЯ ОТ %s.\n", tb, b, a); break;
-    case EV_COUNTER:   printf("[%s] %s: КОНТРАТАКА.\n", tb, a); break;
-    case EV_KNOCKDOWN: printf("[%s] %s: СБИТ С НОГ.\n", tb, b); break;
-    case EV_FALL:      printf("[%s] %s: УПАЛ.\n", tb, a); break;
-    case EV_KO:        printf("[%s] %s: БЕЗ СОЗНАНИЯ.\n", tb, a); break;
-    case EV_DEATH:     printf("[%s] %s: МЁРТВ.\n", tb, a); break;
-    case EV_DISARM:    printf("[%s] %s: ВЫРОНИЛ ОРУЖИЕ.\n", tb, a); break;
-    case EV_RETREAT:   printf("[%s] %s: ОТСТУПАЕТ.\n", tb, a); break;
-    case EV_SURRENDER: printf("[%s] %s: СДАЁТСЯ.\n", tb, a); break;
-    case EV_GETUP:     printf("[%s] %s: ПОДНЯЛСЯ.\n", tb, a); break;
+    case EV_DODGE:     ln_add("[%s] %s: УКЛОНИЛСЯ ОТ %s.", tb, b, a); ln_flush(); break;
+    case EV_COUNTER:   ln_add("[%s] %s: КОНТРАТАКА.", tb, a); ln_flush(); break;
+    case EV_KNOCKDOWN: ln_add("[%s] %s: СБИТ С НОГ.", tb, b); ln_flush(); break;
+    case EV_FALL:      ln_add("[%s] %s: УПАЛ.", tb, a); ln_flush(); break;
+    case EV_KO:        ln_add("[%s] %s: БЕЗ СОЗНАНИЯ.", tb, a); ln_flush(); break;
+    case EV_DEATH:     ln_add("[%s] %s: МЁРТВ.", tb, a); ln_flush(); break;
+    case EV_DISARM:    ln_add("[%s] %s: ВЫРОНИЛ ОРУЖИЕ.", tb, a); ln_flush(); break;
+    case EV_RETREAT:   ln_add("[%s] %s: ОТСТУПАЕТ.", tb, a); ln_flush(); break;
+    case EV_SURRENDER: ln_add("[%s] %s: СДАЁТСЯ.", tb, a); ln_flush(); break;
+    case EV_GETUP:     ln_add("[%s] %s: ПОДНЯЛСЯ.", tb, a); ln_flush(); break;
     default: break;
     }
 }
@@ -244,10 +267,13 @@ bool arena_bout_begin(ArenaSession *s)
     // Замена выбывших новичками
     for (u32 k = 0; k < ARENA_ROSTER; k++) {
         if (!roster[k].gone) continue;
-        if (s->log) printf("[АРЕНА] %s ВЫБЫЛ. НА ЕГО МЕСТО: ", g_names[roster[k].name]);
+        if (s->log) ln_add("[АРЕНА] %s ВЫБЫЛ. НА ЕГО МЕСТО: ", g_names[roster[k].name]);
         make_fighter(s, &roster[k], 0);
         rename_unique(s, k);
-        if (s->log) printf("%s.\n", g_names[roster[k].name]);
+        if (s->log) {
+            ln_add("%s.", g_names[roster[k].name]);
+            ln_flush();
+        }
         s->st.replaced++;
     }
     if (!pick_bout(s)) return false;
@@ -256,19 +282,19 @@ bool arena_bout_begin(ArenaSession *s)
     s->rating[0] = combat_rating(&roster[s->idx[0]].d);
     s->rating[1] = n == 2 ? combat_rating(&roster[s->idx[1]].d) : 0.0f;
     if (s->log) {
-        printf("\n[АРЕНА] %s %u.", s->group ? "СХВАТКА" : "ПОЕДИНОК", s->bout + 1);
+        ln_add("[АРЕНА] %s %u.", s->group ? "СХВАТКА" : "ПОЕДИНОК", s->bout + 1);
         for (u8 side = 0; side < 2; side++) {
-            printf(side ? " —" : "");
+            ln_add(side ? " —" : "");
             bool first = true;
             for (u32 k = 0; k < n; k++) {
                 if (s->team[k] != side) continue;
                 const FighterDesc *d = &roster[s->idx[k]].d;
-                printf("%s%s (АТК %.0f, %s %s)", first ? " " : ", ", g_names[roster[s->idx[k]].name],
+                ln_add("%s%s (АТК %.0f, %s %s)", first ? " " : ", ", g_names[roster[s->idx[k]].name],
                        (f64)d->skill[SK_ATTACK], g_quality_name[d->weapon_q], g_weapons[d->weapon].name);
                 first = false;
             }
         }
-        printf("\n");
+        ln_flush();
     }
 
     CombatWorld *w = &s->w;
@@ -320,8 +346,8 @@ bool arena_bout_tick(ArenaSession *s)
             if (s->log) {
                 char tb[16];
                 fmt_time(tb, w->tick);
-                printf("[%s] ИСХОД ЗАФИКСИРОВАН. %s\n", tb,
-                       s->winner < 0 ? "НИЧЬЯ." : (s->winner == 0 ? "ПЕРВАЯ СТОРОНА." : "ВТОРАЯ СТОРОНА."));
+                ln_add("[%s] ИСХОД ЗАФИКСИРОВАН. %s", tb,
+                       s->winner < 0 ? "НИЧЬЯ." : (s->winner == 0 ? "ПЕРВАЯ СТОРОНА." : "ВТОРАЯ СТОРОНА.")); ln_flush();
             }
         }
     }
