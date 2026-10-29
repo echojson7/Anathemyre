@@ -15,7 +15,7 @@ layout(location = 22) uniform vec3 u_sun_color;
 layout(location = 23) uniform float u_time;
 layout(location = 24) uniform vec3 u_sky_amb;
 layout(location = 25) uniform vec3 u_ground_amb;
-layout(location = 26) uniform int u_unlit;   // портреты интерфейса: чистый цвет без света и тени
+layout(location = 26) uniform int u_unlit;   // портреты интерфейса: свой неподвижный свет
 layout(binding = 0) uniform sampler2DShadow u_shadow;
 
 out vec4 o_color;
@@ -206,6 +206,7 @@ void main()
         float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
         col += (u_sky_amb + u_ground_amb) * rim * 0.35;
     }
-    if (u_unlit != 0) col = albedo + emissive;
+    // Портрет: неподвижный свет спереди-сверху-слева, без солнца и теней мира
+    if (u_unlit != 0) col = albedo * (0.25 + 0.75 * max(dot(N, normalize(vec3(-0.5, 0.7, 0.6))), 0.0)) + emissive;
     o_color = vec4(col, 1.0);
 }
