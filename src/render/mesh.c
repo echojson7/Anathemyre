@@ -12,6 +12,8 @@ bool mb_init(MeshBuilder *mb, Arena *arena, u32 vcap, u32 icap)
     mb->v = ARENA_PUSH_ARRAY(arena, Vertex, vcap);
     mb->idx = ARENA_PUSH_ARRAY(arena, u32, icap);
     mb->skin = NULL;
+    mb->morph = NULL;
+    mb->morph_count = 0;
     mb->vcount = mb->icount = 0;
     mb->vcap = vcap;
     mb->icap = icap;
@@ -32,11 +34,21 @@ bool mb_load(MeshBuilder *mb, Arena *arena, const char *path)
     char magic[4];
     u32 head[3];
     bool ok = fread(magic, 4, 1, f) == 1 && fread(head, sizeof head, 1, f) == 1 && !memcmp(magic, "AMSH", 4) &&
-              (head[0] == 1 || head[0] == 2) && mb_init(mb, arena, head[1], head[2]) &&
+              head[0] >= 1 && head[0] <= 3 && mb_init(mb, arena, head[1], head[2]) &&
               fread(mb->v, sizeof(Vertex), head[1], f) == head[1] && fread(mb->idx, sizeof(u32), head[2], f) == head[2];
-    if (ok && head[0] == 2) {
+    if (ok && head[0] >= 2) {
         mb->skin = ARENA_PUSH_ARRAY(arena, VertexSkin, head[1]);
         ok = mb->skin && fread(mb->skin, sizeof(VertexSkin), head[1], f) == head[1];
+    }
+    if (ok && head[0] >= 3) {
+        u32 k;
+        ok = fread(&k, sizeof k, 1, f) == 1 && k <= MESH_MAX_MORPHS;
+        size_t n = (size_t)head[1] * k * 3;
+        if (ok && k) {
+            mb->morph = ARENA_PUSH_ARRAY(arena, u32, n);
+            ok = mb->morph && fread(mb->morph, sizeof(u32), n, f) == n;
+        }
+        mb->morph_count = ok ? k : 0;
     }
     fclose(f);
     if (!ok) {
@@ -86,7 +98,7 @@ static u32 put(MeshBuilder *mb, V3 p, V3 n)
     v->color[3] = 255;
     v->mat = mb->mat;
     v->bone = mb->bone;
-    v->pad0 = v->pad1 = 0;
+    v->tint = v->pad1 = 0;
     return mb->vcount++;
 }
 

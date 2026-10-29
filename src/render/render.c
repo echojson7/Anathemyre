@@ -11,22 +11,22 @@
 #define SHADOW_SIZE 2048
 #define SHADOW_EXTENT 45.0f   // полуразмер области теней, м
 // Размер пикселя по глубине (pixel.glsl): k = PIXEL_K * s^PIXEL_P, s — пикселей кадра на метр в точке.
-// Шаг 0.5 пикселя, ниже 2 — 0.25. При 1080p: 3 м — 6, 4 м — 4.5, 5 м — 3.5, 6 м — 3, 7 м — 2.5, 8 м — 2,
-// 9 м — 1.75, 10–11 м — 1.5, с 12 м — 1.25 и дальше не меняется
-#define PIXEL_K 0.0097f
+// Шаг 0.5 пикселя, ниже 2 — 0.25. При 1080p: 3 м — 4.5, 4 м — 3.5, 5 м — 2.5, 6 м — 2, 7 м — 1.75,
+// 8 м — 1.5, с 9 м — 1.25 и дальше не меняется
+#define PIXEL_K 0.00728f
 #define PIXEL_P 1.1f
 
 // Расположения uniform задаются явно в GLSL (layout(location = N))
 enum {
     U_VIEW_PROJ = 0, U_SKINNED = 17, U_LIGHT_VP = 18, U_INST_BASE = 19,
-    U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26, U_TEXEL = 27,
+    U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26, U_TEXEL = 27, U_MORPHS = 28,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
     U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44, U_V_TILE = 45,
 };
 
 // Буферы хранения (layout(binding = N) в scene.vert)
-enum { SB_BONES = 0, SB_INST = 1 };
+enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2 };
 
 // Кости и списки экземпляров пишутся каждый кадр; кольцо буферов, чтобы не ждать GPU с прошлым кадром
 #define STREAM_FRAMES 3
@@ -62,10 +62,12 @@ typedef struct Target {
 static struct {
     Arena *scratch;
     char   data_dir[512];
-    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_src_map, prog_vrs_block, prog_vrs;
+    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_src_map, prog_vrs_block, prog_vrs, prog_level, prog_level_max;
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
     Target scene, rays, atmos, ldr;
+    Target level;     // размер пикселя каждой точки (R8UI), level.frag
+    Target level_max; // самый крупный размер в блоке 8x8 (R8UI), level_max.frag
     Target src_map;   // откуда каждый пиксель берёт цвет (RG16UI), src_map.frag
     Target block;     // частота шейдинга блоков 4x4 (R8UI)
     Target rate;      // карта частоты шейдинга (R8UI), клетка vrs_tile пикселей
@@ -179,6 +181,8 @@ bool render_reload_shaders(void)
     const char *style_fs[] = { "common.glsl", "pixel.glsl", "style.frag" };
     const char *src_map_fs[] = { "pixel.glsl", "src_map.frag" };
     const char *vrs_block_fs[] = { "vrs_block.frag" };
+    const char *level_fs[] = { "pixel.glsl", "level.frag" };
+    const char *level_max_fs[] = { "level_max.frag" };
     const char *vrs_fs[] = { "vrs.frag" };
     const char *upscale_fs[] = { "upscale.frag" };
 
@@ -196,14 +200,16 @@ bool render_reload_shaders(void)
     u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 2));
     u32 style = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, style_fs, 3));
     u32 src_map = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, src_map_fs, 2));
+    u32 level = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, level_fs, 2));
+    u32 level_max = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, level_max_fs, 1));
     u32 vrs_block = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_block_fs, 1));
     u32 vrs = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_fs, 1));
     u32 upscale = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, upscale_fs, 1));
     R.scratch->used = mark;
 
-    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, src_map, vrs_block, vrs };
+    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, src_map, vrs_block, vrs, level, level_max };
     u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style, &R.prog_upscale,
-                     &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs };
+                     &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs, &R.prog_level, &R.prog_level_max };
     bool ok = true;
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) {
@@ -322,6 +328,8 @@ void render_shutdown(void)
     target_free(&R.atmos);
     target_free(&R.ldr);
     target_free(&R.src_map);
+    target_free(&R.level);
+    target_free(&R.level_max);
     target_free(&R.block);
     target_free(&R.rate);
     target_free(&R.portrait);
@@ -335,7 +343,7 @@ void render_shutdown(void)
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
     u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style, R.prog_upscale,
-                    R.prog_src_map, R.prog_vrs_block, R.prog_vrs };
+                    R.prog_src_map, R.prog_vrs_block, R.prog_vrs, R.prog_level, R.prog_level_max };
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
         if (progs[i]) glDeleteProgram(progs[i]);
     memset(&R, 0, sizeof R);
@@ -370,7 +378,7 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
     glVertexArrayAttribFormat(gm->vao, 0, 3, GL_FLOAT, GL_FALSE, offsetof(Vertex, pos));
     glVertexArrayAttribFormat(gm->vao, 1, 3, GL_FLOAT, GL_FALSE, offsetof(Vertex, nrm));
     glVertexArrayAttribFormat(gm->vao, 2, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(Vertex, color));
-    glVertexArrayAttribIFormat(gm->vao, 3, 2, GL_UNSIGNED_BYTE, offsetof(Vertex, mat));
+    glVertexArrayAttribIFormat(gm->vao, 3, 4, GL_UNSIGNED_BYTE, offsetof(Vertex, mat));
     for (u32 i = 0; i < 4; i++) glVertexArrayAttribBinding(gm->vao, i, 0);
     gm->skin_vbo = 0;
     if (mb->skin) {
@@ -384,6 +392,12 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
         glVertexArrayAttribFormat(gm->vao, 5, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(VertexSkin, weight));
         glVertexArrayAttribBinding(gm->vao, 4, 1);
         glVertexArrayAttribBinding(gm->vao, 5, 1);
+    }
+    gm->morph_buf = 0;
+    gm->morph_count = mb->morph ? mb->morph_count : 0;
+    if (gm->morph_count) {
+        glCreateBuffers(1, &gm->morph_buf);
+        glNamedBufferStorage(gm->morph_buf, (GLsizeiptr)((size_t)mb->vcount * gm->morph_count * 3 * sizeof(u32)), mb->morph, 0);
     }
     gm->index_count = mb->icount;
     gm->lod_next = NULL;
@@ -583,6 +597,8 @@ static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
         } else {
             glUniform1i(U_SKINNED, 1);
             glUniform1i(U_INST_BASE, (GLint)(base + i));
+            glUniform1i(U_MORPHS, (GLint)m->morph_count);
+            if (m->morph_count) glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_MORPH, m->morph_buf);
             glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT, NULL, (GLsizei)(j - i));
         }
         draws++;
@@ -661,6 +677,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         target_make(&R.src_map, iw, ih, GL_RG16UI, false);
+        target_make(&R.level, iw, ih, GL_R8UI, false);
+        target_make(&R.level_max, (iw + 7) / 8, (ih + 7) / 8, GL_R8UI, false);
         if (R.vrs && !(target_make(&R.block, (iw + 3) / 4, (ih + 3) / 4, GL_R8UI, false) &&
                        target_make(&R.rate, (iw + R.vrs_tile[0] - 1) / R.vrs_tile[0], (ih + R.vrs_tile[1] - 1) / R.vrs_tile[1],
                                    GL_R8UI, false)))
@@ -731,16 +749,28 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);
     // Размер пикселя на дальности 1 м; s^P = (px_m / d)^P = PIXEL_K * px_m^P * (1/d)^P
-    f32 px_k = rs->pixel ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
+    f32 px_k = rs->pixel && rs->pixel_div <= 1 ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
     bool vrs = R.vrs && rs->vrs && rs->pixel;
     R.stat_vrs = vrs;
-    // По готовой глубине: откуда каждый пиксель берёт цвет, раз за кадр (фильтр и карта частоты)
-    glBindFramebuffer(GL_FRAMEBUFFER, R.src_map.fbo);
+    // По готовой глубине: размер пикселя в каждой точке и его максимум по блокам 8x8,
+    // затем откуда каждый пиксель берёт цвет, раз за кадр (фильтр и карта частоты)
     glDisable(GL_DEPTH_TEST);
+    glBindVertexArray(R.empty_vao);
+    glBindTextureUnit(1, R.scene.depth);
+    glBindFramebuffer(GL_FRAMEBUFFER, R.level.fbo);
+    glUseProgram(R.prog_level);
+    glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindFramebuffer(GL_FRAMEBUFFER, R.level_max.fbo);
+    glViewport(0, 0, R.level_max.w, R.level_max.h);
+    glUseProgram(R.prog_level_max);
+    glBindTextureUnit(4, R.level.color);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindFramebuffer(GL_FRAMEBUFFER, R.src_map.fbo);
+    glViewport(0, 0, iw, ih);
     glUseProgram(R.prog_src_map);
     glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
-    glBindTextureUnit(1, R.scene.depth);
-    glBindVertexArray(R.empty_vao);
+    glBindTextureUnit(5, R.level_max.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (vrs) {
         // Где фильтр сольёт пиксели в блоки, материалы и атмосфера считаются раз на блок
