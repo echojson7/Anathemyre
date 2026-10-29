@@ -12,6 +12,8 @@ layout(location = 20) uniform vec3 u_cam_pos;
 layout(location = 21) uniform vec3 u_sun_dir;
 layout(location = 22) uniform vec3 u_sun_color;
 layout(location = 23) uniform float u_time;
+layout(location = 24) uniform vec3 u_sky_amb;
+layout(location = 25) uniform vec3 u_ground_amb;
 layout(binding = 0) uniform sampler2DShadow u_shadow;
 
 out vec4 o_color;
@@ -164,12 +166,10 @@ void main()
     float sh = ndl > 0.0 ? sun_shadow(P, N) : 0.0;
 
     // Небо и отражённый от песка свет
-    vec3 sky = vec3(0.16, 0.16, 0.15);
-    vec3 ground = vec3(0.20, 0.15, 0.09);
-    vec3 ambient = mix(ground, sky, N.y * 0.5 + 0.5) * 0.9;
+    vec3 ambient = mix(u_ground_amb, u_sky_amb, N.y * 0.5 + 0.5) * 0.9;
     vec3 Lflat = normalize(vec3(-L.x, 0.0, -L.z));
     float bounce = max(dot(N, -Lflat), 0.0) * 0.08 + max(-N.y, 0.0) * 0.05;
-    ambient += vec3(0.30, 0.22, 0.12) * bounce;
+    ambient += u_ground_amb * 1.5 * bounce;
 
     vec3 H = normalize(L + V);
     float sp = spec * pow(max(dot(N, H), 0.0), gloss) * sh;
@@ -178,7 +178,7 @@ void main()
     // Контровой свет от дымки: фигуры читаются силуэтом
     if (u_skinned != 0) {
         float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
-        col += vec3(0.36, 0.31, 0.23) * rim * 0.35;
+        col += (u_sky_amb + u_ground_amb) * rim * 0.35;
     }
     o_color = vec4(col, 1.0);
 }

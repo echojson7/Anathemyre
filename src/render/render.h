@@ -23,8 +23,10 @@ typedef struct DrawItem {
 typedef struct FrameView {
     M4  view, proj;
     V3  cam_pos;
-    V3  sun_dir;        // направление НА солнце
+    V3  sun_dir;        // направление НА главный свет (солнце или луна)
     V3  sun_color;
+    V3  sky_amb, ground_amb;  // рассеянный свет неба и отражённый от земли
+    V3  haze, zenith;         // цвет дымки и неба в зените
     V3  shadow_center;  // центр области теней
     f32 time;
     u32 frame;
@@ -32,8 +34,10 @@ typedef struct FrameView {
 
 typedef struct RenderSettings {
     i32  internal_h;    // высота внутреннего разрешения
-    bool post;          // пост-обработка вкл/выкл
+    u32  filter;        // фильтр кадра: 0 — без фильтра, 1..RENDER_FILTERS-1 — пресеты
 } RenderSettings;
+
+#define RENDER_FILTERS 5
 
 // Время проходов на GPU, мс, среднее с прошлого render_take_stats
 enum { PASS_SHADOW, PASS_SCENE, PASS_ATMOS, PASS_STYLE, PASS_BLIT, PASS_COUNT };

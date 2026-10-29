@@ -16,12 +16,16 @@
 #include "game/testroom.h"
 #include "platform/platform.h"
 #include "render/render.h"
+#include "world/sky.h"
 
 #define CHAR_VARIANTS 4
 #define CROWD_SIZE 9
 // Арена у зала, перед его открытым краем
 #define ARENA_CENTER v3(14.0f, 0.0f, 34.0f)
 #define ARENA_SHOW_AFTER_BOUT_S 12.0f
+static const char *const FILTER_NAMES[RENDER_FILTERS] = { "без фильтра", "естественный", "охра", "закат", "плёнка" };
+
+#define DAY_LENGTH_S 120.0f  // полные сутки, с; пока быстро, чтобы смену было видно
 
 typedef struct RtsCamera {
     V3  target;
@@ -38,6 +42,8 @@ typedef struct Options {
     u64         seed;
     bool        no_vsync;
     bool        follow;      // камера следует за своим персонажем
+    f32         tod;         // время суток на старте: 0 полночь, 0.5 полдень
+    u32         filter;      // фильтр кадра, см. FILTER_NAMES
     u32         arena_bench; // прогнать N боёв арены без окна
     u32         arena_log;   // сколько первых боёв печатать подробно
     u32         battle[2];   // полевой бой: бойцов в каждом отряде
@@ -127,7 +133,7 @@ static bool pick_ground(M4 view_proj, V3 eye, f32 nx, f32 ny, V3 *out)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--follow] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
+    puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--follow] [--tod 0..1] [--filter N] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
 }
@@ -140,6 +146,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--frames") && i + 1 < argc) o->shot_frames = atoi(argv[++i]);
         else if (!strcmp(a, "--novsync")) o->no_vsync = true;
         else if (!strcmp(a, "--follow")) o->follow = true;
+        else if (!strcmp(a, "--tod") && i + 1 < argc) o->tod = strtof(argv[++i], NULL);
+        else if (!strcmp(a, "--filter") && i + 1 < argc) o->filter = (u32)atoi(argv[++i]) % RENDER_FILTERS;
         else if (!strcmp(a, "--res") && i + 1 < argc) o->internal_h = atoi(argv[++i]);
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
@@ -195,7 +203,7 @@ int main(int argc, char **argv)
     platform_preinit();
     time_init();
     Options opt = {
-        .shot_frames = 90, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337,
+        .tod = 0.31f, .filter = 1, .shot_frames = 90, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337,
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
@@ -302,7 +310,7 @@ int main(int argc, char **argv)
     for (u32 i = 0; i < TR_MAX_CHARS * RENDER_MAX_BONES; i++) bones[i] = m4_identity();
 
     RtsCamera cam = opt.cam;
-    RenderSettings rs = { .internal_h = opt.internal_h, .post = true };
+    RenderSettings rs = { .internal_h = opt.internal_h, .filter = opt.filter };
     static const i32 res_steps[] = { 270, 360, 540, 720 };
     u32 res_index = 1;
 
@@ -314,19 +322,28 @@ int main(int argc, char **argv)
     f64 cpu_logic = 0, cpu_submit = 0, cpu_swap = 0;
     bool vsync = !opt.no_vsync && opt.shot_path == NULL;
     f32 sim_time = 0;
+    f32 tod = opt.tod;
+    bool day_run = true;
     u32 frame = 0;
 
-    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ПКМ — идти, средняя кнопка и Q/E — поворот, F — следовать за персонажем, F1 — стиль, F2 — разрешение, F3 — vsync, F5 — шейдеры");
+    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ПКМ — идти, средняя кнопка и Q/E — поворот, F — следовать за персонажем, F1 — фильтр, F2 — разрешение, F3 — vsync, F4 — остановить сутки, F5 — шейдеры");
 
     while (!in.quit) {
         platform_poll(&in);
         if (in.key_pressed[KEY_ESCAPE]) break;
-        if (in.key_pressed[KEY_F1]) rs.post = !rs.post;
+        if (in.key_pressed[KEY_F1]) {
+            rs.filter = (rs.filter + 1) % RENDER_FILTERS;
+            log_info("ФИЛЬТР: %s", FILTER_NAMES[rs.filter]);
+        }
         if (in.key_pressed[KEY_F2]) {
             res_index = (res_index + 1) % ARRAY_COUNT(res_steps);
             rs.internal_h = res_steps[res_index];
         }
         if (in.key_pressed[KEY_F5]) render_reload_shaders();
+        if (in.key_pressed[KEY_F4]) {
+            day_run = !day_run;
+            log_info("СУТКИ: %s", day_run ? "идут" : "остановлены");
+        }
         if (in.key_pressed[KEY_F]) {
             opt.follow = !opt.follow;
             if (opt.follow) cam.dist = MIN(cam.dist, 8.0f);
@@ -401,9 +418,15 @@ int main(int argc, char **argv)
 
         f64 t_submit = time_now();
         cpu_logic += t_submit - t_logic;
-        // Низкое солнце сбоку и сзади: длинные тени через зал
-        fv.sun_dir = v3_norm(v3(0.70f, 0.30f, -0.62f));
-        fv.sun_color = v3(2.2f, 1.75f, 1.1f);
+        if (day_run) tod = fmodf(tod + dt / DAY_LENGTH_S, 1.0f);
+        Sky sky;
+        sky_at(tod, &sky);
+        fv.sun_dir = sky.light_dir;
+        fv.sun_color = sky.light_color;
+        fv.sky_amb = sky.sky_amb;
+        fv.ground_amb = sky.ground_amb;
+        fv.haze = sky.haze;
+        fv.zenith = sky.zenith;
         fv.shadow_center = cam.target;
         fv.time = sim_time;
         fv.frame = frame;

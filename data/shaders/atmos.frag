@@ -10,13 +10,13 @@ layout(location = 34) uniform mat4 u_light_vp;
 layout(location = 35) uniform float u_time;
 layout(location = 36) uniform int u_frame;
 layout(location = 37) uniform float u_proj_scale;
+layout(location = 38) uniform vec3 u_haze;
+layout(location = 39) uniform vec3 u_zenith;
 layout(binding = 0) uniform sampler2D u_color;
 layout(binding = 1) uniform sampler2D u_depth;
 layout(binding = 2) uniform sampler2DShadow u_shadow;
 
 out vec4 o_color;
-
-const vec3 HAZE = vec3(0.31, 0.28, 0.22);
 
 vec3 world_at(vec2 uv, float d)
 {
@@ -28,13 +28,18 @@ vec3 sky(vec3 dir)
 {
     float h = dir.y;
     float s = max(dot(dir, u_sun_dir), 0.0);
-    vec3 zenith = vec3(0.10, 0.10, 0.10);
-    vec3 horizon = HAZE * 1.25;
-    vec3 c = mix(horizon, zenith, smoothstep(0.0, 0.55, h));
-    c = mix(c, HAZE * 0.7, smoothstep(0.0, -0.2, h));
+    vec3 horizon = u_haze * 1.25;
+    vec3 c = mix(horizon, u_zenith, smoothstep(0.0, 0.55, h));
+    c = mix(c, u_haze * 0.7, smoothstep(0.0, -0.2, h));
     // Пыльные полосы облаков
     float band = fbm3(vec3(dir.x / max(h + 0.15, 0.05) * 1.5, dir.z / max(h + 0.15, 0.05) * 1.5, u_time * 0.01));
     c *= 0.85 + 0.3 * band * smoothstep(0.0, 0.3, h);
+    // Звёзды сквозь пыль: видны только ночью
+    float night = 1.0 - smoothstep(0.006, 0.04, u_zenith.g);
+    if (night > 0.0 && h > 0.0) {
+        vec3 q = floor(dir * 300.0);
+        c += vec3(0.50, 0.52, 0.60) * step(0.997, hash13(q)) * hash13(q + 7.0) * night * smoothstep(0.0, 0.3, h);
+    }
     c += u_sun_color * (pow(s, 600.0) * 6.0 + pow(s, 24.0) * 0.35 + pow(s, 4.0) * 0.12);
     return c;
 }
@@ -97,7 +102,7 @@ void main()
     if (!is_sky) fog_amount = min(fog_amount, 1.25);
     float T = exp(-fog_amount);
     float sun_amt = pow(max(dot(dir, u_sun_dir), 0.0), 6.0);
-    vec3 fog_col = HAZE + u_sun_color * sun_amt * 0.18;
+    vec3 fog_col = u_haze + u_sun_color * sun_amt * 0.18;
     if (!is_sky) col = col * T + fog_col * (1.0 - T);
     else col = mix(col, fog_col, clamp(1.0 - T, 0.0, 0.6) * smoothstep(0.3, 0.0, dir.y));
 
