@@ -289,12 +289,17 @@ int main(int argc, char **argv)
             RenderStats st;
             render_take_stats(&st);
             f64 k = 1000.0 / stat_frames;
-            log_info("КАДР: %.2f мс, %.0f к/с | CPU: логика %.3f, отправка %.3f, swap %.3f | "
-                     "GPU %.3f: тени %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f",
+            char gpu[192];
+            // Драйвер может не отдавать метки времени (например, D3D12 в WSL)
+            if (st.samples && st.gpu_total_ms > 0.0)
+                snprintf(gpu, sizeof gpu, "GPU %.3f: тени %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f",
+                         st.gpu_total_ms, st.gpu_ms[PASS_SHADOW], st.gpu_ms[PASS_SCENE], st.gpu_ms[PASS_ATMOS],
+                         st.gpu_ms[PASS_STYLE], st.gpu_ms[PASS_BLIT]);
+            else
+                snprintf(gpu, sizeof gpu, "GPU: драйвер не отдаёт метки времени");
+            log_info("КАДР: %.2f мс, %.0f к/с | CPU: логика %.3f, отправка %.3f, swap %.3f | %s",
                      (now - stat_t) * k, stat_frames / (now - stat_t),
-                     cpu_logic * k, cpu_submit * k, cpu_swap * k, st.gpu_total_ms,
-                     st.gpu_ms[PASS_SHADOW], st.gpu_ms[PASS_SCENE], st.gpu_ms[PASS_ATMOS],
-                     st.gpu_ms[PASS_STYLE], st.gpu_ms[PASS_BLIT]);
+                     cpu_logic * k, cpu_submit * k, cpu_swap * k, gpu);
             stat_t = now;
             stat_frames = 0;
             cpu_logic = cpu_submit = cpu_swap = 0;
