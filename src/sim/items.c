@@ -26,9 +26,9 @@ const ArmorDef g_armors[A_COUNT] = {
 };
 
 const AttackDef g_attacks[ATK_COUNT] = {
-    [ATK_OVERHEAD] = { 1.15f, 1.00f, 0.0f, 40, { 0.20f, 0.40f, 0.12f, 0.09f, 0.09f, 0.05f, 0.05f } },
-    [ATK_SWING]    = { 1.00f, 1.00f, 0.0f, 0, { 0.05f, 0.34f, 0.34f, 0.09f, 0.09f, 0.045f, 0.045f } },
-    [ATK_THRUST]   = { 1.00f, 0.85f, 0.3f, 30, { 0.08f, 0.40f, 0.35f, 0.05f, 0.05f, 0.035f, 0.035f } },
+    [ATK_OVERHEAD] = { 1.15f, 1.00f, 0.0f, 40 },
+    [ATK_SWING]    = { 1.00f, 1.00f, 0.0f, 0 },
+    [ATK_THRUST]   = { 1.00f, 0.85f, 0.3f, 30 },
 };
 
 const f32 g_quality_mul[Q_COUNT] = { 0.6f, 0.8f, 1.0f, 1.15f, 1.3f };

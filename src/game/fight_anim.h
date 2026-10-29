@@ -19,6 +19,7 @@ typedef struct FightAnim {
     bool prone, from_stand, dropped;
     V3   drop_pos;                    // в координатах боя
     f32  drop_yaw;
+    f32  lock_x, lock_z;              // где была цель в начале замаха: от уворота удар уходит в пустоту
 } FightAnim;
 
 // Боец вошёл в бой: оружие ещё убрано, достанет сам

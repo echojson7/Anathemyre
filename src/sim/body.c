@@ -45,6 +45,22 @@ const HitCapsule g_body_hit[BODY_MAX_HIT_CAPSULES] = {
 };
 const u32 g_body_hit_count = 11;
 
+// Те же капсулы в боевой стойке с одноручным (снято с позы character_pose, guard = 1):
+// руки вперёд, левая нога впереди. По ним считается, куда пришёлся удар по стоящему
+const HitCapsule g_body_hit_guard[BODY_MAX_HIT_CAPSULES] = {
+    { PART_HEAD, BONE_HEAD, { 0.003f, 1.607f, 0.160f }, { 0.003f, 1.607f, 0.160f }, 0.11f },
+    { PART_CHEST, BONE_CHEST, { 0.007f, 1.173f, 0.041f }, { 0.003f, 1.320f, 0.072f }, 0.16f },
+    { PART_STOMACH, BONE_SPINE, { 0.008f, 0.909f, -0.003f }, { 0.004f, 1.047f, 0.018f }, 0.15f },
+    { PART_ARM_L, BONE_UPPER_ARM_L, { 0.198f, 1.359f, 0.082f }, { 0.208f, 1.158f, 0.215f }, 0.06f },
+    { PART_ARM_L, BONE_FOREARM_L, { 0.208f, 1.158f, 0.215f }, { 0.121f, 1.344f, 0.482f }, 0.05f },
+    { PART_ARM_R, BONE_UPPER_ARM_R, { -0.184f, 1.339f, 0.135f }, { -0.161f, 1.118f, 0.227f }, 0.06f },
+    { PART_ARM_R, BONE_FOREARM_R, { -0.161f, 1.118f, 0.227f }, { 0.006f, 1.160f, 0.516f }, 0.05f },
+    { PART_LEG_L, BONE_THIGH_L, { 0.111f, 0.889f, 0.026f }, { 0.182f, 0.532f, 0.260f }, 0.08f },
+    { PART_LEG_L, BONE_SHIN_L, { 0.182f, 0.532f, 0.260f }, { 0.236f, 0.082f, 0.244f }, 0.07f },
+    { PART_LEG_R, BONE_THIGH_R, { -0.105f, 0.889f, -0.041f }, { -0.173f, 0.469f, 0.041f }, 0.08f },
+    { PART_LEG_R, BONE_SHIN_R, { -0.173f, 0.469f, 0.041f }, { -0.216f, 0.063f, -0.156f }, 0.07f },
+};
+
 const SocketDef g_body_sockets[SOCKET_COUNT] = {
     [SOCKET_HAND_R] = { BONE_HAND_R, { -0.25f, 0.85f, 0.05f } },
     [SOCKET_HAND_L] = { BONE_HAND_L, { 0.25f, 0.85f, 0.05f } },

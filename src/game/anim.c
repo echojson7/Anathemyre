@@ -591,13 +591,13 @@ static const FightK K_WINDUP[ATK_COUNT] = {
 static const FightK K_STRIKE[ATK_COUNT] = {
     // Шаг передней ногой, корпус складывается, оружие уходит вперёд-вниз
     [ATK_OVERHEAD] = { { -0.75f, 0.30f, 0.10f, -0.20f, 0.20f, 0.0f }, { 0.25f, 0.10f, 0.25f, -1.35f, 0.0f, 0.0f },
-                       0.48f, 0.30f, 0.0f, 0.15f, 0.14f, 0.22f, 0.40f, 0.0f },
+                       0.48f, 0.30f, 0.0f, 0.15f, 0.14f, 0.12f, 0.30f, 0.0f },
     // Таз ведёт, плечи догоняют, оружие проходит поперёк и уходит влево
     [ATK_SWING]    = { { -1.40f, 1.15f, 0.10f, -0.30f, 0.30f, -0.2f }, { 0.30f, -0.20f, 0.45f, -0.90f, 0.0f, 0.0f },
-                       0.14f, 0.55f, 0.0f, 0.45f, 0.11f, 0.12f, 0.22f, 0.0f },
+                       0.14f, 0.55f, 0.0f, 0.45f, 0.11f, 0.08f, 0.18f, 0.0f },
     // Выпад: длинный шаг, рука выпрямлена, левая уходит назад для равновесия
     [ATK_THRUST]   = { { -1.50f, 0.20f, 0.05f, -0.05f, 1.45f, 0.0f }, { 0.55f, -0.10f, 0.25f, -0.55f, 0.0f, 0.0f },
-                       0.30f, 0.35f, 0.0f, 0.25f, 0.16f, 0.34f, 0.58f, 0.0f },
+                       0.30f, 0.35f, 0.0f, 0.25f, 0.16f, 0.20f, 0.42f, 0.0f },
 };
 
 static void apply_fight(Pose *o, FightK k, f32 w, f32 *chest_yaw)
@@ -1017,6 +1017,91 @@ static Xf sheath_frame(u8 w, u8 *bone)
     return frame_axes(v3(0.40f, 1.0f, -0.02f), v3(0.0f, 0.0f, -1.0f), v3(s.x - 0.16f, s.y - 0.12f, s.z + 0.03f));
 }
 
+// ---------------------------------------------------------------- оружие в бою
+
+// Стойка и блок по типу оружия: рукоять и оси оружия относительно груди (поза привязки, от сустава груди)
+typedef struct GuardK {
+    V3 pos, tip, edge;     // стойка
+    V3 bpos, btip, bedge;  // блок
+} GuardK;
+
+static const GuardK g_guard[3] = {
+    // Одноручное: рукоять у пояса справа, остриё в лицо противнику; блок — клинок поперёк над головой
+    { { -0.15f, -0.14f, 0.35f }, { 0.15f, 1.60f, 1.0f }, { 0.0f, -1.0f, 1.6f },
+      { -0.12f, 0.38f, 0.30f }, { 1.0f, 0.30f, 0.15f }, { 0.0f, 1.0f, 0.25f } },
+    // Древковое: правая у бедра, древко вперёд в грудь противнику; блок — древко поперёк груди
+    { { -0.16f, -0.21f, 0.08f }, { 0.10f, 0.35f, 1.0f }, { 0.0f, -1.0f, 0.0f },
+      { -0.25f, 0.05f, 0.25f }, { 1.0f, 0.35f, 0.10f }, { 0.0f, 0.0f, 1.0f } },
+    // Тяжёлое двуручное: рукоять у живота, клинок стоймя чуть вперёд; блок — плашмя перед собой
+    { { -0.10f, -0.17f, 0.31f }, { 0.18f, 1.0f, 0.30f }, { 0.0f, 0.0f, 1.0f },
+      { -0.10f, 0.10f, 0.32f }, { 0.35f, 1.0f, 0.10f }, { 1.0f, 0.0f, 0.0f } },
+};
+
+static Xf frame_lerp(const Xf *a, const Xf *b, f32 t) { return xf_slerp_rot(a, b, t, v3_lerp(a->t, b->t, t)); }
+
+// Оружие на доле удара q (0 — взведено, 1 — конец проводки). Размах и удар сверху: клинок от плеча P
+// по дуге в плоскости следа, на ударе точка клинка проходит через цель T; укол — рукоять вперёд, остриё за T
+static Xf strike_frame(const CharAction *a, V3 P, V3 T, f32 len, f32 reach, f32 q)
+{
+    if (a->attack == ATK_THRUST) {
+        // Рукоять от бока толкается к цели, пока остриё не уйдёт за неё; дальше руки не пускают
+        V3 gw = v3_add(P, v3(0.0f, -0.28f, -0.12f));
+        V3 db = v3_sub(T, gw);
+        f32 dbl = fmaxf(v3_len(db), 0.3f);
+        f32 push = clampf(dbl - len + 0.10f - (a->aim_stop ? 0.30f : 0.0f), 0.10f, 0.60f);
+        V3 gh = v3_add(gw, v3_mul(db, push / dbl));
+        V3 gp = v3_sub(gh, P);
+        f32 gl = v3_len(gp);
+        if (gl > reach) gh = v3_add(P, v3_mul(gp, reach / gl));
+        V3 g = v3_lerp(gw, gh, smooth01(q / 0.45f));
+        V3 u = v3_norm(v3_sub(T, g));
+        return frame_axes(u, v3_cross(u, v3(0, 1, 0)), g);
+    }
+    V3 d = v3_sub(T, P);
+    f32 D = fmaxf(v3_len(d), 0.3f);
+    V3 u0 = v3_mul(d, 1.0f / D);
+    bool over = a->attack == ATK_OVERHEAD;
+    f32 tw = over ? -2.2f : -1.9f, tf = over ? 0.9f : 1.3f;
+    f32 th = lerpf(tw, tf, q);
+    // Блок: клинок встаёт перед целью и отскакивает
+    if (a->aim_stop && th > -0.35f) th = -0.35f - 0.4f * fminf(th + 0.35f, 1.0f);
+    V3 m = over ? v3(a->aim_s, -1.0f, 0.0f) : v3(1.0f, a->aim_s, 0.0f);
+    m = v3_norm(v3_sub(m, v3_mul(u0, v3_dot(m, u0))));
+    f32 ah = clampf(D - 0.7f * len, 0.25f, reach);
+    f32 r = th < 0.0f ? lerpf(ah, 0.38f, (th / tw) * (th / tw)) : lerpf(ah, 0.42f, (th / tf) * (th / tf));
+    f32 sn, cs;
+    fsincos(th, &sn, &cs);
+    V3 u = v3_add(v3_mul(u0, cs), v3_mul(m, sn));
+    V3 e = v3_sub(v3_mul(m, cs), v3_mul(u0, sn));
+    return frame_axes(u, e, v3_add(P, v3_mul(u, r)));
+}
+
+// Рамка оружия в бою (пространство модели): стойка, блок, замах — удар — возврат
+static Xf fight_frame(const CharAction *a, u8 wpn, const Xf *wld)
+{
+    u8 wc = g_weapons[wpn].wclass;
+    const GuardK *k = &g_guard[wc == WC_POLEARM ? 1 : wc == WC_HEAVY ? 2 : 0];
+    const Xf *c = &wld[BONE_CHEST];
+    Xf f = frame_axes(xf_dir(c, k->tip), xf_dir(c, k->edge), xf_point(c, k->pos));
+    f32 bl = clampf(a->block, 0.0f, 1.0f);
+    if (bl > 0.0f) {
+        Xf b = frame_axes(xf_dir(c, k->btip), xf_dir(c, k->bedge), xf_point(c, k->bpos));
+        f = frame_lerp(&f, &b, smooth01(bl));
+    }
+    if (a->swing <= 0.0f || !a->aim_on) return f;
+    V3 P = wld[BONE_UPPER_ARM_R].t;
+    f32 reach = v3_len(v3_sub(joint(BONE_FOREARM_R), joint(BONE_UPPER_ARM_R))) +
+                v3_len(v3_sub(joint(BONE_HAND_R), joint(BONE_FOREARM_R))) + 0.07f;
+    f32 len = g_weapons[wpn].length;
+    if (a->swing < 1.0f) {
+        Xf s = strike_frame(a, P, a->aim, len, reach, 0.0f);
+        return frame_lerp(&f, &s, smooth01(a->swing));
+    }
+    if (a->swing < 2.0f) return strike_frame(a, P, a->aim, len, reach, ease_out(a->swing - 1.0f));
+    Xf s = strike_frame(a, P, a->aim, len, reach, 1.0f);
+    return frame_lerp(&s, &f, smooth01((a->swing - 2.0f) / 0.8f));
+}
+
 // ---------------------------------------------------------------- IK руки
 
 static void arm_ik(Xf *wld, u32 side, V3 target, const Xf *hand_rot)
@@ -1285,6 +1370,15 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
             }
             V3 wrist = v3_sub(grip_t, xf_dir(&hrot, g.t));
             arm_ik(wld, R, wrist, &hrot);
+        }
+        // В бою оружие ведёт рамка стойки, блока или удара, правая рука идёт за ним
+        f32 wf = guard * smooth01((wield - 0.6f) / 0.4f) * (1.0f - 0.7f * clampf(a->stagger, 0.0f, 1.0f));
+        if (wf > 0.0f && a->clip == CLIP_NONE) {
+            Xf ff = fight_frame(a, wpn, wld);
+            Xf hrot = xf_mul(&ff, &ginv);
+            V3 wrist = v3_sub(ff.t, xf_dir(&hrot, g.t));
+            Xf hb = xf_slerp_rot(&wld[BONE_HAND_R], &hrot, wf, v3(0, 0, 0));
+            arm_ik(wld, R, v3_lerp(wld[BONE_HAND_R].t, wrist, wf), &hb);
         }
         bool in_hand = wield >= GRAB && a->clip == CLIP_NONE;
         // Выбывшие роняют оружие сами (вызывающий рисует его на земле); в клипе — в руке

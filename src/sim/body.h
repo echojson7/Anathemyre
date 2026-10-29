@@ -77,6 +77,7 @@ typedef struct BodyClass {
 extern const BoneDef    g_body_bones[BONE_COUNT];
 extern const BodyClass  g_body_classes[BODY_CLASS_COUNT];
 extern const HitCapsule g_body_hit[BODY_MAX_HIT_CAPSULES];
+extern const HitCapsule g_body_hit_guard[BODY_MAX_HIT_CAPSULES];  // в боевой стойке
 extern const u32        g_body_hit_count;
 extern const SocketDef  g_body_sockets[SOCKET_COUNT];
 extern const f32        g_part_hp[PART_COUNT];      // HP класса H
