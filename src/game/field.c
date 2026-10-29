@@ -67,10 +67,9 @@ bool field_hostile(const Field *f, u32 a, u32 b)
 
 i32 field_target(const Field *f, u32 i) { return i < f->w.count ? f->w.order[i] : -1; }
 
-void field_pos(const Field *f, u32 i, f32 *x, f32 *z, f32 *heading)
+void field_pos(const Field *f, u32 i, f32 a, f32 *x, f32 *z, f32 *heading)
 {
     const CombatWorld *w = &f->w;
-    f32 a = f->acc / COMBAT_DT;
     *x = lerpf(f->px[i], w->x[i], a);
     *z = lerpf(f->pz[i], w->z[i], a);
     f32 dh = w->heading[i] - f->ph[i];
@@ -309,52 +308,40 @@ static void rules_tick(Field *f, GroundFn ground)
     }
 }
 
-void field_update(Field *f, f32 dt, GroundFn ground)
+void field_tick(Field *f, GroundFn ground)
 {
     CombatWorld *w = &f->w;
     // Спящие стоят там, где их довела ходьба
-    for (u32 i = 0; i < w->count; i++)
+    for (u32 i = 0; i < w->count; i++) {
         if (w->idle[i]) {
             w->x[i] = f->body[i]->pos.x;
             w->z[i] = f->body[i]->pos.z;
             w->heading[i] = f->body[i]->heading;
         }
-    w->grid_dirty = true;
-
-    f->acc += dt;
-    for (u32 steps = 0; f->acc >= COMBAT_DT && steps < 8; steps++) {
-        f->acc -= COMBAT_DT;
-        for (u32 i = 0; i < w->count; i++) {
-            f->px[i] = w->x[i];
-            f->pz[i] = w->z[i];
-            f->ph[i] = w->heading[i];
-            if (!w->idle[i]) fight_anim_pre_tick(&f->anim[i], w, i);
-        }
-        if (f->fights) {
-            fighter_think_all(&f->ai, w);
-            combat_tick(w);
-        } else {
-            // Никто не дерётся: бою считать нечего, нужна только сетка для оглядки
-            combat_sync_grid(w);
-            w->tick++;
-        }
-        rules_tick(f, ground);
-        log_events(f);
+        f->px[i] = w->x[i];
+        f->pz[i] = w->z[i];
+        f->ph[i] = w->heading[i];
+        if (!w->idle[i]) fight_anim_pre_tick(&f->anim[i], w, i);
     }
-    if (f->acc > COMBAT_DT) f->acc = COMBAT_DT;  // кадр слишком долгий: не догонять
+    w->grid_dirty = true;
+    if (f->fights) {
+        fighter_think_all(&f->ai, w);
+        combat_tick(w);
+    } else {
+        // Никто не дерётся: бою считать нечего, нужна только сетка для оглядки
+        combat_sync_grid(w);
+        w->tick++;
+    }
+    rules_tick(f, ground);
+    log_events(f);
 
     for (u32 i = 0; i < w->count; i++) {
         Player *p = f->body[i];
         i32 o = w->order[i];
         if (!w->idle[i]) {
-            // В бою тело повторяет симуляцию: там, где его показывает вид боя
-            f32 x, z, h;
-            field_pos(f, i, &x, &z, &h);
-            fight_anim_update(&f->anim[i], w, i, f->acc / COMBAT_DT, dt);
-            x = f->anim[i].disp_x;
-            z = f->anim[i].disp_z;
-            p->pos = v3(x, ground(x, z), z);
-            p->heading = p->move_yaw = h;
+            // В бою тело стоит там, где его держит симуляция; вид боя (выпады, сглаживание) — у кадра
+            p->pos = v3(w->x[i], ground(w->x[i], w->z[i]), w->z[i]);
+            p->heading = p->move_yaw = w->heading[i];
             continue;
         }
         if (o >= 0) {
@@ -371,6 +358,14 @@ void field_update(Field *f, f32 dt, GroundFn ground)
             p->moving = false;
         }
     }
+}
+
+void field_present(Field *f, f32 alpha, f32 dt)
+{
+    CombatWorld *w = &f->w;
+    f->alpha = alpha;
+    for (u32 i = 0; i < w->count; i++)
+        if (!w->idle[i]) fight_anim_update(&f->anim[i], w, i, alpha, dt);
 }
 
 // ---------------------------------------------------------------- проверка без окна
@@ -422,13 +417,14 @@ static int bench_scene(Arena *mem, u64 seed)
     }
     printf("СЦЕНКА: ОТРЯД (4) АТАКУЕТ %s; С НИМ ДВОЕ СВОИХ, РЯДОМ ДВОЕ ПРОХОЖИХ\n", names[0]);
     for (u32 i = 0; i < sq->count; i++) field_attack(f, i, sq->count);
-    const f32 dt = 1.0f / 60.0f;
+    // Шагами мира, как в игре: ходьба, затем тик поля
+    const f32 dt = COMBAT_DT;
     f32 t = 0.0f, next_print = 0.0f;
     bool done = false;
-    for (u32 fr = 0; fr < 60 * 180 && !done; fr++, t += dt) {
+    for (u32 fr = 0; fr < COMBAT_HZ * 180 && !done; fr++, t += dt) {
         squad_update(sq, dt, flat_ground);
         walk_bodies(npc, 5, dt);
-        field_update(f, dt, flat_ground);
+        field_tick(f, flat_ground);
         if (t >= next_print) {
             print_slots(f, t);
             next_print += 4.0f;
@@ -469,16 +465,16 @@ static int bench_scale(Arena *mem, u32 n, u64 seed)
     log_set_echo(false);
     // Своя сторона идёт в атаку: каждый на того, кто стоит напротив
     for (u32 i = 0; i + 1 < n; i += 2) field_attack(f, i, i + 1);
-    const f32 dt = 1.0f / 60.0f;
+    const f32 dt = COMBAT_DT;
     f64 sum = 0.0, worst = 0.0;
     u32 frames = 0, peak = 0;
-    for (; frames < 60 * 120; frames++) {
+    for (; frames < COMBAT_HZ * 120; frames++) {
         f64 t0 = time_now();
         for (u32 i = 0; i < n; i++) {
             if (b[i].ctrl == CTRL_FREE) b[i].vmax = g_gait_speed[GAIT_RUN];
             player_update(&b[i], dt, flat_ground);
         }
-        field_update(f, dt, flat_ground);
+        field_tick(f, flat_ground);
         f64 ms = (time_now() - t0) * 1000.0;
         sum += ms;
         worst = ms > worst ? ms : worst;
@@ -495,7 +491,7 @@ static int bench_scale(Arena *mem, u32 n, u64 seed)
         for (u32 k = 0; k < FS_COUNT; k++) if (hist[sd][k]) printf(" %s %u;", g_state_name[k], hist[sd][k]);
         printf("\n");
     }
-    printf("НАГРУЗКА: %u ТЕЛ, 120 С ПРИ 60 К/С: КАДР ПОЛЯ СРЕДНИЙ %.3f МС, ХУДШИЙ %.3f МС; В БОЮ ДО %u; ВЫБЫЛО СВОИХ %u, ЧУЖИХ %u\n",
+    printf("НАГРУЗКА: %u ТЕЛ, 120 С: ШАГ МИРА (ХОДЬБА И ТИК ПОЛЯ) СРЕДНИЙ %.3f МС, ХУДШИЙ %.3f МС; В БОЮ ДО %u; ВЫБЫЛО СВОИХ %u, ЧУЖИХ %u\n",
            n, sum / frames, worst, peak, out[0], out[1]);
     log_set_echo(true);
     return 0;

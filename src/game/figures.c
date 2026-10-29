@@ -190,7 +190,7 @@ static bool fight_pose(const Field *fd, u32 i, PoseJob *j, M4 *drop)
     CharPose walk = j->p;
     V3 dp;
     f32 dy;
-    bool dropped = fight_anim_pose(&fd->anim[i], &fd->w, i, fd->acc / COMBAT_DT, v3(0, 0, 0), walk.pos.y, walk.time, &j->p,
+    bool dropped = fight_anim_pose(&fd->anim[i], &fd->w, i, fd->alpha, v3(0, 0, 0), walk.pos.y, walk.time, &j->p,
                                    &j->act, &dp, &dy);
     j->p.seed = walk.seed;
     j->p.height = walk.height;
@@ -206,7 +206,7 @@ static u32 arena_figures(Figures *f, const CharMeshes *m, const ArenaView *v, co
                          DrawItem *items)
 {
     const CombatWorld *w = &s->w;
-    f32 alpha = v->acc / COMBAT_DT;
+    f32 alpha = v->alpha;
     u32 n = 0, set = 0;
     if (!v->in_bout) return 0;
     for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) {
@@ -235,6 +235,24 @@ static u32 arena_figures(Figures *f, const CharMeshes *m, const ArenaView *v, co
     return n;
 }
 
+void figures_view(Figures *f, const People *p, const Field *fd, f32 alpha, GroundFn ground)
+{
+    for (u32 i = 0; i < p->count; i++) {
+        const Player *b = &p->body[i];
+        if (b->slot >= 0 && field_awake(fd, (u32)b->slot)) {
+            // В бою: где его показывает вид боя (выпады, отскоки), поворот — сглаженный тик
+            u32 s = (u32)b->slot;
+            f32 x = fd->anim[s].disp_x, z = fd->anim[s].disp_z, h, px, pz;
+            field_pos(fd, s, alpha, &px, &pz, &h);
+            f->view[i] = *b;
+            f->view[i].pos = v3(x, ground(x, z), z);
+            f->view[i].heading = f->view[i].move_yaw = h;
+        } else {
+            player_lerp(&p->last[i], b, alpha, &f->view[i]);
+        }
+    }
+}
+
 u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *fd, const ArenaView *av,
                  const ArenaSession *s, const FigureView *v, DrawItem *items, PointLight *lights, u32 *nl)
 {
@@ -248,7 +266,7 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
             f->age[i] = -1.0f;
             continue;
         }
-        const Player *b = &p->body[i];
+        const Player *b = &f->view[i];
         const CharSheet *cs = &p->sheet[i];
         f32 lit = torch_lit(p->torch[i], p->seed[i], v->night);
         bool fight = b->slot >= 0 && field_awake(fd, (u32)b->slot), pose;
@@ -303,7 +321,7 @@ u32 figures_marks(Figures *f, const CharMeshes *m, const Squad *sq, const Field 
     u32 n = 0, set = 0;
     for (u32 i = 0; i < sq->count; i++) {
         if (!sq->selected[i]) continue;
-        const Player *pl = squad_body(sq, i);
+        const Player *pl = &f->view[sq->member[i]];
         M4 *rb = &f->marks[(set++) * RENDER_MAX_BONES];
         rb[0] = m4_translate(pl->pos);
         items[n++] = (DrawItem){ .mesh = &m->ring[0], .bones = rb, .no_shadow = true };
@@ -314,7 +332,7 @@ u32 figures_marks(Figures *f, const CharMeshes *m, const Squad *sq, const Field 
             if (sq->selected[j] && field_target(fd, (u32)squad_body(sq, j)->slot) == t) first = false;
         if (first) {
             M4 *tb = &f->marks[(set++) * RENDER_MAX_BONES];
-            tb[0] = m4_translate(fd->body[t]->pos);
+            tb[0] = m4_translate(f->view[t].pos);  // слот поля = номер в таблице
             items[n++] = (DrawItem){ .mesh = &m->ring[2], .bones = tb, .no_shadow = true };
         }
     }

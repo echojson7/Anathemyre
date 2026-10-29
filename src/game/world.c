@@ -1,5 +1,7 @@
 #include "world.h"
 
+#include <string.h>
+
 #include "../core/clock.h"
 #include "../core/log.h"
 #include "../core/prof.h"
@@ -67,27 +69,57 @@ bool world_init(World *w, Arena *perm, MeshBuilder *mb, u64 seed, f32 tod, bool 
     w->field = ARENA_PUSH_ARRAY(perm, Field, 1);
     field_init(w->field, perm, seed);
     people_join_field(p, w->field);
+    memcpy(p->last, p->body, p->count * sizeof *p->body);
     w->valley = ARENA_PUSH_ARRAY(perm, ValleyView, 1);
     return true;
 }
 
-void world_update(World *w, f32 dt)
+// Один шаг мира. Порядок систем постоянный: ходьба, арена, поле боя (видит тела после ходьбы), сутки
+static void world_tick(World *w)
 {
-    w->time += dt;
+    People *p = w->people;
+    memcpy(p->last, p->body, p->count * sizeof *p->body);
     prof_zone(PZ_PEOPLE);
-    people_update(w->people, &w->rng, &w->town_rng, dt, testroom_ground);
-    squad_update(&w->squad, dt, world_ground);
+    people_update(p, &w->rng, &w->town_rng, TICK_DT, testroom_ground);
+    squad_update(&w->squad, TICK_DT, world_ground);
     prof_zone(PZ_ARENA);
-    arena_view_update(&w->aview, w->arena, dt);
+    arena_view_tick(&w->aview, w->arena);
     prof_zone(PZ_FIELD);
-    field_update(w->field, dt, world_ground);
+    field_tick(w->field, world_ground);
     if (w->day_run) {
-        w->tod += dt / DAY_LENGTH_S;
+        w->tod += TICK_DT / DAY_LENGTH_S;
         if (w->tod >= 1.0f) {
             w->tod -= 1.0f;
             w->day++;
         }
     }
+    w->tick++;
+}
+
+void world_update(World *w, f32 dt)
+{
+    w->acc += dt;
+    for (u32 n = 0; w->acc >= TICK_DT && n < TICKS_PER_FRAME_MAX; n++) {
+        w->acc -= TICK_DT;
+        world_tick(w);
+    }
+    if (w->acc > TICK_DT) w->acc = TICK_DT;  // не успел: остаток не копится
+    w->alpha = w->acc / TICK_DT;
+}
+
+void world_present(World *w, f32 dt)
+{
+    arena_view_present(&w->aview, w->arena, w->alpha, dt);
+    field_present(w->field, w->alpha, dt);
+}
+
+f32 world_time(const World *w) { return ((f32)(w->tick % TIME_WRAP_TICKS) + w->alpha) * TICK_DT; }
+
+f32 world_tod(const World *w)
+{
+    if (!w->day_run) return w->tod;
+    f32 t = w->tod + w->alpha * TICK_DT / DAY_LENGTH_S;
+    return t >= 1.0f ? t - 1.0f : t;
 }
 
 bool world_squad_fighting(const World *w)
@@ -127,6 +159,10 @@ bool world_travel(World *w, Arena *perm)
         squad_place(sq, squad_home(), squad_home_heading(), world_ground);
         log_info("ПЕРЕХОД: отряд в пустоши у арены");
     }
-    for (u32 i = 0; i < sq->count; i++) sq->selected[i] = false;
+    // Перенос — не движение: кадр не должен тянуть отряд через всю карту между шагами
+    for (u32 i = 0; i < sq->count; i++) {
+        sq->selected[i] = false;
+        w->people->last[sq->member[i]] = w->people->body[sq->member[i]];
+    }
     return true;
 }

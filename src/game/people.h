@@ -23,6 +23,7 @@ enum { TEAM_SQUAD, TEAM_MOBS, TEAM_WANDER };
 typedef struct People {
     u32       count;
     Player    body[PEOPLE_MAX];
+    Player    last[PEOPLE_MAX];       // тело на прошлом шаге мира: кадр сглаживает между ним и body
     CharSheet sheet[PEOPLE_MAX];
     u8        role[PEOPLE_MAX];
     u8        team[PEOPLE_MAX];       // команда на поле боя

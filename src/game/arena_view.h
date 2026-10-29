@@ -19,10 +19,10 @@
 typedef struct ArenaView {
     V3  center;
     f32 floor_y;
-    f32 acc;        // накопленное время до следующего тика боя
+    f32 alpha;      // для кадра: доля шага мира после последнего тика боя
     bool in_bout;
 
-    // Бойцы текущего боя: вид каждого (сглаживание, позы, выпавшее оружие)
+    // Бойцы текущего боя: вид каждого (сглаживание, позы, выпавшее оружие); пишет кадр
     FightAnim fa[ARENA_MAX_BOUT];
 
     // Места зрителей за оградой: точка в мире, куда смотрит, зерно позы
@@ -33,8 +33,10 @@ typedef struct ArenaView {
 // Ринг, ограда, прожекторы, круг знаков: статика с тенями
 void arena_view_build(MeshBuilder *mb, V3 center);
 void arena_view_init(ArenaView *v, V3 center, f32 floor_y);
-// Прогнать бои по реальному времени (тики COMBAT_HZ) и обновить анимацию
-void arena_view_update(ArenaView *v, ArenaSession *s, f32 dt);
+// Тик арены (шаг мира): бой идёт, между боями ищется следующий
+void arena_view_tick(ArenaView *v, ArenaSession *s);
+// Вид бойцов для кадра: alpha — доля шага после тика, dt — игровое время кадра
+void arena_view_present(ArenaView *v, const ArenaSession *s, f32 alpha, f32 dt);
 // Внешность бойца ростера ri (матрица слота RENDER_LOOK_SLOT)
 M4  arena_view_look(const ArenaSession *s, u32 ri, CharLook *lk);
 // Свет арены: зажигается с темнотой night (Sky.night), в out — до AV_LIGHTS источников
