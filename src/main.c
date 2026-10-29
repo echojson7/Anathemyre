@@ -13,6 +13,7 @@
 #include "game/battle.h"
 #include "game/character.h"
 #include "game/hud.h"
+#include "game/look.h"
 #include "game/squad.h"
 #include "game/testroom.h"
 #include "platform/platform.h"
@@ -20,9 +21,7 @@
 #include "render/ui.h"
 #include "world/sky.h"
 
-// Тела людей (tools/humanconv): мужчина, женщина, худой мужчина; у каждого LOD0..2
-#define BODY_KINDS 3
-static const char *const g_body_file[BODY_KINDS] = { "mh_male", "mh_female", "mh_thin" };
+#define BODY_KINDS BODY_KIND_COUNT
 #define CROWD_SIZE 9
 // Арена у зала, перед его открытым краем
 #define ARENA_CENTER v3(14.0f, 0.0f, 34.0f)
@@ -66,19 +65,21 @@ typedef struct Options {
 typedef struct PortraitKey {
     const GpuMesh *body, *weapon;
     f32 seed, height, width;
+    M4  look;
     i32 size;
 } PortraitKey;
 static PortraitKey g_portrait_key[RENDER_PORTRAIT_SLOTS];
 
 // Портрет: неподвижная фигура в покое, камера по кости головы спереди, чуть сверху
 static void portrait(const FrameView *base, u32 slot, i32 size, const GpuMesh *body, const GpuMesh *weapon,
-                     f32 seed, f32 height, f32 width, M4 *bones)
+                     f32 seed, f32 height, f32 width, M4 look, M4 *bones)
 {
-    PortraitKey key = { body, weapon, seed, height, width, size };
+    PortraitKey key = { body, weapon, seed, height, width, look, size };
     if (slot >= RENDER_PORTRAIT_SLOTS || !memcmp(&g_portrait_key[slot], &key, sizeof key)) return;
     g_portrait_key[slot] = key;
     CharPose p = { .seed = seed, .height = height, .width = width };
     character_pose(&p, NULL, bones);
+    bones[RENDER_LOOK_SLOT] = look;
     DrawItem items[2] = { { .mesh = body, .bones = bones }, { .mesh = weapon, .bones = bones } };
     M4 hb = bones[BONE_HEAD];
     V3 head = m4_point(hb, v3(0, 1.70f, 0.03f));
@@ -89,6 +90,15 @@ static void portrait(const FrameView *base, u32 slot, i32 size, const GpuMesh *b
     fv.view = m4_look_at(fv.cam_pos, v3_sub(head, v3_mul(up, 0.06f)), up);
     fv.proj = m4_perspective(0.55f, 1.0f, 0.05f, 20.0f);
     render_portrait(slot, size, &fv, m4_mul(fv.proj, fv.view), items, weapon ? 2 : 1);
+}
+
+// Внешность члена отряда: по номеру и сложению
+static M4 squad_look(const Squad *s, u32 i)
+{
+    const CharSheet *cs = &s->sheet[i];
+    CharLook lk;
+    look_make(&lk, s->variant[i], 1000u + i, cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
+    return look_matrix(&lk, s->variant[i]);
 }
 
 // Ближе 4 м камера подходит только к ряду людей (меню НАСТРОЙКИ, крупные планы)
@@ -404,6 +414,17 @@ int main(int argc, char **argv)
     GpuMesh human_mesh[HUMAN_N];
     u32 human_count = 0;
     M4 *human_bones = ARENA_PUSH_ARRAY(&perm, M4, HUMAN_N * RENDER_MAX_BONES);
+    // Левее в том же ряду: разная внешность (морфы и оттенки) на сетках с LOD
+    enum { LOOKS_N = 12 };
+    M4 *looks_bones = ARENA_PUSH_ARRAY(&perm, M4, LOOKS_N * RENDER_MAX_BONES);
+    for (u32 j = 0; j < LOOKS_N; j++) {
+        f32 x = -1.0f - 0.75f * (f32)j;
+        for (u32 b = 0; b < RENDER_MAX_BONES; b++) looks_bones[j * RENDER_MAX_BONES + b] = m4_translate(v3(x, ground_height(x, 22.0f), 22.0f));
+        CharLook lk;
+        f32 r = (f32)((j * 37u) % 11u) / 10.0f;
+        look_make(&lk, j % BODY_KINDS, 300u + j, 58.0f + 34.0f * r, 1.8f, 10.0f + 60.0f * (1.0f - r));
+        looks_bones[j * RENDER_MAX_BONES + RENDER_LOOK_SLOT] = look_matrix(&lk, j % BODY_KINDS);
+    }
     mark = perm.used;
     bool humans_on = false, humans_flip = opt.humans;
 
@@ -512,6 +533,7 @@ int main(int argc, char **argv)
                 f32 x = 0.3f + 2.4f * (f32)(k / CHAR_LODS) + 0.7f * (f32)lod;
                 for (u32 b = 0; b < RENDER_MAX_BONES; b++)
                     human_bones[human_count * RENDER_MAX_BONES + b] = m4_translate(v3(x, ground_height(x, 22.0f), 22.0f));
+                human_bones[human_count * RENDER_MAX_BONES + RENDER_LOOK_SLOT] = (M4){ 0 };
                 human_count++;
             }
         }
@@ -645,7 +667,13 @@ int main(int argc, char **argv)
             };
             M4 *b = &bones[i * RENDER_MAX_BONES];
             character_pose(&p, NULL, b);
-            items[n++] = (DrawItem){ .mesh = &body_mesh[crowd.variant[i] % BODY_KINDS], .bones = b };
+            u32 kind = crowd.variant[i] % BODY_KINDS;
+            CharLook lk;
+            f32 hm = 1.8f * p.height;
+            look_make(&lk, kind, i * 7919u + 101u, 72.0f * p.height * p.height * p.width * p.width, hm,
+                      30.0f + 25.0f * sinf(crowd.seed[i] * 2.1f));
+            b[RENDER_LOOK_SLOT] = look_matrix(&lk, kind);
+            items[n++] = (DrawItem){ .mesh = &body_mesh[kind], .bones = b };
         }
         n += arena_view_draw(aview, arena, sim_time, body_mesh, BODY_KINDS, weapon_mesh, arena_bones, items + n);
         for (u32 i = 0; i < squad->count; i++) {
@@ -658,6 +686,7 @@ int main(int argc, char **argv)
                 .lean_fwd = pl->lean_fwd, .lean_side = pl->lean_side, .look = pl->look,
             };
             character_pose(&p, NULL, b);
+            b[RENDER_LOOK_SLOT] = squad_look(squad, i);
             items[n++] = (DrawItem){ .mesh = &body_mesh[squad->variant[i] % BODY_KINDS], .bones = b };
             if (cs->equip[SLOT_WEAPON].kind == IK_WEAPON)
                 items[n++] = (DrawItem){ .mesh = &weapon_mesh[cs->equip[SLOT_WEAPON].id], .bones = b };
@@ -674,6 +703,8 @@ int main(int argc, char **argv)
         }
         for (u32 k = 0; humans_on && k < human_count; k++)
             items[n++] = (DrawItem){ .mesh = &human_mesh[k], .bones = human_bones + k * RENDER_MAX_BONES };
+        for (u32 j = 0; humans_on && j < LOOKS_N; j++)
+            items[n++] = (DrawItem){ .mesh = &body_mesh[j % BODY_KINDS], .bones = looks_bones + j * RENDER_MAX_BONES };
         V3 look_pos;
         if (hud.look_kind == LOOK_ARENA && hud_arena_pos(aview, arena, hud.look, &look_pos)) {
             M4 *rb = squad_bones + (size_t)SQUAD_MAX * 3 * RENDER_MAX_BONES;
@@ -713,14 +744,15 @@ int main(int argc, char **argv)
                 const FighterDesc *d = &arena->roster[k].d;
                 f32 seed = (f32)k * 13.7f + 3.0f;
                 portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, &body_mesh[k % BODY_KINDS], &weapon_mesh[d->weapon],
-                         seed, d->height / 1.8f, 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), pb);
+                         seed, d->height / 1.8f, 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), arena_view_look(arena, k), pb);
                 continue;
             }
             if (focus && (hud.look_kind != LOOK_SQUAD || k >= squad->count)) continue;
             const CharSheet *cs = &squad->sheet[k];
             const GpuMesh *wm = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? &weapon_mesh[cs->equip[SLOT_WEAPON].id] : NULL;
             portrait(&fv, focus ? HUD_PORTRAIT_FOCUS : i, focus ? HUD_PORTRAIT_FOCUS_PX : HUD_PORTRAIT_CARD_PX,
-                     &body_mesh[squad->variant[k] % BODY_KINDS], wm, 7.0f + (f32)k * 5.3f, cs->d.height / 1.8f, 0.0f, pb);
+                     &body_mesh[squad->variant[k] % BODY_KINDS], wm, 7.0f + (f32)k * 5.3f, cs->d.height / 1.8f, 0.0f,
+                     squad_look(squad, k), pb);
         }
         ui_set_image(render_portrait_texture());
         ui_set_time(real_time);

@@ -267,6 +267,15 @@ void arena_view_update(ArenaView *v, ArenaSession *s, f32 dt)
     }
 }
 
+M4 arena_view_look(const ArenaSession *s, u32 ri)
+{
+    const FighterDesc *d = &s->roster[ri].d;
+    u32 kind = ri % BODY_KIND_COUNT;  // как сетка тела в arena_view_draw
+    CharLook lk;
+    look_make(&lk, kind, ri * 31u + 7u, d->mass, d->height, d->skill[SK_STRENGTH]);
+    return look_matrix(&lk, kind);
+}
+
 u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const GpuMesh *body, u32 variants,
                     const GpuMesh *weapons, M4 *bones, DrawItem *items)
 {
@@ -300,6 +309,7 @@ u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const G
             };
             M4 *b = &bones[(set++) * RENDER_MAX_BONES];
             character_pose(&p, &act, b);
+            b[RENDER_LOOK_SLOT] = arena_view_look(s, ri);
             items[n++] = (DrawItem){ .mesh = &body[ri % variants], .bones = b };
             if (v->dropped[i]) {
                 M4 *wb = &bones[(set++) * RENDER_MAX_BONES];
@@ -319,7 +329,11 @@ u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const G
         };
         M4 *b = &bones[(set++) * RENDER_MAX_BONES];
         character_pose(&p, NULL, b);
-        items[n++] = (DrawItem){ .mesh = &body[(k + 2) % variants], .bones = b };
+        u32 kind = (k + 2) % variants;
+        CharLook lk;
+        look_make(&lk, kind, 5000u + k, 72.0f * p.height * p.height * p.width * p.width, 1.8f * p.height, 25.0f);
+        b[RENDER_LOOK_SLOT] = look_matrix(&lk, kind);
+        items[n++] = (DrawItem){ .mesh = &body[kind], .bones = b };
     }
     return n;
 }

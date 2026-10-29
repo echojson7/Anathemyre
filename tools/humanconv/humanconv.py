@@ -69,12 +69,15 @@ def morph(base, Z, p):
         if len(i):
             v[i] += w * Z['targets/' + name + '.vector'].astype(np.float64) * 1e-3
     gen = {'female': 1 - p['gender'], 'male': p['gender']}
+    age = {'young': 1 - p.get('age', 0.0), 'old': p.get('age', 0.0)}
+    race = p.get('race', {'african': 1 / 3, 'asian': 1 / 3, 'caucasian': 1 / 3})
     for gn, gw in gen.items():
-        for mn, mw in three(p['muscle']).items():
-            for wn, ww in three(p['weight']).items():
-                add('macrodetails/universal-%s-young-%smuscle-%sweight' % (gn, mn, wn), gw * mw * ww)
-        for race in ('african', 'asian', 'caucasian'):
-            add('macrodetails/%s-%s-young' % (race, gn), gw / 3)
+        for an, aw in age.items():
+            for mn, mw in three(p['muscle']).items():
+                for wn, ww in three(p['weight']).items():
+                    add('macrodetails/universal-%s-%s-%smuscle-%sweight' % (gn, an, mn, wn), gw * aw * mw * ww)
+            for rn, rw in race.items():
+                add('macrodetails/%s-%s-%s' % (rn, gn, an), gw * aw * rw)
     # Размер и упругость груди (у MakeHuman только для женщин)
     gw = 1 - p['gender']
     for mn, mw in three(p['muscle']).items():
@@ -87,6 +90,23 @@ def morph(base, Z, p):
         add(name, w)
     return v
 
+
+# Морфы внешности: у каждого свой поток сдвигов вершин, игра смешивает их весами экземпляра
+# (порядок как LOOK_* в src/game/look.h)
+MORPHS = (
+    dict(weight=1.0),                  # полнее
+    dict(weight=0.0),                  # худее
+    dict(muscle=1.0),                  # сильнее
+    dict(muscle=0.0),                  # слабее
+    dict(age=1.0),                     # старше: 1 — глубокая старость
+    dict(race={'african': 1.0}),       # черты лица: широкий нос, полные губы
+    dict(race={'asian': 1.0}),         # черты лица: узкие глаза, плоское лицо
+    dict(mods={'chin/chin-width-incr': 0.7, 'chin/chin-bones-incr': 0.6, 'head/head-square': 0.6,
+               'nose/nose-volume-incr': 0.4}),  # тяжёлая челюсть, крупный нос
+)
+# Класс оттенка вершины: игра перекрашивает кожу и волосы под экземпляр
+TINT_NONE, TINT_SKIN, TINT_HAIR = 0, 1, 2
+MORPH_POS, MORPH_NRM = 0.25, 2.0  # диапазоны сдвига позиции (м) и нормали в файле
 
 JOINT_SRC = (('PELVIS', 'spine05'), ('SPINE', 'spine04'), ('CHEST', 'spine02'), ('NECK', 'neck01'), ('HEAD', 'head'),
              ('CLAVICLE_L', 'clavicle.L'), ('UPPER_ARM_L', 'upperarm01.L'), ('FOREARM_L', 'lowerarm01.L'), ('HAND_L', 'wrist.L'),
@@ -278,18 +298,23 @@ def normals(v, t):
     return n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
 
 
-def build(p, base, faces, Z, skel, W):
+def posed(p, base, faces, Z, skel, W, fit=None):
+    # Морфы, поза привязки и масштаб (по умолчанию — рост HEIGHT). fit — (низ, масштаб) другого тела
     v = morph(base, Z, p)
     J = {k: v[ix].mean(0) for k, ix in skel['joints'].items()}
     v = repose(v, J, W, list(W.keys()))
     J = {k: v[ix].mean(0) for k, ix in skel['joints'].items()}
+    if fit is None:
+        used = np.unique(faces['body'])
+        y0 = v[used, 1].min()
+        fit = (y0, HEIGHT / (v[used, 1].max() - y0))
+    o = np.array([0.0, fit[0], 0.0])
+    return (v - o) * fit[1], {k: (x - o) * fit[1] for k, x in J.items()}, fit
 
+
+def build(p, base, faces, Z, skel, W):
+    v, J, fit = posed(p, base, faces, Z, skel, W)
     body = faces['body']
-    used = np.unique(body)
-    lo = v[used].min(0)
-    s = HEIGHT / (v[used, 1].max() - lo[1])
-    v = (v - np.array([0.0, lo[1], 0.0])) * s
-    J = {k: (x - np.array([0.0, lo[1], 0.0])) * s for k, x in J.items()}
 
     # Кость игры и веса нужных групп MH на вершину
     nv = len(v)
@@ -421,7 +446,15 @@ def build(p, base, faces, Z, skel, W):
         mat[ix] = MAT_SKIN
         eyes.append(f)
     eyes = np.concatenate(eyes)
-    pal, pid = np.unique(np.concatenate([np.round(col, 4), mat[:, None]], 1), axis=0, return_inverse=True)
+    ie = np.unique(eyes)
+    tcl = np.where(mat == MAT_SKIN, TINT_SKIN, TINT_NONE)
+    tcl[brows] = TINT_HAIR
+    if p['beard']:
+        tcl[beard] = TINT_HAIR
+    if p['hair'] != 'bald':
+        tcl[hair_t] = TINT_HAIR
+    tcl[ie] = TINT_NONE
+    pal, pid = np.unique(np.concatenate([np.round(col, 4), mat[:, None], tcl[:, None]], 1), axis=0, return_inverse=True)
     pid = pid.ravel()
     vote = lambda q: q[np.arange(len(q)), (q[:, :, None] == q[:, None, :]).sum(2).argmax(1)]
     nf0 = len(F0)
@@ -429,6 +462,25 @@ def build(p, base, faces, Z, skel, W):
     # делится на четыре (линейно, без сглаживания); соседи с поделённым ребром — веером из центра.
     # Номера вершин как у сглаженной сетки: точки рёбер nv0 + e, центры граней nv0 + len(E) + f
     vl = np.concatenate([vc, vc[E].mean(1), vc[F0].mean(1)])
+    # Морфы внешности в номерах вершин vl: то же тело с другими ползунками
+    VK = []
+    for m in MORPHS:
+        q = dict(p, **{k: x for k, x in m.items() if k != 'mods'})
+        q['mods'] = dict(p.get('mods', {}))
+        for k, x in m.get('mods', {}).items():
+            q['mods'][k] = q['mods'].get(k, 0.0) + x
+        vk = posed(q, base, faces, Z, skel, W, fit)[0]
+        VK.append(np.concatenate([vk, vk[E].mean(1), vk[F0].mean(1)]))
+
+    def mdelta(t, n):
+        # Сдвиги (вершина vl, морф, 6): позиция и нормаль; у глаз нормали свои — не трогаются
+        d = np.zeros((len(vl), len(VK), 6))
+        for k, vk in enumerate(VK):
+            d[:, k, :3] = vk - vl
+            d[:, k, 3:] = normals(vk, t) - n
+        d[ie, :, 3:] = 0
+        return d
+
     fe_ = np.sort(np.stack([F0, np.roll(F0, -1, 1)], 2).reshape(-1, 2), 1)
     qe = np.unique(fe_, axis=0, return_inverse=True)[1].reshape(nf0, 4)
 
@@ -456,10 +508,16 @@ def build(p, base, faces, Z, skel, W):
     n0 = normals(vl, T0)
     n0[np.unique(eyes)] = n[np.unique(eyes)]
 
-    def ponytail(rings, segs):
+    def ponytail(rings, segs, md):
+        # Хвост жёсткий: при морфах сдвигается как затылок
         back = hd & (y > top_y - 0.12) & (y < top_y - 0.08)
         zb = z[back].min()
-        return tail(np.array([0.0, top_y - 0.095, zb + 0.004]), np.array([0.0, top_y - 0.33, zb - 0.012]), 0.026, 0.011, rings, segs)
+        pv, pn, pt = tail(np.array([0.0, top_y - 0.095, zb + 0.004]), np.array([0.0, top_y - 0.33, zb - 0.012]), 0.026, 0.011, rings, segs)
+        d = md[np.where(back[:len(vl)])[0]].mean(0)
+        d[:, 3:] = 0
+        k = len(pv)
+        return ((pv, pn, np.tile(hcol, (k, 1)), np.full(k, MAT_CLOTH), np.full(k, TINT_HAIR), rigid(np.full(k, HEAD)),
+                 np.tile(d, (k, 1, 1))), pt)
 
     # Лицо и голова при упрощении дороже: их вершины уходят последними
     wv = np.where(bone == HEAD, 40.0, np.where(bone == NECK, 8.0, 1.0))
@@ -469,7 +527,8 @@ def build(p, base, faces, Z, skel, W):
     (T0, P0), = decimate(vl, T0, P0, [LOD_TRIS[0]], wv)
     n0 = normals(vl, T0)
     n0[np.unique(eyes)] = n[np.unique(eyes)]
-    parts = [split(vl, n0, T0, P0, pal, sk)]
+    md = mdelta(T0, n0)
+    parts = [split(vl, n0, T0, P0, pal, sk, md)]
     if p['hair'] != 'bald':
         f = T0[hair_t[T0].all(1)]
         ix = np.unique(f)
@@ -480,11 +539,10 @@ def build(p, base, faces, Z, skel, W):
         hv = vl[ix] + n0[ix] * off[:, None]
         hb = np.where(hv[:, 1] < J['neck03____head'][1], NECK, HEAD)
         hc = hcol * rng.uniform(0.85, 1.15, (len(ix), 1))
-        parts.append(((hv, n0[ix], hc, np.full(len(ix), MAT_CLOTH), rigid(hb)), remap[f]))
+        parts.append(((hv, n0[ix], hc, np.full(len(ix), MAT_CLOTH), np.full(len(ix), TINT_HAIR), rigid(hb), md[ix]), remap[f]))
         if p['hair'] == 'long':
             # Собранные в хвост: узел на затылке и сужающийся жгут
-            pv, pn, pt = ponytail(7, 8)
-            parts.append(((pv, pn, np.tile(hcol, (len(pv), 1)), np.full(len(pv), MAT_CLOTH), rigid(np.full(len(pv), HEAD))), pt))
+            parts.append(ponytail(7, 8, md))
     lods.append(merge(parts))
 
     # Дальние LOD: своё упрощение с учётом швов окраски (decimate). Окраска проще:
@@ -497,9 +555,8 @@ def build(p, base, faces, Z, skel, W):
         fcol[beard] = skin * 0.15 + hcol * 0.85
     if p['hair'] != 'bald':
         fcol[hair_t] = hcol; fmat[hair_t] = MAT_CLOTH
-    ie = np.unique(eyes)
     fcol[ie] = col[ie]; fmat[ie] = MAT_SKIN
-    fpal, fpid = np.unique(np.concatenate([np.round(fcol, 4), fmat[:, None]], 1), axis=0, return_inverse=True)
+    fpal, fpid = np.unique(np.concatenate([np.round(fcol, 4), fmat[:, None], tcl[:, None]], 1), axis=0, return_inverse=True)
     fpid = fpid.ravel()
     fe = vote(fpid[eyes])
     Tf, Pf = refine(vote(fpid[body]).reshape(4, nf0).T)
@@ -510,10 +567,11 @@ def build(p, base, faces, Z, skel, W):
     eye_l = decimate(vl, tri(eyes), np.concatenate([fe, fe]), list(eye_n), wv)
     for (rings, segs), (tb, pb), (te, pe) in zip(rs, body_l, eye_l):
         t, fp = np.concatenate([tb, te]), np.concatenate([pb, pe])
-        parts = [split(vl, normals(vl, t), t, fp, fpal, sk)]
+        nt = normals(vl, t)
+        md = mdelta(t, nt)
+        parts = [split(vl, nt, t, fp, fpal, sk, md)]
         if p['hair'] == 'long':
-            pv, pn, pt = ponytail(rings, segs)
-            parts.append(((pv, pn, np.tile(hcol, (len(pv), 1)), np.full(len(pv), MAT_CLOTH), rigid(np.full(len(pv), HEAD))), pt))
+            parts.append(ponytail(rings, segs, md))
         lods.append(merge(parts))
     return lods, J
 
@@ -648,12 +706,13 @@ def rigid(bone):
     return np.concatenate([np.asarray(bone)[:, None].repeat(4, 1), np.tile((1.0, 0, 0, 0), (len(bone), 1))], 1)
 
 
-def split(v, n, t, fp, pal, bone):
-    # Вершины делятся по окраске граней: край белья и губ чёткий, без размытия по треугольнику
+def split(v, n, t, fp, pal, sk, md):
+    # Вершины делятся по окраске граней: край белья и губ чёткий, без размытия по треугольнику.
+    # Часть сетки: позиции, нормали, цвета, материалы, классы оттенка, скиннинг, сдвиги морфов
     K = len(pal)
     uk, kinv = np.unique((t.astype(np.int64) * K + fp[:, None]).ravel(), return_inverse=True)
     src, kp = uk // K, pal[uk % K]
-    return (v[src], n[src], kp[:, :3], kp[:, 3].astype(int), bone[src]), kinv.reshape(-1, 3)
+    return (v[src], n[src], kp[:, :3], kp[:, 3].astype(int), kp[:, 4].astype(int), sk[src], md[src]), kinv.reshape(-1, 3)
 
 
 def merge(parts):
@@ -661,15 +720,17 @@ def merge(parts):
     base, ts = 0, []
     for (pv, *_), t in parts:
         ts.append(t + base); base += len(pv)
-    V, N, C, M, B = (np.concatenate([np.asarray(pa[0][k]) for pa in parts]) for k in range(5))
+    cols = [np.concatenate([np.asarray(pa[0][k]) for pa in parts]) for k in range(len(parts[0][0]))]
     T = np.concatenate(ts)
     live = np.unique(T)
-    remap = np.full(len(V), -1); remap[live] = np.arange(len(live))
-    return V[live], N[live], C[live], M[live], B[live], remap[T]
+    remap = np.full(len(cols[0]), -1); remap[live] = np.arange(len(live))
+    return [c[live] for c in cols] + [remap[T]]
 
 
-def write_mesh(path, V, N, C, M, S, T):
-    # AMSH 2: после индексов поток скиннинга, на вершину u8 кости[4] и u8 веса[4] (сумма 255)
+def write_mesh(path, V, N, C, M, L, S, D, T):
+    # AMSH 3: после индексов поток скиннинга, на вершину u8 кости[4] и u8 веса[4] (сумма 255);
+    # затем u32 число морфов и сдвиги: на вершину и морф три u32 = snorm16 пары (dx dy) (dz nx) (ny nz),
+    # позиция в долях MORPH_POS, нормаль в долях MORPH_NRM
     w = np.floor(S[:, 4:] * 255).astype(int)
     w[:, 0] += 255 - w.sum(1)
     sk = np.concatenate([S[:, :4].astype(int), w], 1).astype('u1')
@@ -677,12 +738,17 @@ def write_mesh(path, V, N, C, M, S, T):
     a = np.zeros(len(V), dt)
     a['pos'] = V; a['nrm'] = N
     a['col'][:, :3] = np.clip(np.round(C * 255), 0, 255); a['col'][:, 3] = 255
-    a['mat'] = M; a['bone'] = sk[:, 0]
+    a['mat'] = M; a['bone'] = sk[:, 0]; a['pad'][:, 0] = L
+    q = D / np.array([MORPH_POS] * 3 + [MORPH_NRM] * 3)
+    assert np.abs(q).max() <= 1.0, 'сдвиг морфа вне диапазона файла'
+    q = np.round(q * 32767).astype('<i2')
     with open(path, 'wb') as f:
-        f.write(b'AMSH' + struct.pack('<III', 2, len(V), T.size))
+        f.write(b'AMSH' + struct.pack('<III', 3, len(V), T.size))
         f.write(a.tobytes())
         f.write(T.astype('<u4').tobytes())
         f.write(sk.tobytes())
+        f.write(struct.pack('<I', D.shape[1]))
+        f.write(q.tobytes())
 
 
 def main():
@@ -693,9 +759,10 @@ def main():
     W = json.load(open(mh + '/default_weights.mhw'))['weights']
     for p in PEOPLE:
         lods, J = build(p, base, faces, Z, skel, W)
-        for l, (V, N, C, M, B, T) in enumerate(lods):
+        for l, mesh in enumerate(lods):
             name = p['name'] + ('_lod%d' % l if l else '')
-            write_mesh('%s/%s.mesh' % (out, name), V, N, C, M, B, T)
+            write_mesh('%s/%s.mesh' % (out, name), *mesh)
+            V, T = mesh[0], mesh[-1]
             print('%-15s %5d вершин %6d треугольников' % (name, len(V), len(T)))
         # Суставы для src/sim/body.c (g_body_bones): голова первой кости MH, что ведёт кость игры
         for b, n in JOINT_SRC:

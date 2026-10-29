@@ -19,12 +19,15 @@ typedef enum Material {
 } Material;
 
 #define BONE_NONE 255
+#define MESH_MAX_MORPHS 8  // веса морфов экземпляра — первые 8 чисел матрицы внешности (render.h, RENDER_LOOK_SLOT)
 
 typedef struct Vertex {
     f32 pos[3];
     f32 nrm[3];
     u8  color[4];
-    u8  mat, bone, pad0, pad1;
+    u8  mat, bone;
+    u8  tint;  // класс оттенка экземпляра: 0 нет, 1 кожа, 2 волосы
+    u8  pad1;
 } Vertex;
 
 // Мягкий скиннинг: до 4 костей на вершину, веса в сумме 255, самая тяжёлая первой
@@ -36,6 +39,8 @@ typedef struct VertexSkin {
 typedef struct MeshBuilder {
     Vertex *v;
     VertexSkin *skin;  // NULL — жёсткий скиннинг по Vertex.bone
+    u32 *morph;        // сдвиги морфов: на вершину и морф 3 u32 (snorm16 пары: dx dy, dz nx, ny nz)
+    u32  morph_count;
     u32    *idx;
     u32     vcount, vcap;
     u32     icount, icap;
@@ -48,7 +53,7 @@ typedef struct MeshBuilder {
 
 bool mb_init(MeshBuilder *mb, Arena *arena, u32 vcap, u32 icap);
 // Готовая сетка из файла .mesh (tools/humanconv): "AMSH", версия, число вершин и индексов, Vertex[], u32[];
-// с версии 2 следом VertexSkin[]. Буферы берутся из арены по размеру файла
+// с версии 2 следом VertexSkin[], с версии 3 — u32 число морфов и их сдвиги. Буферы берутся из арены по размеру файла
 bool mb_load(MeshBuilder *mb, Arena *arena, const char *path);
 void mb_set(MeshBuilder *mb, V3 color, Material mat, u8 bone);
 
