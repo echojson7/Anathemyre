@@ -23,6 +23,7 @@ const ArmorDef g_armors[A_COUNT] = {
     [A_PLATE]   = { "ОБШИВКА", SLOT_TORSO_ARMOR, { 0, 0.75f, 0.4f, 0, 0, 0, 0 }, 0.55f, 0.20f, 0.35f, 9, 0.15f },
     [A_BUCKET]  = { "КОЖУХ", SLOT_HEAD, { 0.9f, 0, 0, 0, 0, 0, 0 }, 0.60f, 0.25f, 0.50f, 3, 0.05f },
     [A_GREAVES] = { "ТРУБНЫЕ ПОНОЖИ", SLOT_LEGS, { 0, 0, 0, 0, 0, 0.7f, 0.7f }, 0.30f, 0.20f, 0.25f, 4, 0.08f },
+    [A_PANTS]   = { "РАБОЧИЕ ШТАНЫ", SLOT_PANTS, { 0, 0, 0, 0, 0, 0.8f, 0.8f }, 0.10f, 0.05f, 0.05f, 1, 0.00f },
 };
 
 const AttackDef g_attacks[ATK_COUNT] = {
@@ -34,4 +35,4 @@ const AttackDef g_attacks[ATK_COUNT] = {
 const f32 g_quality_mul[Q_COUNT] = { 0.6f, 0.8f, 1.0f, 1.15f, 1.3f };
 const char *g_quality_name[Q_COUNT] = { "ХЛАМ", "ХОДОВОЕ", "ДОБРОТНОЕ", "МАСТЕРСКОЕ", "ДРЕВНЕЕ" };
 const char *g_attack_name[ATK_COUNT] = { "УДАР СВЕРХУ", "РАЗМАХ", "УКОЛ" };
-const u8 g_armor_layer_order[4] = { SLOT_HEAD, SLOT_TORSO_ARMOR, SLOT_LEGS, SLOT_TORSO_UNDER };
+const u8 g_armor_layer_order[5] = { SLOT_HEAD, SLOT_TORSO_ARMOR, SLOT_LEGS, SLOT_PANTS, SLOT_TORSO_UNDER };

@@ -20,13 +20,13 @@ typedef struct MemberDef {
 #define GOODS(id, n) { IK_GOODS, id, Q_SOUND, n }
 
 static const MemberDef g_start[] = {
-    { "ГОСТОМЫСЛ", 0, 1, W_RESSORA, Q_SOUND, { A_RAGS, A_JACKET, END_A }, { G_WRAP, G_BOOTS, G_PACK, END_G },
+    { "ГОСТОМЫСЛ", 0, 1, W_RESSORA, Q_SOUND, { A_RAGS, A_JACKET, A_PANTS, END_A }, { G_WRAP, G_BOOTS, G_PACK, END_G },
       { GOODS(G_WATER, 1), GOODS(G_RUSK, 6), GOODS(G_BANDAGE, 4), GOODS(G_TOKEN, 1) } },
-    { "НИКАНДР", 0, 1, W_BAGOR, Q_WORN, { A_QUILT, A_BUCKET, END_A }, { G_MITTS, G_BELT, END_G },
+    { "НИКАНДР", 0, 1, W_BAGOR, Q_WORN, { A_QUILT, A_BUCKET, A_PANTS, END_A }, { G_MITTS, G_BELT, END_G },
       { GOODS(G_WATER, 1), GOODS(G_MEAT, 3), GOODS(G_SCRAP, 2) } },
-    { "АППИЙ", 2, 0, W_ARMATURA, Q_JUNK, { A_RAGS, END_A }, { G_BOOTS, END_G },
+    { "АППИЙ", 2, 0, W_ARMATURA, Q_JUNK, { A_RAGS, A_PANTS, END_A }, { G_BOOTS, END_G },
       { GOODS(G_FUEL, 1), GOODS(G_PART, 1), GOODS(G_RUSK, 3) } },
-    { "КИНСЛАВА", 1, 2, W_SEKACH, Q_MASTER, { A_QUILT, A_PLATE, A_GREAVES, END_A }, { G_BOOTS, G_MITTS, G_PACK, END_G },
+    { "КИНСЛАВА", 1, 2, W_SEKACH, Q_MASTER, { A_QUILT, A_PLATE, A_GREAVES, A_PANTS }, { G_BOOTS, G_MITTS, G_PACK, END_G },
       { GOODS(G_WATER, 1), GOODS(G_BANDAGE, 6), GOODS(G_MEAT, 5), { IK_WEAPON, W_RESSORA, Q_WORN, 1 } } },
 };
 
@@ -56,8 +56,8 @@ static void member_init(CharSheet *c, const MemberDef *m, Rng *rng)
 void sheet_random(CharSheet *c, Rng *rng, const char *name, u32 tier, u8 weapon)
 {
     MemberDef m = { .name = name, .tier = (u8)tier, .weapon = weapon, .weapon_q = tier ? Q_WORN : Q_JUNK,
-                    .armor = { A_RAGS, END_A, END_A, END_A }, .gear = { END_G, END_G, END_G, END_G } };
-    if (tier >= 2) m.armor[1] = A_QUILT;
+                    .armor = { A_RAGS, A_PANTS, END_A, END_A }, .gear = { END_G, END_G, END_G, END_G } };
+    if (tier >= 2) m.armor[2] = A_QUILT;
     member_init(c, &m, rng);
 }
 

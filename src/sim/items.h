@@ -32,7 +32,7 @@ typedef struct ArmorDef {
     f32 dodge_pen;
 } ArmorDef;
 
-enum { A_RAGS, A_JACKET, A_QUILT, A_PLATE, A_BUCKET, A_GREAVES, A_COUNT };
+enum { A_RAGS, A_JACKET, A_QUILT, A_PLATE, A_BUCKET, A_GREAVES, A_PANTS, A_COUNT };
 #define ARMOR_NONE 255
 
 // Качество: множитель урона оружия и сопротивлений брони
@@ -53,6 +53,6 @@ extern const AttackDef g_attacks[ATK_COUNT];
 extern const f32       g_quality_mul[Q_COUNT];
 extern const char     *g_quality_name[Q_COUNT];
 extern const char     *g_attack_name[ATK_COUNT];
-extern const u8        g_armor_layer_order[4];  // слоты снаружи внутрь
+extern const u8        g_armor_layer_order[5];  // слоты снаружи внутрь
 
 #endif

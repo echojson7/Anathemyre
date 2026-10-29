@@ -3,7 +3,7 @@
 const char *const g_body_file[BODY_KIND_COUNT] = { "mh_male", "mh_female", "mh_thin" };
 
 const char *const g_gear_file[GEAR_COUNT] = {
-    "rags", "quilt", "jacket", "plate", "bucket", "greaves", "wrap", "boots", "mitts", "pack", "belt",
+    "rags", "quilt", "jacket", "plate", "bucket", "greaves", "wrap", "boots", "mitts", "pack", "belt", "pants",
 };
 
 // Порядок как HAIR_FEMALE и HAIR_MALE в tools/humanconv
@@ -24,15 +24,27 @@ u32 look_hair(const CharLook *l, u8 *gear, u32 n)
 
 static const u8 g_armor_gear[A_COUNT] = {
     [A_RAGS] = GEAR_RAGS, [A_JACKET] = GEAR_JACKET, [A_QUILT] = GEAR_QUILT,
-    [A_PLATE] = GEAR_PLATE, [A_BUCKET] = GEAR_BUCKET, [A_GREAVES] = GEAR_GREAVES,
+    [A_PLATE] = GEAR_PLATE, [A_BUCKET] = GEAR_BUCKET, [A_GREAVES] = GEAR_GREAVES, [A_PANTS] = GEAR_PANTS,
 };
+
+// Штаны под комбинезоном не рисуются: их закрывает его штанина
+static u32 drop_hidden(u8 *out, u32 n)
+{
+    bool quilt = false;
+    for (u32 i = 0; i < n; i++) quilt |= out[i] == GEAR_QUILT;
+    if (!quilt) return n;
+    u32 m = 0;
+    for (u32 i = 0; i < n; i++)
+        if (out[i] != GEAR_PANTS) out[m++] = out[i];
+    return m;
+}
 
 u32 gear_from_armor(const u8 *armor, u8 *out)
 {
     u32 n = 0;
     for (u32 s = 0; s < SLOT_COUNT; s++)
         if (armor[s] < A_COUNT) out[n++] = g_armor_gear[armor[s]];
-    return n;
+    return drop_hidden(out, n);
 }
 
 u32 gear_from_sheet(const CharSheet *cs, u8 *out)
@@ -43,7 +55,7 @@ u32 gear_from_sheet(const CharSheet *cs, u8 *out)
         if (it->kind == IK_ARMOR && it->id < A_COUNT) out[n++] = g_armor_gear[it->id];
         else if (it->kind == IK_GOODS && it->id >= G_WRAP && it->id <= G_BELT) out[n++] = (u8)(GEAR_WRAP + (it->id - G_WRAP));
     }
-    return n;
+    return drop_hidden(out, n);
 }
 
 static f32 hash01(u32 *s);
@@ -57,6 +69,8 @@ u32 gear_random(u32 seed, u8 *out)
     if (hash01(&s) < 0.75f) out[n++] = GEAR_BOOTS;
     if (hash01(&s) < 0.25f) out[n++] = GEAR_PACK;
     if (hash01(&s) < 0.4f) out[n++] = GEAR_BELT;
+    // Штаны почти у всех; под комбинезоном их не видно
+    if (hash01(&s) < 0.85f && out[0] != GEAR_QUILT) out[n++] = GEAR_PANTS;
     return n;
 }
 

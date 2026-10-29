@@ -702,7 +702,7 @@ int main(int argc, char **argv)
     u32 human_count = 0;
     M4 *human_bones = ARENA_PUSH_ARRAY(&perm, M4, HUMAN_N * RENDER_MAX_BONES);
     // Левее в том же ряду: разная внешность (морфы и оттенки) на сетках с LOD
-    enum { LOOKS_N = 12 };
+    enum { LOOKS_N = GEAR_COUNT + 1 };
     M4 *looks_bones = ARENA_PUSH_ARRAY(&perm, M4, LOOKS_N * RENDER_MAX_BONES);
     for (u32 j = 0; j < LOOKS_N; j++) {
         f32 x = -1.0f - 0.75f * (f32)j;

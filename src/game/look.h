@@ -25,10 +25,10 @@ typedef struct CharLook {
 // Одежда и броня: сетки поверх тела (data/meshes/gear, tools/humanconv GEAR), на том же наборе костей
 typedef enum GearId {
     GEAR_RAGS, GEAR_QUILT, GEAR_JACKET, GEAR_PLATE, GEAR_BUCKET, GEAR_GREAVES,
-    GEAR_WRAP, GEAR_BOOTS, GEAR_MITTS, GEAR_PACK, GEAR_BELT,
+    GEAR_WRAP, GEAR_BOOTS, GEAR_MITTS, GEAR_PACK, GEAR_BELT, GEAR_PANTS,
     GEAR_COUNT
 } GearId;
-#define GEAR_MAX_WORN 10  // по вещи на слот и причёска
+#define GEAR_MAX_WORN 11  // по вещи на слот и причёска
 extern const char *const g_gear_file[GEAR_COUNT];
 
 // Причёски (data/meshes/hair): рисуются как вещи, в ряду сеток тела после вещей. NULL — вида нет

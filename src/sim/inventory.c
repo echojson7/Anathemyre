@@ -27,7 +27,7 @@ const char *g_skill_name[SK_COUNT] = {
 const char *g_slot_name[SLOT_COUNT + 1] = {
     [SLOT_HEAD] = "ГОЛОВА", [SLOT_FACE] = "ЛИЦО", [SLOT_TORSO_UNDER] = "РУБАХА", [SLOT_TORSO_ARMOR] = "БРОНЯ",
     [SLOT_LEGS] = "НОГИ", [SLOT_FEET] = "СТУПНИ", [SLOT_HANDS] = "РУКИ", [SLOT_BACK] = "СПИНА",
-    [SLOT_BELT] = "ПОЯС", [SLOT_WEAPON] = "ОРУЖИЕ",
+    [SLOT_BELT] = "ПОЯС", [SLOT_PANTS] = "ШТАНЫ", [SLOT_WEAPON] = "ОРУЖИЕ",
 };
 
 const char *g_state_name[FS_COUNT] = {

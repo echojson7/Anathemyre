@@ -531,7 +531,7 @@ def build(p, base, faces, Z, skel, W):
 
 
 # Одежда и броня: имя файла -> вещь игры (src/game/look.h, GEAR_*)
-GEAR = ('rags', 'quilt', 'jacket', 'plate', 'bucket', 'greaves', 'wrap', 'boots', 'mitts', 'pack', 'belt')
+GEAR = ('rags', 'quilt', 'jacket', 'plate', 'bucket', 'greaves', 'wrap', 'boots', 'mitts', 'pack', 'belt', 'pants')
 GEAR_SEGS = (16, 10, 6)  # сегментов по кругу у жёстких вещей на LOD0..2
 # Причёски: имя файла -> вид у тела этого пола (src/game/look.c, g_hair_file)
 HAIR_FEMALE = ('tail', 'bun', 'braid', 'crop')
@@ -986,7 +986,7 @@ def garments(ctx):
         sh_ = 0.025
         c0 = a + f * sh_
         fr = mid & (np.abs(ga_all) < 1.2)
-        r = np.percentile(np.linalg.norm(rad[fr] - f * sh_, axis=1), 97) + 0.02
+        r = np.percentile(np.linalg.norm(rad[fr] - f * sh_, axis=1), 97) + 0.03
         half = 1.35
         for l in range(3):
             pv, pt = pipe(c0, c0 + (b - a), f, r, half, 2, (10, 6, 4)[l], 0.004)
@@ -1001,7 +1001,7 @@ def garments(ctx):
                 o = a + (b - a) * u
                 near = mid & (np.abs(t - u * L) < 0.04)
                 ga, rn = ga_all[near], rn_all[near]
-                skin = np.array([np.median(rn[np.abs(np.angle(np.exp(1j * (ga - q)))) < 0.3]) + 0.019 for q in g])
+                skin = np.array([np.median(rn[np.abs(np.angle(np.exp(1j * (ga - q)))) < 0.3]) + 0.03 for q in g])
                 # Радиус трубы в направлении g от оси ноги (ось трубы сдвинута на sh_ вперёд)
                 cg = np.cos(g)
                 pr = sh_ * cg + np.sqrt(np.maximum((r + 0.004) ** 2 - (sh_ * np.sin(g)) ** 2, 0))
@@ -1085,7 +1085,7 @@ def garments(ctx):
         return pv, pt, low
     out['boots'] = [[] for _ in range(3)]
     for l in range(3):
-        out['boots'][l].append(shell(l, s, 0.019, (BOOT, MAT_LEATHER), lay, relax=6))
+        out['boots'][l].append(shell(l, s, 0.03, (BOOT, MAT_LEATHER), lay, relax=6))
         for bn in (FT_L, FT_R):
             q = used[bone[used] == bn]
             n_, sg_ = (12, 8, 5)[l], (12, 8, 6)[l]
@@ -1195,6 +1195,19 @@ def garments(ctx):
             pv, pt = glyph(np.random.default_rng(5), np.array([0.0, 1.43, z0 - 0.085 - 0.062]), np.array([0, 0, -1.0]), 0.05, cols=2)
             parts.append(rigid_part(pv, pt, PAINT, MAT_METAL, CHEST, back))
         out['pack'].append(parts)
+    # Рабочие штаны: тёмный хаки-брезент от пояса до щиколоток, светлые заплаты на коленях, накладной карман
+    # на одном бедре, пояс и подгиб темнее. На поясе тоньше робы: рубаха поверх штанов; низ уходит в ботинки
+    legs = np.isin(bone, [PELVIS, SPINE, TH_L, TH_R, SH_L, SH_R])
+    s = field(soft(legs), lin(hip + 0.09 - Y), lin(Y - ankle - 0.05))
+    lay = [(Y - hip - 0.072, (0.10, 0.10, 0.08), MAT_CLOTH, 1),
+           (inside(thigh | shin, np.minimum(0.055 - np.abs(Y - knee - 0.01), (nrm0[:, 2] - 0.25) * 0.2)), (0.24, 0.23, 0.18), MAT_CLOTH, 1),
+           (inside(thigh & side_l, np.minimum(0.05 - np.abs(Y - hip + 0.20), (np.abs(nrm0[:, 0]) - 0.55) * 0.2)), (0.12, 0.125, 0.095), MAT_CLOTH, 1),
+           (inside(shin, ankle + 0.075 - Y), (0.11, 0.11, 0.085), MAT_CLOTH, 1),
+           (inside(np.isin(bone, [PELVIS, SPINE]) & (Z > 0), np.minimum(0.004 - AX, Y - hip + 0.06)), (0.10, 0.10, 0.08), MAT_CLOTH, 0)]
+    # Штанина свободная и книзу шире, как у брезента; ботинки и поножи сидят поверх
+    off = np.where((thigh | shin) | (Y < hip), 0.012 + 0.011 * np.clip((hip - Y) / (hip - ankle), 0, 1), 0.005)
+    out['pants'] = [[shell(l, s, off, ((0.16, 0.165, 0.125), MAT_CLOTH), lay, relax=6)] for l in range(3)]
+
     # Бельё из небелёного холста: трусы с широкой тёмной резинкой; у мужчин короткие штанины и шов спереди,
     # у женщин вырез по бедру и лиф на лямках, перекрещенных на спине (не полоса без лямок)
     mid = np.isin(bone, [PELVIS, SPINE, TH_L, TH_R]) & np.isin(np.arange(nvl), used) & (AX < 0.012) & (Y > 0.6) & (Y < hip)
