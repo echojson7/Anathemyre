@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "audio/audio.h"
 #include "core/arena.h"
 #include "core/clock.h"
 #include "core/log.h"
@@ -13,6 +14,7 @@
 #include "game/battle.h"
 #include "game/anim.h"
 #include "game/field.h"
+#include "game/sfx.h"
 #include "game/hud.h"
 #include "game/look.h"
 #include "game/squad.h"
@@ -73,6 +75,8 @@ typedef struct Options {
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
     bool        valley;      // начать в долине (иначе переход из меню НАСТРОЙКИ)
+    bool        mute;        // без звука
+    const char *sound_demo;  // сценка звука в WAV без окна
 } Options;
 
 // Вещи поверх тела: те же кости, что у тела
@@ -444,6 +448,7 @@ static void usage(void)
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
     puts("anathemyre --field-bench N [--seed N]   приказ атаки без окна, затем нагрузка поля на N тел");
+    puts("anathemyre --sound-demo out.wav   сценка звука (ветер, шаги, бой, даль) в файл и замер микшера; --mute — играть без звука");
 }
 
 static bool parse_args(int argc, char **argv, Options *o)
@@ -465,6 +470,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--no-pixel")) o->no_pixel = true;
         else if (!strcmp(a, "--pixel-div") && i + 1 < argc) o->pixel_div = atoi(argv[++i]);
         else if (!strcmp(a, "--valley")) o->valley = true;
+        else if (!strcmp(a, "--mute")) o->mute = true;
+        else if (!strcmp(a, "--sound-demo") && i + 1 < argc) o->sound_demo = argv[++i];
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
         else if (!strcmp(a, "--pixel-int")) o->pixel_int = true;
         else if (!strcmp(a, "--ao-half")) o->ao_half = true;
@@ -534,6 +541,7 @@ int main(int argc, char **argv)
     if (!parse_args(argc, argv, &opt)) return 1;
     if (opt.move_bench) return player_bench(opt.move_trace);
     if (opt.field_bench) return field_bench(opt.field_bench - 1, opt.seed);
+    if (opt.sound_demo) return audio_demo(opt.sound_demo);
     if (opt.arena_bench) return arena_bench(opt.arena_bench, opt.seed, opt.arena_log);
     if (opt.battle[0] || opt.battle[1])
         return battle_bench(opt.battle[0], opt.battle[1], opt.seed, opt.threads, opt.battle_verify);
@@ -757,6 +765,13 @@ int main(int argc, char **argv)
         o->ngear = (u8)gear_random(i * 977u + 31u, o->gear);
     }
     PointLight *lights = ARENA_PUSH_ARRAY(&perm, PointLight, TORCH_LIGHTS_MAX);
+    // Звук: слушатель у камеры, шаги, бой поля и арены. Без звука снимки кадров и --mute
+    WorldSound *wsound = ARENA_PUSH_ARRAY(&perm, WorldSound, 1);
+    sfx_init(wsound, field, arena, ARENA_CENTER, ground_height);
+    // Банк собирается в своём потоке при старте; устройство открывается, только если звук включён
+    bool sound_ok = !opt.shot_path && audio_init(&perm), sound_on = sound_ok && !opt.mute;
+    f32 sound_vol = 0.8f;
+    if (sound_on) audio_start();
     // Оружие, выпавшее на землю, по слоту поля
     M4 *drop_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)field->w.count * RENDER_MAX_BONES);
     // На каждого: тело, кольцо, метка цели; плюс кольцо осматриваемого чужого и кольца целей атаки
@@ -991,6 +1006,14 @@ int main(int argc, char **argv)
             }
             if (hud_debug_button(&hud, "ЗАМЕР КАДРА")) bench_request = true;
             hud_debug_check(&hud, "ЖУРНАЛ", &hud.dbg.journal);
+            bool snd = sound_on;
+            if (hud_debug_check(&hud, "ЗВУК", &snd) && sound_ok) {
+                if (snd) audio_start();
+                sound_on = snd;
+                audio_volume(sound_vol, sound_on);
+            }
+            snprintf(val, sizeof val, "%.0f%%", (f64)(sound_vol * 100.0f));
+            if (hud_debug_slider(&hud, "ГРОМКОСТЬ", &sound_vol, 0.0f, 1.0f, val)) audio_volume(sound_vol, sound_on);
         }
         if (hud_debug_end(&hud)) {
             memset(hin.mouse_pressed, 0, sizeof hin.mouse_pressed);
@@ -1006,9 +1029,12 @@ int main(int argc, char **argv)
             u8 pk;
             u32 pi;
             bool on_body = hud_pick(&hud, &hin, &hw, &pk, &pi);
+            bool any = false;
+            for (u32 i = 0; i < squad->count; i++) any |= squad->selected[i];
             if (on_body && pk == LOOK_FIELD) {
                 for (u32 i = 0; i < squad->count; i++)
                     if (squad->selected[i]) field_attack(field, (u32)squad->body[i].slot, pi);
+                if (any) audio_play_ui(SFX_UI_ORDER, 1.0f);
             } else if (!on_body || pk != LOOK_SQUAD) {
                 f32 nx = 2.0f * ((f32)in.mouse_x + 0.5f) / (f32)ww - 1.0f;
                 f32 ny = 1.0f - 2.0f * ((f32)in.mouse_y + 0.5f) / (f32)wh;
@@ -1017,6 +1043,7 @@ int main(int argc, char **argv)
                     for (u32 i = 0; i < squad->count; i++)
                         if (squad->selected[i]) field_cancel(field, (u32)squad->body[i].slot, true);
                     squad_order_move(squad, hit);
+                    if (any) audio_play_ui(SFX_UI_TICK, 1.0f);
                 }
             }
         }
@@ -1039,6 +1066,11 @@ int main(int argc, char **argv)
         }
         squad_update(squad, dt, ground_height);
         field_update(field, dt, ground_height);
+        if (sound_on) {
+            sfx_listener(wsound, fv.cam_pos, cam.target, cam.yaw, g_in_valley);
+            sfx_field(wsound, field);
+            if (!g_in_valley) sfx_arena(wsound, aview, arena);
+        }
         if (day_run) {
             tod += dt / DAY_LENGTH_S;
             if (tod >= 1.0f) {
@@ -1319,6 +1351,7 @@ int main(int argc, char **argv)
         }
     }
 
+    audio_stop();
     ui_shutdown();
     render_shutdown();
     platform_shutdown();

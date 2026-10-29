@@ -49,12 +49,19 @@ jobs:
           ./build/anathemyre_debug --arena-bench 100 | tail -3
           ./build/anathemyre_debug --battle-bench 100 100 --battle-verify
 
+      - name: Звук под ASan (сценка в WAV без устройства)
+        env:
+          LSAN_OPTIONS: suppressions=tools/lsan.supp
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ./build/anathemyre_debug --sound-demo build/sound.wav
+
       - uses: actions/upload-artifact@v4
         with:
           name: screenshot
           path: |
             build/shot.png
             build/valley.png
+            build/sound.wav
 
   windows:
     runs-on: ubuntu-24.04
