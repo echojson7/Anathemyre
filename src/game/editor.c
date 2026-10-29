@@ -26,11 +26,12 @@ static const struct {
 } g_morph[LOOK_MORPHS] = {
     [LOOK_FAT] = { "ПОЛНОТА", 0.0f, 1.0f },     [LOOK_LEAN] = { "ХУДОБА", 0.0f, 1.0f },
     [LOOK_STRONG] = { "МЫШЦЫ", 0.0f, 1.0f },    [LOOK_WEAK] = { "СЛАБОСТЬ", 0.0f, 1.0f },
-    [LOOK_OLD] = { "ВОЗРАСТ", 0.0f, 1.0f },     [LOOK_FACE_A] = { "НОС И ГУБЫ", -0.7f, 1.0f },
-    [LOOK_FACE_B] = { "РАЗРЕЗ ГЛАЗ", -0.7f, 1.0f }, [LOOK_JAW] = { "ЧЕЛЮСТЬ", -0.6f, 1.0f },
+    [LOOK_OLD] = { "ВОЗРАСТ", 0.0f, 1.0f },     [LOOK_NOSE] = { "НОС", -1.0f, 1.0f },
+    [LOOK_EYES] = { "РАЗРЕЗ ГЛАЗ", -1.0f, 1.0f }, [LOOK_JAW] = { "ЧЕЛЮСТЬ", -0.6f, 1.0f },
+    [LOOK_LIPS] = { "ГУБЫ", -0.6f, 1.0f },  // ниже −0.6 губы расходятся
 };
 static const u8 g_body_morphs[] = { LOOK_FAT, LOOK_LEAN, LOOK_STRONG, LOOK_WEAK, LOOK_OLD };
-static const u8 g_face_morphs[] = { LOOK_FACE_A, LOOK_FACE_B, LOOK_JAW };
+static const u8 g_face_morphs[] = { LOOK_NOSE, LOOK_LIPS, LOOK_EYES, LOOK_JAW };
 
 void editor_init(Editor *e)
 {

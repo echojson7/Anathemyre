@@ -4,17 +4,21 @@
 #define ANA_LOOK_H
 
 #include "../core/math3d.h"
+#include "../sim/body.h"
 #include "../sim/inventory.h"
 
-// Уровни детализации тел и одежды: 0 — полный, каждый следующий грубее
-#define CHAR_LODS 3
+// Уровни детализации тел и одежды: 0 — для крупных планов, каждый следующий грубее (tools/humanconv LOD_TRIS)
+#define CHAR_LODS 5
 
 // Сетки тел (data/meshes, tools/humanconv)
 typedef enum BodyKind { BODY_MALE, BODY_FEMALE, BODY_THIN, BODY_KIND_COUNT } BodyKind;
 extern const char *const g_body_file[BODY_KIND_COUNT];
+// Суставы каждого тела в позе привязки (печатает tools/humanconv): по ним вращаются кости, иначе
+// у женщины бёдра и плечи крутились бы вокруг мужских суставов
+extern const V3 g_body_joints[BODY_KIND_COUNT][BONE_COUNT];
 
-// Морфы, порядок как MORPHS в tools/humanconv
-enum { LOOK_FAT, LOOK_LEAN, LOOK_STRONG, LOOK_WEAK, LOOK_OLD, LOOK_FACE_A, LOOK_FACE_B, LOOK_JAW, LOOK_MORPHS };
+// Морфы, порядок как MORPHS в tools/humanconv. Лицо — только местные морфы: нос, разрез глаз, челюсть, губы
+enum { LOOK_FAT, LOOK_LEAN, LOOK_STRONG, LOOK_WEAK, LOOK_OLD, LOOK_NOSE, LOOK_EYES, LOOK_JAW, LOOK_LIPS, LOOK_MORPHS };
 
 typedef struct CharLook {
     f32 morph[LOOK_MORPHS];

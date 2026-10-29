@@ -42,6 +42,12 @@ void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool h
             s->humans = true;
             if (humans_want) *cam = (RtsCamera){ .target = { 3.4f, 0, 22 }, .yaw = 0.0f, .pitch = 0.15f, .dist = 6.5f };
         }
+        s->stand_moved |= hud_debug_check(h, "СТЕНД ФИГУР", &s->stand);
+        static const char *stand_row[] = { "СТЕНД: МУЖЧИНА", "СТЕНД: ЖЕНЩИНА", "СТЕНД: ХУДОЙ", "СТЕНД: РОСТ" };
+        if (s->stand && hud_debug_button(h, stand_row[s->stand_row % 4])) {
+            s->stand_row = (s->stand_row + 1) % 4;
+            s->stand_moved = true;
+        }
         u32 mins = (u32)(w->tod * 24.0f * 60.0f);
         snprintf(val, sizeof val, "%02u:%02u", mins / 60 % 24, mins % 60);
         hud_debug_slider(h, "ВРЕМЯ СУТОК", &w->tod, 0.0f, 0.999f, val);

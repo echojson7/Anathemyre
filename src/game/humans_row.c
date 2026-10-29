@@ -39,7 +39,7 @@ void humans_row_toggle(HumansRow *h, MeshBuilder *mb, Arena *perm, const char *d
         h->has_hair[h->count] = body != BODY_THIN && mb_load(mb, perm, path);
         if (h->has_hair[h->count]) gpu_mesh_upload(&h->hair[h->count], mb);
         perm->used = mark;
-        f32 x = 0.3f + 2.4f * (f32)body + 0.7f * (f32)lod;
+        f32 x = 0.3f + (0.7f * CHAR_LODS + 0.3f) * (f32)body + 0.7f * (f32)lod;
         M4 *b = &h->bones[h->count * RENDER_MAX_BONES];
         for (u32 j = 0; j < RENDER_MAX_BONES; j++) b[j] = m4_translate(v3(x, ground(x, 22.0f), 22.0f));
         b[RENDER_LOOK_SLOT] = (M4){ 0 };
