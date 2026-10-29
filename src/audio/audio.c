@@ -60,7 +60,7 @@ static const SfxDef g_def[SFX_COUNT] = {
     [SFX_UI_TICK]       = { 1.0f, 1.0f, 0.10f, 0.00f, 0.03f },
     [SFX_UI_ORDER]      = { 1.0f, 1.0f, 0.12f, 0.00f, 0.02f },
     // Даль: слышно за километр, но тихо, глухо и с запозданием
-    [SFX_FAR_GROAN]     = { 60.0f, 2500.0f, 0.45f, 0.90f, 0.12f },
+    [SFX_FAR_GROAN]     = { 60.0f, 2500.0f, 0.30f, 0.90f, 0.12f },
     [SFX_FAR_BANG]      = { 60.0f, 2500.0f, 0.55f, 0.90f, 0.10f },
     [SFX_FAR_RADIO]     = { 30.0f, 2500.0f, 0.30f, 0.60f, 0.04f },
     // Обломки на ветру: где-то рядом, тихо
@@ -536,18 +536,18 @@ static void mix_ambient(u32 n)
     for (u32 c = 0; c < 2; c++) {
         svf_set(&g_m.rush[c], (380.0f + 650.0f * g) * m->pitch * (c ? 1.05f : 0.95f), 0.8f);
         for (u32 k = 0; k < WIND_HOWLS; k++)
-            svf_set(&g_m.howl[c][k], g_m.howl_f[k] * m->pitch * (1.0f + 0.25f * g) * (c ? 1.012f : 0.988f), k == 2 ? 26.0f : 14.0f);
+            svf_set(&g_m.howl[c][k], g_m.howl_f[k] * m->pitch * (1.0f + 0.25f * g) * (c ? 1.012f : 0.988f), k == 2 ? 16.0f : 10.0f);
     }
     const f32 ar = 0.0207f, ah = 0.28f, af = 0.0026f;  // 160 Гц, ~2.5 кГц, дрожь песка ~20 Гц
     f32 kr = 1.2f * level * m->rumble, km = 0.22f * level * m->rush * (0.4f + 0.6f * g);
     f32 kh[WIND_HOWLS], ks = 0.045f * level * m->sand * (0.3f + g);
     // Узкая полоса из шума тихая сама по себе: свисту нужен большой множитель
-    for (u32 k = 0; k < WIND_HOWLS; k++) kh[k] = (k == 2 ? 1.1f : 2.0f) * level * m->howl * (0.2f + 0.8f * g * g) * g_m.howl_a[k];
+    for (u32 k = 0; k < WIND_HOWLS; k++) kh[k] = (k == 2 ? 0.3f : 0.8f) * level * m->howl * (0.15f + 0.85f * g * g) * g_m.howl_a[k];
     // Гул: низкие ноты с медленным биением; верхние гармоники — чтобы было слышно и в динамиках ноутбука
     static const f32 hum_f[4] = { 41.2f, 55.3f, 82.6f, 123.9f }, hum_a[4] = { 1.0f, 0.7f, 0.45f, 0.25f };
     g_m.hum_am += dt * 0.07f;
     if (g_m.hum_am > 1.0f) g_m.hum_am -= 1.0f;
-    f32 hum = sc->hum * 0.012f * (0.75f + 0.25f * sinf(TAU * g_m.hum_am));
+    f32 hum = sc->hum * 0.011f * (0.9f + 0.1f * sinf(TAU * g_m.hum_am));
     // Вода: шум в полосе, низкий плеск и пузыри
     f32 river = sc->river ? g_m.river_g : 0.0f;
     f32 rl = river * sqrtf(0.5f * (1.0f - g_m.river_pan)), rrr = river * sqrtf(0.5f * (1.0f + g_m.river_pan));
