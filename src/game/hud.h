@@ -57,6 +57,7 @@ typedef struct HudWorld {
     f32                 time;       // реальное время, с
     f32                 tod;        // время суток 0..1
     u32                 day;
+    bool                alone;      // отряд в другой локации: чужих и арену не выбирать
 } HudWorld;
 
 void hud_init(Hud *h);

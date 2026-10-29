@@ -14,6 +14,7 @@
 #define RENDER_MAX_POSED 1024    // разных наборов костей за кадр (персонаж с оружием — один набор)
 #define RENDER_PORTRAIT_PX 96     // наибольший портрет, пикселей
 #define RENDER_PORTRAIT_SLOTS 10
+#define RENDER_MAX_VIS_INST 131072  // видимых экземпляров (трава, деревья, камни) за проход
 
 typedef struct GpuMesh {
     u32 vao, vbo, ibo, skin_vbo;  // skin_vbo — веса до 4 костей, 0 у жёстких сеток
@@ -25,7 +26,36 @@ typedef struct GpuMesh {
     // Уровень детализации: если сфера на экране меньше lod_px пикселей, рисуется lod_next
     const struct GpuMesh *lod_next;
     f32 lod_px;
+    // Для экземпляров: редеет с дальности fade[0] и пропадает к fade[1], м (0 — не редеет)
+    f32  fade[2];
+    bool two_sided;     // без отсечения задних граней (листья, трава)
 } GpuMesh;
+
+// Экземпляр статической сетки (32 байта, InstRec в scene.vert): деревья, трава, камни
+typedef struct RInst {
+    f32 pos[3];
+    f32 yaw;
+    f32 scale, hscale;  // по ширине и по высоте
+    f32 lean;           // наклон оси вверх, рад; в сторону локальной X после поворота
+    u32 tint;           // RGB — множитель цвета (128 = 1.0), старший байт — порядок прореживания 0..255
+} RInst;
+
+// Группа экземпляров одной сетки, подряд в постоянном буфере. Рендер отсекает группу, затем каждый
+// экземпляр (bulk — без проверки по одному, для травы), выбирает LOD и сводит одинаковые сетки в один вызов.
+// У редеющих сеток экземпляры в группе идут по возрастанию порядка прореживания
+typedef struct InstGroup {
+    const GpuMesh *mesh;
+    u32  first, count;
+    V4   bound;         // сфера всей группы
+    bool bulk, no_shadow;
+} InstGroup;
+
+// Участок: группы first..first+count подряд и общая сфера. Невидимый участок отбрасывается целиком,
+// у целиком видимого группы и экземпляры не проверяются по одному
+typedef struct InstCluster {
+    V4  bound;
+    u32 first, count;
+} InstCluster;
 
 // Что рисовать; bones == NULL для статики (вершины уже в мировых координатах).
 // Видимость и уровень детализации рендер выбирает сам по границам сетки
@@ -76,6 +106,11 @@ bool render_reload_shaders(void);
 bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb);
 // Сделать coarse следующим уровнем детализации fine: fine рисуется, пока сфера не меньше min_px пикселей
 void gpu_mesh_set_lod(GpuMesh *fine, const GpuMesh *coarse, f32 min_px);
+// Постоянный буфер экземпляров (заменяет прежний). Массив inst должен жить, пока он нужен рендеру:
+// по нему отсекаются экземпляры
+bool render_upload_instances(const RInst *inst, u32 count);
+// Группы экземпляров по участкам для следующих кадров (NULL — нет); массивы должны жить, пока используются
+void render_set_groups(const InstGroup *groups, const InstCluster *clusters, u32 cluster_count);
 void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const RenderSettings *rs, i32 win_w, i32 win_h);
 // Конец кадра GPU: после портретов и интерфейса, перед swap
 void render_frame_end(void);
