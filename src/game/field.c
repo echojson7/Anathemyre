@@ -404,12 +404,13 @@ static int bench_scene(Arena *mem, u64 seed)
     Field *f = ARENA_PUSH_ARRAY(mem, Field, 1);
     field_init(f, mem, seed);
     Squad *sq = ARENA_PUSH_ARRAY(mem, Squad, 1);
-    squad_init(sq, &rng, v3(0, 0, 0), 0.0f, flat_ground);
+    People *people = ARENA_PUSH_ARRAY(mem, People, 1);
+    squad_init(sq, people, &rng, v3(0, 0, 0), 0.0f, flat_ground);
     static const char *names[] = { "ЧУРИЛА", "ВЕЛИМИР", "ГОСТЯТА", "ФЕОДУЛ", "ПРОКЛ" };
     Player npc[5];
     CharSheet *sheet = ARENA_PUSH_ARRAY(mem, CharSheet, 5);
     for (u32 i = 0; i < sq->count; i++) {
-        field_add(f, &sq->body[i], &sq->sheet[i], 0, FF_PLAYER | FF_ASSIST);
+        field_add(f, squad_body(sq, i), squad_sheet(sq, i), 0, FF_PLAYER | FF_ASSIST);
         sq->selected[i] = true;
     }
     for (u32 k = 0; k < 5; k++) {

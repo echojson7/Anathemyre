@@ -221,8 +221,8 @@ static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 
         u8 kd = LOOK_SQUAD;
         u32 idx = k;
         if (k < w->squad->count) {
-            pos = w->squad->body[k].pos;
-            u32 s = (u32)w->squad->body[k].slot;
+            pos = squad_body(w->squad, k)->pos;
+            u32 s = (u32)squad_body(w->squad, k)->slot;
             if (field_awake(fd, s) && fs_lying(fd->w.state[s])) tall = 0.4f;
         } else if (k >= w->squad->count + ARENA_MAX_BOUT) {
             u32 s = k - w->squad->count - ARENA_MAX_BOUT;
@@ -269,7 +269,7 @@ static const char *move_state(const Field *f, const Player *p)
 // Враждует ли чужой слот с отрядом
 static bool foe_of_squad(const HudWorld *w, u32 slot)
 {
-    return w->squad->count && w->squad->body[0].slot >= 0 && field_hostile(w->field, (u32)w->squad->body[0].slot, slot);
+    return w->squad->count && squad_body(w->squad, 0)->slot >= 0 && field_hostile(w->field, (u32)squad_body(w->squad, 0)->slot, slot);
 }
 
 static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
@@ -277,10 +277,10 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
     memset(o, 0, sizeof *o);
     if (kind == LOOK_SQUAD) {
         if (look >= w->squad->count) return false;
-        CharSheet *c = &w->squad->sheet[look];
+        CharSheet *c = squad_sheet(w->squad, look);
         o->name = c->name;
         o->role = "ОТРЯД";
-        o->body = &w->squad->body[look];
+        o->body = squad_body(w->squad, look);
         o->state = move_state(w->field, o->body);
         if (o->body->slot >= 0 && field_awake(w->field, (u32)o->body->slot)) o->bleed = w->field->w.bleed[o->body->slot];
         memcpy(o->hp, c->d.hp, sizeof o->hp);
@@ -386,7 +386,7 @@ bool hud_pick(const Hud *h, const Input *in, const HudWorld *w, u8 *kind, u32 *i
 static bool drop_held(Hud *h, Squad *sq)
 {
     if (!h->held.kind) return true;
-    if (h->look_kind != LOOK_SQUAD || !inv_add(&sq->sheet[h->look].inv, h->held)) return false;
+    if (h->look_kind != LOOK_SQUAD || !inv_add(&squad_sheet(sq, h->look)->inv, h->held)) return false;
     h->held.kind = IK_NONE;
     return true;
 }
@@ -500,7 +500,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
         } else if (lmb && close_hot(&L, L.iwx, L.iwy, INV_WIN_W)) {
             windows_set(h, sq, false);
         } else if (h->look_kind == LOOK_SQUAD && h->look < sq->count) {
-            inventory_input(h, &L, &sq->sheet[h->look], lmb, rmb);
+            inventory_input(h, &L, squad_sheet(sq, h->look), lmb, rmb);
         }
         lmb = rmb = false;
     }
@@ -587,7 +587,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
                 bool in_box = false;
                 for (u32 k = 0; k <= 12 && !in_box; k++) {
                     f32 a = (f32)k * (2.0f * PI_F / 12.0f), r = k ? SELECT_RING_R : 0.0f, px, py;
-                    V3 p = v3_add(sq->body[i].pos, v3(sinf(a) * r, 0.03f, cosf(a) * r));
+                    V3 p = v3_add(squad_body(sq, i)->pos, v3(sinf(a) * r, 0.03f, cosf(a) * r));
                     in_box = project(w->view_proj, p, &px, &py) && px >= x0 && px <= x1 && py >= y0 && py <= y1;
                 }
                 if (in_box) sq->selected[i] = true;
@@ -913,8 +913,8 @@ static void draw_selected(const Hud *h, const Layout *L, const HudWorld *w)
 static void draw_card(const Hud *h, const HudWorld *w, const Layout *L, u32 i)
 {
     const Squad *sq = w->squad;
-    const CharSheet *c = &sq->sheet[i];
-    const Player *pl = &sq->body[i];
+    const CharSheet *c = squad_sheet(sq, i);
+    const Player *pl = squad_body(sq, i);
     f32 x = card_x(L, i), y = L->bottom;
     bool hot = inside(L->bmx, L->bmy, x, y, CARD_W, BOTTOM_H);
     bool look = h->look_kind == LOOK_SQUAD && h->look == i;

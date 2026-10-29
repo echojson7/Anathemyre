@@ -219,43 +219,9 @@ void arena_view_update(ArenaView *v, ArenaSession *s, f32 dt)
 M4 arena_view_look(const ArenaSession *s, u32 ri, CharLook *lk)
 {
     const FighterDesc *d = &s->roster[ri].d;
-    u32 kind = ri % BODY_KIND_COUNT;  // как сетка тела в arena_view_draw
+    u32 kind = ri % BODY_KIND_COUNT;  // как сетка тела в figures.c
     look_make(lk, kind, ri * 31u + 7u, d->mass, d->height, d->skill[SK_STRENGTH]);
     return look_matrix(lk, kind);
-}
-
-u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const GpuMesh *body, const GpuMesh *gear, u32 variants,
-                    const GpuMesh *weapons, M4 *bones, DrawItem *items)
-{
-    const CombatWorld *w = &s->w;
-    f32 alpha = v->acc / COMBAT_DT;
-    u32 n = 0, set = 0;
-    if (v->in_bout) {
-        for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) {
-            u32 ri = s->idx[i];
-            CharPose p;
-            CharAction act;
-            V3 dp;
-            f32 dyaw;
-            bool dropped = fight_anim_pose(&v->fa[i], w, i, alpha, v->center, v->floor_y, time, &p, &act, &dp, &dyaw);
-            M4 *b = &bones[(set++) * RENDER_MAX_BONES];
-            character_pose(&p, &act, b);
-            CharLook lk;
-            b[RENDER_LOOK_SLOT] = arena_view_look(s, ri, &lk);
-            items[n++] = (DrawItem){ .mesh = &body[ri % variants], .bones = b };
-            u8 worn[GEAR_MAX_WORN];
-            u32 nw = gear_from_armor(s->roster[ri].d.armor, worn);
-            nw += look_hair(&lk, worn, nw);
-            for (u32 g = 0; g < nw; g++) items[n++] = (DrawItem){ .mesh = &gear[(ri % variants) * GEAR_ROW + worn[g]], .bones = b };
-            if (dropped) {
-                M4 *wb = &bones[(set++) * RENDER_MAX_BONES];
-                weapon_ground_pose(dp, dyaw, wb);
-                b = wb;
-            }
-            items[n++] = (DrawItem){ .mesh = &weapons[w->weapon[i]], .bones = b };
-        }
-    }
-    return n;
 }
 
 static f32 smooth(f32 a, f32 b, f32 x)

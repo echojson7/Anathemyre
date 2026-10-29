@@ -1038,115 +1038,118 @@ static u32 next_node(Rng *r, u32 at, u32 prev)
     return n ? opts[rng_below(r, n)] : prev;
 }
 
-static void walk_to(TownFolk *f, Rng *r, u32 i, u32 node)
+static void walk_to(People *p, Rng *r, u32 i, u32 node)
 {
     const Node *nd = &k_nodes[node];
-    f->prev[i] = f->node[i];
-    f->node[i] = (u8)node;
-    player_order_move(&f->body[i], v3(nd->x + rng_range(r, -nd->jitter, nd->jitter), 0, nd->z + rng_range(r, -nd->jitter, nd->jitter)));
-    f->body[i].marker = 0.0f;
+    p->prev[i] = p->node[i];
+    p->node[i] = (u8)node;
+    // Порядок случайных чисел задан явно: сначала z, потом x
+    f32 jz = rng_range(r, -nd->jitter, nd->jitter), jx = rng_range(r, -nd->jitter, nd->jitter);
+    player_order_move(&p->body[i], v3(nd->x + jx, 0, nd->z + jz));
+    p->body[i].marker = 0.0f;
 }
 
-void town_folk_init(TownFolk *f, const Town *t, Rng *r, u32 walkers, u32 variants)
+void town_folk_add(People *p, const Town *t, Rng *r, u32 walkers, u32 variants, u8 team)
 {
-    *f = (TownFolk){ 0 };
-    // Сначала продавцы, сторожа и работники, потом прохожие, остаток мест — зеваки
+    u32 first = p->count;
+    // Сначала продавцы, сторожа и работники, потом прохожие, остаток мест — зеваки.
+    // Один посёлок: за своих встают сторожа
     for (u32 pass = 0; pass < 3; pass++) {
         if (pass == 1) {
-            for (u32 k = 0; k < walkers && f->count < TOWN_MAX_FOLK; k++) {
-                u32 i = f->count++;
+            for (u32 k = 0; k < walkers && p->count - first < TOWN_MAX_FOLK; k++) {
                 u32 node = 1 + rng_below(r, NODE_COUNT - 1);
                 const Node *nd = &k_nodes[node];
-                player_init(&f->body[i], v3(nd->x + rng_range(r, -nd->jitter, nd->jitter), 0, nd->z + rng_range(r, -nd->jitter, nd->jitter)),
-                            rng_range(r, 0, 2 * PI_F));
-                f->kind[i] = FOLK_WALK;
-                f->node[i] = f->prev[i] = (u8)node;
-                f->wait[i] = rng_range(r, 0.0f, 4.0f);
+                f32 h = rng_range(r, 0, 2 * PI_F);
+                f32 jz = rng_range(r, -nd->jitter, nd->jitter), jx = rng_range(r, -nd->jitter, nd->jitter);
+                u32 i = people_add(p, ROLE_TOWN, v3(nd->x + jx, 0, nd->z + jz), h, team, 0);
+                p->node[i] = p->prev[i] = (u8)node;
+                p->wait[i] = rng_range(r, 0.0f, 4.0f);
             }
         }
-        for (u32 s = 0; s < t->spot_count && f->count < TOWN_MAX_FOLK; s++) {
+        for (u32 s = 0; s < t->spot_count && p->count - first < TOWN_MAX_FOLK; s++) {
             const TownSpot *sp = &t->spot[s];
             bool want = pass == 0 ? sp->kind != SPOT_IDLE : pass == 2 && sp->kind == SPOT_IDLE;
             if (!want) continue;
-            u32 i = f->count++;
-            player_init(&f->body[i], sp->pos, sp->heading);
-            f->kind[i] = FOLK_STAND;
-            f->armed[i] = sp->kind == SPOT_GUARD;
-            f->sheet[i].role = sp->kind == SPOT_TRADER ? "ТОРГОВЕЦ" : sp->kind == SPOT_GUARD ? "СТОРОЖ СКУДЕЛИ"
+            bool guard = sp->kind == SPOT_GUARD;
+            u32 i = people_add(p, ROLE_TOWN, sp->pos, sp->heading, team, guard ? FF_ASSIST : 0);
+            p->stand[i] = true;
+            p->sheet[i].role = sp->kind == SPOT_TRADER ? "ТОРГОВЕЦ" : guard ? "СТОРОЖ СКУДЕЛИ"
                              : sp->kind == SPOT_WORKER ? "СБОРЩИК ЛОМА" : "ЖИТЕЛЬ СКУДЕЛИ";
         }
     }
-    for (u32 i = 0; i < f->count; i++) {
-        f->seed[i] = rng_range(r, 0.0f, 100.0f);
-        f->variant[i] = (u8)rng_below(r, variants);
-        f->pace[i] = rng_range(r, 0.95f, 1.4f);
-        f->body[i].phase = rng_f32(r);
-        f->body[i].gait = GAIT_WALK;
-        f->home[i] = f->body[i].pos;
-        f->home_h[i] = f->body[i].heading;
+    for (u32 i = first; i < p->count; i++) {
+        p->seed[i] = rng_range(r, 0.0f, 100.0f);
+        p->variant[i] = (u8)rng_below(r, variants);
+        p->pace[i] = rng_range(r, 0.95f, 1.4f);
+        p->body[i].phase = rng_f32(r);
+        p->body[i].gait = GAIT_WALK;
+        p->home[i] = p->body[i].pos;
+        p->home_h[i] = p->body[i].heading;
     }
     // Листы жителей: свой поток случайных чисел, чтобы посёлок не зависел от их числа.
     // Сторожа бывалые, с ломом в руке (как рисуется), и у всех сторожей и у каждого пятого прохожего — факел
-    for (u32 i = 0; i < f->count; i++) {
-        CharSheet *c = &f->sheet[i];
+    for (u32 i = first; i < p->count; i++) {
+        u32 k = i - first;
+        bool armed = p->fflags[i] & FF_ASSIST;
+        CharSheet *c = &p->sheet[i];
         const char *role = c->role ? c->role : "ПРОХОЖИЙ";
         Rng sr;
-        rng_seed(&sr, 0x70C0u + i, 93);
-        u8 weapon = f->variant[i] % 2 ? W_ARMATURA : W_RESSORA;
-        sheet_random(c, &sr, name_next(f->variant[i] % BODY_KIND_COUNT == BODY_FEMALE), f->armed[i] ? 1 : 0, weapon);
-        if (!f->armed[i]) {
+        rng_seed(&sr, 0x70C0u + k, 93);
+        u8 weapon = p->variant[i] % 2 ? W_ARMATURA : W_RESSORA;
+        sheet_random(c, &sr, name_next(p->variant[i] % BODY_KIND_COUNT == BODY_FEMALE), armed ? 1 : 0, weapon);
+        if (!armed) {
             Item old;
             sheet_equip(c, SLOT_WEAPON, (Item){ 0 }, &old);
         }
         c->role = role;
-        f->torch[i] = f->armed[i] || (f->kind[i] == FOLK_WALK && i % 5 == 0);
+        p->torch[i] = armed || (!p->stand[i] && k % 5 == 0);
+        people_look_random(p, i, k * 6151u + 5003u, k * 977u + 31u);
     }
 }
 
-void town_folk_update(TownFolk *f, Rng *r, f32 dt, GroundFn ground)
+void town_folk_step(People *pp, u32 i, Rng *r, f32 dt, GroundFn ground)
 {
-    for (u32 i = 0; i < f->count; i++) {
-        Player *p = &f->body[i];
-        if (p->ctrl != CTRL_FREE) {
-            // Бой или погоня: телом правит поле боя; после — постоит и пойдёт дальше
-            f->wait[i] = rng_range(r, 3.0f, 8.0f);
-            player_update(p, dt, ground);
-            continue;
-        }
-        if (f->kind[i] != FOLK_WALK && (p->moving || v3_len(v3_sub(f->home[i], p->pos)) > 0.5f)) {
-            // Стоящий после боя возвращается на место и встаёт как стоял
-            if (!p->moving && (f->wait[i] -= dt) <= 0.0f) {
-                player_order_move(p, f->home[i]);
-                p->marker = 0.0f;
-            }
-            p->vmax = f->pace[i];
-            player_update(p, dt, ground);
-            if (!p->moving) p->heading = f->home_h[i];
-            continue;
-        }
-        if (f->kind[i] != FOLK_WALK) {
-            // Стоящие следят головой за ближайшим прохожим
-            f32 best = 36.0f, goal = 0.0f;
-            for (u32 j = 0; j < f->count; j++) {
-                    if (f->kind[j] != FOLK_WALK) continue;
-                    f32 dx = f->body[j].pos.x - p->pos.x, dz = f->body[j].pos.z - p->pos.z, d2 = dx * dx + dz * dz;
-                    if (d2 < best && fabsf(f->body[j].pos.y - p->pos.y) < 2.0f) {
-                        f32 a = atan2f(dx, dz) - p->heading;
-                        while (a > PI_F) a -= 2 * PI_F;
-                        while (a < -PI_F) a += 2 * PI_F;
-                        if (fabsf(a) < 1.6f) {
-                            best = d2;
-                            goal = clampf(a, -1.0f, 1.0f);
-                        }
-                    }
-                }
-            p->look += (goal - p->look) * fminf(1.0f, dt * 2.5f);
-            continue;
-        }
-        bool was = p->moving;
-        if (!p->moving && (f->wait[i] -= dt) <= 0.0f) walk_to(f, r, i, next_node(r, f->node[i], f->prev[i]));
-        p->vmax = f->pace[i];
+    Player *p = &pp->body[i];
+    if (p->ctrl != CTRL_FREE) {
+        // Бой или погоня: телом правит поле боя; после — постоит и пойдёт дальше
+        pp->wait[i] = rng_range(r, 3.0f, 8.0f);
         player_update(p, dt, ground);
-        if (was && !p->moving) f->wait[i] = k_nodes[f->node[i]].market ? rng_range(r, 1.5f, 8.0f) : rng_range(r, 0.0f, 1.2f);
+        return;
     }
+    if (pp->stand[i] && (p->moving || v3_len(v3_sub(pp->home[i], p->pos)) > 0.5f)) {
+        // Стоящий после боя возвращается на место и встаёт как стоял
+        if (!p->moving && (pp->wait[i] -= dt) <= 0.0f) {
+            player_order_move(p, pp->home[i]);
+            p->marker = 0.0f;
+        }
+        p->vmax = pp->pace[i];
+        player_update(p, dt, ground);
+        if (!p->moving) p->heading = pp->home_h[i];
+        return;
+    }
+    if (pp->stand[i]) {
+        // Стоящие следят головой за ближайшим прохожим
+        f32 best = 36.0f, goal = 0.0f;
+        for (u32 j = 0; j < pp->count; j++) {
+            if (pp->role[j] != ROLE_TOWN || pp->stand[j]) continue;
+            const Player *o = &pp->body[j];
+            f32 dx = o->pos.x - p->pos.x, dz = o->pos.z - p->pos.z, d2 = dx * dx + dz * dz;
+            if (d2 < best && fabsf(o->pos.y - p->pos.y) < 2.0f) {
+                f32 a = atan2f(dx, dz) - p->heading;
+                while (a > PI_F) a -= 2 * PI_F;
+                while (a < -PI_F) a += 2 * PI_F;
+                if (fabsf(a) < 1.6f) {
+                    best = d2;
+                    goal = clampf(a, -1.0f, 1.0f);
+                }
+            }
+        }
+        p->look += (goal - p->look) * fminf(1.0f, dt * 2.5f);
+        return;
+    }
+    bool was = p->moving;
+    if (!p->moving && (pp->wait[i] -= dt) <= 0.0f) walk_to(pp, r, i, next_node(r, pp->node[i], pp->prev[i]));
+    p->vmax = pp->pace[i];
+    player_update(p, dt, ground);
+    if (was && !p->moving) pp->wait[i] = k_nodes[pp->node[i]].market ? rng_range(r, 1.5f, 8.0f) : rng_range(r, 0.0f, 1.2f);
 }

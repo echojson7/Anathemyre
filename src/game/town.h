@@ -6,6 +6,7 @@
 #include "../core/rng.h"
 #include "../render/mesh.h"
 #include "../sim/inventory.h"
+#include "people.h"
 #include "player.h"
 
 #define TOWN_MAX_SPOTS 64
@@ -26,33 +27,13 @@ typedef struct Town {
     u32      stalls, houses;
 } Town;
 
-typedef enum FolkKind { FOLK_STAND, FOLK_WALK } FolkKind;
-
-// Жители: торговцы и зеваки стоят на местах, прохожие ходят по узлам улиц
-typedef struct TownFolk {
-    u32    count;
-    Player body[TOWN_MAX_FOLK];
-    f32    seed[TOWN_MAX_FOLK];
-    f32    wait[TOWN_MAX_FOLK];
-    f32    pace[TOWN_MAX_FOLK];    // свой темп шага, м/с
-    u8     variant[TOWN_MAX_FOLK];
-    u8     kind[TOWN_MAX_FOLK];    // FolkKind
-    u8     node[TOWN_MAX_FOLK], prev[TOWN_MAX_FOLK];
-    bool   armed[TOWN_MAX_FOLK];
-    bool   torch[TOWN_MAX_FOLK];   // с темнотой зажигает факел
-    CharSheet sheet[TOWN_MAX_FOLK];
-    V3     home[TOWN_MAX_FOLK];    // стоящие после боя возвращаются на место
-    f32    home_h[TOWN_MAX_FOLK];
-} TownFolk;
-
 // Геометрия посёлка (отбрасывает тени) и места жителей
 void town_build(MeshBuilder *mb, Rng *rng, Town *t);
 // Высота яруса под точкой, если она в посёлке; иначе base
 f32  town_ground(f32 x, f32 z, f32 base);
 // Выравнивание рельефа вокруг посёлка: 0 — ровно, 1 — дюны как обычно
 f32  town_flatten(f32 x, f32 z);
-void town_folk_init(TownFolk *f, const Town *t, Rng *rng, u32 walkers, u32 variants);
-// Телами, которыми правит поле боя (бой, погоня), не управляет: после боя стоящие идут на место
-void town_folk_update(TownFolk *f, Rng *rng, f32 dt, GroundFn ground);
+// Жители (People, ROLE_TOWN): торговцы, сторожа и зеваки стоят на местах, прохожие ходят по узлам улиц
+void town_folk_add(People *p, const Town *t, Rng *rng, u32 walkers, u32 variants, u8 team);
 
 #endif
