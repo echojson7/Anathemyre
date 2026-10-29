@@ -112,16 +112,37 @@ void look_make(CharLook *l, u32 body, u32 seed, f32 mass, f32 height, f32 streng
     l->morph[LOOK_FACE_A] = 1.4f * (hash01(&s) - 0.5f);
     l->morph[LOOK_FACE_B] = 1.4f * (hash01(&s) - 0.5f);
     l->morph[LOOK_JAW] = body == BODY_FEMALE ? 0.8f * hash01(&s) - 0.6f : 1.2f * hash01(&s) - 0.4f;
-    l->skin = g_skin[(u32)(hash01(&s) * (f32)ARRAY_COUNT(g_skin)) % ARRAY_COUNT(g_skin)];
-    // Седина со старостью
+    l->skin_t = (f32)((u32)(hash01(&s) * (f32)ARRAY_COUNT(g_skin)) % ARRAY_COUNT(g_skin)) / (f32)(ARRAY_COUNT(g_skin) - 1);
+    // Волосы почти у всех тёмные, седина со старостью
     f32 hr = hash01(&s);
-    V3 h = g_hair[(u32)(hr * hr * (f32)ARRAY_COUNT(g_hair)) % ARRAY_COUNT(g_hair)];
-    l->hair = v3_lerp(h, v3(0.36f, 0.35f, 0.33f), clampf((l->morph[LOOK_OLD] - 0.25f) * 2.5f, 0.0f, 0.9f));
+    l->hair_t = (f32)((u32)(hr * hr * (f32)ARRAY_COUNT(g_hair)) % ARRAY_COUNT(g_hair)) / (f32)(ARRAY_COUNT(g_hair) - 1);
+    l->gray = clampf((l->morph[LOOK_OLD] - 0.25f) * 2.5f, 0.0f, 0.9f);
+    look_paint(l);
     // Причёска: у женщин всегда, мужчины через одного-двух бритые (тем чаще, чем старше)
-    u32 nc = 0;
-    while (nc < HAIR_MAX && g_hair_file[body][nc]) nc++;
+    u32 nc = look_cuts(body);
     f32 c = hash01(&s);
     l->cut = body != BODY_FEMALE && c < 0.2f + 0.4f * l->morph[LOOK_OLD] ? 0 : (u8)(1 + (u32)(hash01(&s) * (f32)nc) % nc);
+}
+
+// Точка на ряду цветов: t 0..1 от первого до последнего, между соседними плавно
+static V3 palette_at(const V3 *pal, u32 n, f32 t)
+{
+    f32 k = clampf(t, 0.0f, 1.0f) * (f32)(n - 1);
+    u32 a = MIN((u32)k, n - 2);
+    return v3_lerp(pal[a], pal[a + 1], k - (f32)a);
+}
+
+void look_paint(CharLook *l)
+{
+    l->skin = palette_at(g_skin, ARRAY_COUNT(g_skin), l->skin_t);
+    l->hair = v3_lerp(palette_at(g_hair, ARRAY_COUNT(g_hair), l->hair_t), v3(0.36f, 0.35f, 0.33f), clampf(l->gray, 0.0f, 1.0f));
+}
+
+u32 look_cuts(u32 body)
+{
+    u32 n = 0;
+    while (body < BODY_KIND_COUNT && n < HAIR_MAX && g_hair_file[body][n]) n++;
+    return n;
 }
 
 M4 look_matrix(const CharLook *l, u32 body)

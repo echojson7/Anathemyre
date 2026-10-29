@@ -15,6 +15,8 @@ u32 people_add(People *p, Role role, V3 pos, f32 heading, u8 team, u8 fflags)
     p->seed[i] = p->height[i] = p->width[i] = 0.0f;
     p->look_seed[i] = 0;
     p->look[i] = (M4){ 0 };
+    memset(&p->lk[i], 0, sizeof p->lk[i]);
+    p->lk_own[i] = false;
     p->ngear[i] = 0;
     p->torch[i] = p->stand[i] = false;
     p->home[i] = pos;
@@ -31,21 +33,33 @@ void people_look_random(People *p, u32 i, u32 look_seed, u32 gear_seed)
     p->height[i] = hs;
     p->width[i] = ws;
     p->look_seed[i] = look_seed;
-    CharLook lk;
-    look_make(&lk, p->variant[i], look_seed, 72.0f * hs * hs * ws * ws, 1.8f * hs, 30.0f + 25.0f * sinf(s * 2.1f));
-    p->look[i] = look_matrix(&lk, p->variant[i]);
+    CharLook *lk = &p->lk[i];
+    look_make(lk, p->variant[i], look_seed, 72.0f * hs * hs * ws * ws, 1.8f * hs, 30.0f + 25.0f * sinf(s * 2.1f));
+    p->look[i] = look_matrix(lk, p->variant[i]);
     p->ngear[i] = (u8)gear_random(gear_seed, p->gear[i]);
-    p->ngear[i] += (u8)look_hair(&lk, p->gear[i], p->ngear[i]);
+    p->ngear[i] += (u8)look_hair(lk, p->gear[i], p->ngear[i]);
 }
 
 void people_dress(People *p, u32 i)
 {
     const CharSheet *cs = &p->sheet[i];
-    CharLook lk;
-    look_make(&lk, p->variant[i], p->look_seed[i], cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
-    p->look[i] = look_matrix(&lk, p->variant[i]);
+    CharLook *lk = &p->lk[i];
+    if (!p->lk_own[i]) {
+        look_make(lk, p->variant[i], p->look_seed[i], cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
+        p->look[i] = look_matrix(lk, p->variant[i]);
+    }
     p->ngear[i] = (u8)gear_from_sheet(cs, p->gear[i]);
-    p->ngear[i] += (u8)look_hair(&lk, p->gear[i], p->ngear[i]);
+    p->ngear[i] += (u8)look_hair(lk, p->gear[i], p->ngear[i]);
+}
+
+void people_relook(People *p, u32 i)
+{
+    p->look[i] = look_matrix(&p->lk[i], p->variant[i]);
+    // Прежнюю причёску долой, новую в конец списка
+    u32 n = 0;
+    for (u32 k = 0; k < p->ngear[i]; k++)
+        if (p->gear[i][k] < GEAR_COUNT) p->gear[i][n++] = p->gear[i][k];
+    p->ngear[i] = (u8)(n + look_hair(&p->lk[i], p->gear[i], n));
 }
 
 void people_dress_live(People *p)
