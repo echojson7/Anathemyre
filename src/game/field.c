@@ -134,6 +134,7 @@ static void wake(Field *f, u32 i)
     f->pz[i] = w->z[i];
     f->ph[i] = w->heading[i];
     f->calm[i] = 0.0f;
+    fight_anim_reset(&f->anim[i], w, i, (f32)i * 13.7f + 3.0f);
     p->ctrl = CTRL_FIGHT;
     p->speed = 0.0f;
     f->fights++;  // до пересчёта в конце тика
@@ -327,6 +328,7 @@ void field_update(Field *f, f32 dt, GroundFn ground)
             f->px[i] = w->x[i];
             f->pz[i] = w->z[i];
             f->ph[i] = w->heading[i];
+            if (!w->idle[i]) fight_anim_pre_tick(&f->anim[i], w, i);
         }
         if (f->fights) {
             fighter_think_all(&f->ai, w);
@@ -345,9 +347,12 @@ void field_update(Field *f, f32 dt, GroundFn ground)
         Player *p = f->body[i];
         i32 o = w->order[i];
         if (!w->idle[i]) {
-            // В бою тело повторяет симуляцию
+            // В бою тело повторяет симуляцию: там, где его показывает вид боя
             f32 x, z, h;
             field_pos(f, i, &x, &z, &h);
+            fight_anim_update(&f->anim[i], w, i, f->acc / COMBAT_DT, dt);
+            x = f->anim[i].disp_x;
+            z = f->anim[i].disp_z;
             p->pos = v3(x, ground(x, z), z);
             p->heading = p->move_yaw = h;
             continue;
@@ -358,10 +363,7 @@ void field_update(Field *f, f32 dt, GroundFn ground)
             p->moving = true;
             p->ctrl = CTRL_CHASE;
             p->marker = 0.0f;
-            if (!(f->flags[i] & FF_PLAYER)) {
-                p->gait = GAIT_RUN;
-                p->vmax = sheet_speed(f->sheet[i], GAIT_RUN);
-            }
+            if (!(f->flags[i] & FF_PLAYER)) p->vmax = sheet_speed(f->sheet[i], GAIT_RUN);
         } else if (p->ctrl == CTRL_CHASE) {
             // Погоня окончена: стоит, где догнал
             p->ctrl = CTRL_FREE;

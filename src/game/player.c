@@ -101,7 +101,7 @@ void player_update(Player *p, f32 dt, GroundFn ground)
     p->walk = follow(p->walk, walk_goal, 0.15f, dt);
     // Походка по фактической скорости: в повороте с бега видно сброс на трусцу
     p->run += clampf(char_run_from_speed(p->speed) - p->run, -dt * 2.5f, dt * 2.5f);
-    p->phase += (p->speed + step_turn) * dt / char_stride(p->run);
+    p->phase += (p->speed + step_turn) * dt / char_stride(p->speed);
     p->phase -= floorf(p->phase);
 }
 

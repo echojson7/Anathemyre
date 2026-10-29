@@ -9,6 +9,7 @@
 
 #include "../ai/fighter.h"
 #include "../sim/inventory.h"
+#include "fight_anim.h"
 #include "player.h"
 
 #define FIELD_MAX 1024
@@ -31,6 +32,7 @@ typedef struct Field {
     u8   leave[FIELD_MAX];           // выйти из боя при первой возможности: дан приказ идти
     f32  calm[FIELD_MAX];            // сколько секунд рядом нет врага
     f32  px[FIELD_MAX], pz[FIELD_MAX], ph[FIELD_MAX];  // прошлый тик: сглаживание
+    FightAnim anim[FIELD_MAX];       // вид бойца, пока слот не спит
     f32  grudge[COMBAT_MAX_TEAMS];   // сколько ещё секунд команда помнит вражду
     u32  fights;                     // проснувшихся сейчас
 } Field;

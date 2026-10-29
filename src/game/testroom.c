@@ -1,5 +1,8 @@
 #include "testroom.h"
 
+#include <string.h>
+
+#include "arena.h"
 #include "character.h"
 #include "squad.h"
 
@@ -292,5 +295,87 @@ void crowd_update(Crowd *c, Rng *rng, f32 dt)
         p->vmax = 1.15f;
         player_update(p, dt, testroom_ground);
         if (was && !p->moving) c->wait[i] = rng_range(rng, 2.0f, 7.0f);
+    }
+}
+
+// ---------------------------------------------------------------- мобы
+
+// Маршрут вокруг зала и арены, против часовой
+static const V2 g_route[MOB_ROUTE] = {
+    { -36.0f, -33.0f }, { 0.0f, -36.0f }, { 37.0f, -32.0f }, { 38.0f, 30.0f }, { 14.0f, 50.0f }, { -37.0f, 32.0f },
+};
+
+typedef struct MobDef {
+    const char *name;
+    u8 tier, weapon, gait;
+    u8 armor[3];
+} MobDef;
+
+static const MobDef g_mob_defs[MOB_MAX] = {
+    { "ВЫШАТА", 1, W_RESSORA, GAIT_WALK, { A_RAGS, A_JACKET, ARMOR_NONE } },
+    { "ФЕОКТИСТ", 1, W_BAGOR, GAIT_JOG, { A_QUILT, ARMOR_NONE, ARMOR_NONE } },
+    { "ГОРДИАН", 2, W_BALKA, GAIT_WALK, { A_QUILT, A_PLATE, A_BUCKET } },
+    { "МИЛОНЕГ", 0, W_ARMATURA, GAIT_RUN, { A_RAGS, ARMOR_NONE, ARMOR_NONE } },
+    { "КАССИЙ", 1, W_SEKACH, GAIT_JOG, { A_JACKET, A_GREAVES, ARMOR_NONE } },
+};
+
+void mobs_init(Mobs *m, Rng *rng)
+{
+    memset(m, 0, sizeof *m);
+    m->count = MOB_MAX;
+    for (u32 i = 0; i < m->count; i++) {
+        const MobDef *d = &g_mob_defs[i];
+        CharSheet *c = &m->sheet[i];
+        c->name = d->name;
+        arena_random_fighter(&c->d, rng, d->tier);
+        for (u32 s = 0; s < SLOT_COUNT; s++) c->d.armor[s] = ARMOR_NONE;
+        for (u32 p = 0; p < PART_COUNT; p++) c->d.hp[p] = g_part_hp[p];
+        c->d.blood = 100.0f * c->d.mass / 75.0f;
+        Item old;
+        c->d.weapon = d->weapon;
+        sheet_equip(c, SLOT_WEAPON, item_make(IK_WEAPON, d->weapon, Q_WORN, 1), &old);
+        for (u32 k = 0; k < 3 && d->armor[k] != ARMOR_NONE; k++) {
+            Item it = item_make(IK_ARMOR, d->armor[k], Q_WORN, 1);
+            sheet_equip(c, item_slot(it), it, &old);
+        }
+        sheet_equip(c, SLOT_BACK, item_make(IK_GOODS, G_PACK, Q_WORN, 1), &old);
+        // Разнесены по кругу, у каждого своя точка старта
+        u32 at = (i * 7u + 1u) % MOB_ROUTE;
+        V2 a = g_route[at], b = g_route[(at + 1) % MOB_ROUTE];
+        f32 t = rng_range(rng, 0.1f, 0.8f);
+        f32 x = lerpf(a.x, b.x, t), z = lerpf(a.y, b.y, t);
+        player_init(&m->body[i], v3(x, testroom_ground(x, z), z), atan2f(b.x - a.x, b.y - a.y));
+        m->body[i].gait = d->gait;
+        m->body[i].phase = rng_f32(rng);
+        m->next[i] = (u8)((at + 1) % MOB_ROUTE);
+        m->variant[i] = (u8)(i % 4);
+        m->seed[i] = rng_range(rng, 0.0f, 100.0f);
+        player_order_move(&m->body[i], v3(b.x, 0.0f, b.y));
+        m->body[i].marker = 0.0f;
+    }
+}
+
+void mobs_update(Mobs *m, Rng *rng, f32 dt)
+{
+    for (u32 i = 0; i < m->count; i++) {
+        Player *p = &m->body[i];
+        if (p->ctrl != CTRL_FREE) {
+            // Бой или погоня: поле боя ведёт тело, после — постоит и пойдёт дальше по кругу
+            m->wait[i] = rng_range(rng, 4.0f, 10.0f);
+            player_update(p, dt, testroom_ground);
+            continue;
+        }
+        bool was = p->moving;
+        p->vmax = g_gait_speed[p->gait] * (0.9f + 0.002f * m->sheet[i].d.skill[SK_ATHLETICS]);
+        if (!p->moving && (m->wait[i] -= dt) <= 0.0f) {
+            V2 t = g_route[m->next[i]];
+            // Не точно в точку: каждый круг немного иначе
+            player_order_move(p, v3(t.x + rng_range(rng, -2.0f, 2.0f), 0.0f, t.y + rng_range(rng, -2.0f, 2.0f)));
+            p->marker = 0.0f;
+            m->next[i] = (u8)((m->next[i] + 1) % MOB_ROUTE);
+        }
+        player_update(p, dt, testroom_ground);
+        // Дошёл: иногда стоит, переводит дух, иногда сразу дальше
+        if (was && !p->moving) m->wait[i] = rng_f32(rng) < 0.55f ? rng_range(rng, 6.0f, 16.0f) : 0.0f;
     }
 }
