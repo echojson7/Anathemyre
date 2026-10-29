@@ -68,7 +68,7 @@ typedef struct Options {
     bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
     bool        pixel_int;   // пиксели только целых размеров 1, 2, 4, 8
     bool        ao_half;     // AO в половинном разрешении
-    bool        noise_tex;   // шум материалов из 3D-текстуры
+    bool        noise_tex;   // шум материалов из 3D-текстуры (по умолчанию; --hash-noise — прежний счёт хешами)
     bool        fullscreen;  // окно без рамки на весь монитор
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
@@ -468,7 +468,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
         else if (!strcmp(a, "--pixel-int")) o->pixel_int = true;
         else if (!strcmp(a, "--ao-half")) o->ao_half = true;
-        else if (!strcmp(a, "--noise-tex")) o->noise_tex = true;
+        else if (!strcmp(a, "--hash-noise")) o->noise_tex = false;
         else if (!strcmp(a, "--fullscreen")) o->fullscreen = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
@@ -528,7 +528,7 @@ int main(int argc, char **argv)
     platform_preinit();
     time_init();
     Options opt = {
-        .tod = 0.31f, .shot_frames = 90, .width = 1280, .height = 720, .seed = 1337,
+        .tod = 0.31f, .shot_frames = 90, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
