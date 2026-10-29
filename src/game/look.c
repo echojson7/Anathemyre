@@ -6,6 +6,20 @@ const char *const g_gear_file[GEAR_COUNT] = {
     "rags", "quilt", "jacket", "plate", "bucket", "greaves", "wrap", "boots", "mitts", "pack", "belt",
 };
 
+// Порядок как HAIR_FEMALE и HAIR_MALE в tools/humanconv
+const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX] = {
+    [BODY_MALE] = { "crop", "shag", "tied" },
+    [BODY_FEMALE] = { "tail", "bun", "braid", "crop" },
+    [BODY_THIN] = { "crop", "shag", "tied" },
+};
+
+u32 look_hair(const CharLook *l, u8 *out)
+{
+    if (!l->cut) return 0;
+    out[0] = (u8)(GEAR_COUNT + l->cut - 1);
+    return 1;
+}
+
 static const u8 g_armor_gear[A_COUNT] = {
     [A_RAGS] = GEAR_RAGS, [A_JACKET] = GEAR_JACKET, [A_QUILT] = GEAR_QUILT,
     [A_PLATE] = GEAR_PLATE, [A_BUCKET] = GEAR_BUCKET, [A_GREAVES] = GEAR_GREAVES,
@@ -87,6 +101,11 @@ void look_make(CharLook *l, u32 body, u32 seed, f32 mass, f32 height, f32 streng
     f32 hr = hash01(&s);
     V3 h = g_hair[(u32)(hr * hr * (f32)ARRAY_COUNT(g_hair)) % ARRAY_COUNT(g_hair)];
     l->hair = v3_lerp(h, v3(0.36f, 0.35f, 0.33f), clampf((l->morph[LOOK_OLD] - 0.25f) * 2.5f, 0.0f, 0.9f));
+    // Причёска: у женщин всегда, мужчины через одного-двух бритые (тем чаще, чем старше)
+    u32 nc = 0;
+    while (nc < HAIR_MAX && g_hair_file[body][nc]) nc++;
+    f32 c = hash01(&s);
+    l->cut = body != BODY_FEMALE && c < 0.2f + 0.4f * l->morph[LOOK_OLD] ? 0 : (u8)(1 + (u32)(hash01(&s) * (f32)nc) % nc);
 }
 
 M4 look_matrix(const CharLook *l, u32 body)

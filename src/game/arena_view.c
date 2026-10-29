@@ -153,7 +153,7 @@ void arena_view_build(MeshBuilder *mb, V3 center)
             f32 a = (f32)i * PI_F * 0.5f + 0.3f;
             mb_box(mb, xf_box(v3(c.x + sinf(a) * 0.07f, c.y - 0.02f, c.z + cosf(a) * 0.07f), v3(0.012f, 0.22f, 0.012f), 0, a, 0));
         }
-        mb_set(mb, C_LAMP, MAT_EMISSIVE, BONE_NONE);
+        mb_set(mb, v3_mul(C_LAMP, 0.5f), MAT_EMISSIVE, BONE_NONE);
         mb_box(mb, xf_box(v3_add(c, v3(0, -0.02f, 0)), v3(0.07f, 0.11f, 0.07f), 0, 0.3f, 0));
     }
 
@@ -216,13 +216,12 @@ void arena_view_update(ArenaView *v, ArenaSession *s, f32 dt)
     for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) fight_anim_update(&v->fa[i], w, i, alpha, dt);
 }
 
-M4 arena_view_look(const ArenaSession *s, u32 ri)
+M4 arena_view_look(const ArenaSession *s, u32 ri, CharLook *lk)
 {
     const FighterDesc *d = &s->roster[ri].d;
     u32 kind = ri % BODY_KIND_COUNT;  // как сетка тела в arena_view_draw
-    CharLook lk;
-    look_make(&lk, kind, ri * 31u + 7u, d->mass, d->height, d->skill[SK_STRENGTH]);
-    return look_matrix(&lk, kind);
+    look_make(lk, kind, ri * 31u + 7u, d->mass, d->height, d->skill[SK_STRENGTH]);
+    return look_matrix(lk, kind);
 }
 
 u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const GpuMesh *body, const GpuMesh *gear, u32 variants,
@@ -241,11 +240,13 @@ u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const G
             bool dropped = fight_anim_pose(&v->fa[i], w, i, alpha, v->center, v->floor_y, time, &p, &act, &dp, &dyaw);
             M4 *b = &bones[(set++) * RENDER_MAX_BONES];
             character_pose(&p, &act, b);
-            b[RENDER_LOOK_SLOT] = arena_view_look(s, ri);
+            CharLook lk;
+            b[RENDER_LOOK_SLOT] = arena_view_look(s, ri, &lk);
             items[n++] = (DrawItem){ .mesh = &body[ri % variants], .bones = b };
             u8 worn[GEAR_MAX_WORN];
             u32 nw = gear_from_armor(s->roster[ri].d.armor, worn);
-            for (u32 g = 0; g < nw; g++) items[n++] = (DrawItem){ .mesh = &gear[(ri % variants) * GEAR_COUNT + worn[g]], .bones = b };
+            nw += look_hair(&lk, worn + nw);
+            for (u32 g = 0; g < nw; g++) items[n++] = (DrawItem){ .mesh = &gear[(ri % variants) * GEAR_ROW + worn[g]], .bones = b };
             if (dropped) {
                 M4 *wb = &bones[(set++) * RENDER_MAX_BONES];
                 weapon_ground_pose(dp, dyaw, wb);
@@ -285,7 +286,7 @@ u32 arena_view_lights(const ArenaView *v, f32 night, f32 time, PointLight *out)
             l->cone = 0.80f;
             l->radius = 30.0f;
             l->color = v3_mul(C_LAMP, 80.0f * on * hum);
-            l->glow = 0.0002f;
+            l->glow = 0.00006f;
         } else {
             // Лампа в сетке на стойке ворот
             V3 p = oct_corner(c, FENCE_R, (int)k + 1, 2.6f);
@@ -295,7 +296,7 @@ u32 arena_view_lights(const ArenaView *v, f32 night, f32 time, PointLight *out)
             l->cone = -1.0f;
             l->radius = 9.0f;
             l->color = v3_mul(C_LAMP, 2.2f * on * hum);
-            l->glow = 0.012f;
+            l->glow = 0.004f;
         }
     }
     return n;

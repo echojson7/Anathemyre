@@ -100,8 +100,8 @@ u32 grid_query(const Grid *g, f32 x, f32 z, f32 r, u32 mask, u32 *out, u32 out_c
         }
         for (i32 cx = cx0; cx <= cx1; cx++) {
             u32 base = (row + (u32)cx) * nt;
-            for (u32 t = 0; t < nt; t++) {
-                if (!(mask & (1u << t))) continue;
+            for (u32 m = mask & all; m; m &= m - 1) {
+                u32 t = (u32)__builtin_ctz(m);
                 for (u32 k = g->start[base + t]; k < g->start[base + t + 1]; k++) {
                     if (n == out_cap) return n;
                     out[n++] = g->items[k];
@@ -110,6 +110,43 @@ u32 grid_query(const Grid *g, f32 x, f32 z, f32 r, u32 mask, u32 *out, u32 out_c
         }
     }
     return n;
+}
+
+void grid_count(const Grid *g, f32 x, f32 z, f32 r, u32 mask, const f32 *px, const f32 *pz, u32 *count)
+{
+    i32 cx0 = coord(x - r, g->ox, g->inv_cell, g->w), cx1 = coord(x + r, g->ox, g->inv_cell, g->w);
+    i32 cz0 = coord(z - r, g->oz, g->inv_cell, g->h), cz1 = coord(z + r, g->oz, g->inv_cell, g->h);
+    u32 nt = g->ntags;
+    mask &= nt >= 32 ? GRID_ALL_TAGS : (1u << nt) - 1;
+    f32 r2 = r * r;
+    // Ячейка целиком внутри, если её дальний угол ближе r с запасом: объекты на самой границе круга
+    // проверяются по одному тем же сравнением, что у вызывающих
+    f32 in2 = (r - 0.01f) * (r - 0.01f);
+    for (i32 cz = cz0; cz <= cz1; cz++) {
+        f32 z0 = g->oz + (f32)cz * g->cell - z, z1 = z0 + g->cell;
+        f32 fz = fmaxf(z0 * z0, z1 * z1);
+        u32 row = (u32)cz * g->w;
+        for (i32 cx = cx0; cx <= cx1; cx++) {
+            f32 x0 = g->ox + (f32)cx * g->cell - x, x1 = x0 + g->cell;
+            // Крайние ячейки сетки собирают и прижатых к краю: только по одному
+            bool edge = cx == 0 || cz == 0 || cx == (i32)g->w - 1 || cz == (i32)g->h - 1;
+            bool inside = !edge && fmaxf(x0 * x0, x1 * x1) + fz <= in2;
+            u32 base = (row + (u32)cx) * nt;
+            for (u32 m = mask; m; m &= m - 1) {
+                u32 t = (u32)__builtin_ctz(m);
+                u32 k0 = g->start[base + t], k1 = g->start[base + t + 1];
+                if (inside) {
+                    count[t] += k1 - k0;
+                    continue;
+                }
+                for (u32 k = k0; k < k1; k++) {
+                    u32 j = g->items[k];
+                    f32 dx = px[j] - x, dz = pz[j] - z;
+                    if (dx * dx + dz * dz <= r2) count[t]++;
+                }
+            }
+        }
+    }
 }
 
 u32 grid_tags(const Grid *g, f32 x, f32 z, f32 r)

@@ -64,6 +64,23 @@ float ao_at(vec2 uv, float dist)
     return dot(ao, w) / max(dot(w, vec4(1.0)), 1e-6);
 }
 
+// Цензура: размытие по кругу 20 см в мире: формы под меткой не читаются, цвет сцены без AO. Считается только на метке
+vec3 censor_blur(vec2 uv, float view_dist)
+{
+    vec2 res = vec2(textureSize(u_color, 0));
+    float radius_px = min(0.2 * u_proj_scale / max(view_dist, 0.1), 400.0);
+    // Поворот спирали свой у каждого пикселя: вместо колец ровный шум, его прячет зерно фильтра
+    float rnd = ign(gl_FragCoord.xy, u_frame) * 6.2831;
+    vec3 sum = vec3(0.0);
+    const int N_TAPS = 32;
+    for (int i = 0; i < N_TAPS; i++) {
+        float a = rnd + float(i) * 2.399963;
+        float r = radius_px * sqrt((float(i) + 0.5) / float(N_TAPS));
+        sum += texture(u_color, uv + vec2(cos(a), sin(a)) * r / res).rgb;
+    }
+    return sum / float(N_TAPS);
+}
+
 // Свечение пыли вокруг факелов и фонарей: свет, рассеянный вдоль луча взгляда до поверхности.
 // Интеграл 1/d² по лучу считается точно: (atan((t1 - tc)/h) - atan(-tc/h)) / h
 vec3 light_glow(vec3 dir, float dist)
@@ -73,8 +90,9 @@ vec3 light_glow(vec3 dir, float dist)
         if (l_dir[i].w <= 0.0) continue;
         vec3 q = l_pos[i].xyz - u_cam;
         float tc = dot(q, dir);
-        float r = l_pos[i].w * 0.5;   // светится пыль только близко к огню
-        float h2 = max(dot(q, q) - tc * tc, 0.0025);
+        float r = l_pos[i].w * 0.35;  // светится пыль только близко к огню
+        // Ближе 0.4 м от оси луча не растёт: у самого огня нет яркого пятна
+        float h2 = max(dot(q, q) - tc * tc, 0.16);
         if (h2 >= r * r) continue;
         float h = sqrt(h2);
         float a = (atan((dist - tc) / h) + atan(tc / h)) / h;
@@ -99,7 +117,11 @@ void main()
         dist = 4000.0;
         col = sky(dir);
     } else {
-        col = texture(u_color, uv).rgb * (u_ao_half != 0 ? ao_at(uv, dist) : ambient_occlusion(uv, P, dist));
+        vec4 c = texture(u_color, uv);
+        col = c.rgb;
+        float cz = clamp(c.a - 1.0, 0.0, 1.0);
+        if (cz > 0.0) col = mix(col, censor_blur(uv, dist), cz);
+        col *= u_ao_half != 0 ? ao_at(uv, dist) : ambient_occlusion(uv, P, dist);
     }
 
     // Высотный туман: плотнее у земли

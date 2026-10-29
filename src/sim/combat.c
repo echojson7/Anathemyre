@@ -798,6 +798,11 @@ bool combat_any_near(const CombatWorld *w, f32 x, f32 z, f32 r, u32 mask)
     return (grid_tags(&w->grid, x, z, r) & mask) != 0;
 }
 
+void combat_count(const CombatWorld *w, f32 x, f32 z, f32 r, u32 mask, u32 *count)
+{
+    grid_count(&w->grid, x, z, r, mask, w->x, w->z, count);
+}
+
 u32 combat_near(const CombatWorld *w, f32 x, f32 z, f32 r, u32 mask, u32 *out)
 {
     return grid_query(&w->grid, x, z, r, mask, out, COMBAT_NEAR_MAX);
