@@ -122,16 +122,17 @@ static Layout layout(const Hud *h, const Input *in)
     L.btn_x = L.w - BTN_W - 8;
     L.btn_y = L.h - 2 * BTN_H - 4 - 8;
     L.clock_x = L.w - CLOCK_W - 8;
-    L.iwx = h->inv_x < 0 ? L.w - INV_WIN_W - 8 : h->inv_x;
-    L.iwy = h->inv_y < 0 ? WIN_TOP : h->inv_y;
+    L.cwx = h->char_x < 0 ? 8 : h->char_x;
+    L.cwy = h->char_y < 0 ? WIN_TOP : h->char_y;
+    win_place(&L.cwx, &L.cwy, CHAR_WIN_W, CHAR_WIN_H, L.w, L.h);
+    // Инвентарь пристыкован справа к окну персонажа, пока его не утащили отдельно
+    L.iwx = h->inv_x < 0 ? L.cwx + CHAR_WIN_W + 6 : h->inv_x;
+    L.iwy = h->inv_y < 0 ? L.cwy : h->inv_y;
     win_place(&L.iwx, &L.iwy, INV_WIN_W, INV_WIN_H, L.w, L.h);
     L.sx = L.iwx + 8;
     L.sy = L.iwy + 20;
     L.ix = L.sx;
     L.iy = L.sy + 5 * (SLOT_H + 3) + 14;
-    L.cwx = h->char_x < 0 ? 8 : h->char_x;
-    L.cwy = h->char_y < 0 ? WIN_TOP : h->char_y;
-    win_place(&L.cwx, &L.cwy, CHAR_WIN_W, CHAR_WIN_H, L.w, L.h);
     return L;
 }
 
@@ -334,6 +335,7 @@ void hud_look(Hud *h, u8 kind, u32 index)
 
 bool hud_window_open(const Hud *h) { return h->win_inv || h->win_char; }
 
+
 // Вещь с курсора обратно в мешок; некуда — false, окно не закрывается
 static bool drop_held(Hud *h, Squad *sq)
 {
@@ -341,6 +343,13 @@ static bool drop_held(Hud *h, Squad *sq)
     if (h->look_kind != LOOK_SQUAD || !inv_add(&sq->sheet[h->look].inv, h->held)) return false;
     h->held.kind = IK_NONE;
     return true;
+}
+
+// Персонаж и инвентарь открываются и закрываются вместе; закрыть нельзя, пока вещь в руке
+static void windows_set(Hud *h, Squad *sq, bool open)
+{
+    if (!open && !drop_held(h, sq)) return;
+    h->win_inv = h->win_char = open;
 }
 
 static void look_at(Hud *h, Squad *sq, u8 kind, u32 index)
@@ -413,9 +422,8 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
     }
 
     bool has_look = h->look_kind != LOOK_NONE;
-    if (in->key_pressed[KEY_I] && (h->win_inv || has_look) && drop_held(h, sq)) h->win_inv = !h->win_inv;
-    if (in->key_pressed[KEY_P] && (h->win_char || has_look)) h->win_char = !h->win_char;
-    if (in->key_pressed[KEY_ESCAPE] && drop_held(h, sq)) h->win_inv = h->win_char = false;
+    if ((in->key_pressed[KEY_I] || in->key_pressed[KEY_P]) && (hud_window_open(h) || has_look)) windows_set(h, sq, !hud_window_open(h));
+    if (in->key_pressed[KEY_ESCAPE]) windows_set(h, sq, false);
     if (in->key_pressed[KEY_SPACE]) {
         if (h->speed) {
             h->speed_before = h->speed;
@@ -444,7 +452,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
             h->grab_x = L.mx - L.iwx;
             h->grab_y = L.my - L.iwy;
         } else if (lmb && close_hot(&L, L.iwx, L.iwy, INV_WIN_W)) {
-            if (drop_held(h, sq)) h->win_inv = false;
+            windows_set(h, sq, false);
         } else if (h->look_kind == LOOK_SQUAD && h->look < sq->count) {
             inventory_input(h, &L, &sq->sheet[h->look], lmb, rmb);
         }
@@ -453,7 +461,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
     if (h->win_char && inside(L.mx, L.my, L.cwx, L.cwy, CHAR_WIN_W, CHAR_WIN_H)) {
         over = true;
         if (lmb && close_hot(&L, L.cwx, L.cwy, CHAR_WIN_W)) {
-            h->win_char = false;
+            windows_set(h, sq, false);
         } else if (lmb && L.my < L.cwy + WIN_HEAD_H) {
             h->win_drag = 2;
             h->grab_x = L.mx - L.cwx;
@@ -494,8 +502,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
     if (inside(L.mx, L.my, L.btn_x, L.btn_y, BTN_W, 2 * BTN_H + 4)) {
         over = true;
         if (lmb && has_look) {
-            if (inside(L.mx, L.my, L.btn_x, win_btn_y(&L, 0), BTN_W, BTN_H) && drop_held(h, sq)) h->win_inv = !h->win_inv;
-            if (inside(L.mx, L.my, L.btn_x, win_btn_y(&L, 1), BTN_W, BTN_H)) h->win_char = !h->win_char;
+            if (inside(L.mx, L.my, L.btn_x, L.btn_y, BTN_W, 2 * BTN_H + 4)) windows_set(h, sq, !hud_window_open(h));
         }
         lmb = false;
     }
