@@ -203,9 +203,7 @@ bool hud_arena_pos(const ArenaView *v, const ArenaSession *s, u32 roster, V3 *ou
 {
     i32 i = hud_arena_fighter(v, s, roster);
     if (i < 0) return false;
-    f32 a = v->acc / COMBAT_DT;
-    *out = v3(v->center.x + lerpf(v->prev_x[i], s->w.x[i], a), v->floor_y,
-              v->center.z + lerpf(v->prev_z[i], s->w.z[i], a));
+    *out = v3(v->center.x + v->fa[i].disp_x, v->floor_y, v->center.z + v->fa[i].disp_z);
     return true;
 }
 
