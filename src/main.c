@@ -452,6 +452,7 @@ int main(int argc, char **argv)
     f64 stat_t = last;
     u32 stat_frames = 0;
     f32 shown_ms = 0, shown_fps = 0;  // для отладочного меню
+    f32 ui_user = 1.0f, ui_user_text = 1.0f;  // ползунки размера интерфейса
     f64 fps_t = last;                 // счётчик кадров обновляется чаще, чем строка КАДР
     u32 fps_frames = 0;
     f64 cpu_logic = 0, cpu_submit = 0, cpu_swap = 0;
@@ -544,6 +545,7 @@ int main(int argc, char **argv)
         fv.view = m4_look_at(fv.cam_pos, v3_add(cam.target, v3(0, 1.0f, 0)), v3(0, 1, 0));
         fv.proj = m4_perspective(CAM_FOV, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
 
+        ui_set_user_scale(ui_user, ui_user_text);
         ui_begin(ww, wh);
         // Отладочное меню слева вверху: все настройки, бывшие на F1–F10
         Input hin = in;
@@ -572,6 +574,10 @@ int main(int argc, char **argv)
                 hud.speed = (u8)(sp + 0.5f);
                 if (hud.speed) hud.speed_before = hud.speed;
             }
+            snprintf(val, sizeof val, "X%.2f", (f64)ui_scale());
+            hud_debug_slider(&hud, "МАСШТАБ ИНТЕРФЕЙСА", &ui_user, 0.5f, 1.5f, val);
+            snprintf(val, sizeof val, "X%.2f", (f64)ui_text_scale());
+            hud_debug_slider(&hud, "РАЗМЕР ТЕКСТА", &ui_user_text, 0.5f, 1.5f, val);
             snprintf(val, sizeof val, "%.2f МС  %.0f К/С", (f64)shown_ms, (f64)shown_fps);
             hud_debug_text(&hud, "КАДР", val);
             hud_debug_check(&hud, "СЧЁТЧИК КАДРОВ", &hud.dbg.fps_on);

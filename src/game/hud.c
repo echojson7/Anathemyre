@@ -738,7 +738,7 @@ static void utf8_head(char *out, size_t size, const char *s, u32 n)
 static void text_fit(f32 x, f32 y, f32 w, u32 color, const char *s)
 {
     char buf[64];
-    utf8_head(buf, sizeof buf, s, (u32)((w + 1) / UI_ADVANCE));
+    utf8_head(buf, sizeof buf, s, (u32)((w + 1) / ui_advance()));
     ui_text(x, y, color, buf);
 }
 
@@ -758,7 +758,7 @@ static void draw_item_cell(f32 x, f32 y, f32 w, f32 h, Item it, u32 edge)
     ui_frame(x, y, w, h, edge);
     // В клетку влезает несколько букв; полное имя во всплывающей подсказке
     char ab[32];
-    u32 chars = (u32)((w - 3) / UI_ADVANCE);
+    u32 chars = (u32)((w - 3) / ui_advance());
     const char *name = item_name(it), *sp = strchr(name, ' ');
     if (sp && chars <= 3) {
         char first[8], second[8];
@@ -800,13 +800,13 @@ static void tooltip(const Layout *L, Item it)
     }
     f32 w = 0;
     for (u32 k = 0; k < n; k++) w = fmaxf(w, ui_text_width(lines[k]));
-    f32 bw = w + 12, bh = (f32)n * UI_LINE + 6;
+    f32 bw = w + 12, bh = (f32)n * ui_line() + 6;
     f32 x = fminf(L->mx + 12, L->w - bw - 2), y = fminf(L->my + 14, L->h - bh - 2);
     ui_rect(x + 2, y + 2, bw, bh, C_SHADE);
     ui_panel_fill(x, y, bw, bh, UI_RGBA(20, 19, 16, 250), UI_RGBA(10, 10, 9, 250));
     ui_frame(x, y, bw, bh, C_EDGE);
     brackets(x, y, bw, bh, 4, C_ACCENT);
-    for (u32 k = 0; k < n; k++) ui_text(x + 6, y + 4 + (f32)k * UI_LINE, k ? C_DIM : C_ACCENT, lines[k]);
+    for (u32 k = 0; k < n; k++) ui_text(x + 6, y + 4 + (f32)k * ui_line(), k ? C_DIM : C_ACCENT, lines[k]);
 }
 
 static void small_label(f32 x, f32 y, const char *s) { ui_text(x, y, C_FAINT, s); }
@@ -1104,7 +1104,7 @@ void hud_draw(const Hud *h, const Input *in, const HudWorld *w)
 
 bool hud_debug_begin(Hud *h, const Input *in)
 {
-    ui_layer(UI_TOP);
+    ui_layer(UI_DEBUG);
     f32 s = ui_scale(), sw = ui_width(), sh = ui_height();
     h->dbg.mx = floorf((f32)in->mouse_x / s);
     h->dbg.my = floorf((f32)in->mouse_y / s);
@@ -1261,15 +1261,16 @@ static void draw_journal(Hud *h)
     f32 x = h->dbg.x + DBG_W + 6, y = h->dbg.y, jh = fmaxf(h->dbg.h, 320);
     if (inside(h->dbg.mx, h->dbg.my, x, y, JOURNAL_W, jh)) h->dbg.over = true;
     panel(x, y, JOURNAL_W, jh, "ЖУРНАЛ", NULL);
-    const u32 cpl = (JOURNAL_W - 16) / UI_ADVANCE, rows = (u32)((jh - 24) / UI_LINE);
-    f32 ty = y + jh - 6 - UI_LINE;
+    const f32 lh = ui_line();
+    const u32 cpl = (u32)((JOURNAL_W - 16) / ui_advance()), rows = (u32)((jh - 24) / lh);
+    f32 ty = y + jh - 6 - lh;
     u32 used = 0, n = log_count();
     char seg[LOG_LINE_MAX];
     for (u32 i = n; i-- > 0 && used < rows;) {
         const char *line = log_line(i);
         u32 len = utf8_len(line), parts = MAX(1u, (len + cpl - 1) / cpl);
         u32 c = i + 1 == n ? C_TEXT : (line[0] == '[' ? C_FAINT : C_DIM);
-        for (u32 k = parts; k-- > 0 && used < rows; used++, ty -= UI_LINE) {
+        for (u32 k = parts; k-- > 0 && used < rows; used++, ty -= lh) {
             utf8_head(seg, sizeof seg, utf8_skip(line, k * cpl), cpl);
             ui_text(x + 8, ty, c, seg);
         }

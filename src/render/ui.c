@@ -144,10 +144,13 @@ static struct {
     u32 prog, vao, vbo, tex;
     u32 prog_up;               // слой рисуется в своём масштабе и ровно растягивается на окно
     u32 fbo[UI_LAYERS], target[UI_LAYERS];
-    i32 tw[UI_LAYERS], th[UI_LAYERS];  // размер цели, логические пиксели слоя
+    i32 tw[UI_LAYERS], th[UI_LAYERS];  // размер цели: одна точка шрифта — один пиксель цели
     u8  lut_ascii[128];   // номер буквы + 1, 0 — нет
     u8  lut_cyr[0x60];    // U+0400..U+045F
-    f32 scale[UI_LAYERS];
+    f32 scale[UI_LAYERS];  // пикселей окна на логическую единицу (рамки, отступы)
+    f32 text[UI_LAYERS];   // пикселей окна на точку шрифта
+    f32 f[UI_LAYERS];      // пикселей цели на логическую единицу: scale / text
+    f32 user_scale, user_text;  // ползунки отладочного меню
     u32 layer;
     i32 win_w, win_h;
     u32 image;            // текстура для ui_image
@@ -216,6 +219,7 @@ bool ui_init(void)
     glVertexArrayAttribBinding(U.vao, 0, 0);
     glVertexArrayAttribBinding(U.vao, 1, 0);
     glVertexArrayAttribBinding(U.vao, 2, 0);
+    U.user_scale = U.user_text = 1.0f;
     return true;
 }
 
@@ -234,10 +238,14 @@ void ui_begin(i32 win_w, i32 win_h)
 {
     U.win_w = win_w;
     U.win_h = win_h;
-    // Шаг 0.25 от высоты окна. 1440p: нижняя полоса ×1.75, окна и остальное ×2.25
-    static const f32 k[UI_LAYERS] = { 1.17f, 1.5f };
+    // От высоты окна, база 1080p, шаг 0.25. 1440p: нижняя полоса ×1.75, окна и остальное ×2,
+    // текст везде ×1.5 (буква 10.5 пикселя). Текст мельче рамок, поэтому считается отдельно
+    static const f32 k[UI_LAYERS] = { 1.3125f, 1.5f, 1.5f };
+    const f32 base = (f32)win_h / 1080.0f;
     for (u32 i = 0; i < UI_LAYERS; i++) {
-        U.scale[i] = fmaxf(1.0f, roundf((f32)win_h / 960.0f * k[i] * 4.0f) * 0.25f);
+        U.scale[i] = fmaxf(1.0f, roundf(base * k[i] * U.user_scale * 4.0f) * 0.25f);
+        U.text[i] = fminf(U.scale[i], fmaxf(1.0f, roundf(base * 1.125f * U.user_text * 4.0f) * 0.25f));
+        U.f[i] = U.scale[i] / U.text[i];
         U.count[i] = 0;
     }
     U.layer = UI_TOP;
@@ -247,8 +255,17 @@ void ui_layer(u32 layer) { U.layer = MIN(layer, UI_LAYERS - 1); }
 f32 ui_scale(void) { return U.scale[U.layer]; }
 f32 ui_width(void) { return floorf((f32)U.win_w / U.scale[U.layer]); }
 f32 ui_height(void) { return floorf((f32)U.win_h / U.scale[U.layer]); }
+f32 ui_text_scale(void) { return U.text[U.layer]; }
+f32 ui_advance(void) { return UI_ADVANCE / U.f[U.layer]; }
+f32 ui_line(void) { return UI_LINE / U.f[U.layer]; }
 
-static void quad2(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 c, u32 c2)
+void ui_set_user_scale(f32 frames, f32 text)
+{
+    U.user_scale = frames;
+    U.user_text = text;
+}
+
+static void quad2_px(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 c, u32 c2)
 {
     u32 *n = &U.count[U.layer];
     if (*n + 6 > ARRAY_COUNT(U.v[0]) || w <= 0.0f || h <= 0.0f) return;
@@ -260,6 +277,16 @@ static void quad2(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u3
     v[4] = v[2];
     v[5] = (UiVertex){ x, y + h, u0, v1, c2 };
     *n += 6;
+}
+
+// Логический прямоугольник в пиксели цели: края по сетке, тонкая линия не пропадает
+static void quad2(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 c, u32 c2)
+{
+    const f32 f = U.f[U.layer];
+    f32 x0 = roundf(x * f), y0 = roundf(y * f);
+    f32 pw = fmaxf(roundf((x + w) * f) - x0, w > 0.0f ? 1.0f : 0.0f);
+    f32 ph = fmaxf(roundf((y + h) * f) - y0, h > 0.0f ? 1.0f : 0.0f);
+    quad2_px(x0, y0, pw, ph, u0, v0, u1, v1, c, c2);
 }
 
 static void quad(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 c)
@@ -316,19 +343,21 @@ static u32 utf8_next(const char **ps)
     return c;
 }
 
+// Буква — ровно 5x7 пикселей цели; по высоте строка по центру логических 7 единиц, как раньше
 f32 ui_text(f32 x, f32 y, u32 color, const char *s)
 {
-    const f32 inv = 1.0f / ATLAS;
+    const f32 inv = 1.0f / ATLAS, f = U.f[U.layer];
+    f32 px = roundf(x * f), py = roundf((y + UI_GLYPH_H * 0.5f) * f - UI_GLYPH_H * 0.5f);
     while (*s) {
         u32 g = find_glyph(utf8_next(&s));
         if (g) {
             g--;
             f32 u0 = (f32)((g % (ATLAS / CELL)) * CELL) * inv, v0 = (f32)((g / (ATLAS / CELL)) * CELL) * inv;
-            quad(x, y, UI_GLYPH_W, UI_GLYPH_H, u0, v0, u0 + UI_GLYPH_W * inv, v0 + UI_GLYPH_H * inv, color);
+            quad2_px(px, py, UI_GLYPH_W, UI_GLYPH_H, u0, v0, u0 + UI_GLYPH_W * inv, v0 + UI_GLYPH_H * inv, color, color);
         }
-        x += UI_ADVANCE;
+        px += UI_ADVANCE;
     }
-    return x;
+    return px / f;
 }
 
 f32 ui_num(f32 x, f32 y, u32 color, const char *s)
@@ -360,13 +389,13 @@ f32 ui_text_width(const char *s)
         utf8_next(&s);
         w += UI_ADVANCE;
     }
-    return w > 0 ? w - 1 : 0;
+    return w > 0 ? (w - 1) / U.f[U.layer] : 0;
 }
 
 // Слой в свою цель, затем на окно: ровные пиксели при дробном масштабе (тот же фильтр, что у кадра)
 static void draw_layer(u32 l)
 {
-    i32 tw = (i32)floorf((f32)U.win_w / U.scale[l]), th = (i32)floorf((f32)U.win_h / U.scale[l]);
+    i32 tw = (i32)floorf((f32)U.win_w / U.text[l]), th = (i32)floorf((f32)U.win_h / U.text[l]);
     if (tw != U.tw[l] || th != U.th[l]) {
         if (U.target[l]) glDeleteTextures(1, &U.target[l]);
         glCreateTextures(GL_TEXTURE_2D, 1, &U.target[l]);
