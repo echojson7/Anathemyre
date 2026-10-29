@@ -2,7 +2,7 @@
 # Люди из MakeHuman (CC0) -> .mesh игры. Офлайн, в игре не нужен.
 # Морфы пола и сложения, руки вниз и ноги прямо (поза привязки игры), рост 1.80 м,
 # раскраска по граням (кожа, бельё, губы, брови), волосы над кожей головы, глаза.
-# Три LOD: исходная сетка MakeHuman (~27 тыс. треугольников), ~5 тыс. и ~1 тыс.
+# Три LOD по LOD_TRIS, упрощение своё, лицо дороже остального.
 # Нужен только numpy.
 #   python3 -I tools/humanconv/humanconv.py <папка MakeHuman> <targets.npz> <data/meshes>
 # Папка MakeHuman: base.obj, default.mhskel, default_weights.mhw (makehuman/data из system assets)
@@ -14,6 +14,8 @@ import numpy as np
  TH_L, SH_L, FT_L, TH_R, SH_R, FT_R) = range(20)
 MAT_CLOTH, MAT_SKIN = 3, 7
 HEIGHT = 1.80
+# Треугольников тела на LOD0..2 (без оболочки волос)
+LOD_TRIS = (12000, 2500, 800)
 
 # Сложение и цвета как у нашей тройки (src/main.c human_shape), чтобы сравнивать честно
 PEOPLE = [
@@ -315,6 +317,7 @@ def build(p, base, faces, Z, skel, W):
     # Губы по весам круговой мышцы рта, брови над глазами
     lips = (get('oris01', 'oris03.L', 'oris03.R', 'oris05', 'oris07.L', 'oris07.R') > 0.8) & (n[:, 2] > 0.2)
     col[lips] = skin * np.array([0.93, 0.84, 0.82])
+    brows = np.zeros(nv, bool)
     for sd, sg in (('L', 1), ('R', -1)):
         e = J['eye.%s____head' % sd]
         dx = (x - e[0]) * sg
@@ -322,6 +325,7 @@ def build(p, base, faces, Z, skel, W):
         brow = (bone == HEAD) & (dx > -0.016) & (dx < 0.026) & (y > e[1] + 0.012 + arch) & (y < e[1] + 0.021 + arch) \
             & (z > e[2] - 0.005) & (n[:, 2] > 0.3)
         col[brow] = skin * 0.25 + hcol * 0.75
+        brows |= brow
     if p['beard']:
         # Борода и усы: щетина объёмом 3 мм по нижней части лица
         eye_y = J['eye.L____head'][1]
@@ -348,6 +352,9 @@ def build(p, base, faces, Z, skel, W):
     hair_k = np.where(hair_t, np.clip((y - line) / 0.015, 0, 1), 0.0)
     if p['hair'] == 'bald':
         col = col * (1 - 0.35 * hair_k[:, None]) + hcol * 0.35 * hair_k[:, None]
+    else:
+        # Под оболочкой волос кожа того же цвета: край оболочки не виден, линия роста — шов окраски
+        col[hair_t] = hcol; mat[hair_t] = MAT_CLOTH
 
     # Окраска по граням: грань берёт самую частую окраску своих вершин.
     # Сглаженная сетка нужна только для точной окраски; LOD0 — исходная сетка MakeHuman,
@@ -404,13 +411,19 @@ def build(p, base, faces, Z, skel, W):
         zb = z[back].min()
         return tail(np.array([0.0, top_y - 0.095, zb + 0.004]), np.array([0.0, top_y - 0.33, zb - 0.012]), 0.026, 0.011, rings, segs)
 
+    # Лицо и голова при упрощении дороже: их вершины уходят последними
+    wv = np.where(bone == HEAD, 40.0, np.where(bone == NECK, 8.0, 1.0))
     lods = []
-    # LOD0: волосы — копия кожи головы выше линии роста, приподнятая над ней; к линии сходит на нет
+    # LOD0 тоже упрощается, но с полной окраской. Волосы — копия граней кожи головы выше линии роста,
+    # приподнятая над ней; к линии сходит на нет
+    (T0, P0), = decimate(vl, T0, P0, [LOD_TRIS[0]], wv)
+    n0 = normals(vl, T0)
+    n0[np.unique(eyes)] = n[np.unique(eyes)]
     parts = [split(vl, n0, T0, P0, pal, bone)]
     if p['hair'] != 'bald':
-        f = tri(F0[hair_t[F0].all(1)])
+        f = T0[hair_t[T0].all(1)]
         ix = np.unique(f)
-        remap = np.full(nv0, -1); remap[ix] = np.arange(len(ix))
+        remap = np.full(len(vl), -1); remap[ix] = np.arange(len(ix))
         # Пряди: толщина и оттенок немного гуляют
         rng = np.random.default_rng(7)
         off = 0.0015 + ((0.006 if p['hair'] == 'short' else 0.004) + rng.uniform(-0.0015, 0.0015, len(ix))) * hair_k[ix]
@@ -420,13 +433,15 @@ def build(p, base, faces, Z, skel, W):
         parts.append(((hv, n0[ix], hc, np.full(len(ix), MAT_CLOTH), hb), remap[f]))
         if p['hair'] == 'long':
             # Собранные в хвост: узел на затылке и сужающийся жгут
-            pv, pn, pt = ponytail(9, 10)
+            pv, pn, pt = ponytail(7, 8)
             parts.append(((pv, pn, np.tile(hcol, (len(pv), 1)), np.full(len(pv), MAT_CLOTH), np.full(len(pv), HEAD)), pt))
     lods.append(merge(parts))
 
     # Дальние LOD: своё упрощение с учётом швов окраски (decimate). Окраска проще:
-    # кожа, бельё без резинки, борода, волосы — окраска кожи головы, глаза
+    # кожа, бельё без резинки, губы, брови, борода, волосы — окраска кожи головы.
+    # Глаза упрощаются отдельно и не меньше чем до 24 треугольников: иначе уходят под веки
     fcol = np.where(under_m[:, None], under, skin)
+    fcol[lips] = col[lips]; fcol[brows] = col[brows]
     fmat = np.where(under_m, MAT_CLOTH, MAT_SKIN)
     if p['beard']:
         fcol[beard] = skin * 0.15 + hcol * 0.85
@@ -438,10 +453,13 @@ def build(p, base, faces, Z, skel, W):
     fpid = fpid.ravel()
     fe = vote(fpid[eyes])
     Tf, Pf = refine(vote(fpid[body]).reshape(4, nf0).T)
-    Tf = np.concatenate([Tf, tri(eyes)]); Pf = np.concatenate([Pf, fe, fe])
-    rs = ((5, 6), (4, 5))
+    rs = ((5, 6), (4, 4))
+    eye_n = (80, 48)
     tail_n = [(r - 1) * s * 2 if p['hair'] == 'long' else 0 for r, s in rs]
-    for (rings, segs), (t, fp) in zip(rs, decimate(vl, Tf, Pf, [5000 - tail_n[0], 1000 - tail_n[1]])):
+    body_l = decimate(vl, Tf, Pf, [LOD_TRIS[l + 1] - tail_n[l] - eye_n[l] for l in range(2)], wv)
+    eye_l = decimate(vl, tri(eyes), np.concatenate([fe, fe]), list(eye_n), wv)
+    for (rings, segs), (tb, pb), (te, pe) in zip(rs, body_l, eye_l):
+        t, fp = np.concatenate([tb, te]), np.concatenate([pb, pe])
         parts = [split(vl, normals(vl, t), t, fp, fpal, bone)]
         if p['hair'] == 'long':
             pv, pn, pt = ponytail(rings, segs)
@@ -450,7 +468,7 @@ def build(p, base, faces, Z, skel, W):
     return lods, J
 
 
-def decimate(v, T, fp, targets):
+def decimate(v, T, fp, targets, wv):
     # Схлопывание рёбер по квадрикам (Garland–Heckbert), вершина уходит в соседа (half-edge).
     # Швы окраски и края сетки: вершина шва идёт только вдоль шва, угол шва неподвижен,
     # поэтому окраска не рвётся на треугольники. Для каждой цели — треугольники и их окраска
@@ -486,6 +504,7 @@ def decimate(v, T, fp, targets):
                 m = np.cross(d, nn[f]); m /= max(np.linalg.norm(m), 1e-20)
                 q = np.append(m, -m @ v[e[0]])
                 Q[list(e)] += 20.0 * (d @ d) * np.outer(q, q)
+    Q *= wv[:, None, None]
     sn = defaultdict(set)
     for a, b in seam:
         sn[a].add(b); sn[b].add(a)
