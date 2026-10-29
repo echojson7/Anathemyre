@@ -19,14 +19,14 @@
 // Расположения uniform задаются явно в GLSL (layout(location = N))
 enum {
     U_VIEW_PROJ = 0, U_SKINNED = 17, U_LIGHT_VP = 18, U_INST_BASE = 19,
-    U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26, U_TEXEL = 27,
+    U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26, U_TEXEL = 27, U_MORPHS = 28,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
     U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44, U_V_TILE = 45,
 };
 
 // Буферы хранения (layout(binding = N) в scene.vert)
-enum { SB_BONES = 0, SB_INST = 1 };
+enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2 };
 
 // Кости и списки экземпляров пишутся каждый кадр; кольцо буферов, чтобы не ждать GPU с прошлым кадром
 #define STREAM_FRAMES 3
@@ -378,7 +378,7 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
     glVertexArrayAttribFormat(gm->vao, 0, 3, GL_FLOAT, GL_FALSE, offsetof(Vertex, pos));
     glVertexArrayAttribFormat(gm->vao, 1, 3, GL_FLOAT, GL_FALSE, offsetof(Vertex, nrm));
     glVertexArrayAttribFormat(gm->vao, 2, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(Vertex, color));
-    glVertexArrayAttribIFormat(gm->vao, 3, 2, GL_UNSIGNED_BYTE, offsetof(Vertex, mat));
+    glVertexArrayAttribIFormat(gm->vao, 3, 4, GL_UNSIGNED_BYTE, offsetof(Vertex, mat));
     for (u32 i = 0; i < 4; i++) glVertexArrayAttribBinding(gm->vao, i, 0);
     gm->skin_vbo = 0;
     if (mb->skin) {
@@ -392,6 +392,12 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
         glVertexArrayAttribFormat(gm->vao, 5, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(VertexSkin, weight));
         glVertexArrayAttribBinding(gm->vao, 4, 1);
         glVertexArrayAttribBinding(gm->vao, 5, 1);
+    }
+    gm->morph_buf = 0;
+    gm->morph_count = mb->morph ? mb->morph_count : 0;
+    if (gm->morph_count) {
+        glCreateBuffers(1, &gm->morph_buf);
+        glNamedBufferStorage(gm->morph_buf, (GLsizeiptr)((size_t)mb->vcount * gm->morph_count * 3 * sizeof(u32)), mb->morph, 0);
     }
     gm->index_count = mb->icount;
     gm->lod_next = NULL;
@@ -591,6 +597,8 @@ static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
         } else {
             glUniform1i(U_SKINNED, 1);
             glUniform1i(U_INST_BASE, (GLint)(base + i));
+            glUniform1i(U_MORPHS, (GLint)m->morph_count);
+            if (m->morph_count) glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_MORPH, m->morph_buf);
             glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT, NULL, (GLsizei)(j - i));
         }
         draws++;

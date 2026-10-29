@@ -6,6 +6,7 @@
 #include "../render/render.h"
 #include "arena.h"
 #include "character.h"
+#include "look.h"
 #include "fight_anim.h"
 
 #define AV_SPECTATORS 14
@@ -32,7 +33,9 @@ void arena_view_init(ArenaView *v, V3 center, f32 floor_y);
 // Прогнать бои по реальному времени (тики COMBAT_HZ) и обновить анимацию
 void arena_view_update(ArenaView *v, ArenaSession *s, f32 dt);
 // Заполнить элементы отрисовки; bones — AV_BONE_SETS * RENDER_MAX_BONES матриц.
-// body — сетки тел без оружия (вариантов CHAR_VARIANTS), weapons — по W_COUNT (в руке или в ножнах — по позе)
+// body — сетки тел (BODY_KIND_COUNT вариантов), weapons — по W_COUNT (в руке или в ножнах — по позе)
+// Внешность бойца ростера ri (матрица слота RENDER_LOOK_SLOT)
+M4  arena_view_look(const ArenaSession *s, u32 ri);
 u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const GpuMesh *body, u32 variants,
                     const GpuMesh *weapons, M4 *bones, DrawItem *items);
 
