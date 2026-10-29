@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "../core/log.h"
 #include "../render/render.h"
 #include "../render/ui.h"
 
@@ -318,6 +319,10 @@ void hud_init(Hud *h)
     h->focus = -1;
     h->speed = h->speed_before = 1;
     h->inv_x = h->inv_y = h->char_x = h->char_y = -1.0f;
+    h->dbg.x = 8;
+    h->dbg.y = 26;
+    h->dbg.slider = -1;
+    h->dbg.journal = true;
 }
 
 void hud_look(Hud *h, u8 kind, u32 index)
@@ -1088,4 +1093,185 @@ void hud_draw(const Hud *h, const Input *in, const HudWorld *w)
         item_size(h->held, &iw, &ih);
         draw_item_cell(L.mx - 4, L.my - 4, iw * CELL - 1, ih * CELL - 1, h->held, C_ACCENT);
     }
+}
+
+// ---------------------------------------------------------------- отладочное меню
+
+#define DBG_W     200
+#define DBG_ROW   14
+#define DBG_BTN_W 84
+
+bool hud_debug_begin(Hud *h, const Input *in)
+{
+    ui_layer(UI_TOP);
+    f32 s = ui_scale(), sw = ui_width(), sh = ui_height();
+    h->dbg.mx = floorf((f32)in->mouse_x / s);
+    h->dbg.my = floorf((f32)in->mouse_y / s);
+    h->dbg.lmb = in->mouse_pressed[MOUSE_LEFT];
+    h->dbg.down = in->mouse_down[MOUSE_LEFT];
+    h->dbg.over = false;
+    h->dbg.id = 0;
+    if (!h->dbg.down) h->dbg.slider = -1;
+
+    // Кнопка в углу
+    bool hot = inside(h->dbg.mx, h->dbg.my, 8, 8, DBG_BTN_W, 13);
+    button(8, 8, DBG_BTN_W, 13, "\xee\x80\x82", "НАСТРОЙКИ", h->dbg.open, hot);
+    if (hot) {
+        h->dbg.over = true;
+        if (h->dbg.lmb) {
+            h->dbg.open = !h->dbg.open;
+            h->dbg.lmb = false;
+        }
+    }
+    if (!h->dbg.open) return false;
+
+    // Окно тянут за шапку
+    if (h->dbg.drag) {
+        if (h->dbg.down) {
+            h->dbg.x = h->dbg.mx - h->dbg.grab_x;
+            h->dbg.y = h->dbg.my - h->dbg.grab_y;
+        } else {
+            h->dbg.drag = false;
+        }
+        h->dbg.over = true;
+    }
+    win_place(&h->dbg.x, &h->dbg.y, DBG_W, h->dbg.h, sw, sh);
+    f32 x = h->dbg.x, y = h->dbg.y;
+    if (inside(h->dbg.mx, h->dbg.my, x, y, DBG_W, h->dbg.h)) {
+        h->dbg.over = true;
+        bool close = inside(h->dbg.mx, h->dbg.my, x + DBG_W - 13, y + 3, 10, 10);
+        if (h->dbg.lmb && close) {
+            h->dbg.open = false;
+            h->dbg.lmb = false;
+            return false;
+        }
+        if (h->dbg.lmb && h->dbg.my < y + WIN_HEAD_H) {
+            h->dbg.drag = true;
+            h->dbg.grab_x = h->dbg.mx - x;
+            h->dbg.grab_y = h->dbg.my - y;
+            h->dbg.lmb = false;
+        }
+    }
+    panel(x, y, DBG_W, h->dbg.h, "НАСТРОЙКИ", "ОТЛАДКА");
+    ui_text(x + DBG_W - 12, y + 5, inside(h->dbg.mx, h->dbg.my, x + DBG_W - 13, y + 3, 10, 10) ? C_BAD : C_DIM, "x");
+    h->dbg.row = y + 20;
+    return true;
+}
+
+// Строка виджета: прямоугольник строки и горячая ли она
+static bool dbg_row(Hud *h, f32 *x, f32 *y)
+{
+    *x = h->dbg.x + 8;
+    *y = h->dbg.row;
+    h->dbg.row += DBG_ROW;
+    h->dbg.id++;
+    return inside(h->dbg.mx, h->dbg.my, *x - 2, *y - 2, DBG_W - 12, DBG_ROW);
+}
+
+bool hud_debug_check(Hud *h, const char *label, bool *v)
+{
+    f32 x, y;
+    bool hot = dbg_row(h, &x, &y);
+    inset(x, y, 10, 10);
+    if (*v) ui_rect(x + 2, y + 2, 6, 6, C_ACCENT);
+    ui_text(x + 16, y + 2, hot ? C_TEXT : C_DIM, label);
+    if (hot && h->dbg.lmb) {
+        *v = !*v;
+        h->dbg.lmb = false;
+        return true;
+    }
+    return false;
+}
+
+bool hud_debug_button(Hud *h, const char *label)
+{
+    f32 x, y;
+    bool hot = dbg_row(h, &x, &y);
+    button(x, y - 1, DBG_W - 16, 12, NULL, label, false, hot);
+    if (hot && h->dbg.lmb) {
+        h->dbg.lmb = false;
+        return true;
+    }
+    return false;
+}
+
+bool hud_debug_slider(Hud *h, const char *label, f32 *v, f32 lo, f32 hi, const char *value)
+{
+    f32 x, y;
+    bool hot = dbg_row(h, &x, &y);
+    const f32 tx = x + 84, tw = DBG_W - 16 - 84 - 34;
+    ui_text(x, y + 2, hot || h->dbg.slider == h->dbg.id ? C_TEXT : C_DIM, label);
+    if (hot && h->dbg.lmb && inside(h->dbg.mx, h->dbg.my, tx - 3, y - 2, tw + 6, DBG_ROW)) {
+        h->dbg.slider = h->dbg.id;
+        h->dbg.lmb = false;
+    }
+    bool changed = false;
+    if (h->dbg.slider == h->dbg.id) {
+        f32 nv = lo + clampf((h->dbg.mx - tx) / tw, 0.0f, 1.0f) * (hi - lo);
+        changed = nv != *v;
+        *v = nv;
+    }
+    f32 r = clampf((*v - lo) / (hi - lo), 0.0f, 1.0f);
+    inset(tx, y + 4, tw, 3);
+    ui_rect(tx + 1, y + 5, floorf((tw - 2) * r), 1, C_ACCENT);
+    ui_rect(floorf(tx + (tw - 3) * r), y + 1, 3, 9, h->dbg.slider == h->dbg.id ? C_ACCENT : C_TEXT);
+    text_right(x + DBG_W - 16, y + 2, C_DIM, value);
+    return changed;
+}
+
+void hud_debug_text(Hud *h, const char *label, const char *value)
+{
+    f32 x, y;
+    dbg_row(h, &x, &y);
+    ui_text(x, y + 2, C_FAINT, label);
+    text_right(x + DBG_W - 16, y + 2, C_DIM, value);
+}
+
+#define JOURNAL_W 380
+
+// Сколько букв UTF-8 в строке
+static u32 utf8_len(const char *s)
+{
+    u32 n = 0;
+    for (; *s; s++) n += ((u8)*s & 0xC0) != 0x80;
+    return n;
+}
+
+static const char *utf8_skip(const char *s, u32 n)
+{
+    for (u32 k = 0; *s && k < n; k++) {
+        s++;
+        while (*s && ((u8)*s & 0xC0) == 0x80) s++;
+    }
+    return s;
+}
+
+// Журнал справа от меню: всё, что раньше шло в консоль, новые строки внизу, длинные переносятся
+static void draw_journal(Hud *h)
+{
+    f32 x = h->dbg.x + DBG_W + 6, y = h->dbg.y, jh = fmaxf(h->dbg.h, 320);
+    if (inside(h->dbg.mx, h->dbg.my, x, y, JOURNAL_W, jh)) h->dbg.over = true;
+    panel(x, y, JOURNAL_W, jh, "ЖУРНАЛ", NULL);
+    const u32 cpl = (JOURNAL_W - 16) / UI_ADVANCE, rows = (u32)((jh - 24) / UI_LINE);
+    f32 ty = y + jh - 6 - UI_LINE;
+    u32 used = 0, n = log_count();
+    char seg[LOG_LINE_MAX];
+    for (u32 i = n; i-- > 0 && used < rows;) {
+        const char *line = log_line(i);
+        u32 len = utf8_len(line), parts = MAX(1u, (len + cpl - 1) / cpl);
+        u32 c = i + 1 == n ? C_TEXT : (line[0] == '[' ? C_FAINT : C_DIM);
+        for (u32 k = parts; k-- > 0 && used < rows; used++, ty -= UI_LINE) {
+            utf8_head(seg, sizeof seg, utf8_skip(line, k * cpl), cpl);
+            ui_text(x + 8, ty, c, seg);
+        }
+    }
+}
+
+bool hud_debug_end(Hud *h)
+{
+    if (h->dbg.open) {
+        h->dbg.h = h->dbg.row - h->dbg.y + 4;
+        if (h->dbg.journal) draw_journal(h);
+    }
+    return h->dbg.over || h->dbg.slider >= 0;
 }

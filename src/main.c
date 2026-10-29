@@ -55,7 +55,7 @@ typedef struct Options {
     bool        bench;       // замер кадра сразу после старта, затем выход
     bool        move_bench;  // проверка разворотов без окна
     const char *move_trace;
-    bool        humans;      // ряд людей для сравнения сразу при старте (иначе F2)
+    bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
 } Options;
 
 // Портрет: неподвижная фигура в покое, камера по кости головы спереди, чуть сверху
@@ -76,7 +76,7 @@ static void portrait(const FrameView *base, u32 slot, i32 size, const GpuMesh *b
     render_portrait(slot, size, &fv, m4_mul(fv.proj, fv.view), items, weapon ? 2 : 1);
 }
 
-// Ближе 4 м камера подходит только к ряду людей (F2, крупные планы)
+// Ближе 4 м камера подходит только к ряду людей (меню НАСТРОЙКИ, крупные планы)
 static f32 g_cam_min_dist = 4.0f;
 
 static void camera_update(RtsCamera *c, const Input *in, f32 dt)
@@ -101,7 +101,7 @@ static void camera_update(RtsCamera *c, const Input *in, f32 dt)
     c->pitch = clampf(c->pitch, 0.08f, 1.45f);
 }
 
-// Замер кадра (F10 или --bench): камера у арены вплотную, утро, сутки стоят, vsync выкл.
+// Замер кадра (меню НАСТРОЙКИ или --bench): камера у арены вплотную, утро, сутки стоят, vsync выкл.
 // BENCH_WARMUP_S на прогрев, затем BENCH_S секунд замера и итог в лог
 #define BENCH_WARMUP_S 2.0
 #define BENCH_S 10.0
@@ -138,16 +138,16 @@ static void bench_report(Bench *b, f64 seconds, i32 ww, i32 wh)
     for (u32 i = 0; i < n; i++) sum += b->frame_ms[i];
     qsort(b->frame_ms, n, sizeof *b->frame_ms, cmp_f32);
     f64 k = 1000.0 / b->cpu_frames;
-    log_info("ЗАМЕР: окно %dx%d, %u кадров за %.1f с | кадр: среднее %.3f мс (%.0f к/с), медиана %.3f, худший 1%% %.3f",
+    log_stat("ЗАМЕР: окно %dx%d, %u кадров за %.1f с | кадр: среднее %.3f мс (%.0f к/с), медиана %.3f, худший 1%% %.3f",
              ww, wh, n, seconds, sum / n, n / seconds, b->frame_ms[n / 2], b->frame_ms[MIN(n - 1, n * 99 / 100)]);
     if (st.samples && st.gpu_total_ms > 0.0)
-        log_info("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | GPU %.3f: тени %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f",
+        log_stat("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | GPU %.3f: тени %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f",
                  b->cpu_logic * k, b->cpu_submit * k, b->cpu_swap * k, st.gpu_total_ms, st.gpu_ms[PASS_SHADOW],
                  st.gpu_ms[PASS_SCENE], st.gpu_ms[PASS_ATMOS], st.gpu_ms[PASS_STYLE], st.gpu_ms[PASS_BLIT]);
     else
-        log_info("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | GPU: драйвер не отдаёт метки времени",
+        log_stat("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | GPU: драйвер не отдаёт метки времени",
                  b->cpu_logic * k, b->cpu_submit * k, b->cpu_swap * k);
-    log_info("ЗАМЕР: сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk",
+    log_stat("ЗАМЕР: сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk",
              st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0);
 }
 
@@ -298,6 +298,8 @@ int main(int argc, char **argv)
     if (opt.arena_bench) return arena_bench(opt.arena_bench, opt.seed, opt.arena_log);
     if (opt.battle[0] || opt.battle[1])
         return battle_bench(opt.battle[0], opt.battle[1], opt.seed, opt.threads, opt.battle_verify);
+    // Дальше в консоль — только к/с, замеры и сбои; остальное в журнал на экране
+    log_set_echo(false);
     log_info("АНАТЕМАЙР. ЭТАП 0. ЗЕРНО МИРА %llu", (unsigned long long)opt.seed);
 
     char data_dir[512];
@@ -448,6 +450,7 @@ int main(int argc, char **argv)
     f64 last = time_now();
     f64 stat_t = last;
     u32 stat_frames = 0;
+    f32 shown_ms = 0, shown_fps = 0;  // для отладочного меню
     f64 cpu_logic = 0, cpu_submit = 0, cpu_swap = 0;
     bool vsync = !opt.no_vsync && opt.shot_path == NULL;
     f32 sim_time = 0, real_time = 0;
@@ -459,27 +462,17 @@ int main(int argc, char **argv)
     Bench bench = { .frame_ms = ARENA_PUSH_ARRAY(&perm, f32, BENCH_MAX_FRAMES) };
     bool bench_request = opt.bench && !opt.shot_path;
 
-    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — инвентарь, P — персонаж, пробел — пауза, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F2 — люди для сравнения, F3 — vsync, F4 — остановить сутки, F5 — шейдеры, F10 — замер кадра");
+    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — инвентарь, P — персонаж, пробел — пауза, средняя кнопка и Q/E — поворот, F — следовать; остальное — в меню НАСТРОЙКИ слева вверху");
 
     while (!in.quit) {
         platform_poll(&in);
         // Esc сначала закрывает окна
         if (in.key_pressed[KEY_ESCAPE] && !hud_window_open(&hud)) break;
-        if (in.key_pressed[KEY_F1]) rs.post = !rs.post;
-        if (in.key_pressed[KEY_F5]) render_reload_shaders();
-        if (in.key_pressed[KEY_F4]) {
-            day_run = !day_run;
-            log_info("СУТКИ: %s", day_run ? "идут" : "остановлены");
-        }
         if (in.key_pressed[KEY_F]) {
             opt.follow = !opt.follow;
             if (opt.follow) cam.dist = MIN(cam.dist, 8.0f);
         }
-        // F2: ряд людей для сравнения (наш мокап и MakeHuman), камера к нему; сетки строятся при первом показе
-        if (in.key_pressed[KEY_F2]) {
-            humans_flip = true;
-            cam = (RtsCamera){ .target = { 2.55f, 0, 22 }, .yaw = 0.0f, .pitch = 0.15f, .dist = 5.0f };
-        }
+        // Ряд людей для сравнения (наш мокап и MakeHuman); сетки строятся при первом показе
         if (humans_flip) {
             humans_flip = false;
             humans_on = !humans_on;
@@ -504,13 +497,7 @@ int main(int argc, char **argv)
                 human_count++;
             }
         }
-        if (in.key_pressed[KEY_F3]) {
-            vsync = !vsync;
-            platform_set_vsync(vsync);
-            log_info("VSYNC: %s", vsync ? "вкл" : "выкл");
-        }
-
-        if ((in.key_pressed[KEY_F10] || bench_request) && !bench.on && !opt.shot_path) {
+        if (bench_request && !bench.on && !opt.shot_path) {
             bench_request = false;
             bench.on = true;
             bench.cam = cam;
@@ -527,7 +514,7 @@ int main(int argc, char **argv)
             bench.last_now = 0;
             bench.frames = bench.cpu_frames = 0;
             bench.cpu_logic = bench.cpu_submit = bench.cpu_swap = 0;
-            log_info("ЗАМЕР: начат, %.0f с прогрева и %.0f с замера; камера у арены, управление камерой отключено", BENCH_WARMUP_S, BENCH_S);
+            log_stat("ЗАМЕР: начат, %.0f с прогрева и %.0f с замера; камера у арены, управление камерой отключено", BENCH_WARMUP_S, BENCH_S);
         }
 
         f64 now = time_now();
@@ -558,13 +545,49 @@ int main(int argc, char **argv)
         fv.proj = m4_perspective(CAM_FOV, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
 
         ui_begin(ww, wh);
+        // Отладочное меню слева вверху: все настройки, бывшие на F1–F10
+        Input hin = in;
+        if (hud_debug_begin(&hud, &in)) {
+            char val[32];
+            hud_debug_check(&hud, "ФИЛЬТР КАДРА", &rs.post);
+            hud_debug_check(&hud, "ПИКСЕЛЬНОСТЬ", &rs.pixel);
+            if (hud_debug_check(&hud, "VSYNC", &vsync)) {
+                platform_set_vsync(vsync);
+                log_info("VSYNC: %s", vsync ? "вкл" : "выкл");
+            }
+            if (hud_debug_check(&hud, "СУТКИ ИДУТ", &day_run)) log_info("СУТКИ: %s", day_run ? "идут" : "остановлены");
+            if (hud_debug_check(&hud, "КАМЕРА СЛЕДУЕТ", &opt.follow) && opt.follow) cam.dist = MIN(cam.dist, 8.0f);
+            bool humans_want = humans_on;
+            if (hud_debug_check(&hud, "ЛЮДИ ДЛЯ СРАВНЕНИЯ", &humans_want)) {
+                humans_flip = true;
+                if (humans_want) cam = (RtsCamera){ .target = { 2.55f, 0, 22 }, .yaw = 0.0f, .pitch = 0.15f, .dist = 5.0f };
+            }
+            u32 mins = (u32)(tod * 24.0f * 60.0f);
+            snprintf(val, sizeof val, "%02u:%02u", mins / 60 % 24, mins % 60);
+            hud_debug_slider(&hud, "ВРЕМЯ СУТОК", &tod, 0.0f, 0.999f, val);
+            static const char *speed_name[] = { "ПАУЗА", "x1", "x2", "x3" };
+            f32 sp = (f32)hud.speed;
+            if (hud_debug_slider(&hud, "СКОРОСТЬ", &sp, 0.0f, 3.0f, speed_name[hud.speed])) {
+                hud.speed = (u8)(sp + 0.5f);
+                if (hud.speed) hud.speed_before = hud.speed;
+            }
+            snprintf(val, sizeof val, "%.2f МС  %.0f К/С", (f64)shown_ms, (f64)shown_fps);
+            hud_debug_text(&hud, "КАДР", val);
+            if (hud_debug_button(&hud, "ПЕРЕЗАГРУЗИТЬ ШЕЙДЕРЫ")) render_reload_shaders();
+            if (hud_debug_button(&hud, "ЗАМЕР КАДРА")) bench_request = true;
+            hud_debug_check(&hud, "ЖУРНАЛ", &hud.dbg.journal);
+        }
+        if (hud_debug_end(&hud)) {
+            memset(hin.mouse_pressed, 0, sizeof hin.mouse_pressed);
+            memset(hin.mouse_down, 0, sizeof hin.mouse_down);
+        }
         HudWorld hw = { .squad = squad, .arena = arena, .aview = aview, .view_proj = m4_mul(fv.proj, fv.view),
                         .time = real_time, .tod = tod, .day = day };
-        bool ui_busy = hud_input(&hud, &in, &hw);
+        bool ui_busy = hud_input(&hud, &hin, &hw);
         if (hud.focus >= 0) cam.target = v3(squad->body[hud.focus].pos.x, 0, squad->body[hud.focus].pos.z);
 
         // ПКМ по земле: выбранные идут туда
-        if (in.mouse_pressed[MOUSE_RIGHT] && !ui_busy && ww > 0 && wh > 0) {
+        if (hin.mouse_pressed[MOUSE_RIGHT] && !ui_busy && ww > 0 && wh > 0) {
             f32 nx = 2.0f * ((f32)in.mouse_x + 0.5f) / (f32)ww - 1.0f;
             f32 ny = 1.0f - 2.0f * ((f32)in.mouse_y + 0.5f) / (f32)wh;
             V3 hit;
@@ -673,7 +696,7 @@ int main(int argc, char **argv)
         }
         ui_set_image(render_portrait_texture());
         ui_set_time(real_time);
-        hud_draw(&hud, &in, &hw);
+        hud_draw(&hud, &hin, &hw);
         ui_end();
         f64 t_swap = time_now();
         cpu_submit += t_swap - t_submit;
@@ -681,7 +704,7 @@ int main(int argc, char **argv)
         frame++;
         if (opt.shot_path && (i32)frame >= opt.shot_frames) {
             render_read_pixels(shot_buf, ww, wh);
-            if (write_ppm(opt.shot_path, shot_buf, ww, wh)) log_info("КАДР: записан %s", opt.shot_path);
+            if (write_ppm(opt.shot_path, shot_buf, ww, wh)) log_stat("КАДР: записан %s", opt.shot_path);
             else log_error("КАДР: не записан %s", opt.shot_path);
             break;
         }
@@ -731,11 +754,13 @@ int main(int argc, char **argv)
                          st.gpu_ms[PASS_STYLE], st.gpu_ms[PASS_BLIT]);
             else
                 snprintf(gpu, sizeof gpu, "GPU: драйвер не отдаёт метки времени");
-            log_info("КАДР: %.2f мс, %.0f к/с | CPU: логика %.3f, отправка %.3f, swap %.3f | %s",
+            log_stat("КАДР: %.2f мс, %.0f к/с | CPU: логика %.3f, отправка %.3f, swap %.3f | %s",
                      (now - stat_t) * k, stat_frames / (now - stat_t),
                      cpu_logic * k, cpu_submit * k, cpu_swap * k, gpu);
-            log_info("ОТРИСОВКА: элементов %u | сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk",
+            log_stat("ОТРИСОВКА: элементов %u | сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk",
                      st.items, st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0);
+            shown_ms = (f32)((now - stat_t) * k);
+            shown_fps = (f32)(stat_frames / (now - stat_t));
             stat_t = now;
             stat_frames = 0;
             cpu_logic = cpu_submit = cpu_swap = 0;
