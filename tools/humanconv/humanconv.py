@@ -16,11 +16,17 @@ HEIGHT = 1.80
 # Сложение и цвета как у нашей тройки (src/main.c human_shape), чтобы сравнивать честно
 PEOPLE = [
     dict(name='mh_male', gender=1.0, muscle=0.8, weight=0.5, hair='short', beard=False,
-         skin=(0.52, 0.37, 0.28), hcol=(0.10, 0.08, 0.06), under=(0.30, 0.29, 0.27)),
+         skin=(0.52, 0.37, 0.28), hcol=(0.10, 0.08, 0.06), under=(0.30, 0.29, 0.27),
+         mods={'torso/torso-muscle-pectoral-incr': 0.5}),
+    # Песочные часы: талия уже, бёдра чуть уже, грудь больше и ближе друг к другу, лобок ниже
     dict(name='mh_female', gender=0.0, muscle=0.5, weight=0.55, hair='long', beard=False,
-         skin=(0.60, 0.45, 0.36), hcol=(0.20, 0.13, 0.08), under=(0.30, 0.29, 0.27)),
+         skin=(0.60, 0.45, 0.36), hcol=(0.20, 0.13, 0.08), under=(0.30, 0.29, 0.27),
+         cup=0.8, firm=0.7,
+         mods={'measure/measure-waist-circ-decr': 0.9, 'measure/measure-hips-circ-decr': 0.3,
+               'breast/breast-dist-decr': 0.7, 'pelvis/bulge-decr': 1.0}),
     dict(name='mh_thin', gender=1.0, muscle=0.45, weight=0.15, hair='bald', beard=True,
-         skin=(0.38, 0.26, 0.19), hcol=(0.07, 0.06, 0.05), under=(0.30, 0.29, 0.27)),
+         skin=(0.38, 0.26, 0.19), hcol=(0.07, 0.06, 0.05), under=(0.30, 0.29, 0.27),
+         mods={'torso/torso-muscle-pectoral-incr': 0.4}),
 ]
 
 
@@ -62,6 +68,16 @@ def morph(base, Z, p):
                 add('macrodetails/universal-%s-young-%smuscle-%sweight' % (gn, mn, wn), gw * mw * ww)
         for race in ('african', 'asian', 'caucasian'):
             add('macrodetails/%s-%s-young' % (race, gn), gw / 3)
+    # Размер и упругость груди (у MakeHuman только для женщин)
+    gw = 1 - p['gender']
+    for mn, mw in three(p['muscle']).items():
+        for wn, ww in three(p['weight']).items():
+            for cn, cw in three(p.get('cup', 0.5)).items():
+                for fn, fw in three(p.get('firm', 0.5)).items():
+                    if cn != 'average' or fn != 'average':
+                        add('breast/female-young-%smuscle-%sweight-%scup-%sfirmness' % (mn, wn, cn, fn), gw * mw * ww * cw * fw)
+    for name, w in p.get('mods', {}).items():
+        add(name, w)
     return v
 
 
@@ -253,16 +269,28 @@ def build(p, base, faces, Z, skel, W):
     isbody = np.zeros(nv, bool); isbody[used] = True
     mid = trunk & isbody & (ax < 0.012) & (y > 0.6) & (y < hip)
     crotch = y[mid].min()
-    top = hip + (0.03 if p['gender'] > 0.5 else 0.045)
-    briefs = trunk & (y < top) & (y > crotch - 0.004 + 0.62 * np.maximum(0.0, ax - 0.02))
+    top = hip + (0.05 if p['gender'] > 0.5 else 0.065)
+    briefs = trunk & (y < top) & (y > crotch + 0.012 + 0.75 * np.maximum(0.0, ax - 0.025))
     under_m = briefs
     if p['gender'] < 0.5:
         # Топ без лямок: полоса вокруг груди, как бельё в Kenshi
         torso = np.isin(bone, [SPINE, CHEST, CLAV_L, CLAV_R])
         nip = J['breast.L____tail']
         rise = 0.02 * np.clip((z - nip[2] + 0.12) / 0.08, 0, 1)  # спереди край выше, чем на спине
-        under_m = under_m | (torso & (y > nip[1] - 0.07) & (y < nip[1] + 0.025 + rise))
+        under_m = under_m | (torso & (y > nip[1] - 0.055) & (y < nip[1] + 0.04 + rise))
     col[under_m] = under; mat[under_m] = MAT_CLOTH
+
+    if p['gender'] > 0.5:
+        # Соски: ореол вокруг самой выступающей точки груди
+        for sd in ('L', 'R'):
+            nj = J['breast.%s____tail' % sd]
+            near = isbody & (np.abs(x - nj[0]) < 0.012) & (np.abs(y - nj[1]) < 0.012)
+            c = v[np.where(near)[0][z[near].argmax()]]
+            d = np.linalg.norm(v - c, axis=1)
+            col[isbody & (d < 0.011)] = skin * np.array([0.80, 0.68, 0.64])
+            tip = isbody & (d < 0.004)
+            col[tip] = skin * np.array([0.70, 0.56, 0.52])
+            v[tip] += n[tip] * 0.0015
 
     # Губы по весам круговой мышцы рта, брови над глазами
     lips = (get('oris01', 'oris03.L', 'oris03.R', 'oris05', 'oris07.L', 'oris07.R') > 0.8) & (n[:, 2] > 0.2)
