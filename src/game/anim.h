@@ -14,7 +14,10 @@
 #define CHAR_BONE_WEAPON BONE_COUNT
 // Слот факела: в левом кулаке, древко по +Y
 #define CHAR_BONE_TORCH (BONE_COUNT + 1)
-#define CHAR_BONES (BONE_COUNT + 2)
+// Слот пламени: над ветошью факела, всегда стоит вертикально, куда бы ни клонилось древко
+#define CHAR_BONE_FLAME (BONE_COUNT + 2)
+#define CHAR_BONES (BONE_COUNT + 3)
+#define TORCH_FLAME_BASE 0.47f  // низ пламени над кулаком по древку, м
 
 _Static_assert(CHAR_BONES <= 24, "скелет с оружием не влезает в RENDER_MAX_BONES");
 

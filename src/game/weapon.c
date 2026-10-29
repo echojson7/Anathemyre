@@ -83,7 +83,6 @@ void weapon_build(MeshBuilder *mb, u8 weapon)
     }
 }
 
-#define TORCH_FLAME_Y 0.56f  // середина пламени над кулаком, м
 
 void torch_build(MeshBuilder *mb, bool flame)
 {
@@ -99,16 +98,22 @@ void torch_build(MeshBuilder *mb, bool flame)
         wcyl(mb, 0.47f, 0.485f, 0.037f, 0.0f);
         return;
     }
-    // Пламя: яркое ядро и языки вокруг, повёрнутые по-разному
-    mb_set(mb, v3(0.55f, 0.32f, 0.10f), MAT_EMISSIVE, B);
-    wbox(mb, 0.49f, 0.66f, 0.05f, 0.05f, 0.0f, 0.0f);
-    mb_set(mb, v3(0.42f, 0.15f, 0.04f), MAT_EMISSIVE, B);
-    wbox(mb, 0.48f, 0.62f, 0.075f, 0.03f, 0.008f, 0.12f);
-    wbox(mb, 0.48f, 0.60f, 0.03f, 0.075f, -0.006f, -0.1f);
-    wbox(mb, 0.58f, 0.74f, 0.028f, 0.028f, 0.01f, 0.2f);
+    // Пламя капли: жёлтый низ у ветоши, выше оранжевый язык, по краям тёмно-красные отрывы.
+    // Своя кость CHAR_BONE_FLAME: начало у ветоши, ось +Y всегда вверх
+    const u8 F = CHAR_BONE_FLAME;
+    static const V2 base[] = { { -0.01f, 0.0f }, { 0.01f, 0.030f }, { 0.04f, 0.042f }, { 0.11f, 0.038f } };
+    static const V2 top[] = { { 0.10f, 0.040f }, { 0.18f, 0.030f }, { 0.26f, 0.013f }, { 0.33f, 0.0f } };
+    static const V2 lick[] = { { 0.0f, 0.016f }, { 0.07f, 0.011f }, { 0.13f, 0.0f } };
+    mb_set(mb, v3(0.52f, 0.28f, 0.06f), MAT_EMISSIVE, F);
+    mb_lathe(mb, v3(0, 0, 0), v3(0, 1, 0), base, 4, 6, 1.0f, 1.0f);
+    mb_set(mb, v3(0.40f, 0.13f, 0.03f), MAT_EMISSIVE, F);
+    mb_lathe(mb, v3(0, 0, 0), v3(0.05f, 1, 0.02f), top, 4, 6, 1.0f, 1.0f);
+    mb_set(mb, v3(0.24f, 0.05f, 0.01f), MAT_EMISSIVE, F);
+    mb_lathe(mb, v3(0.022f, 0.15f, 0.01f), v3(0.022f + 0.25f, 1.15f, 0.11f), lick, 3, 5, 1.0f, 1.0f);
+    mb_lathe(mb, v3(-0.02f, 0.13f, -0.015f), v3(-0.02f - 0.2f, 1.13f, -0.215f), lick, 3, 5, 1.0f, 1.0f);
 }
 
-V3 torch_flame_pos(const M4 *bones) { return m4_point(bones[CHAR_BONE_TORCH], v3(0.0f, TORCH_FLAME_Y, 0.0f)); }
+V3 torch_flame_pos(const M4 *bones) { return m4_point(bones[CHAR_BONE_FLAME], v3(0.0f, 0.12f, 0.0f)); }
 
 void weapon_ground_pose(V3 pos, f32 yaw, M4 *out)
 {

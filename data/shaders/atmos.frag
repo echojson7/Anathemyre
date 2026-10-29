@@ -90,10 +90,11 @@ vec3 light_glow(vec3 dir, float dist)
         if (l_dir[i].w <= 0.0) continue;
         vec3 q = l_pos[i].xyz - u_cam;
         float tc = dot(q, dir);
-        float r = l_pos[i].w * 0.35;  // светится пыль только близко к огню
-        // Ближе 0.4 м от оси луча не растёт: у самого огня нет яркого пятна
-        float h2 = max(dot(q, q) - tc * tc, 0.16);
+        // Светится пыль только у самого огня: ореол не шире метра, к краю сходит в ноль
+        const float r = 1.0;
+        float h2 = dot(q, q) - tc * tc;
         if (h2 >= r * r) continue;
+        h2 = max(h2, 0.0225);  // ближе 0.15 м от оси луча не растёт: пламя не тонет в пятне
         float h = sqrt(h2);
         float a = (atan((dist - tc) / h) + atan(tc / h)) / h;
         float w = 1.0 - h2 / (r * r);

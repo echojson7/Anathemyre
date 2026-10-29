@@ -283,10 +283,11 @@ u32 arena_view_lights(const ArenaView *v, f32 night, f32 time, PointLight *out)
             V3 dir = v3(sinf(a), 0.0f, cosf(a));
             l->pos = v3(c.x + dir.x * 9.3f, 10.0f, c.z + dir.z * 9.3f);
             l->dir = v3_norm(v3_sub(v3(c.x, v->floor_y, c.z), l->pos));
-            l->cone = 0.80f;
+            // Узкий конус с чёткой кромкой: на полу ринга лежит круг света, за ним темно
+            l->cone = 0.96f;
             l->radius = 30.0f;
-            l->color = v3_mul(C_LAMP, 80.0f * on * hum);
-            l->glow = 0.00006f;
+            l->color = v3_mul(C_LAMP, 90.0f * on * hum);
+            l->glow = 0.00012f;
         } else {
             // Лампа в сетке на стойке ворот
             V3 p = oct_corner(c, FENCE_R, (int)k + 1, 2.6f);
@@ -296,7 +297,7 @@ u32 arena_view_lights(const ArenaView *v, f32 night, f32 time, PointLight *out)
             l->cone = -1.0f;
             l->radius = 9.0f;
             l->color = v3_mul(C_LAMP, 2.2f * on * hum);
-            l->glow = 0.004f;
+            l->glow = 0.0015f;
         }
     }
     return n;

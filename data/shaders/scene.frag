@@ -279,7 +279,7 @@ void main()
         float nl = dot(N, Ld);
         float k = foliage ? 0.3 + 0.7 * abs(nl) : max(nl, 0.0);
         float c = l_col[i].a;
-        if (c > -1.0) k *= smoothstep(c, c + (1.0 - c) * 0.5, dot(-Ld, l_dir[i].xyz));
+        if (c > -1.0) k *= smoothstep(c, c + (1.0 - c) * 0.2, dot(-Ld, l_dir[i].xyz));
         if (k <= 0.0) continue;
         vec3 li = l_col[i].rgb * (k * light_falloff(d2, r));
         col += albedo * li + li * spec * pow(max(dot(N, normalize(Ld + V)), 0.0), gloss);

@@ -265,12 +265,12 @@ static u32 torch_draw(const M4 *b, f32 lit, f32 seed, f32 time, const GpuMesh *s
     f32 fl = 0.80f + 0.10f * sinf(time * 17.0f + seed) + 0.07f * sinf(time * 29.3f + seed * 3.1f) +
              0.05f * sinf(time * 47.0f + seed * 7.7f);
     PointLight *l = &lights[(*nl)++];
-    l->pos = v3_add(torch_flame_pos(b), v3(0.0f, 0.06f, 0.0f));
+    l->pos = torch_flame_pos(b);
     l->radius = 8.0f;
     l->color = v3_mul(v3(1.0f, 0.50f, 0.18f), 2.6f * lit * fl);
     l->cone = -1.0f;
     l->dir = v3(0, -1, 0);
-    l->glow = 0.006f;
+    l->glow = 0.0025f;
     return n;
 }
 
