@@ -33,6 +33,8 @@ typedef struct People {
     f32       height[PEOPLE_MAX], width[PEOPLE_MAX];
     u32       look_seed[PEOPLE_MAX];
     M4        look[PEOPLE_MAX];
+    CharLook  lk[PEOPLE_MAX];         // из чего собрана look: морфы, тона, причёска
+    bool      lk_own[PEOPLE_MAX];     // внешность задана редактором: не пересчитывать из зерна и листа
     u8        gear[PEOPLE_MAX][GEAR_MAX_WORN];
     u8        ngear[PEOPLE_MAX];
     bool      torch[PEOPLE_MAX];      // с темнотой зажигает факел
@@ -52,6 +54,8 @@ void people_look_random(People *p, u32 i, u32 look_seed, u32 gear_seed);
 // Внешность из листа: надетые вещи, сложение и сила из листа. Отряд и мобы — каждый кадр (переодеваются)
 void people_dress(People *p, u32 i);
 void people_dress_live(People *p);
+// Внешность из lk[i] (после правки в редакторе): матрица и причёска в списке вещей
+void people_relook(People *p, u32 i);
 // Всех на поле боя по порядку: слот = номер в таблице
 void people_join_field(People *p, Field *f);
 // Шаг всех, кроме своего отряда (им правит squad_update): rng — пустошь, town_rng — посёлок

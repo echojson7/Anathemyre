@@ -218,6 +218,7 @@ static Key map_key(KeySym ks)
     case XK_g: case XK_G: return KEY_G;
     case XK_p: case XK_P: return KEY_P;
     case XK_h: case XK_H: return KEY_H;
+    case XK_k: case XK_K: return KEY_K;
     case XK_Up: return KEY_UP;
     case XK_Down: return KEY_DOWN;
     case XK_Left: return KEY_LEFT;

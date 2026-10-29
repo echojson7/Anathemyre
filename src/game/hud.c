@@ -47,6 +47,9 @@
 #define CLOCK_H    32
 #define DOUBLE_CLICK_S 0.35f
 #define SELECT_RING_R 0.48f  // радиус кольца выбора под ногами, как в main.c
+#define DBG_W      200  // окно НАСТРОЙКИ
+#define DBG_ROW    14   // строка виджета
+#define DBG_BTN_W  84
 
 // Порядок слотов в окне инвентаря: две колонки по шесть
 static const u8 g_slot_order[SLOT_COUNT + 1] = {
@@ -121,7 +124,7 @@ static Layout layout(const Hud *h, const Input *in)
     L.sel_x = 8;
     L.cards_x = L.sel_x + SEL_W + 8;
     L.btn_x = L.w - BTN_W - 8;
-    L.btn_y = L.h - 2 * BTN_H - 4 - 8;
+    L.btn_y = L.h - 3 * BTN_H - 2 * 4 - 8;
     L.clock_x = L.w - CLOCK_W - 8;
     L.cwx = h->char_x < 0 ? 8 : h->char_x;
     L.cwy = h->char_y < 0 ? WIN_TOP : h->char_y;
@@ -359,9 +362,7 @@ void hud_init(Hud *h)
     h->focus = -1;
     h->speed = h->speed_before = 1;
     h->inv_x = h->inv_y = h->char_x = h->char_y = -1.0f;
-    h->dbg.x = 8;
-    h->dbg.y = 26;
-    h->dbg.slider = -1;
+    h->dbg.f = (HudForm){ .x = 8, .y = 26, .w = DBG_W, .slider = -1 };
     h->dbg.journal = true;
     h->dbg.fps_on = true;
 }
@@ -469,7 +470,11 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
 
     bool has_look = h->look_kind != LOOK_NONE;
     if ((in->key_pressed[KEY_I] || in->key_pressed[KEY_P]) && (hud_window_open(h) || has_look)) windows_set(h, sq, !hud_window_open(h));
-    if (in->key_pressed[KEY_ESCAPE]) windows_set(h, sq, false);
+    if (in->key_pressed[KEY_K] && (h->win_look || has_look)) h->win_look = !h->win_look;
+    if (in->key_pressed[KEY_ESCAPE]) {
+        windows_set(h, sq, false);
+        h->win_look = false;
+    }
     if (in->key_pressed[KEY_SPACE]) {
         if (h->speed) {
             h->speed_before = h->speed;
@@ -545,10 +550,11 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
     }
 
     // Кнопки окон
-    if (inside(L.mx, L.my, L.btn_x, L.btn_y, BTN_W, 2 * BTN_H + 4)) {
+    if (inside(L.mx, L.my, L.btn_x, L.btn_y, BTN_W, 3 * BTN_H + 2 * 4)) {
         over = true;
         if (lmb && has_look) {
-            if (inside(L.mx, L.my, L.btn_x, L.btn_y, BTN_W, 2 * BTN_H + 4)) windows_set(h, sq, !hud_window_open(h));
+            if (L.my < win_btn_y(&L, 2)) windows_set(h, sq, !hud_window_open(h));
+            else h->win_look = !h->win_look;
         }
         lmb = false;
     }
@@ -946,9 +952,10 @@ static void draw_buttons(const Hud *h, const Layout *L)
 {
     bool can = h->look_kind != LOOK_NONE;
     f32 x = L->btn_x;
-    f32 y0 = win_btn_y(L, 0), y1 = win_btn_y(L, 1);
+    f32 y0 = win_btn_y(L, 0), y1 = win_btn_y(L, 1), y2 = win_btn_y(L, 2);
     button(x, y0, BTN_W, BTN_H, "I", "ИНВЕНТАРЬ", h->win_inv, can && inside(L->mx, L->my, x, y0, BTN_W, BTN_H));
     button(x, y1, BTN_W, BTN_H, "P", "ПЕРСОНАЖ", h->win_char, can && inside(L->mx, L->my, x, y1, BTN_W, BTN_H));
+    button(x, y2, BTN_W, BTN_H, "K", "ВНЕШНОСТЬ", h->win_look, can && inside(L->mx, L->my, x, y2, BTN_W, BTN_H));
 }
 
 static void draw_clock(const Hud *h, const Layout *L, const HudWorld *w)
@@ -1159,145 +1166,209 @@ void hud_draw(const Hud *h, const Input *in, const HudWorld *w)
     }
 }
 
-// ---------------------------------------------------------------- отладочное меню
+// ---------------------------------------------------------------- окна с виджетами
 
-#define DBG_W     200
-#define DBG_ROW   14
-#define DBG_BTN_W 84
-
-bool hud_debug_begin(Hud *h, const Input *in)
+// Мышь в слое окон; сбросить строки
+static void form_input(HudForm *f, const Input *in)
 {
     ui_layer(UI_DEBUG);
-    f32 s = ui_scale(), sw = ui_width(), sh = ui_height();
-    h->dbg.mx = floorf((f32)in->mouse_x / s);
-    h->dbg.my = floorf((f32)in->mouse_y / s);
-    h->dbg.lmb = in->mouse_pressed[MOUSE_LEFT];
-    h->dbg.down = in->mouse_down[MOUSE_LEFT];
-    h->dbg.over = false;
-    h->dbg.id = 0;
-    if (!h->dbg.down) h->dbg.slider = -1;
+    f32 s = ui_scale();
+    f->mx = floorf((f32)in->mouse_x / s);
+    f->my = floorf((f32)in->mouse_y / s);
+    f->lmb = in->mouse_pressed[MOUSE_LEFT];
+    f->down = in->mouse_down[MOUSE_LEFT];
+    f->over = false;
+    f->id = 0;
+    if (!f->down) f->slider = -1;
+}
 
-    // Кнопка в углу
-    bool hot = inside(h->dbg.mx, h->dbg.my, 8, 8, DBG_BTN_W, 13);
-    button(8, 8, DBG_BTN_W, 13, "\xee\x80\x82", "НАСТРОЙКИ", h->dbg.open, hot);
-    if (hot) {
-        h->dbg.over = true;
-        if (h->dbg.lmb) {
-            h->dbg.open = !h->dbg.open;
-            h->dbg.lmb = false;
-        }
-    }
-    // Счётчик кадров сверху по центру
-    if (h->dbg.fps_on) {
-        char buf[32];
-        snprintf(buf, sizeof buf, "%.0f К/С  %.2f МС", (f64)h->dbg.fps, (f64)h->dbg.fps_ms);
-        f32 w = ui_text_width(buf) + 12, x = floorf((sw - w) * 0.5f);
-        inset(x, 8, w, 13);
-        ui_text(x + 6, 11, C_TEXT, buf);
-    }
-    if (!h->dbg.open) return false;
-
-    // Окно тянут за шапку
-    if (h->dbg.drag) {
-        if (h->dbg.down) {
-            h->dbg.x = h->dbg.mx - h->dbg.grab_x;
-            h->dbg.y = h->dbg.my - h->dbg.grab_y;
+// Открытое окно: тянут за шапку, закрывают крестом. false — закрыли
+static bool form_window(HudForm *f, const char *title, const char *right)
+{
+    if (f->drag) {
+        if (f->down) {
+            f->x = f->mx - f->grab_x;
+            f->y = f->my - f->grab_y;
         } else {
-            h->dbg.drag = false;
+            f->drag = false;
         }
-        h->dbg.over = true;
+        f->over = true;
     }
-    win_place(&h->dbg.x, &h->dbg.y, DBG_W, h->dbg.h, sw, sh);
-    f32 x = h->dbg.x, y = h->dbg.y;
-    if (inside(h->dbg.mx, h->dbg.my, x, y, DBG_W, h->dbg.h)) {
-        h->dbg.over = true;
-        bool close = inside(h->dbg.mx, h->dbg.my, x + DBG_W - 13, y + 3, 10, 10);
-        if (h->dbg.lmb && close) {
-            h->dbg.open = false;
-            h->dbg.lmb = false;
+    win_place(&f->x, &f->y, f->w, f->h, ui_width(), ui_height());
+    f32 x = f->x, y = f->y;
+    bool close = inside(f->mx, f->my, x + f->w - 13, y + 3, 10, 10);
+    if (inside(f->mx, f->my, x, y, f->w, f->h)) {
+        f->over = true;
+        if (f->lmb && close) {
+            f->open = false;
+            f->lmb = false;
             return false;
         }
-        if (h->dbg.lmb && h->dbg.my < y + WIN_HEAD_H) {
-            h->dbg.drag = true;
-            h->dbg.grab_x = h->dbg.mx - x;
-            h->dbg.grab_y = h->dbg.my - y;
-            h->dbg.lmb = false;
+        if (f->lmb && f->my < y + WIN_HEAD_H) {
+            f->drag = true;
+            f->grab_x = f->mx - x;
+            f->grab_y = f->my - y;
+            f->lmb = false;
         }
     }
-    panel(x, y, DBG_W, h->dbg.h, "НАСТРОЙКИ", "ОТЛАДКА");
-    ui_text(x + DBG_W - 12, y + 5, inside(h->dbg.mx, h->dbg.my, x + DBG_W - 13, y + 3, 10, 10) ? C_BAD : C_DIM, "x");
-    h->dbg.row = y + 20;
+    panel(x, y, f->w, f->h, title, right);
+    ui_text(x + f->w - 12, y + 5, close ? C_BAD : C_DIM, "x");
+    f->row = y + 20;
     return true;
 }
 
-// Строка виджета: прямоугольник строки и горячая ли она
-static bool dbg_row(Hud *h, f32 *x, f32 *y)
+bool hud_form_begin(HudForm *f, const Input *in, const char *title, const char *right)
 {
-    *x = h->dbg.x + 8;
-    *y = h->dbg.row;
-    h->dbg.row += DBG_ROW;
-    h->dbg.id++;
-    return inside(h->dbg.mx, h->dbg.my, *x - 2, *y - 2, DBG_W - 12, DBG_ROW);
+    form_input(f, in);
+    return f->open && form_window(f, title, right);
 }
 
-bool hud_debug_check(Hud *h, const char *label, bool *v)
+// Строка виджета: прямоугольник строки и горячая ли она
+static bool form_row(HudForm *f, f32 *x, f32 *y)
+{
+    *x = f->x + 8;
+    *y = f->row;
+    f->row += DBG_ROW;
+    f->id++;
+    return inside(f->mx, f->my, *x - 2, *y - 2, f->w - 12, DBG_ROW);
+}
+
+bool hud_form_check(HudForm *f, const char *label, bool *v)
 {
     f32 x, y;
-    bool hot = dbg_row(h, &x, &y);
+    bool hot = form_row(f, &x, &y);
     inset(x, y, 10, 10);
     if (*v) ui_rect(x + 2, y + 2, 6, 6, C_ACCENT);
     ui_text(x + 16, y + 2, hot ? C_TEXT : C_DIM, label);
-    if (hot && h->dbg.lmb) {
+    if (hot && f->lmb) {
         *v = !*v;
-        h->dbg.lmb = false;
+        f->lmb = false;
         return true;
     }
     return false;
 }
 
-bool hud_debug_button(Hud *h, const char *label)
+bool hud_form_button(HudForm *f, const char *label)
 {
     f32 x, y;
-    bool hot = dbg_row(h, &x, &y);
-    button(x, y - 1, DBG_W - 16, 12, NULL, label, false, hot);
-    if (hot && h->dbg.lmb) {
-        h->dbg.lmb = false;
+    bool hot = form_row(f, &x, &y);
+    button(x, y - 1, f->w - 16, 12, NULL, label, false, hot);
+    if (hot && f->lmb) {
+        f->lmb = false;
         return true;
     }
     return false;
 }
 
-bool hud_debug_slider(Hud *h, const char *label, f32 *v, f32 lo, f32 hi, const char *value)
+bool hud_form_slider(HudForm *f, const char *label, f32 *v, f32 lo, f32 hi, const char *value)
 {
     f32 x, y;
-    bool hot = dbg_row(h, &x, &y);
-    const f32 tx = x + 84, tw = DBG_W - 16 - 84 - 34;
-    ui_text(x, y + 2, hot || h->dbg.slider == h->dbg.id ? C_TEXT : C_DIM, label);
-    if (hot && h->dbg.lmb && inside(h->dbg.mx, h->dbg.my, tx - 3, y - 2, tw + 6, DBG_ROW)) {
-        h->dbg.slider = h->dbg.id;
-        h->dbg.lmb = false;
+    bool hot = form_row(f, &x, &y);
+    const f32 tx = x + 84, tw = f->w - 16 - 84 - 34;
+    ui_text(x, y + 2, hot || f->slider == f->id ? C_TEXT : C_DIM, label);
+    if (hot && f->lmb && inside(f->mx, f->my, tx - 3, y - 2, tw + 6, DBG_ROW)) {
+        f->slider = f->id;
+        f->lmb = false;
     }
     bool changed = false;
-    if (h->dbg.slider == h->dbg.id) {
-        f32 nv = lo + clampf((h->dbg.mx - tx) / tw, 0.0f, 1.0f) * (hi - lo);
+    if (f->slider == f->id) {
+        f32 nv = lo + clampf((f->mx - tx) / tw, 0.0f, 1.0f) * (hi - lo);
         changed = nv != *v;
         *v = nv;
     }
     f32 r = clampf((*v - lo) / (hi - lo), 0.0f, 1.0f);
     inset(tx, y + 4, tw, 3);
     ui_rect(tx + 1, y + 5, floorf((tw - 2) * r), 1, C_ACCENT);
-    ui_rect(floorf(tx + (tw - 3) * r), y + 1, 3, 9, h->dbg.slider == h->dbg.id ? C_ACCENT : C_TEXT);
-    text_right(x + DBG_W - 16, y + 2, C_DIM, value);
+    ui_rect(floorf(tx + (tw - 3) * r), y + 1, 3, 9, f->slider == f->id ? C_ACCENT : C_TEXT);
+    text_right(x + f->w - 16, y + 2, C_DIM, value);
     return changed;
 }
 
-void hud_debug_text(Hud *h, const char *label, const char *value)
+void hud_form_text(HudForm *f, const char *label, const char *value)
 {
     f32 x, y;
-    dbg_row(h, &x, &y);
+    form_row(f, &x, &y);
     ui_text(x, y + 2, C_FAINT, label);
-    text_right(x + DBG_W - 16, y + 2, C_DIM, value);
+    text_right(x + f->w - 16, y + 2, C_DIM, value);
 }
+
+i32 hud_form_step(HudForm *f, const char *label, const char *value)
+{
+    f32 x, y;
+    bool hot = form_row(f, &x, &y);
+    const f32 tx = x + 84, tw = f->w - 16 - 84;
+    bool hl = hot && inside(f->mx, f->my, tx - 2, y - 2, 12, DBG_ROW);
+    bool hr = hot && inside(f->mx, f->my, tx + tw - 10, y - 2, 12, DBG_ROW);
+    ui_text(x, y + 2, hot ? C_TEXT : C_DIM, label);
+    inset(tx, y, tw, 11);
+    ui_text(tx + 2, y + 2, hl ? C_ACCENT : C_DIM, "<");
+    ui_text(tx + tw - 7, y + 2, hr ? C_ACCENT : C_DIM, ">");
+    ui_text(floorf(tx + (tw - ui_text_width(value)) * 0.5f), y + 2, C_TEXT, value);
+    if (!hot || !f->lmb || !inside(f->mx, f->my, tx - 2, y - 2, tw + 4, DBG_ROW)) return 0;
+    f->lmb = false;
+    // Слева от середины — назад, справа — вперёд
+    return f->mx < tx + tw * 0.5f ? -1 : 1;
+}
+
+void hud_form_head(HudForm *f, const char *label)
+{
+    f32 x = f->x + 8, y = f->row + 3;
+    f->row += DBG_ROW + 2;
+    f32 tx = ui_text(x, y, C_ACCENT, label);
+    ui_rect(tx + 5, y + 3, f->x + f->w - 8 - tx - 5, 1, darker(C_BRACKET, 0.7f));
+}
+
+void hud_form_swatch(HudForm *f, u32 rgba)
+{
+    f32 x = f->x + f->w - 8 - 24, y = f->row - DBG_ROW;
+    inset(x, y, 24, 11);
+    ui_rect(x + 2, y + 2, 20, 7, rgba);
+}
+
+void hud_form_portrait(HudForm *f, u32 slot, i32 px)
+{
+    f32 x = floorf(f->x + (f->w - (f32)px) * 0.5f), y = f->row;
+    portrait(x, y, (f32)px, slot, px);
+    f->row += (f32)px + 6;
+}
+
+bool hud_form_end(HudForm *f)
+{
+    if (f->open) f->h = f->row - f->y + 4;
+    return f->over || f->slider >= 0;
+}
+
+// Отладочное меню: кнопка в углу, счётчик кадров, окно НАСТРОЙКИ
+bool hud_debug_begin(Hud *h, const Input *in)
+{
+    HudForm *f = &h->dbg.f;
+    form_input(f, in);
+    bool hot = inside(f->mx, f->my, 8, 8, DBG_BTN_W, 13);
+    button(8, 8, DBG_BTN_W, 13, "\xee\x80\x82", "НАСТРОЙКИ", f->open, hot);
+    if (hot) {
+        f->over = true;
+        if (f->lmb) {
+            f->open = !f->open;
+            f->lmb = false;
+        }
+    }
+    if (h->dbg.fps_on) {
+        char buf[32];
+        snprintf(buf, sizeof buf, "%.0f К/С  %.2f МС", (f64)h->dbg.fps, (f64)h->dbg.fps_ms);
+        f32 w = ui_text_width(buf) + 12, x = floorf((ui_width() - w) * 0.5f);
+        inset(x, 8, w, 13);
+        ui_text(x + 6, 11, C_TEXT, buf);
+    }
+    return f->open && form_window(f, "НАСТРОЙКИ", "ОТЛАДКА");
+}
+
+bool hud_debug_check(Hud *h, const char *label, bool *v) { return hud_form_check(&h->dbg.f, label, v); }
+bool hud_debug_button(Hud *h, const char *label) { return hud_form_button(&h->dbg.f, label); }
+bool hud_debug_slider(Hud *h, const char *label, f32 *v, f32 lo, f32 hi, const char *value)
+{
+    return hud_form_slider(&h->dbg.f, label, v, lo, hi, value);
+}
+void hud_debug_text(Hud *h, const char *label, const char *value) { hud_form_text(&h->dbg.f, label, value); }
 
 #define JOURNAL_W 380
 
@@ -1321,8 +1392,9 @@ static const char *utf8_skip(const char *s, u32 n)
 // Журнал справа от меню: всё, что раньше шло в консоль, новые строки внизу, длинные переносятся
 static void draw_journal(Hud *h)
 {
-    f32 x = h->dbg.x + DBG_W + 6, y = h->dbg.y, jh = fmaxf(h->dbg.h, 320);
-    if (inside(h->dbg.mx, h->dbg.my, x, y, JOURNAL_W, jh)) h->dbg.over = true;
+    HudForm *f = &h->dbg.f;
+    f32 x = f->x + f->w + 6, y = f->y, jh = fmaxf(f->h, 320);
+    if (inside(f->mx, f->my, x, y, JOURNAL_W, jh)) f->over = true;
     panel(x, y, JOURNAL_W, jh, "ЖУРНАЛ", NULL);
     const f32 lh = ui_line();
     const u32 cpl = (u32)((JOURNAL_W - 16) / ui_advance()), rows = (u32)((jh - 24) / lh);
@@ -1342,9 +1414,9 @@ static void draw_journal(Hud *h)
 
 bool hud_debug_end(Hud *h)
 {
-    if (h->dbg.open) {
-        h->dbg.h = h->dbg.row - h->dbg.y + 4;
-        if (h->dbg.journal) draw_journal(h);
+    if (h->dbg.f.open && h->dbg.journal) {
+        h->dbg.f.h = h->dbg.f.row - h->dbg.f.y + 4;
+        draw_journal(h);
     }
-    return h->dbg.over || h->dbg.slider >= 0;
+    return hud_form_end(&h->dbg.f);
 }
