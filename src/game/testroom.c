@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "arena.h"
-#include "character.h"
+#include "anim.h"
 #include "look.h"
 #include "names.h"
 #include "squad.h"
@@ -272,6 +272,7 @@ void crowd_init(Crowd *c, Rng *rng, u32 count)
         c->body[i].gait = GAIT_WALK;
         c->home[i] = c->body[i].pos;
         c->home_h[i] = c->body[i].heading;
+        c->gear_seed[i] = i * 131u + 9u;
         c->wait[i] = rng_range(rng, 0.0f, 3.0f);
         c->seed[i] = rng_range(rng, 0, 100.0f);
         c->variant[i] = (u8)(i % 4);
@@ -317,6 +318,7 @@ void crowd_init_still(Crowd *c, const V3 *pos, const f32 *heading, const f32 *se
         c->torch[i] = i % 5 == 1;
         c->home[i] = p;
         c->home_h[i] = heading[i];
+        c->gear_seed[i] = 7000u + i;
     }
 }
 

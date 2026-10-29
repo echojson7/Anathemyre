@@ -225,7 +225,7 @@ M4 arena_view_look(const ArenaSession *s, u32 ri)
     return look_matrix(&lk, kind);
 }
 
-u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const GpuMesh *body, u32 variants,
+u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const GpuMesh *body, const GpuMesh *gear, u32 variants,
                     const GpuMesh *weapons, M4 *bones, DrawItem *items)
 {
     const CombatWorld *w = &s->w;
@@ -243,6 +243,9 @@ u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const G
             character_pose(&p, &act, b);
             b[RENDER_LOOK_SLOT] = arena_view_look(s, ri);
             items[n++] = (DrawItem){ .mesh = &body[ri % variants], .bones = b };
+            u8 worn[GEAR_MAX_WORN];
+            u32 nw = gear_from_armor(s->roster[ri].d.armor, worn);
+            for (u32 g = 0; g < nw; g++) items[n++] = (DrawItem){ .mesh = &gear[(ri % variants) * GEAR_COUNT + worn[g]], .bones = b };
             if (dropped) {
                 M4 *wb = &bones[(set++) * RENDER_MAX_BONES];
                 weapon_ground_pose(dp, dyaw, wb);

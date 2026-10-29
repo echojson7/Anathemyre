@@ -14,6 +14,7 @@
 typedef struct Crowd {
     u32    count;
     u32    look_base;               // зерно внешности: у разных толп разные лица
+    u32    gear_seed[TR_MAX_CHARS]; // зерно одежды (gear_random)
     Player body[TR_MAX_CHARS];
     CharSheet sheet[TR_MAX_CHARS];
     f32    wait[TR_MAX_CHARS];

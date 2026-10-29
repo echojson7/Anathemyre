@@ -299,6 +299,21 @@ void platform_set_vsync(bool on)
     if (f) f(g_x.dpy, g_x.win, on ? 1 : 0);
 }
 
+void platform_set_fullscreen(bool on)
+{
+    // Просьба оконному менеджеру (EWMH): _NET_WM_STATE_FULLSCREEN
+    XEvent e = { 0 };
+    e.xclient.type = ClientMessage;
+    e.xclient.window = g_x.win;
+    e.xclient.message_type = XInternAtom(g_x.dpy, "_NET_WM_STATE", False);
+    e.xclient.format = 32;
+    e.xclient.data.l[0] = on ? 1 : 0;
+    e.xclient.data.l[1] = (long)XInternAtom(g_x.dpy, "_NET_WM_STATE_FULLSCREEN", False);
+    e.xclient.data.l[3] = 1;
+    XSendEvent(g_x.dpy, DefaultRootWindow(g_x.dpy), False, SubstructureRedirectMask | SubstructureNotifyMask, &e);
+    XFlush(g_x.dpy);
+}
+
 void platform_window_size(i32 *w, i32 *h)
 {
     *w = g_x.width;

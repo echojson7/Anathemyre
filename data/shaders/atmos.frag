@@ -2,26 +2,17 @@
 
 in vec2 v_uv;
 
-layout(location = 30) uniform mat4 u_inv_vp;
-layout(location = 31) uniform vec3 u_cam;
 layout(location = 32) uniform vec3 u_sun_dir;
 layout(location = 33) uniform vec3 u_sun_color;
 layout(location = 35) uniform float u_time;
-layout(location = 36) uniform int u_frame;
-layout(location = 37) uniform float u_proj_scale;
 layout(location = 38) uniform vec3 u_haze;
 layout(location = 39) uniform vec3 u_zenith;
 layout(binding = 0) uniform sampler2D u_color;
-layout(binding = 1) uniform sampler2D u_depth;
 layout(binding = 3) uniform sampler2D u_rays;   // rays.frag, половинное разрешение
+layout(binding = 4) uniform sampler2D u_ao;     // ao.frag, половинное разрешение
+layout(location = 47) uniform int u_ao_half;    // 1 — AO из половинного разрешения
 
 out vec4 o_color;
-
-vec3 world_at(vec2 uv, float d)
-{
-    vec4 w = u_inv_vp * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
-    return w.xyz / w.w;
-}
 
 vec3 sky(vec3 dir)
 {
@@ -63,27 +54,14 @@ float rays_at(vec2 uv, float march)
     return sum / max(wsum, 1e-6);
 }
 
-float ambient_occlusion(vec2 uv, vec3 P, float view_dist)
+// AO из половинного разрешения (ao.frag): из четырёх соседей берём близких по дальности, два чтения gather
+float ao_at(vec2 uv, float dist)
 {
-    vec3 N = normalize(cross(dFdx(P), dFdy(P)));
-    if (dot(N, u_cam - P) < 0.0) N = -N;
-    vec2 res = vec2(textureSize(u_depth, 0));
-    float radius_px = clamp(0.9 * u_proj_scale / max(view_dist, 0.1), 2.0, 40.0);
-    float rnd = ign(gl_FragCoord.xy, u_frame) * 6.2831;
-    float occ = 0.0;
-    const int N_SAMPLES = 8;
-    for (int i = 0; i < N_SAMPLES; i++) {
-        float a = rnd + float(i) * 2.399963;
-        float r = radius_px * sqrt((float(i) + 0.5) / float(N_SAMPLES));
-        vec2 suv = uv + vec2(cos(a), sin(a)) * r / res;
-        float d = texture(u_depth, suv).r;
-        vec3 S = world_at(suv, d);
-        vec3 v = S - P;
-        float l2 = dot(v, v);
-        float o = max(dot(v, N) * inversesqrt(l2 + 1e-4) - 0.1, 0.0);
-        occ += o * (1.0 - smoothstep(0.5, 1.4, l2));
-    }
-    return clamp(1.0 - occ / float(N_SAMPLES) * 1.6, 0.0, 1.0);
+    vec2 t = fract(uv * vec2(textureSize(u_ao, 0)) - 0.5);
+    vec4 ao = textureGather(u_ao, uv, 0), dd = textureGather(u_ao, uv, 1);  // порядок: (0,1) (1,1) (1,0) (0,0)
+    vec4 wb = vec4((1.0 - t.x) * t.y, t.x * t.y, t.x * (1.0 - t.y), (1.0 - t.x) * (1.0 - t.y));
+    vec4 w = wb / (0.02 + abs(dd - dist) / dist);
+    return dot(ao, w) / max(dot(w, vec4(1.0)), 1e-6);
 }
 
 // Свечение пыли вокруг факелов и фонарей: свет, рассеянный вдоль луча взгляда до поверхности.
@@ -121,7 +99,7 @@ void main()
         dist = 4000.0;
         col = sky(dir);
     } else {
-        col = texture(u_color, uv).rgb * ambient_occlusion(uv, P, dist);
+        col = texture(u_color, uv).rgb * (u_ao_half != 0 ? ao_at(uv, dist) : ambient_occlusion(uv, P, dist));
     }
 
     // Высотный туман: плотнее у земли

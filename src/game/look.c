@@ -2,6 +2,48 @@
 
 const char *const g_body_file[BODY_KIND_COUNT] = { "mh_male", "mh_female", "mh_thin" };
 
+const char *const g_gear_file[GEAR_COUNT] = {
+    "rags", "quilt", "jacket", "plate", "bucket", "greaves", "wrap", "boots", "mitts", "pack", "belt",
+};
+
+static const u8 g_armor_gear[A_COUNT] = {
+    [A_RAGS] = GEAR_RAGS, [A_JACKET] = GEAR_JACKET, [A_QUILT] = GEAR_QUILT,
+    [A_PLATE] = GEAR_PLATE, [A_BUCKET] = GEAR_BUCKET, [A_GREAVES] = GEAR_GREAVES,
+};
+
+u32 gear_from_armor(const u8 *armor, u8 *out)
+{
+    u32 n = 0;
+    for (u32 s = 0; s < SLOT_COUNT; s++)
+        if (armor[s] < A_COUNT) out[n++] = g_armor_gear[armor[s]];
+    return n;
+}
+
+u32 gear_from_sheet(const CharSheet *cs, u8 *out)
+{
+    u32 n = 0;
+    for (u32 s = 0; s < SLOT_COUNT; s++) {
+        const Item *it = &cs->equip[s];
+        if (it->kind == IK_ARMOR && it->id < A_COUNT) out[n++] = g_armor_gear[it->id];
+        else if (it->kind == IK_GOODS && it->id >= G_WRAP && it->id <= G_BELT) out[n++] = (u8)(GEAR_WRAP + (it->id - G_WRAP));
+    }
+    return n;
+}
+
+static f32 hash01(u32 *s);
+
+u32 gear_random(u32 seed, u8 *out)
+{
+    u32 s = seed * 2246822519u + 5u, n = 0;
+    f32 t = hash01(&s);
+    out[n++] = t < 0.45f ? GEAR_RAGS : t < 0.75f ? GEAR_QUILT : GEAR_JACKET;
+    if (hash01(&s) < 0.5f) out[n++] = GEAR_WRAP;
+    if (hash01(&s) < 0.75f) out[n++] = GEAR_BOOTS;
+    if (hash01(&s) < 0.25f) out[n++] = GEAR_PACK;
+    if (hash01(&s) < 0.4f) out[n++] = GEAR_BELT;
+    return n;
+}
+
 // Цвета, запечённые в сетках (PEOPLE в tools/humanconv): оттенок экземпляра — отношение к ним
 static const V3 g_base_skin[BODY_KIND_COUNT] = { { 0.52f, 0.37f, 0.28f }, { 0.60f, 0.45f, 0.36f }, { 0.38f, 0.26f, 0.19f } };
 static const V3 g_base_hair[BODY_KIND_COUNT] = { { 0.10f, 0.08f, 0.06f }, { 0.20f, 0.13f, 0.08f }, { 0.07f, 0.06f, 0.05f } };
@@ -61,3 +103,4 @@ M4 look_matrix(const CharLook *l, u32 body)
     m.m[14] = l->hair.z / bh.z - 1.0f;
     return m;
 }
+_Static_assert(GEAR_BELT - GEAR_WRAP == G_BELT - G_WRAP, "вещи G_WRAP..G_BELT идут подряд, как GEAR_WRAP..GEAR_BELT");
