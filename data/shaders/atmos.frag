@@ -6,7 +6,6 @@ layout(location = 30) uniform mat4 u_inv_vp;
 layout(location = 31) uniform vec3 u_cam;
 layout(location = 32) uniform vec3 u_sun_dir;
 layout(location = 33) uniform vec3 u_sun_color;
-layout(location = 34) uniform mat4 u_light_vp;
 layout(location = 35) uniform float u_time;
 layout(location = 36) uniform int u_frame;
 layout(location = 37) uniform float u_proj_scale;
@@ -14,7 +13,7 @@ layout(location = 38) uniform vec3 u_haze;
 layout(location = 39) uniform vec3 u_zenith;
 layout(binding = 0) uniform sampler2D u_color;
 layout(binding = 1) uniform sampler2D u_depth;
-layout(binding = 2) uniform sampler2DShadow u_shadow;
+layout(binding = 3) uniform sampler2D u_rays;   // rays.frag, половинное разрешение
 
 out vec4 o_color;
 
@@ -44,12 +43,24 @@ vec3 sky(vec3 dir)
     return c;
 }
 
-float light_vis(vec3 p)
+// Объёмный свет из половинного разрешения: из четырёх соседей берём близких по глубине,
+// чтобы лучи не перетекали через края фигур
+float rays_at(vec2 uv, float march)
 {
-    vec4 lp = u_light_vp * vec4(p, 1.0);
-    vec3 s = lp.xyz / lp.w * 0.5 + 0.5;
-    if (any(lessThan(s, vec3(0.0))) || any(greaterThan(s, vec3(1.0)))) return 1.0;
-    return texture(u_shadow, vec3(s.xy, s.z - 0.002));
+    vec2 f = uv * vec2(textureSize(u_rays, 0)) - 0.5;
+    ivec2 i0 = ivec2(floor(f));
+    vec2 t = fract(f);
+    ivec2 hi = textureSize(u_rays, 0) - 1;
+    float sum = 0.0, wsum = 0.0;
+    for (int k = 0; k < 4; k++) {
+        ivec2 o = ivec2(k & 1, k >> 1);
+        vec2 r = texelFetch(u_rays, clamp(i0 + o, ivec2(0), hi), 0).rg;
+        float wb = (o.x == 1 ? t.x : 1.0 - t.x) * (o.y == 1 ? t.y : 1.0 - t.y);
+        float wd = 1.0 / (0.02 + abs(r.g - march) / march);
+        sum += r.r * wb * wd;
+        wsum += wb * wd;
+    }
+    return sum / max(wsum, 1e-6);
 }
 
 float ambient_occlusion(vec2 uv, vec3 P, float view_dist)
@@ -106,19 +117,8 @@ void main()
     if (!is_sky) col = col * T + fog_col * (1.0 - T);
     else col = mix(col, fog_col, clamp(1.0 - T, 0.0, 0.6) * smoothstep(0.3, 0.0, dir.y));
 
-    // Объёмный свет: шагаем по лучу в теневой карте
-    const int STEPS = 24;
-    float march = min(dist, 110.0);
-    float step_len = march / float(STEPS);
-    float jitter = ign(gl_FragCoord.xy, u_frame);
-    float lit = 0.0;
-    for (int i = 0; i < STEPS; i++) {
-        float t = (float(i) + jitter) * step_len;
-        vec3 p = u_cam + dir * t;
-        float dens = 0.7 + 0.6 * noise3(p * 0.15 + vec3(u_time * 0.2, 0.0, u_time * 0.1));
-        lit += light_vis(p) * dens * exp(-t * 0.012);
-    }
-    lit *= step_len;
+    // Объёмный свет
+    float lit = rays_at(uv, min(dist, 110.0));
     float mu = dot(dir, u_sun_dir);
     float g = 0.55;
     float phase = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5) * 0.08;

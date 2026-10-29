@@ -74,10 +74,10 @@ typedef struct Target {
 static struct {
     Arena *scratch;
     char   data_dir[512];
-    u32    prog_scene, prog_shadow, prog_atmos, prog_style, prog_upscale;
+    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale;
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
-    Target scene, atmos, ldr;
+    Target scene, rays, atmos, ldr;
     Target portrait;  // атлас портретов: ячейки RENDER_PORTRAIT_PX в ряд, HDR
     u32    prog_figure;
     Target figs;      // атлас спрайтов персонажей: FIG_COLS ячеек FIG_CELL в ряд, HDR и глубина
@@ -183,6 +183,7 @@ bool render_reload_shaders(void)
     const char *scene_fs[] = { "common.glsl", "scene.frag" };
     const char *shadow_fs[] = { "shadow.frag" };
     const char *full_vs[] = { "fullscreen.vert" };
+    const char *rays_fs[] = { "common.glsl", "rays.frag" };
     const char *atmos_fs[] = { "common.glsl", "atmos.frag" };
     const char *style_fs[] = { "common.glsl", "style.frag" };
     const char *upscale_fs[] = { "upscale.frag" };
@@ -192,14 +193,16 @@ bool render_reload_shaders(void)
     u32 scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, scene_fs, 2));
     u32 shadow = link(compile(GL_VERTEX_SHADER, "#define SHADOW_PASS\n", scene_vs, 1),
                       compile(GL_FRAGMENT_SHADER, NULL, shadow_fs, 1));
+    u32 rays = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, rays_fs, 2));
     u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 2));
     u32 style = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, style_fs, 2));
     u32 upscale = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, upscale_fs, 1));
     u32 figure = link(compile(GL_VERTEX_SHADER, NULL, figure_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, figure_fs, 1));
     R.scratch->used = mark;
 
-    u32 progs[] = { scene, shadow, atmos, style, upscale, figure };
-    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_atmos, &R.prog_style, &R.prog_upscale, &R.prog_figure };
+    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, figure };
+    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style, &R.prog_upscale,
+                     &R.prog_figure };
     bool ok = true;
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) {
@@ -300,6 +303,7 @@ bool render_init(Arena *scratch, const char *data_dir)
 void render_shutdown(void)
 {
     target_free(&R.scene);
+    target_free(&R.rays);
     target_free(&R.atmos);
     target_free(&R.ldr);
     target_free(&R.portrait);
@@ -313,7 +317,7 @@ void render_shutdown(void)
     }
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
-    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_atmos, R.prog_style, R.prog_upscale, R.prog_figure };
+    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style, R.prog_upscale, R.prog_figure };
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
         if (progs[i]) glDeleteProgram(progs[i]);
     memset(&R, 0, sizeof R);
@@ -664,6 +668,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     i32 iw = (i32)((f32)ih * (f32)win_w / (f32)win_h + 0.5f);
     if (R.scene.w != iw || R.scene.h != ih) {
         target_make(&R.scene, iw, ih, GL_RGBA16F, true);
+        target_make(&R.rays, (iw + 1) / 2, (ih + 1) / 2, GL_RG16F, false);
         target_make(&R.atmos, iw, ih, GL_RGBA16F, false);
         target_make(&R.ldr, iw, ih, GL_RGBA8, false);
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -777,18 +782,30 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     }
     if (timing) mark(2);
 
-    // 3. Атмосфера: небо, туман, объёмный свет, AO
+    // 3. Атмосфера. Сначала объёмный свет в половинном разрешении, затем небо, туман и AO
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
     glBindVertexArray(R.empty_vao);
-    glBindFramebuffer(GL_FRAMEBUFFER, R.atmos.fbo);
-    glUseProgram(R.prog_atmos);
     M4 inv_vp = m4_inverse(vp);
+    glBindFramebuffer(GL_FRAMEBUFFER, R.rays.fbo);
+    glViewport(0, 0, R.rays.w, R.rays.h);
+    glUseProgram(R.prog_rays);
+    glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
+    glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
+    glUniformMatrix4fv(U_A_LIGHT_VP, 1, GL_FALSE, light_vp.m);
+    glUniform1f(U_A_TIME, fv->time);
+    glUniform1i(U_A_FRAME, (GLint)fv->frame);
+    glBindTextureUnit(1, R.scene.depth);
+    glBindTextureUnit(2, R.shadow_tex);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, R.atmos.fbo);
+    glViewport(0, 0, iw, ih);
+    glUseProgram(R.prog_atmos);
     glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
     glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
     glUniform3f(U_A_SUN_DIR, L.x, L.y, L.z);
     glUniform3f(U_A_SUN_COLOR, fv->sun_color.x, fv->sun_color.y, fv->sun_color.z);
-    glUniformMatrix4fv(U_A_LIGHT_VP, 1, GL_FALSE, light_vp.m);
     glUniform1f(U_A_TIME, fv->time);
     glUniform1i(U_A_FRAME, (GLint)fv->frame);
     glUniform1f(U_A_PROJ_SCALE, fv->proj.m[5] * 0.5f * (f32)ih);
@@ -796,7 +813,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform3f(U_A_ZENITH, fv->zenith.x, fv->zenith.y, fv->zenith.z);
     glBindTextureUnit(0, R.scene.color);
     glBindTextureUnit(1, R.scene.depth);
-    glBindTextureUnit(2, R.shadow_tex);
+    glBindTextureUnit(3, R.rays.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (timing) mark(3);
 
