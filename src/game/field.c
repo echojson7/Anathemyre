@@ -136,7 +136,7 @@ static void wake(Field *f, u32 i)
     f->calm[i] = 0.0f;
     p->ctrl = CTRL_FIGHT;
     p->speed = 0.0f;
-    f->fights++;
+    f->fights++;  // до пересчёта в конце тика
 }
 
 // Слот засыпает: раны в лист, тело снова у ходьбы
@@ -161,7 +161,6 @@ static void sleep_slot(Field *f, u32 i, GroundFn ground)
     }
     f->leave[i] = 0;
     f->calm[i] = 0.0f;
-    f->fights--;
 }
 
 // Ближайший враг слота i в радиусе r. any: и спящие тоже; иначе только те, кто в бою
@@ -240,6 +239,8 @@ static void rules_tick(Field *f, GroundFn ground)
             order_done(f, i, (u32)o);
             o = -1;
         }
+        // Пока есть приказ, вражда не забывается: погоня может быть долгой
+        if (o >= 0) active |= 1u << w->team[i] | 1u << w->team[o];
         if (w->idle[i]) {
             if (o >= 0) {
                 f32 d = dist(w, i, (u32)o);
@@ -292,6 +293,9 @@ static void rules_tick(Field *f, GroundFn ground)
         if (foe_near && !fs_out(s)) active |= 1u << w->team[i];
         if (o < 0 && f->calm[i] >= CALM_S && (free || s == FS_SURRENDER)) sleep_slot(f, i, ground);
     }
+    // Бою есть что считать, пока кто-то не спит и жив: без сознания тоже приходит в себя в бою
+    f->fights = 0;
+    for (u32 i = 0; i < w->count; i++) f->fights += !w->idle[i] && w->state[i] != FS_DEAD;
     // Вражда забывается, когда команда долго не дерётся
     for (u32 t = 0; t < COMBAT_MAX_TEAMS; t++) {
         if (active & (1u << t)) {
