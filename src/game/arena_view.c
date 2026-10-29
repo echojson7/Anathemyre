@@ -173,29 +173,7 @@ void arena_view_init(ArenaView *v, V3 center, f32 floor_y)
 static void bout_started(ArenaView *v, const ArenaSession *s)
 {
     const CombatWorld *w = &s->w;
-    for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) {
-        v->prev_x[i] = w->x[i];
-        v->prev_z[i] = w->z[i];
-        v->prev_h[i] = w->heading[i];
-        v->phase[i] = hashf(i * 17u + s->bout);
-        v->walk[i] = v->move_dir[i] = 0.0f;
-        v->guard[i] = v->block[i] = v->dodge[i] = v->stagger[i] = 0.0f;
-        v->down[i] = v->kneel[i] = v->limp[i] = v->crawl[i] = 0.0f;
-        v->down_dir[i] = 1.0f;
-        v->dropped[i] = false;
-    }
-}
-
-static f32 approach(f32 x, f32 target, f32 rate, f32 dt)
-{
-    return x + (target - x) * fminf(1.0f, rate * dt);
-}
-
-// Доля пройденного состояния с учётом времени между тиками
-static f32 state_progress(const CombatWorld *w, u32 i, f32 alpha)
-{
-    if (w->dur[i] <= 0.0f) return 1.0f;
-    return clampf(1.0f - (w->timer[i] - alpha * COMBAT_DT) / w->dur[i], 0.0f, 1.0f);
+    for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) fight_anim_reset(&v->fa[i], w, i, (f32)s->idx[i] * 13.7f + 3.0f);
 }
 
 void arena_view_update(ArenaView *v, ArenaSession *s, f32 dt)
@@ -210,11 +188,7 @@ void arena_view_update(ArenaView *v, ArenaSession *s, f32 dt)
             if (v->in_bout) bout_started(v, s);
             continue;
         }
-        for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) {
-            v->prev_x[i] = w->x[i];
-            v->prev_z[i] = w->z[i];
-            v->prev_h[i] = w->heading[i];
-        }
+        for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) fight_anim_pre_tick(&v->fa[i], w, i);
         if (arena_bout_tick(s)) {
             arena_bout_end(s);
             v->in_bout = false;
@@ -222,49 +196,8 @@ void arena_view_update(ArenaView *v, ArenaSession *s, f32 dt)
     }
     if (v->acc > COMBAT_DT) v->acc = COMBAT_DT;  // кадр слишком долгий: не догонять
     if (!v->in_bout) return;
-
     f32 alpha = v->acc / COMBAT_DT;
-    for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) {
-        u8 st = w->state[i];
-        // Шаг по смещению за тик
-        f32 vx = (w->x[i] - v->prev_x[i]) / COMBAT_DT, vz = (w->z[i] - v->prev_z[i]) / COMBAT_DT;
-        f32 speed = sqrtf(vx * vx + vz * vz);
-        bool moving = speed > 0.15f && !fs_lying(st);
-        v->walk[i] = approach(v->walk[i], moving ? clampf(speed / 1.4f, 0.4f, 1.0f) : 0.0f, 6.0f, dt);
-        if (speed > 0.15f) v->move_dir[i] = wrap_angle(atan2f(vx, vz) - w->heading[i]);
-        f32 stride = st == FS_CRAWL ? 0.5f : CHAR_STRIDE;
-        v->phase[i] += (moving || st == FS_CRAWL ? speed : 0.0f) * dt / stride;
-        v->phase[i] -= floorf(v->phase[i]);
-
-        bool armed = !w->disarmed[i];
-        bool fighting = st == FS_READY || st == FS_WINDUP || st == FS_STRIKE || st == FS_RECOVER || st == FS_BLOCK ||
-                        st == FS_DODGE || st == FS_STAGGER;
-        f32 guard_t = !armed ? 0.0f : (fighting ? 1.0f : (st == FS_RETREAT ? 0.6f : 0.0f));
-        if (w->halted && st == FS_READY) guard_t = 0.35f;  // бой окончен: оружие опущено
-        v->guard[i] = approach(v->guard[i], guard_t, 5.0f, dt);
-        v->block[i] = approach(v->block[i], st == FS_BLOCK ? 1.0f : 0.0f, 14.0f, dt);
-        v->dodge[i] = approach(v->dodge[i], st == FS_DODGE ? 1.0f : 0.0f, 10.0f, dt);
-        v->stagger[i] = approach(v->stagger[i], st == FS_STAGGER ? 1.0f : 0.0f, 10.0f, dt);
-        v->kneel[i] = approach(v->kneel[i], st == FS_SURRENDER ? 1.0f : 0.0f, 3.0f, dt);
-        v->limp[i] = approach(v->limp[i], st == FS_UNCONSCIOUS || st == FS_DEAD ? 1.0f : 0.0f, 4.0f, dt);
-        v->crawl[i] = approach(v->crawl[i], st == FS_CRAWL ? 1.0f : 0.0f, 4.0f, dt);
-
-        // Падение: направление выбирается в начале; ползут ничком
-        bool lying = st == FS_KNOCKED || st == FS_DOWN || st == FS_UNCONSCIOUS || st == FS_CRAWL || st == FS_DEAD;
-        if (lying && v->down[i] < 0.05f)
-            v->down_dir[i] = st == FS_KNOCKED ? 1.0f : (hashf(i * 131u + s->bout) < 0.5f ? 1.0f : -1.0f);
-        if (st == FS_CRAWL) v->down_dir[i] = -1.0f;
-        if (st == FS_GETUP) v->down[i] = 1.0f - state_progress(w, i, alpha);
-        else v->down[i] = approach(v->down[i], lying ? 1.0f : 0.0f, 5.0f, dt);
-
-        // Оружие выпадает из рук у выбывших и обезоруженных
-        if (!v->dropped[i] && (!armed || st == FS_UNCONSCIOUS || st == FS_DEAD || st == FS_SURRENDER)) {
-            v->dropped[i] = true;
-            f32 h = w->heading[i] + (hashf(i * 7u + s->bout) - 0.5f) * 1.5f;
-            v->drop_pos[i] = v3(w->x[i] + sinf(h) * 0.7f - cosf(h) * 0.3f, 0.0f, w->z[i] + cosf(h) * 0.7f + sinf(h) * 0.3f);
-            v->drop_yaw[i] = h + PI_F * 0.5f;
-        }
-    }
+    for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) fight_anim_update(&v->fa[i], w, i, alpha, dt);
 }
 
 M4 arena_view_look(const ArenaSession *s, u32 ri)
@@ -285,40 +218,21 @@ u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const G
     if (v->in_bout) {
         for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) {
             u32 ri = s->idx[i];
-            const FighterDesc *d = &s->roster[ri].d;
-            f32 x = lerpf(v->prev_x[i], w->x[i], alpha), z = lerpf(v->prev_z[i], w->z[i], alpha);
-            f32 h = v->prev_h[i] + wrap_angle(w->heading[i] - v->prev_h[i]) * alpha;
-            f32 seed = (f32)ri * 13.7f + 3.0f;
-            CharPose p = {
-                .pos = v3(v->center.x + x, v->floor_y, v->center.z + z), .heading = h,
-                .phase = v->phase[i], .walk = v->walk[i], .time = time, .seed = seed,
-                .height = d->height / 1.8f, .width = 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f),
-                .move_dir = v->move_dir[i],
-            };
-            u8 st = w->state[i];
-            f32 swing = 0.0f;
-            if (st == FS_WINDUP) swing = state_progress(w, i, alpha);
-            else if (st == FS_STRIKE) swing = 1.0f + state_progress(w, i, alpha);
-            else if (st == FS_RECOVER) swing = 2.0f + state_progress(w, i, alpha);
-            u8 wc = g_weapons[w->weapon[i]].wclass;
-            CharAction act = {
-                .guard = v->guard[i], .attack = w->attack[i], .swing = swing, .block = v->block[i],
-                .dodge = v->dodge[i], .stagger = v->stagger[i], .down = v->down[i], .down_dir = v->down_dir[i],
-                .kneel = v->kneel[i], .crawl = v->crawl[i], .limp = v->limp[i], .severed = w->severed[i],
-                .two_hand = wc == WC_POLEARM || wc == WC_HEAVY,
-            };
+            CharPose p;
+            CharAction act;
+            V3 dp;
+            f32 dyaw;
+            bool dropped = fight_anim_pose(&v->fa[i], w, i, alpha, v->center, v->floor_y, time, &p, &act, &dp, &dyaw);
             M4 *b = &bones[(set++) * RENDER_MAX_BONES];
             character_pose(&p, &act, b);
             b[RENDER_LOOK_SLOT] = arena_view_look(s, ri);
             items[n++] = (DrawItem){ .mesh = &body[ri % variants], .bones = b };
-            if (v->dropped[i]) {
+            if (dropped) {
                 M4 *wb = &bones[(set++) * RENDER_MAX_BONES];
-                V3 dp = v->drop_pos[i];
-                weapon_ground_pose(v3(v->center.x + dp.x, v->floor_y + 0.03f, v->center.z + dp.z), v->drop_yaw[i], wb);
-                items[n++] = (DrawItem){ .mesh = &weapons[w->weapon[i]], .bones = wb };
-            } else {
-                items[n++] = (DrawItem){ .mesh = &weapons[w->weapon[i]], .bones = b };
+                weapon_ground_pose(dp, dyaw, wb);
+                b = wb;
             }
+            items[n++] = (DrawItem){ .mesh = &weapons[w->weapon[i]], .bones = b };
         }
     }
     for (u32 k = 0; k < AV_SPECTATORS; k++) {

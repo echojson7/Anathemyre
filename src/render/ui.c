@@ -140,6 +140,9 @@ static const GlyphArt g_small[] = {
 #define SMALL_COUNT ARRAY_COUNT(g_small)
 _Static_assert(FONT_COUNT + SMALL_COUNT < (ATLAS / CELL) * (ATLAS / CELL), "шрифт не влезает в атлас");
 
+#define UI_BOXES 32
+#define UI_PAD   2.0f  // апскейл смешивает соседние пиксели цели: накладываем с запасом 1, чистим с запасом 2
+
 static struct {
     u32 prog, vao, vbo, tex;
     u32 prog_up;               // слой рисуется в своём масштабе и ровно растягивается на окно
@@ -156,6 +159,10 @@ static struct {
     u32 image;            // текстура для ui_image
     f32 time;
     u32 count[UI_LAYERS];  // вершин в кадре
+    // Занятые части цели в кадре (x0, y0, x1, y1) с запасом UI_PAD, не пересекаются.
+    // Чистятся и накладываются на окно только они
+    f32 box[UI_LAYERS][UI_BOXES][4];
+    u32 boxes[UI_LAYERS];
     UiVertex v[UI_LAYERS][UI_MAX_QUADS * 6];
 } U;
 
@@ -247,6 +254,7 @@ void ui_begin(i32 win_w, i32 win_h)
         U.text[i] = fminf(U.scale[i], fmaxf(1.0f, roundf(base * 1.125f * U.user_text * 4.0f) * 0.25f));
         U.f[i] = U.scale[i] / U.text[i];
         U.count[i] = 0;
+        U.boxes[i] = 0;
     }
     U.layer = UI_TOP;
 }
@@ -265,10 +273,35 @@ void ui_set_user_scale(f32 frames, f32 text)
     U.user_text = text;
 }
 
+static bool box_touch(const f32 *a, const f32 *b)
+{
+    return a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
+}
+
+// Добавить прямоугольник к занятым частям слоя: сливается со всеми, которых касается
+static void box_add(f32 x, f32 y, f32 w, f32 h)
+{
+    f32 (*b)[4] = U.box[U.layer];
+    u32 *n = &U.boxes[U.layer];
+    f32 r[4] = { x - UI_PAD, y - UI_PAD, x + w + UI_PAD, y + h + UI_PAD };
+    // Обычно следующая буква попадает в последний прямоугольник
+    if (*n && b[*n - 1][0] <= r[0] && b[*n - 1][1] <= r[1] && b[*n - 1][2] >= r[2] && b[*n - 1][3] >= r[3]) return;
+    for (u32 i = 0; i < *n;) {
+        if (!box_touch(b[i], r) && *n < UI_BOXES) { i++; continue; }
+        r[0] = fminf(r[0], b[i][0]); r[1] = fminf(r[1], b[i][1]);
+        r[2] = fmaxf(r[2], b[i][2]); r[3] = fmaxf(r[3], b[i][3]);
+        --*n;
+        for (u32 k = 0; k < 4; k++) b[i][k] = b[*n][k];
+        i = 0;
+    }
+    memcpy(b[(*n)++], r, sizeof r);
+}
+
 static void quad2_px(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 c, u32 c2)
 {
     u32 *n = &U.count[U.layer];
     if (*n + 6 > ARRAY_COUNT(U.v[0]) || w <= 0.0f || h <= 0.0f) return;
+    box_add(x, y, w, h);
     UiVertex *v = &U.v[U.layer][*n];
     v[0] = (UiVertex){ x, y, u0, v0, c };
     v[1] = (UiVertex){ x + w, y, u1, v0, c };
@@ -412,7 +445,17 @@ static void draw_layer(u32 l)
     glBindFramebuffer(GL_FRAMEBUFFER, U.fbo[l]);
     glViewport(0, 0, tw, th);
     glClearColor(0, 0, 0, 0);
-    glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_SCISSOR_TEST);
+    for (u32 i = 0; i < U.boxes[l]; i++) {
+        const f32 *b = U.box[l][i];
+        i32 x0 = MAX((i32)floorf(b[0]), 0), y0 = MAX((i32)floorf(b[1]), 0);
+        i32 x1 = MIN((i32)ceilf(b[2]), tw), y1 = MIN((i32)ceilf(b[3]), th);
+        if (x1 > x0 && y1 > y0) {
+            glScissor(x0, th - y1, x1 - x0, y1 - y0);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
+    }
+    glDisable(GL_SCISSOR_TEST);
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     glNamedBufferSubData(U.vbo, 0, (GLsizeiptr)(U.count[l] * sizeof(UiVertex)), U.v[l]);
     glUseProgram(U.prog);
@@ -429,7 +472,19 @@ static void draw_layer(u32 l)
     glUseProgram(U.prog_up);
     glUniform2f(43, (f32)U.win_w, (f32)U.win_h);
     glBindTextureUnit(0, U.target[l]);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glEnable(GL_SCISSOR_TEST);
+    const f32 sx = (f32)U.win_w / (f32)tw, sy = (f32)U.win_h / (f32)th;
+    for (u32 i = 0; i < U.boxes[l]; i++) {
+        const f32 *b = U.box[l][i];
+        f32 x0 = fmaxf(floorf(b[0]) + 1, 0), y0 = fmaxf(floorf(b[1]) + 1, 0);
+        f32 x1 = fminf(ceilf(b[2]) - 1, (f32)tw), y1 = fminf(ceilf(b[3]) - 1, (f32)th);
+        if (x1 <= x0 || y1 <= y0) continue;
+        i32 wx0 = (i32)floorf(x0 * sx), wx1 = (i32)ceilf(x1 * sx);
+        i32 wy0 = (i32)floorf(((f32)th - y1) * sy), wy1 = (i32)ceilf(((f32)th - y0) * sy);
+        glScissor(wx0, wy0, wx1 - wx0, wy1 - wy0);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+    glDisable(GL_SCISSOR_TEST);
 }
 
 void ui_end(void)
