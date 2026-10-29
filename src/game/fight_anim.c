@@ -172,7 +172,8 @@ bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha,
         f32 rz = origin.z + (dodged ? f->lock_z : w->z[t]) - p->pos.z;
         f32 ry = fs_lying(w->state[t]) ? 0.25f : w->aim_y[i] * ts;
         f32 hs = sinf(h), hc = cosf(h);
-        a->aim = v3((rx * hc - rz * hs + w->aim_x[i] * ts) / p->width, ry / p->height, (rx * hs + rz * hc) / p->width);
+        f32 sw = p->width * p->height;
+        a->aim = v3((rx * hc - rz * hs + w->aim_x[i] * ts) / sw, ry / p->height, (rx * hs + rz * hc) / sw);
         a->aim_s = w->aim_s[i];
         a->aim_on = true;
         a->aim_stop = w->react[i] == REACT_BLOCK;

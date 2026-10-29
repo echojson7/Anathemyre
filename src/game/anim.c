@@ -301,8 +301,8 @@ static void locomotion(const CharPose *p, Pose *o, Loco *lo)
     f32 v = p->speed > 0.0f ? p->speed : lerpf(1.2f, 4.8f, run);
     // Размах шага: медленно — всё мельче, к быстрому шагу — шире
     f32 sf = clampf(0.4f + 0.375f * v, 0.4f, 1.2f);
-    // Модель растянута по ширине в sw раз (и вдоль тоже): шаг в модели короче, чтобы стопа не ехала
-    f32 sw = p->width > 0.0f ? p->width : 1.0f;
+    // Модель растянута вдоль в sw раз (рост на ширину): шаг в модели короче, чтобы стопа не ехала
+    f32 sw = (p->width > 0.0f ? p->width : 1.0f) * (p->height > 0.0f ? p->height : 1.0f);
     Gait g;
     // Доля опоры: медленный шаг 0.63, быстрый 0.59, трусца 0.40, бег 0.29
     f32 duty_walk = clampf(0.66f - 0.045f * v, 0.59f, 0.64f);
@@ -1392,7 +1392,7 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         Xf sh_rel = xf_mul(&bind_inv, &sh_local);
         Xf sheath = xf_mul(&wld[sb], &sh_rel);
         Xf g = grip_frame();
-        g.t = v3_sub(g_body_sockets[SOCKET_HAND_R].pos, joint(BONE_HAND_R));
+        g.t = v3_sub(g_body_sockets[SOCKET_HAND_R].pos, g_body_bones[BONE_HAND_R].joint);
         // Поворот кисти, при котором рукоять ложится в ножны
         Xf ginv = { v3(g.x.x, g.y.x, g.z.x), v3(g.x.y, g.y.y, g.z.y), v3(g.x.z, g.y.z, g.z.z), v3(0, 0, 0) };
         Xf hand_at_sheath = xf_mul(&sheath, &ginv);
@@ -1457,9 +1457,10 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         }
     }
 
-    // В мир: точка, поворот, рост и ширина
+    // В мир: точка, поворот, рост и ширина. Рост масштабирует всё тело, ширина — поверх него:
+    // иначе низкий выходил приплюснутым, а высокий тощим
     f32 sh = p->height > 0.0f ? p->height : 1.0f;
-    f32 sw = p->width > 0.0f ? p->width : 1.0f;
+    f32 sw = (p->width > 0.0f ? p->width : 1.0f) * sh;
     f32 hs, hc;
     fsincos(p->heading, &hs, &hc);
     Xf root = { v3(hc * sw, 0, -hs * sw), v3(0, sh, 0), v3(hs * sw, 0, hc * sw), p->pos };
@@ -1473,7 +1474,7 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     out[CHAR_BONE_WEAPON] = xf_m4(&ww);
     // Факел: древко в левом кулаке так же, как рукоять оружия в правом
     Xf tg = grip_frame();
-    tg.t = v3_sub(g_body_sockets[SOCKET_HAND_L].pos, joint(BONE_HAND_L));
+    tg.t = v3_sub(g_body_sockets[SOCKET_HAND_L].pos, g_body_bones[BONE_HAND_L].joint);
     Xf torch = xf_mul(&wld[BONE_HAND_L], &tg);
     if (a->severed & (1u << PART_ARM_L)) torch = (Xf){ v3(0, 0, 0), v3(0, 0, 0), v3(0, 0, 0), torch.t };
     Xf tw_world = xf_mul(&root, &torch);

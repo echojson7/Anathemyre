@@ -22,6 +22,7 @@
 #include "game/figures.h"
 #include "game/hud.h"
 #include "game/humans_row.h"
+#include "game/stand.h"
 #include "game/sfx.h"
 #include "game/testroom.h"
 #include "game/world.h"
@@ -63,6 +64,7 @@ typedef struct Options {
     bool        fullscreen;  // окно без рамки на весь монитор
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
+    i32         stand;       // стенд фигур сразу при старте: ряд + 1 (0 — нет)
     bool        valley;      // начать в долине (иначе пешком или переход из меню НАСТРОЙКИ)
     bool        mute;        // без звука
     const char *sound_demo;  // сценка звука в WAV без окна
@@ -121,6 +123,7 @@ static bool parse_args(int argc, char **argv, Options *o)
             o->move_bench = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
         } else if (!strcmp(a, "--humans")) o->humans = true;
+        else if (!strcmp(a, "--stand") && i + 1 < argc) o->stand = atoi(argv[++i]) + 1;
         else if (!strcmp(a, "--no-pixel")) o->no_pixel = true;
         else if (!strcmp(a, "--pixel-div") && i + 1 < argc) o->pixel_div = atoi(argv[++i]);
         else if (!strcmp(a, "--valley")) o->valley = true;
@@ -270,6 +273,7 @@ int main(int argc, char **argv)
     cm->gear_lod = gear_lod;
     Figures *fig = ARENA_PUSH_ARRAY(&perm, Figures, 1);
     HumansRow *humans = ARENA_PUSH_ARRAY(&perm, HumansRow, 1);
+    Stand *stand = ARENA_PUSH_ARRAY(&perm, Stand, 1);
     if (!world_init(world, &perm, &mb, opt.seed, opt.tod, !opt.day_stop) || !figures_init(fig, cm, &mb, &perm, data_dir)) {
         jobs_shutdown();
         render_shutdown();
@@ -278,6 +282,7 @@ int main(int argc, char **argv)
     }
     figures_view(fig, world->people, world->field, world->alpha, world_ground);
     humans_row_init(humans, &perm, world_ground);
+    stand_init(stand, &perm);
     // Рельеф карты и растения долины — на весь сеанс
     render_set_terrain(map_fill, NULL);
     render_set_groups(world->valley->groups, world->valley->clusters, world->valley->cluster_count);
@@ -296,6 +301,7 @@ int main(int argc, char **argv)
         // иначе кадр показывался бы на период позже)
         .swap_late = true, .follow = opt.follow, .ui_user = 1.0f, .ui_user_text = 1.0f,
         .sound_vol = 0.8f, .music_vol = 0.7f, .music_on = true, .travel = opt.valley,
+        .stand = opt.stand > 0, .stand_moved = opt.stand > 0, .stand_row = opt.stand > 0 ? (u32)(opt.stand - 1) : 0,
     };
     // Звук: слушатель у камеры, шаги, бой поля и арены. Без звука снимки кадров и --mute.
     // Банк собирается в своём потоке при старте; устройство открывается, только если звук включён
@@ -360,6 +366,15 @@ int main(int argc, char **argv)
         if (humans_flip) {
             humans_flip = false;
             humans_row_toggle(humans, &mb, &perm, data_dir, world_ground);
+        }
+        if (set.stand_moved) {
+            set.stand_moved = false;
+            stand_show(stand, set.stand, set.stand_row, &mb, &perm, world_ground, &cam);
+            // Высоту взгляда над плитами задаёт стенд: держать её над землёй, пока он открыт
+            if (set.stand) {
+                cam_y = world_ground(cam.target.x, cam.target.z);
+                cam_lift = cam.target.y - cam_y;
+            } else cam_lift = opt.cam.target.y;
         }
         // Перенос отряда между лагерем и долиной (отладка; пешком тоже можно): камера за ним
         bool jumped = false;   // фигуры ещё на старом месте: в этом кадре камера за ними не идёт
@@ -474,6 +489,7 @@ int main(int argc, char **argv)
         bool look_ring = look_field || (hud.look_kind == LOOK_ARENA && hud_arena_pos(&world->aview, world->arena, hud.look, &look_pos));
         n += figures_marks(fig, cm, squad, field, look_ring ? &look_pos : NULL, items + n);
         n += humans_row_draw(humans, cm, items + n);
+        n += stand_draw(stand, cm, items + n);
 
         // Показать прошлый кадр: GPU рисовал его, пока шла логика этого
         bool swap_first = set.swap_late && !set.vsync && !opt.shot_path;

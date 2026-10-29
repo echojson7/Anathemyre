@@ -68,7 +68,7 @@ void main()
         // Внешность экземпляра: последний слот набора костей (render.h, RENDER_LOOK_SLOT)
         mat4 look = bones[base + 23u];
         for (int k = 0; k < u_morphs; k++) {
-            float w = look[k >> 2][k & 3];
+            float w = k < 8 ? look[k >> 2][k & 3] : look[k - 6][3];  // 9-й и 10-й — в свободных look[2].w, look[3].w
             if (w == 0.0) continue;
             uint o = (uint(gl_VertexID) * uint(u_morphs) + uint(k)) * 3u;
             vec2 a = unpackSnorm2x16(morph[o]), b = unpackSnorm2x16(morph[o + 1u]), c = unpackSnorm2x16(morph[o + 2u]);
