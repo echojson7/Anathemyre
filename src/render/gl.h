@@ -116,6 +116,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 // X-макрос: тип возврата, имя, аргументы
 #define GL_FUNCS(X) \
     X(void, Clear, (GLbitfield mask)) \
+    X(void, Flush, (void)) \
     X(void, ClearColor, (GLfloat r, GLfloat g, GLfloat b, GLfloat a)) \
     X(void, Viewport, (GLint x, GLint y, GLsizei w, GLsizei h)) \
     X(void, Enable, (GLenum cap)) \

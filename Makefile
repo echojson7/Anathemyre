@@ -16,7 +16,8 @@ TARGET_OS ?= linux
 endif
 
 TARGET  := anathemyre
-CSTD    := -std=c11
+# errno математика не ставит: sqrtf и подобные встраиваются одной инструкцией без запасной ветки
+CSTD    := -std=c11 -fno-math-errno
 WARN    := -Wall -Wextra -Wpedantic -Wshadow
 ifeq ($(WERROR),1)
 WARN    += -Werror

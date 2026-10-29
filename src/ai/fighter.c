@@ -149,16 +149,12 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
     w->mvx[i] = w->mvz[i] = 0.0f;
     if (w->idle[i] || fs_out(s) || fs_lying(s)) return;
 
-    // Численный перевес врага рядом подтачивает мораль
-    u32 en = 0, al = 1;
-    u32 near[COMBAT_NEAR_MAX];
-    u32 nn = combat_near(w, w->x[i], w->z[i], 8.0f, TAGS_FIGHTING, near);
-    for (u32 q = 0; q < nn; q++) {
-        u32 j = near[q];
-        if (j == i || fs_out(w->state[j]) || dist2(w, i, j) > 64.0f) continue;
-        if (w->team[j] == w->team[i]) al++;
-        else if (combat_hostile(w, i, j)) en++;
-    }
+    // Численный перевес врага рядом подтачивает мораль. Счёт по меткам сетки (команда; выбывшие и мёртвые
+    // вне маски): свои вместе с ним самим, враги — команды, с которыми враждует
+    u32 cnt[GRID_MAX_TAGS] = { 0 };
+    combat_count(w, w->x[i], w->z[i], 8.0f, TAGS_FIGHTING, cnt);
+    u32 al = cnt[2u + w->team[i]], en = 0;
+    for (u32 m = combat_foe_tags(w, w->team[i]) & TAGS_FIGHTING; m; m &= m - 1) en += cnt[__builtin_ctz(m)];
     if (en > al + 1) w->morale[i] -= 0.1f * (f32)(en - al);
 
     // По приказу бьёт только указанного, пока тот в бою; иначе выбирает сам

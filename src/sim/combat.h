@@ -177,6 +177,8 @@ void combat_sync_grid(CombatWorld *w);
 // Кандидаты с метками из mask в радиусе r (по ячейкам, расстояние проверяет вызывающий);
 // out на COMBAT_NEAR_MAX. Метки сняты в конце прошлого тика
 u32 combat_near(const CombatWorld *w, f32 x, f32 z, f32 r, u32 mask, u32 *out);
+// Сколько бойцов каждой метки из mask ближе r (расстояние² <= r²): прибавляет в count[GRID_MAX_TAGS]
+void combat_count(const CombatWorld *w, f32 x, f32 z, f32 r, u32 mask, u32 *count);
 // Есть ли поблизости кто-то из меток mask (грубо, с запасом)
 bool combat_any_near(const CombatWorld *w, f32 x, f32 z, f32 r, u32 mask);
 f32 combat_reach(const CombatWorld *w, u32 i, u8 kind);
