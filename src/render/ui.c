@@ -142,9 +142,12 @@ _Static_assert(FONT_COUNT + SMALL_COUNT < (ATLAS / CELL) * (ATLAS / CELL), "шр
 
 static struct {
     u32 prog, vao, vbo, tex;
+    u32 prog_up, fbo, target;  // интерфейс рисуется в своём масштабе и ровно растягивается на окно
+    i32 tw, th;                // размер цели, логические пиксели
     u8  lut_ascii[128];   // номер буквы + 1, 0 — нет
     u8  lut_cyr[0x60];    // U+0400..U+045F
-    i32 scale, win_w, win_h;
+    f32 scale;
+    i32 win_w, win_h;
     u32 image;            // текстура для ui_image
     f32 time;
     u32 count;            // вершин в кадре
@@ -189,7 +192,9 @@ bool ui_init(void)
     pix[ATLAS * ATLAS - 1] = 255;  // сплошная заливка
 
     U.prog = render_program("ui.vert", "ui.frag");
-    if (!U.prog) return false;
+    U.prog_up = render_program("fullscreen.vert", "upscale.frag");
+    if (!U.prog || !U.prog_up) return false;
+    glCreateFramebuffers(1, &U.fbo);
     glCreateTextures(GL_TEXTURE_2D, 1, &U.tex);
     glTextureStorage2D(U.tex, 1, GL_R8, ATLAS, ATLAS);
     glTextureSubImage2D(U.tex, 0, 0, 0, ATLAS, ATLAS, GL_RED, GL_UNSIGNED_BYTE, pix);
@@ -215,6 +220,9 @@ bool ui_init(void)
 void ui_shutdown(void)
 {
     if (U.prog) glDeleteProgram(U.prog);
+    if (U.prog_up) glDeleteProgram(U.prog_up);
+    if (U.target) glDeleteTextures(1, &U.target);
+    if (U.fbo) glDeleteFramebuffers(1, &U.fbo);
     if (U.tex) glDeleteTextures(1, &U.tex);
     if (U.vbo) glDeleteBuffers(1, &U.vbo);
     if (U.vao) glDeleteVertexArrays(1, &U.vao);
@@ -224,19 +232,18 @@ void ui_begin(i32 win_w, i32 win_h)
 {
     U.win_w = win_w;
     U.win_h = win_h;
-    U.scale = MAX(1, win_h / 1080);
+    // Шаг 0.25: 720p — 1, 1080p — 1.25, 1440p — 1.5, 4K — 2.25
+    U.scale = fmaxf(1.0f, roundf((f32)win_h / 960.0f * 4.0f) * 0.25f);
     U.count = 0;
 }
 
-i32 ui_scale(void) { return U.scale; }
-f32 ui_width(void) { return (f32)(U.win_w / U.scale); }
-f32 ui_height(void) { return (f32)(U.win_h / U.scale); }
+f32 ui_scale(void) { return U.scale; }
+f32 ui_width(void) { return floorf((f32)U.win_w / U.scale); }
+f32 ui_height(void) { return floorf((f32)U.win_h / U.scale); }
 
 static void quad2(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 c, u32 c2)
 {
     if (U.count + 6 > ARRAY_COUNT(U.v) || w <= 0.0f || h <= 0.0f) return;
-    f32 s = (f32)U.scale;
-    x *= s; y *= s; w *= s; h *= s;
     UiVertex *v = &U.v[U.count];
     v[0] = (UiVertex){ x, y, u0, v0, c };
     v[1] = (UiVertex){ x + w, y, u1, v0, c };
@@ -350,20 +357,44 @@ f32 ui_text_width(const char *s)
 
 void ui_end(void)
 {
-    if (!U.count) return;
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, U.win_w, U.win_h);
+    if (!U.count || U.win_w <= 0 || U.win_h <= 0) return;
+    i32 tw = (i32)ui_width(), th = (i32)ui_height();
+    if (tw != U.tw || th != U.th) {
+        if (U.target) glDeleteTextures(1, &U.target);
+        glCreateTextures(GL_TEXTURE_2D, 1, &U.target);
+        glTextureStorage2D(U.target, 1, GL_RGBA8, tw, th);
+        glTextureParameteri(U.target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(U.target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(U.target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(U.target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glNamedFramebufferTexture(U.fbo, GL_COLOR_ATTACHMENT0, U.target, 0);
+        U.tw = tw;
+        U.th = th;
+    }
+    // В свою цель с прозрачным фоном: цвет копится уже умноженным на альфу
+    glBindFramebuffer(GL_FRAMEBUFFER, U.fbo);
+    glViewport(0, 0, tw, th);
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     glNamedBufferSubData(U.vbo, 0, (GLsizeiptr)(U.count * sizeof(UiVertex)), U.v);
     glUseProgram(U.prog);
-    glUniform2f(0, (f32)U.win_w, (f32)U.win_h);
+    glUniform2f(0, (f32)tw, (f32)th);
     glUniform1f(1, U.time);
     glBindTextureUnit(0, U.tex);
     if (U.image) glBindTextureUnit(1, U.image);
     glBindVertexArray(U.vao);
     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)U.count);
+    // На окно: ровные пиксели при дробном масштабе (тот же фильтр, что у кадра)
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, U.win_w, U.win_h);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    glUseProgram(U.prog_up);
+    glUniform2f(43, (f32)U.win_w, (f32)U.win_h);
+    glBindTextureUnit(0, U.target);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
     glDisable(GL_BLEND);
 }

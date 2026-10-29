@@ -14,7 +14,7 @@
 // Расположения uniform задаются явно в GLSL (layout(location = N))
 enum {
     U_VIEW_PROJ = 0, U_SKINNED = 17, U_LIGHT_VP = 18, U_INST_BASE = 19,
-    U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25,
+    U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
     U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43,
@@ -717,9 +717,7 @@ void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, cons
 {
     if (slot >= RENDER_PORTRAIT_SLOTS || !R.prog_scene) return;
     size = CLAMP(size, 8, RENDER_PORTRAIT_PX);
-    // Тот же шейдер и свет, что у сцены; тень берётся из карты этого кадра
-    M4 light_vp = light_matrix(fv);
-    V3 L = v3_norm(fv->sun_dir);
+    // Шейдер сцены без света и тени: чистый цвет материалов
     i32 x = (i32)slot * RENDER_PORTRAIT_PX;
     glBindFramebuffer(GL_FRAMEBUFFER, R.portrait.fbo);
     glViewport(x, 0, size, size);
@@ -733,20 +731,16 @@ void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, cons
     glCullFace(GL_BACK);
     glUseProgram(R.prog_scene);
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, view_proj.m);
-    glUniformMatrix4fv(U_LIGHT_VP, 1, GL_FALSE, light_vp.m);
     glUniform3f(U_CAM_POS, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
-    glUniform3f(U_SUN_DIR, L.x, L.y, L.z);
-    glUniform3f(U_SUN_COLOR, fv->sun_color.x, fv->sun_color.y, fv->sun_color.z);
     glUniform1f(U_TIME, fv->time);
-    glUniform3f(U_SKY_AMB, fv->sky_amb.x, fv->sky_amb.y, fv->sky_amb.z);
-    glUniform3f(U_GROUND_AMB, fv->ground_amb.x, fv->ground_amb.y, fv->ground_amb.z);
-    glBindTextureUnit(0, R.shadow_tex);
+    glUniform1i(U_UNLIT, 1);
     count = MIN(count, (u32)RENDER_MAX_ITEMS);
     stream_poses(items, count);
     PassView pv = { .fr = frustum_from(view_proj), .full = true };
     u32 n = gather(items, count, &pv, false, g_inst[0]);
     u32 base = stream_insts(g_inst[0], &n);
     draw_insts(g_inst[0], n, base, 2);
+    glUniform1i(U_UNLIT, 0);
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
