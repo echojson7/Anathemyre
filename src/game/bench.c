@@ -33,9 +33,9 @@ static int cmp_f32(const void *a, const void *b)
 static void gpu_line(char *out, size_t size, const RenderStats *st)
 {
     if (st->samples && st->gpu_total_ms > 0.0)
-        snprintf(out, size, "GPU %.3f: тени %.3f, глубина %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f, интерфейс %.3f | между кадрами %.3f",
+        snprintf(out, size, "GPU %.3f: тени %.3f, глубина %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, интерфейс %.3f | между кадрами %.3f",
                  st->gpu_total_ms, st->gpu_ms[PASS_SHADOW], st->gpu_ms[PASS_DEPTH], st->gpu_ms[PASS_SCENE],
-                 st->gpu_ms[PASS_ATMOS], st->gpu_ms[PASS_STYLE], st->gpu_ms[PASS_BLIT], st->gpu_ms[PASS_UI], st->gap_ms);
+                 st->gpu_ms[PASS_ATMOS], st->gpu_ms[PASS_STYLE], st->gpu_ms[PASS_UI], st->gap_ms);
     else
         snprintf(out, size, "GPU: драйвер не отдаёт метки времени");
 }
