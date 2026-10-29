@@ -60,6 +60,7 @@ typedef struct Options {
     bool        no_pixel;    // кадр без пиксельности (сравнение моделей)
     i32         pixel_div;   // --pixel-div: 1 — пиксель по глубине, 2/3 — кадр в 1/2, 1/3 окна
     bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
+    bool        pixel_int;   // пиксели только целых размеров 1, 2, 4, 8
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
 } Options;
@@ -287,6 +288,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--no-pixel")) o->no_pixel = true;
         else if (!strcmp(a, "--pixel-div") && i + 1 < argc) o->pixel_div = atoi(argv[++i]);
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
+        else if (!strcmp(a, "--pixel-int")) o->pixel_int = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
@@ -529,7 +531,8 @@ int main(int argc, char **argv)
     for (u32 i = 0; i < TR_MAX_CHARS * RENDER_MAX_BONES; i++) bones[i] = m4_identity();
 
     RtsCamera cam = opt.cam;
-    RenderSettings rs = { .post = true, .pixel = !opt.no_pixel, .pixel_div = CLAMP(opt.pixel_div, 1, 3), .vrs = !opt.no_vrs };
+    RenderSettings rs = { .post = true, .pixel = !opt.no_pixel, .pixel_div = CLAMP(opt.pixel_div, 1, 3), .vrs = !opt.no_vrs,
+                          .pixel_int = opt.pixel_int };
 
     Input in;
     memset(&in, 0, sizeof in);
@@ -641,9 +644,15 @@ int main(int argc, char **argv)
             char val[32];
             hud_debug_check(&hud, "ФИЛЬТР КАДРА", &rs.post);
             hud_debug_check(&hud, "ПИКСЕЛЬНОСТЬ", &rs.pixel);
-            // Способ пиксельности: по глубине или весь кадр в низком разрешении (как в пиксельных 3D-играх)
-            static const char *px_mode[] = { "", "ПИКСЕЛИ: ПО ГЛУБИНЕ", "ПИКСЕЛИ: КАДР 1/2", "ПИКСЕЛИ: КАДР 1/3" };
-            if (hud_debug_button(&hud, px_mode[rs.pixel_div])) rs.pixel_div = rs.pixel_div % 3 + 1;
+            // Способ пиксельности: по глубине (дробные шаги или целые 1-2-4-8) или весь кадр в низком разрешении
+            static const char *px_mode[] = { "ПИКСЕЛИ: ПО ГЛУБИНЕ", "ПИКСЕЛИ: ПО ГЛУБИНЕ 1-2-4-8", "ПИКСЕЛИ: КАДР 1/2",
+                                             "ПИКСЕЛИ: КАДР 1/3" };
+            u32 px_m = rs.pixel_div > 1 ? (u32)rs.pixel_div : rs.pixel_int ? 1u : 0u;
+            if (hud_debug_button(&hud, px_mode[px_m])) {
+                px_m = (px_m + 1) % 4;
+                rs.pixel_int = px_m == 1;
+                rs.pixel_div = px_m < 2 ? 1 : (i32)px_m;
+            }
             hud_debug_check(&hud, "ШЕЙДИНГ БЛОКАМИ", &rs.vrs);
             if (hud_debug_check(&hud, "VSYNC", &vsync)) {
                 platform_set_vsync(vsync);
