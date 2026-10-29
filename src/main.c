@@ -54,7 +54,7 @@ typedef struct Options {
     u32         threads;     // 0 — по числу ядер
     bool        move_bench;  // проверка разворотов без окна
     const char *move_trace;
-    bool        humans;      // мокап: люди из гладких форм рядом с отрядом
+    bool        humans;      // ряд людей для сравнения сразу при старте (иначе F2)
 } Options;
 
 // Портрет: неподвижная фигура в покое, камера по кости головы спереди, чуть сверху
@@ -75,7 +75,7 @@ static void portrait(const FrameView *base, u32 slot, i32 size, const GpuMesh *b
     render_portrait(slot, size, &fv, m4_mul(fv.proj, fv.view), items, weapon ? 2 : 1);
 }
 
-// Ближе 4 м камера подходит только в мокапе людей (крупные планы)
+// Ближе 4 м камера подходит только к ряду людей (F2, крупные планы)
 static f32 g_cam_min_dist = 4.0f;
 
 static void camera_update(RtsCamera *c, const Input *in, f32 dt)
@@ -104,7 +104,7 @@ static V3 camera_eye(const RtsCamera *c)
 {
     V3 off = v3(sinf(c->yaw) * cosf(c->pitch), sinf(c->pitch), cosf(c->yaw) * cosf(c->pitch));
     V3 eye = v3_add(c->target, v3_mul(off, c->dist));
-    // Крупный план мокапа: камера на уровне точки взгляда
+    // У ряда людей камера кружит вокруг точки взгляда (на 1 м выше цели), иначе вблизи смотрит снизу
     if (g_cam_min_dist < 4.0f) eye.y += 1.0f;
     return eye;
 }
@@ -182,12 +182,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--move-bench")) {
             o->move_bench = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
-        } else if (!strcmp(a, "--humans")) {
-            // Камера сразу на ряду людей
-            o->humans = true;
-            g_cam_min_dist = 0.8f;
-            o->cam = (RtsCamera){ .target = { 2.55f, 0, 22 }, .yaw = 0.0f, .pitch = 0.2f, .dist = 5.0f };
-        } else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
+        } else if (!strcmp(a, "--humans")) o->humans = true;
+        else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--battle-bench") && i + 2 < argc) {
@@ -337,23 +333,7 @@ int main(int argc, char **argv)
     u32 human_count = 0;
     M4 *human_bones = ARENA_PUSH_ARRAY(&perm, M4, 6 * RENDER_MAX_BONES);
     mark = perm.used;
-    for (u32 k = 0; opt.humans && k < 6; k++) {
-        if (k % 2 == 0) {
-            mb_init(&mb, &perm, 120000, 600000);
-            human_build(&mb, &scratch, &human_shape[k / 2]);
-        } else {
-            char path[700];
-            snprintf(path, sizeof path, "%s/meshes/%s.mesh", data_dir, mh_name[k / 2]);
-            if (!mb_load(&mb, &perm, path)) continue;
-        }
-        gpu_mesh_upload(&human_mesh[human_count], &mb);
-        log_info("ЧЕЛОВЕК %u: %u вершин, %u треугольников", k, mb.vcount, mb.icount / 3);
-        perm.used = mark;
-        f32 x = 0.3f + 0.9f * (f32)k;
-        for (u32 b = 0; b < RENDER_MAX_BONES; b++)
-            human_bones[human_count * RENDER_MAX_BONES + b] = m4_translate(v3(x, ground_height(x, 22.0f), 22.0f));
-        human_count++;
-    }
+    bool humans_on = false, humans_flip = opt.humans;
 
     // Метка точки, куда идёт персонаж: бледно-зелёный крест на земле
     GpuMesh marker_mesh;
@@ -424,7 +404,7 @@ int main(int argc, char **argv)
     bool day_run = true;
     u32 frame = 0;
 
-    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — инвентарь, P — персонаж, пробел — пауза, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F3 — vsync, F4 — остановить сутки, F5 — шейдеры");
+    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — инвентарь, P — персонаж, пробел — пауза, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F3 — vsync, F2 — люди для сравнения, F4 — остановить сутки, F5 — шейдеры");
 
     while (!in.quit) {
         platform_poll(&in);
@@ -439,6 +419,35 @@ int main(int argc, char **argv)
         if (in.key_pressed[KEY_F]) {
             opt.follow = !opt.follow;
             if (opt.follow) cam.dist = MIN(cam.dist, 8.0f);
+        }
+        // F2: ряд людей для сравнения (наш мокап и MakeHuman), камера к нему; сетки строятся при первом показе
+        if (in.key_pressed[KEY_F2]) {
+            humans_flip = true;
+            cam = (RtsCamera){ .target = { 2.55f, 0, 22 }, .yaw = 0.0f, .pitch = 0.15f, .dist = 5.0f };
+        }
+        if (humans_flip) {
+            humans_flip = false;
+            humans_on = !humans_on;
+            g_cam_min_dist = humans_on ? 0.8f : 4.0f;
+            mark = perm.used;
+            bool build = humans_on && human_count == 0;
+            for (u32 k = 0; build && k < 6; k++) {
+                if (k % 2 == 0) {
+                    mb_init(&mb, &perm, 120000, 600000);
+                    human_build(&mb, &scratch, &human_shape[k / 2]);
+                } else {
+                    char path[700];
+                    snprintf(path, sizeof path, "%s/meshes/%s.mesh", data_dir, mh_name[k / 2]);
+                    if (!mb_load(&mb, &perm, path)) continue;
+                }
+                gpu_mesh_upload(&human_mesh[human_count], &mb);
+                log_info("ЧЕЛОВЕК %u: %u вершин, %u треугольников", k, mb.vcount, mb.icount / 3);
+                perm.used = mark;
+                f32 x = 0.3f + 0.9f * (f32)k;
+                for (u32 b = 0; b < RENDER_MAX_BONES; b++)
+                    human_bones[human_count * RENDER_MAX_BONES + b] = m4_translate(v3(x, ground_height(x, 22.0f), 22.0f));
+                human_count++;
+            }
         }
         if (in.key_pressed[KEY_F3]) {
             vsync = !vsync;
@@ -537,7 +546,7 @@ int main(int argc, char **argv)
             mk[0] = m4_translate(squad->order_pos);
             items[n++] = (DrawItem){ .mesh = &marker_mesh, .bones = mk, .no_shadow = true };
         }
-        for (u32 k = 0; k < human_count; k++)
+        for (u32 k = 0; humans_on && k < human_count; k++)
             items[n++] = (DrawItem){ .mesh = &human_mesh[k], .bones = human_bones + k * RENDER_MAX_BONES };
         V3 look_pos;
         if (hud.look_kind == LOOK_ARENA && hud_arena_pos(aview, arena, hud.look, &look_pos)) {
