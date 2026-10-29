@@ -24,10 +24,12 @@ void sky_at(f32 tod, Sky *out)
         out->light_color = v3_mul(v3_lerp(low, high, smooth(0.0f, 0.6f, e)), smooth(0.0f, 0.10f, e));
     } else {
         out->light_dir = v3_mul(sun, -1.0f);
-        out->light_color = v3_mul(v3(0.16f, 0.21f, 0.32f), smooth(0.0f, 0.12f, -e));
+        // Луна вдвое слабее прежнего: ночью светят фонари и факелы
+        out->light_color = v3_mul(v3(0.08f, 0.105f, 0.16f), smooth(0.0f, 0.12f, -e));
     }
 
     f32 day = smooth(-0.22f, 0.12f, e);
+    out->night = 1.0f - smooth(-0.12f, 0.05f, e);
     f32 dusk = 1.0f - smooth(0.0f, 0.28f, fabsf(e + 0.03f));  // сумерки: тёплая дымка у горизонта
     V3 warm = v3(1.30f, 0.90f, 0.62f);
     V3 one = v3(1, 1, 1);

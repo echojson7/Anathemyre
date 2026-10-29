@@ -28,6 +28,8 @@ enum {
 
 // Буферы хранения (layout(binding = N) в scene.vert)
 enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2, SB_STATIC_INST = 3 };
+// Буфер констант со светом кадра (common.glsl, блок Lights)
+#define UB_LIGHTS 0
 #define SKIN_STATIC 0
 #define SKIN_BONES 1
 #define SKIN_INSTANCED 2
@@ -96,6 +98,7 @@ static struct {
     f64    stat_ms[PASS_COUNT];
     u32    stat_samples;
     u32    bone_buf[STREAM_FRAMES], inst_buf[STREAM_FRAMES];
+    u32    light_buf[STREAM_FRAMES];
     u32    stream;
     u32    used_poses, used_insts;   // занято в буферах текущего кадра (кадр, затем портреты)
     f64    stat_draws[2], stat_tris[2], stat_visible[2];
@@ -120,6 +123,15 @@ static InstDraw g_idraw[2][MAX_INST_MESHES];
 static u32  g_vis_id[RENDER_MAX_VIS_INST];
 static u16  g_vis_bucket[RENDER_MAX_VIS_INST];
 static M4   g_bones[RENDER_MAX_POSED * RENDER_MAX_BONES];
+
+// Свет кадра в раскладке std140 (common.glsl): число, затем три массива vec4
+typedef struct GpuLights {
+    i32 count[4];
+    f32 pos[RENDER_MAX_LIGHTS][4];   // xyz, w — радиус
+    f32 col[RENDER_MAX_LIGHTS][4];   // rgb, a — косинус конуса
+    f32 dir[RENDER_MAX_LIGHTS][4];   // xyz — ось конуса, w — свечение пыли
+} GpuLights;
+static GpuLights g_lights;
 
 static char *read_file(const char *path)
 {
@@ -363,6 +375,8 @@ bool render_init(Arena *scratch, const char *data_dir)
         glNamedBufferStorage(R.bone_buf[i], (GLsizeiptr)sizeof g_bones, NULL, GL_DYNAMIC_STORAGE_BIT);
         glCreateBuffers(1, &R.inst_buf[i]);
         glNamedBufferStorage(R.inst_buf[i], (GLsizeiptr)sizeof g_inst_pose, NULL, GL_DYNAMIC_STORAGE_BIT);
+        glCreateBuffers(1, &R.light_buf[i]);
+        glNamedBufferStorage(R.light_buf[i], (GLsizeiptr)sizeof g_lights, NULL, GL_DYNAMIC_STORAGE_BIT);
     }
     for (u32 i = 0; i < TIMER_FRAMES; i++) glCreateQueries(GL_TIMESTAMP, TIMER_MARKS, R.timer[i]);
 
@@ -399,6 +413,7 @@ void render_shutdown(void)
     for (u32 i = 0; i < STREAM_FRAMES; i++) {
         if (R.bone_buf[i]) glDeleteBuffers(1, &R.bone_buf[i]);
         if (R.inst_buf[i]) glDeleteBuffers(1, &R.inst_buf[i]);
+        if (R.light_buf[i]) glDeleteBuffers(1, &R.light_buf[i]);
     }
     if (R.static_inst_buf) glDeleteBuffers(1, &R.static_inst_buf);
     for (u32 i = 0; i < TIMER_FRAMES; i++)
@@ -885,6 +900,37 @@ static M4 light_matrix(const FrameView *fv)
     return m4_mul(lp, lv);
 }
 
+// Свет кадра: видимые источники, ближайшие к камере (по краю сферы), не больше RENDER_MAX_LIGHTS
+static void stream_lights(const FrameView *fv, const Frustum *fr)
+{
+    u32 n = 0;
+    f32 key[RENDER_MAX_LIGHTS];
+    const PointLight *pick[RENDER_MAX_LIGHTS];
+    for (u32 i = 0; fv->lights && i < fv->light_count; i++) {
+        const PointLight *l = &fv->lights[i];
+        if (!sphere_visible(fr, (V4){ l->pos.x, l->pos.y, l->pos.z, l->radius })) continue;
+        f32 k = v3_len(v3_sub(l->pos, fv->cam_pos)) - l->radius;
+        if (n == RENDER_MAX_LIGHTS && k >= key[n - 1]) continue;
+        u32 j = n < RENDER_MAX_LIGHTS ? n++ : n - 1;
+        for (; j > 0 && key[j - 1] > k; j--) {
+            key[j] = key[j - 1];
+            pick[j] = pick[j - 1];
+        }
+        key[j] = k;
+        pick[j] = l;
+    }
+    g_lights.count[0] = (i32)n;
+    for (u32 i = 0; i < n; i++) {
+        const PointLight *l = pick[i];
+        V3 d = v3_len(l->dir) > 0.0f ? v3_norm(l->dir) : v3(0, -1, 0);
+        memcpy(g_lights.pos[i], (f32[4]){ l->pos.x, l->pos.y, l->pos.z, l->radius }, sizeof g_lights.pos[i]);
+        memcpy(g_lights.col[i], (f32[4]){ l->color.x, l->color.y, l->color.z, l->cone }, sizeof g_lights.col[i]);
+        memcpy(g_lights.dir[i], (f32[4]){ d.x, d.y, d.z, l->glow }, sizeof g_lights.dir[i]);
+    }
+    glNamedBufferSubData(R.light_buf[R.stream], 0, (GLsizeiptr)sizeof g_lights, &g_lights);
+    glBindBufferBase(GL_UNIFORM_BUFFER, UB_LIGHTS, R.light_buf[R.stream]);
+}
+
 void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const RenderSettings *rs, i32 win_w, i32 win_h)
 {
     if (win_w <= 0 || win_h <= 0 || !R.prog_scene) return;
@@ -934,6 +980,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         .px_k = fv->proj.m[5] * 0.5f * (f32)ih, .inst_lod_k = 1.0f,
     };
     R.cam_eye = fv->cam_pos;
+    stream_lights(fv, &scene_view.fr);
     u32 n_shadow = gather(items, count, &shadow_view, true, g_inst[0]);
     u32 n_scene = gather(items, count, &scene_view, false, g_inst[1]);
     u32 base_shadow = stream_insts(g_inst[0], &n_shadow);

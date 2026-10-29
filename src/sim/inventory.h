@@ -43,6 +43,7 @@ typedef struct Inventory {
 // Лист персонажа отряда: имя, тело и навыки в описании бойца, снаряжение, вещи
 typedef struct CharSheet {
     const char *name;
+    const char *role;   // кто он для чужих глаз (ТОРГОВЕЦ, СТОРОЖ, ЗРИТЕЛЬ); NULL — ПРОХОЖИЙ
     FighterDesc d;
     Item equip[SLOT_COUNT + 1];  // + SLOT_WEAPON
     Inventory inv;

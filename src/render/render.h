@@ -15,6 +15,7 @@
 #define RENDER_PORTRAIT_PX 96     // наибольший портрет, пикселей
 #define RENDER_PORTRAIT_SLOTS 10
 #define RENDER_MAX_VIS_INST 131072  // видимых экземпляров (трава, деревья, камни) за проход
+#define RENDER_MAX_LIGHTS 16        // точечных источников в кадре: ближайшие из видимых (common.glsl)
 
 typedef struct GpuMesh {
     u32 vao, vbo, ibo, skin_vbo;  // skin_vbo — веса до 4 костей, 0 у жёстких сеток
@@ -65,6 +66,16 @@ typedef struct DrawItem {
     bool           no_shadow;  // не отбрасывает тень (рельеф, дальние мегаструктуры)
 } DrawItem;
 
+// Точечный свет без теней: факел, фонарь, прожектор (конусом)
+typedef struct PointLight {
+    V3  pos;
+    f32 radius;     // дальше не светит, м
+    V3  color;      // цвет с яркостью: на 1 м освещённость color / 2
+    f32 cone;       // косинус половины угла конуса; -1 — во все стороны
+    V3  dir;        // ось конуса
+    f32 glow;       // свечение пыли вокруг источника, доля от color
+} PointLight;
+
 typedef struct FrameView {
     M4  view, proj;
     V3  cam_pos;
@@ -73,6 +84,8 @@ typedef struct FrameView {
     V3  sky_amb, ground_amb;  // рассеянный свет неба и отражённый от земли
     V3  haze, zenith;         // цвет дымки и неба в зените
     V3  shadow_center;  // центр области теней
+    const PointLight *lights;  // рендер сам берёт видимые, не больше RENDER_MAX_LIGHTS
+    u32 light_count;
     f32 time;
     u32 frame;
 } FrameView;

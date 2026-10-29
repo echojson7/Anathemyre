@@ -141,6 +141,22 @@ void arena_view_build(MeshBuilder *mb, V3 center)
         mb_quad(mb, lens, v3_mul(right, -0.5f), v3_mul(up, 0.25f));
     }
 
+    // Лампы в сетках на стойках ворот: свет на проход и на песок у ворот
+    for (int k = gate - 1; k <= gate; k++) {
+        V3 p = oct_corner(center, FENCE_R, k, 2.62f);
+        V3 in = v3_norm(v3(center.x - p.x, 0.0f, center.z - p.z));
+        V3 c = v3_add(p, v3_mul(in, 0.2f));
+        mb_set(mb, C_RUST_DARK, MAT_RUST, BONE_NONE);
+        mb_box(mb, xf_box(v3_add(p, v3_mul(in, 0.1f)), v3(0.2f, 0.04f, 0.04f), 0, atan2f(in.x, in.z) + PI_F * 0.5f, 0));
+        mb_box(mb, xf_box(v3_add(c, v3(0, 0.1f, 0)), v3(0.16f, 0.025f, 0.16f), 0, 0.3f, 0));
+        for (int i = 0; i < 4; i++) {
+            f32 a = (f32)i * PI_F * 0.5f + 0.3f;
+            mb_box(mb, xf_box(v3(c.x + sinf(a) * 0.07f, c.y - 0.02f, c.z + cosf(a) * 0.07f), v3(0.012f, 0.22f, 0.012f), 0, a, 0));
+        }
+        mb_set(mb, C_LAMP, MAT_EMISSIVE, BONE_NONE);
+        mb_box(mb, xf_box(v3_add(c, v3(0, -0.02f, 0)), v3(0.07f, 0.11f, 0.07f), 0, 0.3f, 0));
+    }
+
     // Бетонные блоки, на которых стоят и сидят зрители
     mb_set(mb, C_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
     for (int i = 0; i < 9; i++) {
@@ -162,9 +178,9 @@ void arena_view_init(ArenaView *v, V3 center, f32 floor_y)
         f32 a = 0.35f + (f32)k * 0.41f + 0.12f * hashf(k * 7u);
         if (fabsf(wrap_angle(a - PI_F)) < 0.55f) continue;
         f32 r = 8.0f + 0.5f * hashf(k * 11u + 3u);
-        v->sx[n] = sinf(a) * r;
-        v->sz[n] = cosf(a) * r;
-        v->sh[n] = atan2f(-v->sx[n], -v->sz[n]) + (hashf(k * 5u) - 0.5f) * 0.5f;
+        f32 sx = sinf(a) * r, sz = cosf(a) * r;
+        v->spos[n] = v3(center.x + sx, floor_y, center.z + sz);
+        v->sh[n] = atan2f(-sx, -sz) + (hashf(k * 5u) - 0.5f) * 0.5f;
         v->sseed[n] = 100.0f * hashf(k * 3u + 1u);
         n++;
     }
@@ -238,22 +254,49 @@ u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const G
             items[n++] = (DrawItem){ .mesh = &weapons[w->weapon[i]], .bones = b };
         }
     }
-    for (u32 k = 0; k < AV_SPECTATORS; k++) {
-        CharPose p = {
-            .pos = v3(v->center.x + v->sx[k], 0.12f, v->center.z + v->sz[k]), .heading = v->sh[k],
-            .time = time, .seed = v->sseed[k],
-            .height = 1.0f + 0.06f * sinf(v->sseed[k] * 7.31f), .width = 1.0f + 0.08f * sinf(v->sseed[k] * 3.17f + 1.0f),
-        };
-        M4 *b = &bones[(set++) * RENDER_MAX_BONES];
-        character_pose(&p, NULL, b);
-        u32 kind = (k + 2) % variants;
-        CharLook lk;
-        look_make(&lk, kind, 5000u + k, 72.0f * p.height * p.height * p.width * p.width, 1.8f * p.height, 25.0f);
-        b[RENDER_LOOK_SLOT] = look_matrix(&lk, kind);
-        items[n++] = (DrawItem){ .mesh = &body[kind], .bones = b };
-        u8 worn[GEAR_MAX_WORN];
-        u32 nw = gear_random(7000u + k, worn);
-        for (u32 g = 0; g < nw; g++) items[n++] = (DrawItem){ .mesh = &gear[kind * GEAR_COUNT + worn[g]], .bones = b };
+    return n;
+}
+
+static f32 smooth(f32 a, f32 b, f32 x)
+{
+    f32 t = clampf((x - a) / (b - a), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+u32 arena_view_lights(const ArenaView *v, f32 night, f32 time, PointLight *out)
+{
+    u32 n = 0;
+    V3 c = v->center;
+    for (u32 k = 0; k < AV_LIGHTS; k++) {
+        // Зажигаются не разом; пока лампа разгорается, она мигает
+        f32 on = smooth(0.30f + 0.06f * (f32)k, 0.42f + 0.06f * (f32)k, night);
+        if (on <= 0.0f) continue;
+        if (on < 1.0f && hashf((u32)(time * 9.0f) * 7u + k) < 0.35f) continue;
+        // Дрожь напряжения: свет едва заметно дышит, изредка проседает
+        f32 hum = 0.96f + 0.04f * sinf(time * 13.0f + (f32)k * 2.1f);
+        if (hashf((u32)(time * 4.0f) * 13u + k * 101u) < 0.02f) hum *= 0.6f;
+        PointLight *l = &out[n++];
+        if (k < 2) {
+            // Прожектор на мачте: конусом в середину ринга (как в arena_view_build)
+            f32 a = PI_F * (k ? 1.375f : 0.375f);
+            V3 dir = v3(sinf(a), 0.0f, cosf(a));
+            l->pos = v3(c.x + dir.x * 9.3f, 10.0f, c.z + dir.z * 9.3f);
+            l->dir = v3_norm(v3_sub(v3(c.x, v->floor_y, c.z), l->pos));
+            l->cone = 0.80f;
+            l->radius = 30.0f;
+            l->color = v3_mul(C_LAMP, 80.0f * on * hum);
+            l->glow = 0.0002f;
+        } else {
+            // Лампа в сетке на стойке ворот
+            V3 p = oct_corner(c, FENCE_R, (int)k + 1, 2.6f);
+            V3 in = v3_norm(v3(c.x - p.x, 0.0f, c.z - p.z));
+            l->pos = v3_add(p, v3_mul(in, 0.2f));
+            l->dir = v3(0, -1, 0);
+            l->cone = -1.0f;
+            l->radius = 9.0f;
+            l->color = v3_mul(C_LAMP, 2.2f * on * hum);
+            l->glow = 0.012f;
+        }
     }
     return n;
 }
