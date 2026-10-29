@@ -23,7 +23,7 @@ enum {
     U_FADE = 29,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
-    U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44, U_V_TILE = 45,
+    U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44, U_V_TILE = 45, U_S_PIX_INT = 46,
 };
 
 // Буферы хранения (layout(binding = N) в scene.vert)
@@ -954,6 +954,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindFramebuffer(GL_FRAMEBUFFER, R.level.fbo);
     glUseProgram(R.prog_level);
     glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
+    glUniform1i(U_S_PIX_INT, rs->pixel_int ? 1 : 0);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindFramebuffer(GL_FRAMEBUFFER, R.level_max.fbo);
     glViewport(0, 0, R.level_max.w, R.level_max.h);
@@ -964,6 +965,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glViewport(0, 0, iw, ih);
     glUseProgram(R.prog_src_map);
     glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
+    glUniform1i(U_S_PIX_INT, rs->pixel_int ? 1 : 0);
     glBindTextureUnit(5, R.level_max.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (vrs) {

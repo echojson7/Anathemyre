@@ -195,7 +195,8 @@ void main()
     } else if (v_mat == MAT_EMISSIVE) {
         float flicker = 0.85 + 0.15 * noise3(vec3(u_time * 11.0, P.x, P.z));
         emissive = v_color.rgb * 3.0 * flicker;
-        albedo = vec3(0.05);
+        // Почти чёрный цвет — проём в темноту (двери, окна): солнце его не освещает
+        albedo = vec3(max(v_color.r, max(v_color.g, v_color.b)) < 0.02 ? 0.006 : 0.05);
     } else if (v_mat == MAT_TERRAIN) {
         // Земля: цвет вершин — трава, сухая трава, глина, ил; на крутом склоне слоистая порода
         float spots = fbm3(vec3(P.xz * 0.45, 3.0));
