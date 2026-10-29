@@ -323,6 +323,7 @@ void hud_init(Hud *h)
     h->dbg.y = 26;
     h->dbg.slider = -1;
     h->dbg.journal = true;
+    h->dbg.fps_on = true;
 }
 
 void hud_look(Hud *h, u8 kind, u32 index)
@@ -1122,6 +1123,14 @@ bool hud_debug_begin(Hud *h, const Input *in)
             h->dbg.open = !h->dbg.open;
             h->dbg.lmb = false;
         }
+    }
+    // Счётчик кадров сверху по центру
+    if (h->dbg.fps_on) {
+        char buf[32];
+        snprintf(buf, sizeof buf, "%.0f К/С  %.2f МС", (f64)h->dbg.fps, (f64)h->dbg.fps_ms);
+        f32 w = ui_text_width(buf) + 12, x = floorf((sw - w) * 0.5f);
+        inset(x, 8, w, 13);
+        ui_text(x + 6, 11, C_TEXT, buf);
     }
     if (!h->dbg.open) return false;
 

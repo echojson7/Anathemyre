@@ -452,6 +452,8 @@ int main(int argc, char **argv)
     f64 stat_t = last;
     u32 stat_frames = 0;
     f32 shown_ms = 0, shown_fps = 0;  // для отладочного меню
+    f64 fps_t = last;                 // счётчик кадров обновляется чаще, чем строка КАДР
+    u32 fps_frames = 0;
     f64 cpu_logic = 0, cpu_submit = 0, cpu_swap = 0;
     bool vsync = !opt.no_vsync && opt.shot_path == NULL;
     f32 sim_time = 0, real_time = 0;
@@ -572,6 +574,7 @@ int main(int argc, char **argv)
             }
             snprintf(val, sizeof val, "%.2f МС  %.0f К/С", (f64)shown_ms, (f64)shown_fps);
             hud_debug_text(&hud, "КАДР", val);
+            hud_debug_check(&hud, "СЧЁТЧИК КАДРОВ", &hud.dbg.fps_on);
             if (hud_debug_button(&hud, "ПЕРЕЗАГРУЗИТЬ ШЕЙДЕРЫ")) render_reload_shaders();
             if (hud_debug_button(&hud, "ЗАМЕР КАДРА")) bench_request = true;
             hud_debug_check(&hud, "ЖУРНАЛ", &hud.dbg.journal);
@@ -741,6 +744,13 @@ int main(int argc, char **argv)
         }
 
         stat_frames++;
+        fps_frames++;
+        if (now - fps_t >= 0.5) {
+            hud.dbg.fps = (f32)(fps_frames / (now - fps_t));
+            hud.dbg.fps_ms = (f32)((now - fps_t) * 1000.0 / fps_frames);
+            fps_t = now;
+            fps_frames = 0;
+        }
         if (now - stat_t >= 2.0) {
             RenderStats st;
             render_take_stats(&st);
