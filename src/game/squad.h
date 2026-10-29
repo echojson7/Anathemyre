@@ -14,6 +14,8 @@ typedef struct Squad {
     CharSheet sheet[SQUAD_MAX];
     u8        variant[SQUAD_MAX];   // одежда модели
     bool      selected[SQUAD_MAX];
+    V3        order_pos;            // куда щёлкнули последним приказом: там метка
+    f32       order_marker;         // сколько ещё секунд видна метка
     bool      formation;            // идущие по одному приказу держат темп самого медленного
     u16       next_group;
 } Squad;

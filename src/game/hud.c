@@ -25,6 +25,7 @@
 #define SLOT_H 20
 #define CELL 17
 #define DOUBLE_CLICK_S 0.35f
+#define SELECT_RING_R 0.48f  // радиус кольца выбора под ногами, как в main.c
 
 // Порядок слотов в окне: две колонки по пять
 static const u8 g_slot_order[SLOT_COUNT + 1] = {
@@ -357,9 +358,13 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
             f32 x0 = fminf(h->drag_x, L.mx), x1 = fmaxf(h->drag_x, L.mx);
             f32 y0 = fminf(h->drag_y, L.my), y1 = fmaxf(h->drag_y, L.my);
             for (u32 i = 0; i < sq->count; i++) {
-                f32 px, py;
-                bool in_box = project(w->view_proj, v3_add(sq->body[i].pos, v3(0, 0.9f, 0)), &px, &py) &&
-                              px >= x0 && px <= x1 && py >= y0 && py <= y1;
+                // Рамка ловит круг у ног (тот, что подсвечивается выбором): центр или любую точку кольца
+                bool in_box = false;
+                for (u32 k = 0; k <= 12 && !in_box; k++) {
+                    f32 a = (f32)k * (2.0f * PI_F / 12.0f), r = k ? SELECT_RING_R : 0.0f, px, py;
+                    V3 p = v3_add(sq->body[i].pos, v3(sinf(a) * r, 0.03f, cosf(a) * r));
+                    in_box = project(w->view_proj, p, &px, &py) && px >= x0 && px <= x1 && py >= y0 && py <= y1;
+                }
                 if (in_box) sq->selected[i] = true;
                 else if (!shift) sq->selected[i] = false;
             }

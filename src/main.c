@@ -443,11 +443,11 @@ int main(int argc, char **argv)
                 rb[0] = m4_translate(pl->pos);
                 items[n++] = (DrawItem){ .mesh = &ring_mesh[0], .bones = rb, .no_shadow = true };
             }
-            if (pl->marker > 0.0f && pl->moving) {
-                M4 *mk = b + 2 * RENDER_MAX_BONES;
-                mk[0] = m4_translate(pl->target);
-                items[n++] = (DrawItem){ .mesh = &marker_mesh, .bones = mk, .no_shadow = true };
-            }
+        }
+        if (squad->order_marker > 0.0f) {
+            M4 *mk = squad_bones + 2 * RENDER_MAX_BONES;
+            mk[0] = m4_translate(squad->order_pos);
+            items[n++] = (DrawItem){ .mesh = &marker_mesh, .bones = mk, .no_shadow = true };
         }
         V3 look_pos;
         if (hud.inspect && hud.look_kind == LOOK_ARENA && hud_arena_pos(aview, arena, hud.look, &look_pos)) {
