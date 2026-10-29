@@ -24,7 +24,7 @@ PEOPLE = [
          skin=(0.60, 0.45, 0.36), hcol=(0.20, 0.13, 0.08), under=(0.30, 0.29, 0.27),
          cup=0.65, firm=0.7,
          mods={'measure/measure-waist-circ-decr': 1.0, 'bodyshapes/bodyshapes-elvs-fem-neat-hourglass': 0.8,
-               'measure/measure-hips-circ-incr': 0.5, 'measure/measure-shoulder-dist-incr': 0.35,
+               'measure/measure-hips-circ-incr': 0.1, 'buttocks/buttocks-volume-decr': 1.0, 'measure/measure-shoulder-dist-incr': 0.35,
                'breast/breast-dist-decr': 0.15, 'pelvis/bulge-decr': 1.0}),
     dict(name='mh_thin', gender=1.0, muscle=0.45, weight=0.15, hair='bald', beard=True,
          skin=(0.38, 0.26, 0.19), hcol=(0.07, 0.06, 0.05), under=(0.30, 0.29, 0.27),
