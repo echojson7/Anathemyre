@@ -22,7 +22,7 @@ void ui_begin(i32 win_w, i32 win_h);
 // Отрисовать накопленное в текущий кадровый буфер
 void ui_end(void);
 
-i32  ui_scale(void);
+f32  ui_scale(void);
 f32  ui_width(void);   // логический размер окна
 f32  ui_height(void);
 

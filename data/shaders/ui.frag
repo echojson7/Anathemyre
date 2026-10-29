@@ -13,18 +13,13 @@ float hash(vec2 p)
     return fract((p.x + p.y) * p.x);
 }
 
-vec3 aces(vec3 x)
-{
-    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
-}
-
 void main()
 {
     float n = hash(gl_FragCoord.xy + floor(u_time * 24.0) * vec2(7.31, 3.17)) - 0.5;
     if (v_uv.x >= 1.5) {
-        // Портрет: тот же тонмаппинг, что у кадра, плюс зерно и строки старого экрана
+        // Портрет: чистый цвет материалов (без света), только гамма, плюс зерно и строки старого экрана
         vec4 p = texture(u_image, v_uv - vec2(2.0, 0.0));
-        vec3 c = pow(aces(p.rgb * 1.5), vec3(1.0 / 2.2));
+        vec3 c = pow(clamp(p.rgb, 0.0, 1.0), vec3(1.0 / 2.2));
         c *= 1.0 - 0.18 * mod(floor(gl_FragCoord.y), 2.0);
         c += n * 0.06;
         o_color = vec4(c * v_color.rgb, p.a * v_color.a);

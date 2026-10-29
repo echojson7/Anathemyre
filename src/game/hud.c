@@ -150,11 +150,11 @@ typedef struct Layout {
 static Layout layout(const Input *in)
 {
     Layout L;
-    i32 s = ui_scale();
+    f32 s = ui_scale();
     L.w = ui_width();
     L.h = ui_height();
-    L.mx = (f32)(in->mouse_x / s);
-    L.my = (f32)(in->mouse_y / s);
+    L.mx = floorf((f32)in->mouse_x / s);
+    L.my = floorf((f32)in->mouse_y / s);
     L.bottom = L.h - BOTTOM_H - 8;
     L.sel_x = 8;
     L.cards_x = L.sel_x + SEL_W + 8;
