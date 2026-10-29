@@ -61,6 +61,7 @@ typedef struct Options {
     i32         pixel_div;   // --pixel-div: 1 — пиксель по глубине, 2/3 — кадр в 1/2, 1/3 окна
     bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
     bool        pixel_int;   // пиксели только целых размеров 1, 2, 4, 8
+    bool        ao_half;     // AO в половинном разрешении
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
 } Options;
@@ -289,6 +290,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--pixel-div") && i + 1 < argc) o->pixel_div = atoi(argv[++i]);
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
         else if (!strcmp(a, "--pixel-int")) o->pixel_int = true;
+        else if (!strcmp(a, "--ao-half")) o->ao_half = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
@@ -532,7 +534,7 @@ int main(int argc, char **argv)
 
     RtsCamera cam = opt.cam;
     RenderSettings rs = { .post = true, .pixel = !opt.no_pixel, .pixel_div = CLAMP(opt.pixel_div, 1, 3), .vrs = !opt.no_vrs,
-                          .pixel_int = opt.pixel_int };
+                          .pixel_int = opt.pixel_int, .ao_half = opt.ao_half };
 
     Input in;
     memset(&in, 0, sizeof in);
@@ -654,6 +656,7 @@ int main(int argc, char **argv)
                 rs.pixel_div = px_m < 2 ? 1 : (i32)px_m;
             }
             hud_debug_check(&hud, "ШЕЙДИНГ БЛОКАМИ", &rs.vrs);
+            hud_debug_check(&hud, "AO ВПОЛОВИНУ", &rs.ao_half);
             if (hud_debug_check(&hud, "VSYNC", &vsync)) {
                 platform_set_vsync(vsync);
                 log_info("VSYNC: %s", vsync ? "вкл" : "выкл");
