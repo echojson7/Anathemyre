@@ -821,7 +821,8 @@ int main(int argc, char **argv)
     sfx_init(wsound, field, arena, ARENA_CENTER, ground_height);
     // Банк собирается в своём потоке при старте; устройство открывается, только если звук включён
     bool sound_ok = !opt.shot_path && audio_init(&perm), sound_on = sound_ok && !opt.mute;
-    f32 sound_vol = 0.8f;
+    f32 sound_vol = 0.8f, music_vol = 0.7f;
+    bool music_on = true;
     if (sound_on) audio_start();
     // Оружие, выпавшее на землю, по слоту поля
     M4 *drop_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)field->w.count * RENDER_MAX_BONES);
@@ -1073,6 +1074,9 @@ int main(int argc, char **argv)
             }
             snprintf(val, sizeof val, "%.0f%%", (f64)(sound_vol * 100.0f));
             if (hud_debug_slider(&hud, "ГРОМКОСТЬ", &sound_vol, 0.0f, 1.0f, val)) audio_volume(sound_vol, sound_on);
+            if (hud_debug_check(&hud, "МУЗЫКА", &music_on)) audio_music(music_vol, music_on);
+            snprintf(val, sizeof val, "%.0f%%", (f64)(music_vol * 100.0f));
+            if (hud_debug_slider(&hud, "ГРОМКОСТЬ МУЗЫКИ", &music_vol, 0.0f, 1.0f, val)) audio_music(music_vol, music_on);
         }
         if (hud_debug_end(&hud)) {
             memset(hin.mouse_pressed, 0, sizeof hin.mouse_pressed);

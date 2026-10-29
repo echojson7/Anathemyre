@@ -14,6 +14,7 @@
 
 static f32 g_buf[SYN_MAX];  // собираемый вариант
 static f32 g_aux[SYN_MAX];  // слой, который ещё нужно отфильтровать
+static f32 g_tmp[SYN_MAX];  // звон предмета до дребезга
 static Rng g_r;
 
 static f32 rnd(void) { return rng_f32(&g_r); }
@@ -168,6 +169,30 @@ static void aux_add(f32 *b, u32 n, f32 lp_hz, f32 hp_hz, f32 amp)
     }
 }
 
+// Удар по предмету в руке: не колокол, а лязг. Мод много и они плотные (ratio — свой ряд, NULL —
+// случайный с шагом spread), хват гасит звон за tau, верхние моды гаснут быстрее (hf).
+// grit — дребезг: звон модулирован шумом (ржавчина, неплотный хват, прутья друг о друга)
+static void clank(f32 *b, u32 from, u32 n, f32 f0, const f32 *ratio, u32 count, f32 spread, f32 amp, f32 tau, f32 hf,
+                  f32 grit)
+{
+    u32 end = MIN(n, from + at(tau * 8.0f));
+    f32 a = amp, r = 1.0f;
+    for (u32 k = 0; k < count; k++, a *= 0.84f) {
+        if (ratio) r = ratio[k];
+        else if (k) r += spread * rr(0.4f, 1.6f);
+        f32 t = tau / (1.0f + hf * (r - 1.0f)) * rr(0.7f, 1.3f);
+        mode(g_tmp, from, end, f0 * r * rr(0.99f, 1.01f), a * rr(0.5f, 1.0f), t);
+    }
+    f32 la = lp_a(700.0f), l = 0.0f, g = grit * 4.0f;
+    for (u32 i = from; i < end; i++) {
+        l += la * (wn() - l);
+        b[i] += g_tmp[i] * (1.0f + g * l);
+        g_tmp[i] = 0.0f;
+    }
+    // Касание: щелчок в полосе выше основной ноты
+    burst(b, from, n, fminf(f0 * 4.0f, 7000.0f), 1.2f, amp * 0.6f, 0.0003f, 0.003f);
+}
+
 // ---------------------------------------------------------------- звуки
 
 static u32 gen_step_sand(f32 *b)
@@ -238,18 +263,94 @@ static u32 gen_swish(f32 *b, bool heavy)
     return n;
 }
 
-static u32 gen_clash(f32 *b, bool heavy)
+// Стержень со свободными концами: изгибные моды
+static const f32 g_bar[] = { 1.0f, 2.76f, 5.40f, 8.93f, 13.34f, 18.64f };
+
+static u32 gen_wpn_ressora(f32 *b)
 {
-    u32 n = at(heavy ? 1.6f : 1.3f);
-    if (!heavy) {
-        metal(b, 0, n, rr(700.0f, 1150.0f), 1.0f, 0.55f, 0.75f, 8);
-        burst(b, 0, n, rr(3500.0f, 5000.0f), 3.0f, 0.35f, 0.002f, 0.05f);
-        // Клинок скользит по клинку
-        burst(b, at(0.01f), n, rr(2300.0f, 3000.0f), 6.0f, 0.25f, 0.02f, 0.06f);
-    } else {
-        metal(b, 0, n, rr(210.0f, 360.0f), 1.0f, 0.8f, 0.8f, 10);
-        thump(b, 0, n, 120.0f, 60.0f, 0.6f, 0.05f);
-        burst(b, 0, n, 1500.0f, 1.0f, 0.4f, 0.001f, 0.02f);
+    u32 n = at(0.7f);
+    // Лист рессоры: плотный звон в 1.5–2.5 кГц, тело листа — низкая мода
+    clank(b, 0, n, rr(1500.0f, 2100.0f), NULL, 9, 0.22f, 0.8f, rr(0.07f, 0.11f), 0.5f, 0.3f);
+    mode(b, 0, n, rr(180.0f, 260.0f), 0.35f, 0.05f);
+    burst(b, 0, n, rr(4000.0f, 5500.0f), 2.0f, 0.3f, 0.001f, 0.02f);
+    return n;
+}
+
+static u32 gen_wpn_sekach(f32 *b)
+{
+    u32 n = at(0.5f);
+    clank(b, 0, n, rr(560.0f, 820.0f), NULL, 11, 0.35f, 0.9f, rr(0.05f, 0.08f), 0.8f, 0.55f);
+    thump(b, 0, n, 220.0f, 120.0f, 0.4f, 0.02f);
+    burst(b, 0, n, 2400.0f, 0.9f, 0.4f, 0.0005f, 0.012f);
+    return n;
+}
+
+static u32 gen_wpn_armatura(f32 *b)
+{
+    u32 n = at(0.45f);
+    // Прутья бьются друг о друга вразнобой
+    u32 rods = 3 + rng_below(&g_r, 3);
+    for (u32 k = 0; k < rods; k++)
+        clank(b, at(rr(0.0f, 0.022f)), n, rr(750.0f, 1500.0f), g_bar, 5, 0.0f, rr(0.3f, 0.6f), rr(0.025f, 0.05f), 0.4f, 0.3f);
+    // Бетон: короткий стук и крошка
+    lpburst(b, 0, n, 1700.0f, 0.8f, 0.0005f, 0.012f);
+    thump(b, 0, n, 160.0f, 80.0f, 0.5f, 0.025f);
+    grains(at(0.003f), n, 26, 0.05f, 0.45f, 0.003f);
+    aux_add(b, n, 4500.0f, 600.0f, 1.0f);
+    return n;
+}
+
+static u32 gen_wpn_bagor(f32 *b)
+{
+    u32 n = at(0.3f);
+    // Сухое дерево: низкие моды гаснут за десятки миллисекунд
+    static const f32 wood[] = { 1.0f, 2.57f, 4.9f, 7.6f };
+    clank(b, 0, n, rr(360.0f, 520.0f), wood, 4, 0.0f, 0.9f, rr(0.018f, 0.03f), 1.2f, 0.1f);
+    lpburst(b, 0, n, 1300.0f, 0.6f, 0.0005f, 0.008f);
+    thump(b, 0, n, 180.0f, 110.0f, 0.4f, 0.02f);
+    return n;
+}
+
+static u32 gen_wpn_hook(f32 *b)
+{
+    u32 n = at(0.35f);
+    clank(b, 0, n, rr(1050.0f, 1450.0f), NULL, 7, 0.3f, 0.7f, rr(0.04f, 0.07f), 0.6f, 0.4f);
+    // Крюк брякнул на древке
+    clank(b, at(rr(0.03f, 0.05f)), n, rr(1600.0f, 2000.0f), NULL, 4, 0.3f, 0.2f, 0.03f, 0.6f, 0.4f);
+    mode(b, 0, n, rr(380.0f, 480.0f), 0.3f, 0.02f);
+    return n;
+}
+
+static u32 gen_wpn_balka(f32 *b)
+{
+    u32 n = at(1.0f);
+    // Двутавр: низкий плотный лязг полок и стенки, тяжёлое тело
+    clank(b, 0, n, rr(130.0f, 185.0f), NULL, 14, 0.45f, 0.9f, rr(0.09f, 0.13f), 0.35f, 0.55f);
+    thump(b, 0, n, 110.0f, 50.0f, 0.9f, 0.05f);
+    lpburst(b, 0, n, 650.0f, 0.5f, 0.0005f, 0.03f);
+    return n;
+}
+
+// Лезвие скользнуло по лезвию: трение рывками (прилип, сорвался) через узкие полосы, высота сползает
+static u32 gen_scrape(f32 *b)
+{
+    u32 n = at(rr(0.18f, 0.32f));
+    Svf s[3] = { 0 };
+    f32 f0 = rr(2400.0f, 3200.0f), drop = rr(0.75f, 0.9f), rate = rr(45.0f, 90.0f), ph = 0.0f;
+    static const f32 mul[3] = { 1.0f, 1.47f, 2.11f };
+    for (u32 i = 0; i < n; i++) {
+        f32 u = (f32)i / (f32)n;
+        if (!(i & 31))
+            for (u32 k = 0; k < 3; k++) svf_set(&s[k], f0 * mul[k] * lerpf(1.0f, drop, u), 14.0f);
+        ph += rate * rr(0.6f, 1.4f) / FS;
+        f32 slip = 0.0f;
+        if (ph >= 1.0f) {
+            ph -= 1.0f;
+            slip = rr(0.5f, 1.0f);
+        }
+        f32 x = wn() * 0.35f + slip * 3.0f;
+        f32 e = fminf(1.0f, u * 25.0f) * (1.0f - u) * (1.0f - u);
+        b[i] += e * (svf_bp(&s[0], x) + 0.7f * svf_bp(&s[1], x) + 0.4f * svf_bp(&s[2], x));
     }
     return n;
 }
@@ -286,10 +387,33 @@ static u32 gen_hit_pierce(f32 *b)
 
 static u32 gen_hit_armor(f32 *b)
 {
-    u32 n = at(0.8f);
-    metal(b, 0, n, rr(330.0f, 520.0f), 0.8f, 0.22f, 0.6f, 7);
-    thump(b, 0, n, 110.0f, 55.0f, 0.7f, 0.05f);
+    u32 n = at(0.5f);
+    // Мятый лист на теле: тело глушит звон почти сразу
+    clank(b, 0, n, rr(380.0f, 560.0f), NULL, 10, 0.35f, 0.8f, rr(0.05f, 0.08f), 0.7f, 0.6f);
+    thump(b, 0, n, 110.0f, 55.0f, 0.8f, 0.05f);
     burst(b, 0, n, 1200.0f, 1.0f, 0.4f, 0.001f, 0.015f);
+    return n;
+}
+
+static u32 gen_hit_chop(f32 *b)
+{
+    u32 n = at(0.45f);
+    thump(b, 0, n, rr(95.0f, 115.0f), 50.0f, 1.0f, 0.06f);
+    burst(b, 0, n, rr(1400.0f, 2000.0f), 1.0f, 0.7f, 0.001f, 0.025f);
+    lpburst(b, 0, n, 600.0f, 0.8f, 0.001f, 0.05f);
+    grains(at(0.01f), n, 14, 0.04f, 0.4f, 0.003f);
+    aux_add(b, n, 4000.0f, 900.0f, 1.0f);
+    return n;
+}
+
+static u32 gen_hit_crush(f32 *b)
+{
+    u32 n = at(0.7f);
+    thump(b, 0, n, rr(65.0f, 80.0f), 32.0f, 1.0f, 0.1f);
+    lpburst(b, 0, n, 320.0f, 1.0f, 0.001f, 0.08f);
+    thump(b, at(0.03f), n, 120.0f, 60.0f, 0.4f, 0.04f);
+    grains(0, n, 30, 0.07f, 0.4f, 0.004f);
+    aux_add(b, n, 3000.0f, 300.0f, 1.0f);
     return n;
 }
 
@@ -322,7 +446,7 @@ static u32 gen_drop_metal(f32 *b)
     u32 n = at(1.1f);
     f32 base = rr(550.0f, 850.0f), t = 0.0f, gap = rr(0.12f, 0.18f), a = 1.0f;
     for (u32 k = 0; k < 4; k++) {
-        metal(b, at(t), n, base * rr(0.97f, 1.03f), a, 0.18f, 0.7f, 6);
+        clank(b, at(t), n, base * rr(0.97f, 1.03f), NULL, 8, 0.3f, a, 0.12f, 0.6f, 0.35f);
         thump(b, at(t), n, 150.0f, 80.0f, a * 0.4f, 0.015f);
         t += gap;
         gap *= rr(0.6f, 0.8f);
@@ -356,7 +480,7 @@ static u32 gen_draw(f32 *b)
     u32 n = at(0.6f);
     f32 te = rr(0.28f, 0.34f);
     scrape(b, n, te, rr(1900.0f, 2200.0f), rr(3000.0f, 3400.0f), true, 0.6f);
-    metal(b, at(te), n, rr(1800.0f, 2600.0f), 0.5f, 0.3f, 0.6f, 5);
+    clank(b, at(te), n, rr(1800.0f, 2600.0f), NULL, 6, 0.25f, 0.45f, 0.14f, 0.5f, 0.1f);
     lpburst(b, 0, n, 1200.0f, 0.2f, 0.01f, 0.04f);
     return n;
 }
@@ -495,6 +619,41 @@ static u32 gen_far_radio(f32 *b)
     return n;
 }
 
+// Лист железа треплет ветер: серия лязгов вразнобой, то чаще, то реже
+static u32 gen_wind_rattle(f32 *b)
+{
+    u32 n = at(rr(0.8f, 1.5f));
+    f32 f0 = rr(280.0f, 480.0f), t = 0.0f, a = rr(0.5f, 0.8f);
+    while (t < (f32)n / FS - 0.25f) {
+        clank(b, at(t), n, f0 * rr(0.95f, 1.05f), NULL, 8, 0.4f, a, rr(0.03f, 0.06f), 0.7f, 0.8f);
+        t += rnd() < 0.3f ? rr(0.02f, 0.05f) : rr(0.07f, 0.2f);
+        a = clampf(a * rr(0.7f, 1.3f), 0.2f, 1.0f);
+    }
+    return n;
+}
+
+// Скрип металла на ветру: трение рывками, частота рывков плывёт; два резонанса — петля и лист
+static u32 gen_wind_creak(f32 *b)
+{
+    u32 n = at(rr(0.7f, 1.3f));
+    Svf r1 = { 0 }, r2 = { 0 };
+    svf_set(&r1, rr(700.0f, 1000.0f), 6.0f);
+    svf_set(&r2, rr(1600.0f, 2200.0f), 9.0f);
+    f32 f0 = rr(55.0f, 80.0f), f1 = f0 * rr(1.3f, 1.9f), ph = 0.0f;
+    for (u32 i = 0; i < n; i++) {
+        f32 u = (f32)i / (f32)n;
+        ph += lerpf(f0, f1, sinf(PI_F * 0.5f * u)) * rr(0.85f, 1.15f) / FS;
+        f32 imp = 0.0f;
+        if (ph >= 1.0f) {
+            ph -= 1.0f;
+            imp = rr(0.6f, 1.0f);
+        }
+        f32 e = sinf(PI_F * u);
+        b[i] += e * (svf_bp(&r1, imp) * 5.0f + svf_bp(&r2, imp) * 3.0f);
+    }
+    return n;
+}
+
 // ---------------------------------------------------------------- сборка
 
 static u32 gen(u8 sfx, f32 *b)
@@ -506,11 +665,18 @@ static u32 gen(u8 sfx, f32 *b)
     case SFX_STEP_WATER:    return gen_step_water(b);
     case SFX_SWISH:         return gen_swish(b, false);
     case SFX_SWISH_HEAVY:   return gen_swish(b, true);
-    case SFX_CLASH:         return gen_clash(b, false);
-    case SFX_CLASH_HEAVY:   return gen_clash(b, true);
+    case SFX_WPN_RESSORA:   return gen_wpn_ressora(b);
+    case SFX_WPN_SEKACH:    return gen_wpn_sekach(b);
+    case SFX_WPN_ARMATURA:  return gen_wpn_armatura(b);
+    case SFX_WPN_BAGOR:     return gen_wpn_bagor(b);
+    case SFX_WPN_HOOK:      return gen_wpn_hook(b);
+    case SFX_WPN_BALKA:     return gen_wpn_balka(b);
+    case SFX_SCRAPE:        return gen_scrape(b);
     case SFX_HIT_CUT:       return gen_hit_cut(b);
     case SFX_HIT_BLUNT:     return gen_hit_blunt(b);
     case SFX_HIT_PIERCE:    return gen_hit_pierce(b);
+    case SFX_HIT_CHOP:      return gen_hit_chop(b);
+    case SFX_HIT_CRUSH:     return gen_hit_crush(b);
     case SFX_HIT_ARMOR:     return gen_hit_armor(b);
     case SFX_CRACK:         return gen_crack(b);
     case SFX_BODYFALL:      return gen_bodyfall(b);
@@ -523,6 +689,8 @@ static u32 gen(u8 sfx, f32 *b)
     case SFX_FAR_GROAN:     return gen_far_groan(b);
     case SFX_FAR_BANG:      return gen_far_bang(b);
     case SFX_FAR_RADIO:     return gen_far_radio(b);
+    case SFX_WIND_RATTLE:   return gen_wind_rattle(b);
+    case SFX_WIND_CREAK:    return gen_wind_creak(b);
     default:                return 0;
     }
 }
@@ -530,10 +698,14 @@ static u32 gen(u8 sfx, f32 *b)
 // Вариантов на звук: шагов больше всего — они повторяются чаще остальных
 static const u8 g_variants[SFX_COUNT] = {
     [SFX_STEP_SAND] = 6, [SFX_STEP_CONCRETE] = 6, [SFX_STEP_GRASS] = 6, [SFX_STEP_WATER] = 4,
-    [SFX_SWISH] = 3, [SFX_SWISH_HEAVY] = 3, [SFX_CLASH] = 4, [SFX_CLASH_HEAVY] = 3,
-    [SFX_HIT_CUT] = 4, [SFX_HIT_BLUNT] = 4, [SFX_HIT_PIERCE] = 3, [SFX_HIT_ARMOR] = 4, [SFX_CRACK] = 2,
+    [SFX_SWISH] = 3, [SFX_SWISH_HEAVY] = 3,
+    [SFX_WPN_RESSORA] = 5, [SFX_WPN_SEKACH] = 5, [SFX_WPN_ARMATURA] = 5, [SFX_WPN_BAGOR] = 4, [SFX_WPN_HOOK] = 4,
+    [SFX_WPN_BALKA] = 4, [SFX_SCRAPE] = 4,
+    [SFX_HIT_CUT] = 4, [SFX_HIT_BLUNT] = 4, [SFX_HIT_PIERCE] = 3, [SFX_HIT_CHOP] = 4, [SFX_HIT_CRUSH] = 3,
+    [SFX_HIT_ARMOR] = 4, [SFX_CRACK] = 2,
     [SFX_BODYFALL] = 3, [SFX_DROP_METAL] = 3, [SFX_DRAW] = 3, [SFX_SHEATH] = 2, [SFX_SCUFF] = 3,
     [SFX_UI_TICK] = 1, [SFX_UI_ORDER] = 1, [SFX_FAR_GROAN] = 3, [SFX_FAR_BANG] = 3, [SFX_FAR_RADIO] = 2,
+    [SFX_WIND_RATTLE] = 4, [SFX_WIND_CREAK] = 4,
 };
 
 bool synth_build(SfxBank *bank, Arena *perm)

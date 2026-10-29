@@ -78,7 +78,7 @@ void sfx_listener(WorldSound *s, V3 eye, V3 target, f32 yaw, bool valley)
     AudioScene sc;
     if (valley) {
         // Долина: ветер тише, гула почти нет, эхо слабое, вода рядом
-        sc = (AudioScene){ .wind = 0.35f + 0.2f * zoom, .hum = 0.12f, .room = 0.18f, .far = 0.3f, .river = true };
+        sc = (AudioScene){ .wind = 0.35f + 0.2f * zoom, .hum = 0.12f, .room = 0.18f, .far = 0.3f, .river = true, .green = true };
         f32 rx = valley_river_x(lis.z), w = valley_river_w(lis.z), dx = lis.x - rx;
         sc.river_pos = v3(rx + (dx < 0.0f ? -1.0f : 1.0f) * fminf(w, fabsf(dx)), valley_water_y(lis.z), lis.z);
     } else if (in_hall(target.x, target.z)) {
@@ -96,6 +96,35 @@ static const WeaponDef *weapon_of(const CombatWorld *w, u32 i)
 }
 
 static bool weapon_heavy(const WeaponDef *d) { return d && (d->wclass == WC_HEAVY || d->wclass == WC_POLEARM || d->weight >= 6.5f); }
+
+static u32 hash32(u32 x)
+{
+    x ^= x >> 16;
+    x *= 0x7FEB352Du;
+    x ^= x >> 15;
+    x *= 0x846CA68Bu;
+    x ^= x >> 16;
+    return x;
+}
+
+static f32 roll01(SfxFight *f) { return (f32)(hash32(++f->roll * 0x9E3779B9u) >> 8) * (1.0f / 16777216.0f); }
+
+// У каждого бойца своя высота оружия (±7%): два одинаковых секача звенят по-разному
+static f32 own_pitch(const SfxFight *f, u32 i) { return 0.93f + 0.14f * (f32)(hash32((i + 1) * 0x85EBCA6Bu ^ f->salt) & 1023u) / 1023.0f; }
+
+// Чем оружие отвечает на удар: чем закрылись — древко багра деревянное, а бьют им крюком или пикой
+static u8 weapon_voice(u32 w, bool striking)
+{
+    switch (w) {
+    case W_RESSORA:  return SFX_WPN_RESSORA;
+    case W_SEKACH:   return SFX_WPN_SEKACH;
+    case W_ARMATURA: return SFX_WPN_ARMATURA;
+    case W_BAGOR:    return striking ? SFX_WPN_HOOK : SFX_WPN_BAGOR;
+    default:         return SFX_WPN_BALKA;
+    }
+}
+
+static bool weapon_edged(const WeaponDef *d) { return d && (d->wclass == WC_BLADE || d->wclass == WC_CLEAVER); }
 
 static V3 fighter_pos(const SfxFight *f, const CombatWorld *w, u32 i)
 {
@@ -127,7 +156,7 @@ static void sfx_on_events(void *user, const CombatWorld *w)
         case EV_COUNTER: {
             // Свист к концу замаха: громче всего в миг удара (пик звука ~0.2 с от начала)
             f32 delay = fmaxf(0.0f, w->timer[e->a] - 0.2f);
-            f32 pitch = wa ? clampf(1.2f - 0.03f * wa->weight, 0.8f, 1.15f) : 1.3f;
+            f32 pitch = (wa ? clampf(1.2f - 0.03f * wa->weight, 0.8f, 1.15f) : 1.3f) * own_pitch(f, e->a);
             audio_play(weapon_heavy(wa) ? SFX_SWISH_HEAVY : SFX_SWISH, fighter_pos(f, w, e->a), wa ? 1.0f : 0.4f, pitch, delay);
             break;
         }
@@ -140,17 +169,31 @@ static void sfx_on_events(void *user, const CombatWorld *w)
                 u8 a = w->armor[sl][e->b];
                 metal = a != ARMOR_NONE && armor_metal(a) && e->part < PART_COUNT && g_armors[a].cover[e->part] >= 0.5f;
             }
+            f32 pa = own_pitch(f, e->a);
+            bool thrust = e->pierce > e->cut && e->pierce > e->blunt;
             if (metal) {
+                // Броня звенит, и в ней слышно, чем ударили
                 audio_play(SFX_HIT_ARMOR, p, g, wa ? clampf(1.15f - 0.02f * wa->weight, 0.85f, 1.1f) : 0.9f, 0.0f);
+                if (wa) audio_play(weapon_voice(w->weapon[e->a], true), p, g * 0.35f, pa, 0.002f);
                 audio_play(SFX_HIT_BLUNT, p, g * 0.4f, 1.0f, 0.0f);
             } else if (!wa) {
                 audio_play(SFX_HIT_BLUNT, p, g * 0.6f, 1.15f, 0.0f);
-            } else if (e->pierce > e->cut && e->pierce > e->blunt) {
-                audio_play(SFX_HIT_PIERCE, p, g, 1.0f, 0.0f);
-            } else if (e->cut >= e->blunt) {
-                audio_play(SFX_HIT_CUT, p, g, 1.0f, 0.0f);
             } else {
-                audio_play(SFX_HIT_BLUNT, p, g, clampf(1.1f - 0.015f * wa->weight, 0.85f, 1.05f), 0.0f);
+                switch (wa->wclass) {
+                case WC_BLADE: audio_play(thrust ? SFX_HIT_PIERCE : SFX_HIT_CUT, p, g, pa, 0.0f); break;
+                case WC_CLEAVER: audio_play(SFX_HIT_CHOP, p, g, pa, 0.0f); break;
+                case WC_BLUNT:
+                    // Арматура: тупой удар, и бетон с прутьями брякнули
+                    audio_play(SFX_HIT_BLUNT, p, g, clampf(1.1f - 0.015f * wa->weight, 0.85f, 1.05f), 0.0f);
+                    audio_play(SFX_WPN_ARMATURA, p, g * 0.3f, pa, 0.003f);
+                    break;
+                case WC_POLEARM:
+                    // Пикой — укол, размахом — древком плашмя
+                    if (thrust) audio_play(SFX_HIT_PIERCE, p, g, pa * 0.95f, 0.0f);
+                    else audio_play(SFX_HIT_BLUNT, p, g * 0.85f, 1.1f * pa, 0.0f);
+                    break;
+                default: audio_play(SFX_HIT_CRUSH, p, g, pa, 0.0f); break;
+                }
             }
             if (e->flags & EVF_FRACTURE) audio_play(SFX_CRACK, p, 1.0f, 1.0f, 0.01f);
             // Отсечённое упало на землю
@@ -164,11 +207,18 @@ static void sfx_on_events(void *user, const CombatWorld *w)
                 audio_play(SFX_HIT_BLUNT, p, 0.5f, 1.2f, 0.0f);
                 break;
             }
-            bool heavy = weapon_heavy(wa) || weapon_heavy(wb) || (wa && wa->wclass == WC_BLUNT) || wb->wclass == WC_BLUNT;
-            f32 mass = (wa ? wa->weight : 0.0f) + wb->weight;
-            f32 pitch = clampf(1.3f - 0.025f * mass, 0.7f, 1.25f);
+            // Два голоса: громче то, чем закрылись (по нему ударили), тише то, чем бьют.
+            // Высота у каждого своя; сбили стойку — удар глубже и ниже
             bool stag = e->flags & EVF_STAGGER;
-            audio_play(heavy ? SFX_CLASH_HEAVY : SFX_CLASH, p, stag ? 1.15f : 0.9f, stag ? pitch * 0.93f : pitch, 0.0f);
+            f32 force = wa ? clampf(wa->weight / 8.0f, 0.3f, 1.4f) : 0.3f;
+            f32 gb = (stag ? 1.15f : 0.85f) * (0.75f + 0.25f * force);
+            audio_play(weapon_voice(w->weapon[e->b], false), p, gb, own_pitch(f, e->b) * (stag ? 0.96f : 1.0f), 0.0f);
+            if (wa) {
+                audio_play(weapon_voice(w->weapon[e->a], true), p, gb * 0.6f, own_pitch(f, e->a), 0.003f);
+                // Лезвие по лезвию иногда скользит, а не просто стучит
+                if (weapon_edged(wa) && weapon_edged(wb) && roll01(f) < 0.45f)
+                    audio_play(SFX_SCRAPE, p, 0.8f, own_pitch(f, e->a), 0.012f);
+            }
             break;
         }
         case EV_DODGE: audio_play(SFX_SCUFF, fighter_pos(f, w, e->b), 0.8f, 1.0f, 0.0f); break;
@@ -243,6 +293,7 @@ void sfx_arena(WorldSound *s, const ArenaView *v, const ArenaSession *a)
     if (a->bout != s->arena_bout) {
         // Новый бой: в слотах другие люди
         s->arena_bout = a->bout;
+        f->salt = hash32(a->bout + 1u);
         memset(f->down, 0, sizeof f->down);
         memset(f->dropped, 0, sizeof f->dropped);
         memset(f->wield, 0, sizeof f->wield);

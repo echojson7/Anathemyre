@@ -11,6 +11,7 @@
 #include "../core/log.h"
 #include "../core/rng.h"
 #include "../platform/platform.h"
+#include "music.h"
 #include "synth.h"
 
 #define FS ((f32)AUDIO_RATE)
@@ -20,7 +21,7 @@
 #define MIX_BLOCK 64
 #define SOUND_SPEED 343.0f   // м/с: дальний удар доходит позже, чем виден
 #define ECHO_MAX (AUDIO_RATE * 6 / 10)
-#define BANK_BYTES MB(8)
+#define BANK_BYTES MB(12)
 
 // ref — ближе этого громкость полная, дальше падает как ref/d; maxd — дальше не слышно.
 // gain — громкость на ref, rev — доля в эхо, jit — разброс высоты ±
@@ -36,11 +37,19 @@ static const SfxDef g_def[SFX_COUNT] = {
     [SFX_STEP_WATER]    = { 1.0f, 24.0f, 0.30f, 0.08f, 0.12f },
     [SFX_SWISH]         = { 2.0f, 30.0f, 0.32f, 0.15f, 0.12f },
     [SFX_SWISH_HEAVY]   = { 2.0f, 36.0f, 0.42f, 0.15f, 0.10f },
-    [SFX_CLASH]         = { 3.0f, 110.0f, 0.70f, 0.55f, 0.07f },
-    [SFX_CLASH_HEAVY]   = { 3.0f, 120.0f, 0.80f, 0.55f, 0.06f },
+    // Оружие о оружие слышно далеко: громче всего в бою
+    [SFX_WPN_RESSORA]   = { 3.0f, 100.0f, 0.62f, 0.50f, 0.05f },
+    [SFX_WPN_SEKACH]    = { 3.0f, 100.0f, 0.68f, 0.45f, 0.05f },
+    [SFX_WPN_ARMATURA]  = { 3.0f, 90.0f, 0.66f, 0.40f, 0.06f },
+    [SFX_WPN_BAGOR]     = { 3.0f, 70.0f, 0.60f, 0.35f, 0.06f },
+    [SFX_WPN_HOOK]      = { 3.0f, 80.0f, 0.50f, 0.40f, 0.05f },
+    [SFX_WPN_BALKA]     = { 3.0f, 120.0f, 0.80f, 0.55f, 0.04f },
+    [SFX_SCRAPE]        = { 2.0f, 45.0f, 0.32f, 0.30f, 0.08f },
     [SFX_HIT_CUT]       = { 2.0f, 45.0f, 0.55f, 0.20f, 0.10f },
     [SFX_HIT_BLUNT]     = { 2.0f, 55.0f, 0.65f, 0.25f, 0.10f },
     [SFX_HIT_PIERCE]    = { 2.0f, 40.0f, 0.50f, 0.20f, 0.10f },
+    [SFX_HIT_CHOP]      = { 2.0f, 50.0f, 0.62f, 0.22f, 0.10f },
+    [SFX_HIT_CRUSH]     = { 2.5f, 70.0f, 0.78f, 0.30f, 0.08f },
     [SFX_HIT_ARMOR]     = { 3.0f, 80.0f, 0.60f, 0.45f, 0.08f },
     [SFX_CRACK]         = { 1.5f, 30.0f, 0.45f, 0.15f, 0.10f },
     [SFX_BODYFALL]      = { 2.0f, 55.0f, 0.60f, 0.30f, 0.10f },
@@ -54,6 +63,9 @@ static const SfxDef g_def[SFX_COUNT] = {
     [SFX_FAR_GROAN]     = { 60.0f, 2500.0f, 0.45f, 0.90f, 0.12f },
     [SFX_FAR_BANG]      = { 60.0f, 2500.0f, 0.55f, 0.90f, 0.10f },
     [SFX_FAR_RADIO]     = { 30.0f, 2500.0f, 0.30f, 0.60f, 0.04f },
+    // Обломки на ветру: где-то рядом, тихо
+    [SFX_WIND_RATTLE]   = { 8.0f, 120.0f, 0.22f, 0.50f, 0.10f },
+    [SFX_WIND_CREAK]    = { 8.0f, 120.0f, 0.16f, 0.50f, 0.12f },
 };
 
 typedef struct Cmd {
@@ -95,6 +107,29 @@ static inline f32 svf_bp(Svf *s, f32 x)
     return s->band * s->q;
 }
 
+// Погода ветра: держится минуту-две и плавно сменяется соседней. Числа — доли слоёв
+#define WIND_HOWLS 3
+enum { WIND_CALM, WIND_STEADY, WIND_GUSTY, WIND_STORM, WIND_MOODS };
+typedef struct WindMoodDef {
+    f32 level;      // общая сила
+    f32 depth;      // глубина порывов
+    f32 rate;       // как часто сменяются порывы
+    f32 rumble;     // гул низов
+    f32 rush;       // шум потока в середине
+    f32 howl;       // свист и вой в щелях мегаструктур
+    f32 sand;       // песок и пыль
+    f32 pitch;      // высота воя
+    f32 debris;     // как часто треплет обломки
+} WindMoodDef;
+
+static const WindMoodDef g_wind_mood[WIND_MOODS] = {
+    //                 сила  порывы  темп  гул   поток  вой   песок высота обломки
+    [WIND_CALM]   = { 0.45f, 0.35f, 0.6f, 0.9f, 0.45f, 0.3f, 0.25f, 0.85f, 0.3f },
+    [WIND_STEADY] = { 0.80f, 0.45f, 1.0f, 1.0f, 0.85f, 0.6f, 0.60f, 1.00f, 0.7f },
+    [WIND_GUSTY]  = { 0.85f, 1.00f, 1.8f, 1.1f, 1.00f, 1.0f, 0.80f, 1.10f, 1.3f },
+    [WIND_STORM]  = { 1.10f, 0.60f, 1.4f, 1.4f, 1.40f, 1.2f, 1.50f, 1.20f, 1.6f },
+};
+
 // Ревербератор: четыре гребня с затуханием верхов и два фазовых фильтра на канал (схема Шрёдера)
 #define COMBS 4
 #define ALLPASS 2
@@ -117,9 +152,9 @@ static struct {
     u32  n;
     V3   lis, right;
     AudioScene scene;
-    f32  volume;
-    bool on;
-} g_in = { .lock = ATOMIC_FLAG_INIT, .right = { 1, 0, 0 }, .volume = 0.8f, .on = true };
+    f32  volume, music;
+    bool on, music_on;
+} g_in = { .lock = ATOMIC_FLAG_INIT, .right = { 1, 0, 0 }, .volume = 0.8f, .music = 0.7f, .on = true, .music_on = true };
 
 // Слушатель на стороне игры: отсекать дальние звуки до очереди
 static V3 g_lis_game;
@@ -136,14 +171,19 @@ static struct {
     Cmd  q[QUEUE_MAX];
     V3   lis, right;
     AudioScene want, sc;  // заданный фон и плавно идущий к нему
-    f32  vol, vol_want;
+    f32  vol, vol_want, music, music_want;
     bool on;
     Rng  rng;
     u32  noise;           // быстрый шум ветра и воды
-    // Ветер на канал: гул низов, вой в полосе, шипение песка
-    f32  wr1[2], wr2[2], wh[2];
-    Svf  howl[2];
+    // Ветер на канал: гул низов, шум потока, свист в щелях, шипение песка
+    f32  wr1[2], wr2[2], wh[2], sand_fl[2];
+    Svf  rush[2], howl[2][WIND_HOWLS];
+    f32  howl_f[WIND_HOWLS], howl_fw[WIND_HOWLS], howl_a[WIND_HOWLS], howl_aw[WIND_HOWLS], howl_t[WIND_HOWLS];
     f32  gust, gust_want, gust_slow, gust_slow_want, gust_t, gust_slow_t;
+    // Погода ветра: текущая, к которой идём, сколько ещё держится; откуда дует
+    WindMoodDef wm;
+    u8   mood;
+    f32  mood_t, dir, dir_want, debris_t;
     // Гул мегаструктур
     f32  hum_ph[4], hum_am;
     // Вода
@@ -203,10 +243,18 @@ bool audio_init(Arena *perm)
     rng_seed(&g_m.rng, 0xA0D10u, 5);
     g_m.noise = 0x9E3779B9u;
     g_m.vol = g_m.vol_want = 0.8f;
+    g_m.music = g_m.music_want = 0.7f;
+    // Музыка своя в каждом запуске: звук на мир не влияет
+    music_init((u32)(time_now() * 1000.0) ^ 0x6D757331u);
     g_m.on = true;
     g_m.far_t = 9.0f;
     g_m.echo_len = (u32)(0.42f * FS);
-    for (u32 c = 0; c < 2; c++) svf_set(&g_m.howl[c], 400.0f, 7.0f);
+    g_m.mood = WIND_STEADY;
+    g_m.wm = g_wind_mood[WIND_STEADY];
+    g_m.mood_t = rng_range(&g_m.rng, 50.0f, 110.0f);
+    g_m.dir = g_m.dir_want = rng_range(&g_m.rng, 0.0f, TAU);
+    g_m.debris_t = 6.0f;
+    for (u32 k = 0; k < WIND_HOWLS; k++) g_m.howl_f[k] = g_m.howl_fw[k] = 300.0f + 250.0f * (f32)k;
     svf_set(&g_m.river_bp, 900.0f, 0.6f);
     atomic_store(&g_m.bank_ready, false);
     g_m.synth = platform_thread_start(synth_job, NULL);
@@ -279,6 +327,14 @@ void audio_volume(f32 master, bool on)
     lock();
     g_in.volume = master;
     g_in.on = on;
+    unlock();
+}
+
+void audio_music(f32 level, bool on)
+{
+    lock();
+    g_in.music = level;
+    g_in.music_on = on;
     unlock();
 }
 
@@ -400,10 +456,34 @@ static void mix_voices(u32 n)
     g_m.peak_voices = MAX(g_m.peak_voices, active);
 }
 
-// Порывы: медленная волна (10–25 с) и быстрая (1–4 с), обе к случайной цели
+// Следующая погода: обычно соседняя; буря короче остальных
+static void wind_mood_next(void)
+{
+    static const u8 next[WIND_MOODS][4] = {
+        [WIND_CALM]   = { WIND_STEADY, WIND_STEADY, WIND_GUSTY, WIND_STEADY },
+        [WIND_STEADY] = { WIND_CALM, WIND_GUSTY, WIND_GUSTY, WIND_STORM },
+        [WIND_GUSTY]  = { WIND_STEADY, WIND_STEADY, WIND_STORM, WIND_CALM },
+        [WIND_STORM]  = { WIND_GUSTY, WIND_STEADY, WIND_GUSTY, WIND_STEADY },
+    };
+    g_m.mood = next[g_m.mood][rng_below(&g_m.rng, 4)];
+    g_m.mood_t = g_m.mood == WIND_STORM ? rng_range(&g_m.rng, 35.0f, 75.0f) : rng_range(&g_m.rng, 55.0f, 140.0f);
+    // С новой погодой ветер чуть заходит с другой стороны
+    g_m.dir_want = g_m.dir + rng_range(&g_m.rng, -1.2f, 1.2f);
+}
+
+// Порывы: медленная волна (10–25 с) и быстрая (1–4 с), обе к случайной цели; темп — от погоды.
+// Свист: у каждой щели своя высота и громкость, обе плывут
 static void gusts(f32 dt)
 {
-    if ((g_m.gust_t -= dt) <= 0.0f) {
+    if ((g_m.mood_t -= dt) <= 0.0f) wind_mood_next();
+    const WindMoodDef *t = &g_wind_mood[g_m.mood];
+    f32 km = fminf(1.0f, dt / 15.0f);
+    f32 *cur = &g_m.wm.level;
+    const f32 *want = &t->level;
+    for (u32 i = 0; i < sizeof(WindMoodDef) / sizeof(f32); i++) cur[i] += (want[i] - cur[i]) * km;
+    g_m.dir += (g_m.dir_want - g_m.dir) * fminf(1.0f, dt / 20.0f);
+    f32 rate = fmaxf(g_m.wm.rate, 0.3f);
+    if ((g_m.gust_t -= dt * rate) <= 0.0f) {
         g_m.gust_t = rng_range(&g_m.rng, 0.8f, 4.0f);
         f32 r = rng_f32(&g_m.rng);
         g_m.gust_want = r * r;
@@ -412,8 +492,29 @@ static void gusts(f32 dt)
         g_m.gust_slow_t = rng_range(&g_m.rng, 10.0f, 25.0f);
         g_m.gust_slow_want = rng_f32(&g_m.rng);
     }
-    g_m.gust += (g_m.gust_want - g_m.gust) * fminf(1.0f, dt / 1.5f);
+    g_m.gust += (g_m.gust_want - g_m.gust) * fminf(1.0f, dt * rate / 1.5f);
     g_m.gust_slow += (g_m.gust_slow_want - g_m.gust_slow) * fminf(1.0f, dt / 6.0f);
+    static const f32 lo[WIND_HOWLS] = { 200.0f, 380.0f, 900.0f }, hi[WIND_HOWLS] = { 450.0f, 900.0f, 2100.0f };
+    for (u32 k = 0; k < WIND_HOWLS; k++) {
+        if ((g_m.howl_t[k] -= dt) <= 0.0f) {
+            g_m.howl_t[k] = rng_range(&g_m.rng, 2.5f, 9.0f);
+            g_m.howl_fw[k] = rng_range(&g_m.rng, lo[k], hi[k]);
+            f32 r = rng_f32(&g_m.rng);
+            g_m.howl_aw[k] = r < 0.3f ? 0.0f : r;
+        }
+        g_m.howl_f[k] += (g_m.howl_fw[k] - g_m.howl_f[k]) * fminf(1.0f, dt / 2.5f);
+        g_m.howl_a[k] += (g_m.howl_aw[k] - g_m.howl_a[k]) * fminf(1.0f, dt / 2.0f);
+    }
+}
+
+// Ветер треплет обломки: где-то с подветренной стороны дребезжит лист или скрипит петля
+static void debris_event(f32 g)
+{
+    u8 sfx = rng_f32(&g_m.rng) < 0.6f ? SFX_WIND_RATTLE : SFX_WIND_CREAK;
+    f32 a = g_m.dir + PI_F + rng_range(&g_m.rng, -1.4f, 1.4f), dist = rng_range(&g_m.rng, 10.0f, 45.0f);
+    Cmd c = { .sfx = sfx, .gain = clampf(0.4f + g * g_m.wm.level, 0.3f, 1.3f), .pitch = rng_range(&g_m.rng, 0.85f, 1.15f),
+              .pos = v3(g_m.lis.x + sinf(a) * dist, g_m.lis.y + rng_range(&g_m.rng, 0.0f, 8.0f), g_m.lis.z + cosf(a) * dist) };
+    voice_start(&c);
 }
 
 // Фон блока: ветер, гул, вода — сразу в сухой сигнал и немного в эхо
@@ -422,11 +523,26 @@ static void mix_ambient(u32 n)
     const f32 dt = (f32)n / FS;
     gusts(dt);
     const AudioScene *sc = &g_m.sc;
-    f32 g = clampf(0.55f * g_m.gust_slow + 0.6f * g_m.gust, 0.0f, 1.0f);
-    f32 level = sc->wind * (0.35f + 0.65f * g);
-    for (u32 c = 0; c < 2; c++) svf_set(&g_m.howl[c], (280.0f + 520.0f * g) * (c ? 1.07f : 0.94f), 7.0f);
-    const f32 ar = 0.0207f, ah = 0.28f;     // 160 Гц и ~2.5 кГц
-    const f32 kr = 1.3f * level, kh = 0.5f * level * g * g, ks = 0.035f * level * (0.3f + g);
+    const WindMoodDef *m = &g_m.wm;
+    f32 g = clampf((0.55f * g_m.gust_slow + 0.6f * g_m.gust) * m->depth + 0.5f * (1.0f - m->depth), 0.0f, 1.0f);
+    f32 level = sc->wind * m->level * (0.35f + 0.65f * g);
+    if (!sc->green && sc->wind > 0.25f && bank_ready() && (g_m.debris_t -= dt) <= 0.0f) {
+        g_m.debris_t = rng_range(&g_m.rng, 4.0f, 14.0f) / fmaxf(m->debris * (0.4f + g), 0.2f);
+        if (g > 0.35f) debris_event(g);
+    }
+    // Откуда дует: с той стороны громче; порыв ещё и проходит по сторонам
+    f32 side = 0.3f * (sinf(g_m.dir) * g_m.right.x + cosf(g_m.dir) * g_m.right.z) + 0.15f * (g_m.gust - g_m.gust_want);
+    f32 sg[2] = { 1.0f - side, 1.0f + side };
+    for (u32 c = 0; c < 2; c++) {
+        svf_set(&g_m.rush[c], (380.0f + 650.0f * g) * m->pitch * (c ? 1.05f : 0.95f), 0.8f);
+        for (u32 k = 0; k < WIND_HOWLS; k++)
+            svf_set(&g_m.howl[c][k], g_m.howl_f[k] * m->pitch * (1.0f + 0.25f * g) * (c ? 1.012f : 0.988f), k == 2 ? 26.0f : 14.0f);
+    }
+    const f32 ar = 0.0207f, ah = 0.28f, af = 0.0026f;  // 160 Гц, ~2.5 кГц, дрожь песка ~20 Гц
+    f32 kr = 1.2f * level * m->rumble, km = 0.22f * level * m->rush * (0.4f + 0.6f * g);
+    f32 kh[WIND_HOWLS], ks = 0.045f * level * m->sand * (0.3f + g);
+    // Узкая полоса из шума тихая сама по себе: свисту нужен большой множитель
+    for (u32 k = 0; k < WIND_HOWLS; k++) kh[k] = (k == 2 ? 1.1f : 2.0f) * level * m->howl * (0.2f + 0.8f * g * g) * g_m.howl_a[k];
     // Гул: низкие ноты с медленным биением; верхние гармоники — чтобы было слышно и в динамиках ноутбука
     static const f32 hum_f[4] = { 41.2f, 55.3f, 82.6f, 123.9f }, hum_a[4] = { 1.0f, 0.7f, 0.45f, 0.25f };
     g_m.hum_am += dt * 0.07f;
@@ -442,7 +558,12 @@ static void mix_ambient(u32 n)
             g_m.wr1[c] += ar * (x - g_m.wr1[c]);
             g_m.wr2[c] += ar * (g_m.wr1[c] - g_m.wr2[c]);
             g_m.wh[c] += ah * (x - g_m.wh[c]);
-            out[c] = g_m.wr2[c] * kr + svf_bp(&g_m.howl[c], x) * kh + (x - g_m.wh[c]) * ks;
+            g_m.sand_fl[c] += af * (fabsf(x) - g_m.sand_fl[c]);
+            f32 w = g_m.wr2[c] * kr + svf_bp(&g_m.rush[c], x) * km;
+            for (u32 k = 0; k < WIND_HOWLS; k++) w += svf_bp(&g_m.howl[c][k], x) * kh[k];
+            // Песок сечёт неровно: шипение дрожит
+            w += (x - g_m.wh[c]) * ks * (0.4f + 1.2f * g_m.sand_fl[c]);
+            out[c] = w * sg[c];
         }
         f32 h = 0.0f;
         for (u32 k = 0; k < 4; k++) {
@@ -537,6 +658,7 @@ static void drain_input(void)
     g_m.right = g_in.right;
     g_m.want = g_in.scene;
     g_m.vol_want = g_in.volume;
+    g_m.music_want = g_in.music_on ? g_in.music : 0.0f;
     g_m.on = g_in.on;
     unlock();
     for (u32 i = 0; i < n; i++) voice_start(&g_m.q[i]);
@@ -566,6 +688,8 @@ void audio_mix(f32 *out, u32 frames)
         g_m.sc.room += (g_m.want.room - g_m.sc.room) * k;
         g_m.sc.far = g_m.want.far;
         g_m.sc.river = g_m.want.river;
+        g_m.sc.green = g_m.want.green;
+        g_m.music += (g_m.music_want - g_m.music) * fminf(1.0f, dt / 0.3f);
         g_m.vol += ((g_m.on ? g_m.vol_want : 0.0f) - g_m.vol) * fminf(1.0f, dt / 0.05f);
         if (g_m.sc.far > 0.02f && bank_ready() && (g_m.far_t -= dt) <= 0.0f) {
             g_m.far_t = rng_range(&g_m.rng, 14.0f, 45.0f) / fmaxf(g_m.sc.far, 0.25f);
@@ -576,6 +700,7 @@ void audio_mix(f32 *out, u32 frames)
         memset(g_m.buf_s, 0, sizeof g_m.buf_s);
         mix_voices(n);
         mix_ambient(n);
+        if (g_m.music > 1e-3f) music_mix(g_m.buf_l, g_m.buf_r, g_m.buf_s, n, g_m.sc.green, g_m.music);
         mix_reverb(n);
         f32 *o = out + (size_t)done * 2;
         for (u32 j = 0; j < n; j++) {
@@ -633,37 +758,77 @@ int audio_demo(const char *wav_path)
     g_m.offline = true;
     log_stat("ЗВУК: банк %u звуков, %.1f МБ, синтез %.0f мс (в своём потоке)", (unsigned)SFX_COUNT,
              (f64)g_m.bank.bytes / (1024.0 * 1024.0), (f64)g_m.synth_ms);
-    const f32 seconds = 26.0f;
+    // Хвост голосов оружия: сколько звенит до −40 дБ от пика (колокол звенел бы секунды)
+    for (u32 sfx = SFX_WPN_RESSORA; sfx <= SFX_SCRAPE; sfx++) {
+        f32 tail = 0.0f;
+        for (u32 v = 0; v < g_m.bank.count[sfx]; v++) {
+            const i16 *d = g_m.bank.data[sfx][v];
+            u32 last = 0;
+            for (u32 i = 0; i < g_m.bank.len[sfx][v]; i++)
+                if (d[i] > 311 || d[i] < -311) last = i;
+            tail += (f32)last / FS / (f32)g_m.bank.count[sfx];
+        }
+        log_stat("ЗВУК: голос %u: хвост до -40 дБ %.0f мс", sfx - SFX_WPN_RESSORA, (f64)(tail * 1000.0f));
+    }
+    // 0–26 с — сценка; 26–46 — четыре погоды ветра по 5 с; 46–91 — музыка без фона
+    const f32 seconds = 91.0f, t_moods = 26.0f, t_music = 46.0f;
     const u32 frames = (u32)(seconds * FS), step = AUDIO_RATE / 60;
     i16 *pcm = ARENA_PUSH_ARRAY(&mem, i16, (size_t)frames * 2);
     f32 *mix = ARENA_PUSH_ARRAY(&mem, f32, (size_t)step * 2);
     if (!pcm || !mix) return 1;
-    // Бой в 4 м справа впереди: достал, замах — блок, замах — попадание, тяжёлый блок, удар в броню,
-    // дробящий с переломом, падение, выпавшее оружие; в конце убрал
+    music_init(0x6D757331u);
+    audio_music(0.7f, false);
+    // Бой в 4 м справа впереди: достал; рессора бьёт, секач закрылся (лезвие скользнуло); попадание;
+    // балка в рессору; уворот; арматура в шлем; балка с переломом, падение, выпавшее оружие;
+    // арматура в древко багра; тесак врубился; в конце убрал
     static const DemoCue cues[] = {
         { 5.5f, SFX_DRAW, 3, -3, 1 },
-        { 6.3f, SFX_SWISH, 3, -3, 1 }, { 6.55f, SFX_CLASH, 3, -3, 1 },
+        { 6.3f, SFX_SWISH, 3, -3, 1 }, { 6.55f, SFX_WPN_SEKACH, 3, -3, 0.9f }, { 6.553f, SFX_WPN_RESSORA, 3, -3, 0.55f },
+        { 6.565f, SFX_SCRAPE, 3, -3, 0.8f },
         { 7.4f, SFX_SWISH, 3, -3, 1 }, { 7.62f, SFX_HIT_CUT, 3, -3, 1 },
-        { 8.6f, SFX_SWISH_HEAVY, 3, -3, 1 }, { 8.95f, SFX_CLASH_HEAVY, 3, -3, 1 },
+        { 8.6f, SFX_SWISH_HEAVY, 3, -3, 1 }, { 8.95f, SFX_WPN_RESSORA, 3, -3, 1.1f }, { 8.953f, SFX_WPN_BALKA, 3, -3, 0.65f },
         { 9.7f, SFX_SCUFF, 3, -3, 1 },
-        { 10.4f, SFX_SWISH, 3, -3, 1 }, { 10.62f, SFX_HIT_ARMOR, 3, -3, 1 },
-        { 11.5f, SFX_SWISH_HEAVY, 3, -3, 1 }, { 11.85f, SFX_HIT_BLUNT, 3, -3, 1 }, { 11.86f, SFX_CRACK, 3, -3, 1 },
+        { 10.4f, SFX_SWISH, 3, -3, 1 }, { 10.62f, SFX_HIT_ARMOR, 3, -3, 1 }, { 10.622f, SFX_WPN_ARMATURA, 3, -3, 0.35f },
+        { 11.5f, SFX_SWISH_HEAVY, 3, -3, 1 }, { 11.85f, SFX_HIT_CRUSH, 3, -3, 1 }, { 11.86f, SFX_CRACK, 3, -3, 1 },
         { 12.3f, SFX_BODYFALL, 3, -3, 1 }, { 12.5f, SFX_DROP_METAL, 3.3f, -2.5f, 1 },
-        { 12.0f, SFX_HIT_PIERCE, -6, -8, 1 }, { 13.0f, SFX_CLASH, -30, -50, 1 },
-        { 14.5f, SFX_SHEATH, 3, -3, 1 },
+        { 12.0f, SFX_HIT_PIERCE, -6, -8, 1 }, { 13.0f, SFX_WPN_SEKACH, -30, -50, 1 },
+        { 13.5f, SFX_WPN_BAGOR, 3, -3, 0.9f }, { 13.503f, SFX_WPN_ARMATURA, 3, -3, 0.55f },
+        { 14.0f, SFX_HIT_CHOP, 3, -3, 1 },
+        { 14.8f, SFX_SHEATH, 3, -3, 1 },
         { 15.5f, SFX_UI_TICK, 0, 0, 1 }, { 16.0f, SFX_UI_ORDER, 0, 0, 1 },
         { 3.0f, SFX_FAR_GROAN, -300, -200, 1 }, { 17.0f, SFX_FAR_BANG, 400, -100, 1 }, { 19.5f, SFX_FAR_RADIO, -80, 120, 1 },
+        { 18.0f, SFX_WIND_RATTLE, 20, -25, 1 }, { 21.5f, SFX_WIND_CREAK, -25, 10, 1 },
     };
     bool fired[ARRAY_COUNT(cues)] = { 0 };
     f64 mix_s = 0.0;
     f32 next_step_near = 0.3f, next_step_far = 0.5f, next_step_valley = 21.0f;
+    u32 mood_on = 0xFFu;
     for (u32 done = 0; done < frames; done += step) {
         f32 t = (f32)done / FS;
-        bool valley = t >= 20.5f;
+        bool valley = t >= 20.5f && t < t_moods;
         AudioScene sc = { .wind = valley ? 0.35f : 1.0f, .hum = valley ? 0.15f : 1.0f, .room = valley ? 0.2f : 0.55f, .far = 0.0f };
         if (valley) {
             sc.river = true;
+            sc.green = true;
             sc.river_pos = v3(-7.0f, 0.0f, 0.0f);
+        }
+        if (t >= t_moods && t < t_music) {
+            // Погода по очереди, без случайной смены
+            u32 m = MIN((u32)((t - t_moods) / 5.0f), WIND_MOODS - 1);
+            if (m != mood_on) {
+                mood_on = m;
+                g_m.mood = (u8)m;
+                g_m.wm = g_wind_mood[m];
+                g_m.mood_t = 1e9f;
+            }
+            sc.hum = 0.3f;
+        } else if (t >= t_music) {
+            if (mood_on != 0xFEu) {
+                mood_on = 0xFEu;
+                audio_music(0.7f, true);
+                music_cue(0.0f);
+            }
+            sc = (AudioScene){ .room = 0.55f };
         }
         audio_listener(v3(0, 0, 0), v3(1, 0, 0), &sc);
         // Прохожий идёт слева направо в 2 м перед слушателем; второй — в 18 м по бетону
@@ -692,10 +857,12 @@ int audio_demo(const char *wav_path)
         mix_s += time_now() - t0;
         for (u32 j = 0; j < n * 2; j++) pcm[(size_t)done * 2 + j] = (i16)(clampf(mix[j], -1.0f, 1.0f) * 32767.0f);
     }
-    // Громкость по отрезкам: только ветер, бой, долина
-    static const f32 seg[][2] = { { 0.5f, 5.0f }, { 6.0f, 13.0f }, { 21.0f, 26.0f } };
-    static const char *seg_name[] = { "ВЕТЕР И ШАГИ", "БОЙ В 4 М", "ДОЛИНА" };
-    for (u32 s = 0; s < 3; s++) {
+    // Громкость по отрезкам: ветер, бой, долина, погоды ветра, музыка
+    static const f32 seg[][2] = { { 0.5f, 5.0f }, { 6.0f, 15.0f }, { 21.0f, 26.0f }, { 27.5f, 31.0f },
+                                  { 32.5f, 36.0f }, { 37.5f, 41.0f }, { 42.5f, 46.0f }, { 52.0f, 91.0f } };
+    static const char *seg_name[] = { "ВЕТЕР И ШАГИ", "БОЙ В 4 М", "ДОЛИНА", "ЗАТИШЬЕ", "РОВНЫЙ ВЕТЕР", "ПОРЫВЫ", "БУРЯ",
+                                      "МУЗЫКА" };
+    for (u32 s = 0; s < ARRAY_COUNT(seg); s++) {
         f64 sum = 0.0;
         i32 peak = 0;
         u32 a = (u32)(seg[s][0] * FS), b = (u32)(seg[s][1] * FS);

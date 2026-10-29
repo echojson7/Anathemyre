@@ -18,6 +18,8 @@ typedef struct SfxFight {
     u8   dropped[FIELD_MAX];
     f32  wield[FIELD_MAX];
     f32  phase[FIELD_MAX];    // фаза шага: в бою — вида бойца, иначе — ходьбы
+    u32  salt;                // своя высота оружия у бойца: на арене меняется с каждым боем
+    u32  roll;                // свой счётчик случая: мировой RNG звук не трогает
 } SfxFight;
 
 typedef struct WorldSound {
