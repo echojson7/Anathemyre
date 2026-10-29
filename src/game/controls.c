@@ -6,6 +6,7 @@
 #include "../audio/audio.h"
 #include "../core/log.h"
 #include "../render/ui.h"
+#include "../world/map.h"
 #include "figures.h"
 
 void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool humans_on, const FrameStats *st)
@@ -37,7 +38,7 @@ void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool h
         if (hud_debug_check(h, "СУТКИ ИДУТ", &w->day_run)) log_info("СУТКИ: %s", w->day_run ? "идут" : "остановлены");
         if (hud_debug_check(h, "КАМЕРА СЛЕДУЕТ", &s->follow) && s->follow) cam->dist = MIN(cam->dist, 8.0f);
         bool humans_want = humans_on;
-        if (hud_debug_button(h, world_in_valley() ? "ПЕРЕХОД: В ПУСТОШЬ" : "ПЕРЕХОД: В ДОЛИНУ")) s->travel = true;
+        if (hud_debug_button(h, world_squad_in_valley(w) ? "ПЕРЕХОД: В ЛАГЕРЬ" : "ПЕРЕХОД: В ДОЛИНУ")) s->travel = true;
         if (hud_debug_check(h, "ЛЮДИ ДЛЯ СРАВНЕНИЯ", &humans_want)) {
             s->humans = true;
             if (humans_want) *cam = (RtsCamera){ .target = { 3.4f, 0, 22 }, .yaw = 0.0f, .pitch = 0.15f, .dist = 6.5f };
@@ -104,6 +105,9 @@ void orders_input(const Hud *h, const Input *in, const Input *hin, const HudWorl
             if (camera_pick_ground(hw->view_proj, eye, nx, ny, world_ground, &hit)) {
                 for (u32 i = 0; i < sq->count; i++)
                     if (sq->selected[i]) field_cancel(fd, (u32)squad_body(sq, i)->slot, true);
+                // За край карты не уйти
+                hit.x = clampf(hit.x, -MAP_HALF + 20.0f, MAP_HALF - 20.0f);
+                hit.z = clampf(hit.z, -MAP_HALF + 20.0f, MAP_HALF - 20.0f);
                 squad_order_move(sq, hit);
                 if (any) audio_play_ui(SFX_UI_TICK, 1.0f);
             }

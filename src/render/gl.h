@@ -38,10 +38,12 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_BACK 0x0405
 #define GL_CULL_FACE 0x0B44
 #define GL_DEPTH_TEST 0x0B71
+#define GL_DEPTH_CLAMP 0x864F
 #define GL_BLEND 0x0BE2
 #define GL_PACK_ALIGNMENT 0x0D05
 #define GL_TEXTURE_2D 0x0DE1
 #define GL_TEXTURE_3D 0x806F
+#define GL_TEXTURE_2D_ARRAY 0x8C1A
 #define GL_TEXTURE_WRAP_R 0x8072
 #define GL_REPEAT 0x2901
 #define GL_R16 0x822A
@@ -58,6 +60,10 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_ONE 1
 #define GL_ONE_MINUS_SRC_ALPHA 0x0303
 #define GL_R8 0x8229
+#define GL_R32F 0x822E
+#define GL_UNPACK_ROW_LENGTH 0x0CF2
+#define GL_UNPACK_SKIP_ROWS 0x0CF3
+#define GL_UNPACK_SKIP_PIXELS 0x0CF4
 #define GL_VENDOR 0x1F00
 #define GL_RENDERER 0x1F01
 #define GL_VERSION 0x1F02
@@ -138,6 +144,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, DrawArrays, (GLenum mode, GLint first, GLsizei count)) \
     X(void, DrawElements, (GLenum mode, GLsizei count, GLenum type, const void *indices)) \
     X(void, DrawElementsInstanced, (GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instances)) \
+    X(void, MultiDrawElements, (GLenum mode, const GLsizei *count, GLenum type, const void *const *indices, GLsizei drawcount)) \
     X(void, BindBufferBase, (GLenum target, GLuint index, GLuint buffer)) \
     X(void, CreateBuffers, (GLsizei n, GLuint *buffers)) \
     X(void, NamedBufferStorage, (GLuint buffer, GLsizeiptr size, const void *data, GLbitfield flags)) \
@@ -188,6 +195,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, Uniform2f, (GLint loc, GLfloat a, GLfloat b)) \
     X(void, Uniform3f, (GLint loc, GLfloat a, GLfloat b, GLfloat c)) \
     X(void, Uniform4f, (GLint loc, GLfloat a, GLfloat b, GLfloat c, GLfloat d)) \
+    X(void, Uniform4i, (GLint loc, GLint a, GLint b, GLint c, GLint d)) \
     X(void, UniformMatrix4fv, (GLint loc, GLsizei count, GLboolean transpose, const GLfloat *v)) \
     X(void, DebugMessageCallback, (GLDEBUGPROC callback, const void *user)) \
     X(void, CreateQueries, (GLenum target, GLsizei n, GLuint *ids)) \

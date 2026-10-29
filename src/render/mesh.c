@@ -285,28 +285,3 @@ void mb_quad(MeshBuilder *mb, V3 c, V3 right, V3 up)
     tri(mb, b, b + 1, b + 2);
     tri(mb, b, b + 2, b + 3);
 }
-
-void mb_terrain(MeshBuilder *mb, f32 half_size, u32 cells, f32 (*height)(f32 x, f32 z, void *u), void *user)
-{
-    u32 n = cells + 1;
-    if (!reserve(mb, n * n, cells * cells * 6)) return;
-    u32 base = mb->vcount;
-    for (u32 i = 0; i < n; i++)
-        for (u32 j = 0; j < n; j++) {
-            // Квадратичная развёртка: мелкая сетка в центре, крупная к горизонту
-            f32 u = (f32)j / (f32)cells * 2.0f - 1.0f;
-            f32 w = (f32)i / (f32)cells * 2.0f - 1.0f;
-            f32 x = u * fabsf(u) * half_size, z = w * fabsf(w) * half_size;
-            f32 e = 0.5f + 0.02f * sqrtf(x * x + z * z);
-            f32 h = height(x, z, user);
-            f32 dx = height(x + e, z, user) - height(x - e, z, user);
-            f32 dz = height(x, z + e, user) - height(x, z - e, user);
-            put(mb, v3(x, h, z), v3_norm(v3(-dx, 2.0f * e, -dz)));
-        }
-    for (u32 i = 0; i < cells; i++)
-        for (u32 j = 0; j < cells; j++) {
-            u32 p00 = base + i * n + j, p01 = p00 + 1, p10 = p00 + n, p11 = p10 + 1;
-            tri(mb, p00, p10, p11);
-            tri(mb, p00, p11, p01);
-        }
-}

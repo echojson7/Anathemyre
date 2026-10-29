@@ -117,6 +117,7 @@ void main()
 
     // Мелкий шум в мировых координатах, стабилен при движении
     float fine = noise3(P * 9.0);
+    uint texel_mat = v_mat;  // от него разброс яркости квадратов
 
     if (v_mat == MAT_CONCRETE) {
         float big = fbm3(P * 0.18);
@@ -198,17 +199,32 @@ void main()
         // Почти чёрный цвет — проём в темноту (двери, окна): солнце его не освещает
         albedo = vec3(max(v_color.r, max(v_color.g, v_color.b)) < 0.02 ? 0.006 : 0.05);
     } else if (v_mat == MAT_TERRAIN) {
-        // Земля: цвет вершин — трава, сухая трава, глина, ил; на крутом склоне слоистая порода
-        float spots = fbm3(vec3(P.xz * 0.45, 3.0));
-        albedo *= 0.78 + 0.32 * spots;
-        albedo *= 0.88 + 0.22 * noise3(vec3(P.xz * 2.3, 7.0));
-        albedo *= 0.92 + 0.16 * fine;
-        float rock = smoothstep(0.80, 0.62, N.y + 0.1 * (spots - 0.5));
-        float strata = noise3(vec3(P.x * 0.15, P.y * 1.6 + fbm3(P * 0.2) * 2.0, P.z * 0.15));
-        vec3 stone = vec3(0.14, 0.135, 0.125) * (0.6 + 0.6 * strata) * (0.85 + 0.3 * fbm3(P * 1.3));
-        stone = mix(stone, vec3(0.30, 0.19, 0.11), smoothstep(0.6, 0.8, fbm3(P * 0.4 + 9.0)) * 0.5);
-        albedo = mix(albedo, stone, rock);
-        spec = 0.04;
+        // Рельеф карты: в альфе цвета вид поверхности, 0 — песок пустоши, 1 — земля (как в долине)
+        float look = v_color.a;
+        vec3 sand = albedo, earth = albedo;
+        if (look < 1.0) {
+            // Песок: дюны пятнами и рябь
+            float dunes = fbm3(vec3(P.x * 0.05, 0.0, P.z * 0.05));
+            float ripples = noise3(vec3(P.x * 2.5 + P.z * 0.6, 0.0, P.z * 0.4));
+            sand *= 0.75 + 0.4 * dunes;
+            sand *= 0.9 + 0.15 * ripples;
+            sand *= 0.9 + 0.2 * fine;
+        }
+        if (look > 0.0) {
+            // Земля: цвет — трава, сухая трава, глина, ил, камень гряд; на крутом склоне слоистая порода
+            float spots = fbm3(vec3(P.xz * 0.45, 3.0));
+            earth *= 0.78 + 0.32 * spots;
+            earth *= 0.88 + 0.22 * noise3(vec3(P.xz * 2.3, 7.0));
+            earth *= 0.92 + 0.16 * fine;
+            float rock = smoothstep(0.80, 0.62, N.y + 0.1 * (spots - 0.5));
+            float strata = noise3(vec3(P.x * 0.15, P.y * 1.6 + fbm3(P * 0.2) * 2.0, P.z * 0.15));
+            vec3 stone = vec3(0.14, 0.135, 0.125) * (0.6 + 0.6 * strata) * (0.85 + 0.3 * fbm3(P * 1.3));
+            stone = mix(stone, vec3(0.30, 0.19, 0.11), smoothstep(0.6, 0.8, fbm3(P * 0.4 + 9.0)) * 0.5);
+            earth = mix(earth, stone, rock);
+        }
+        albedo = mix(sand, earth, look);
+        spec = 0.04 * look;
+        texel_mat = look < 0.5 ? MAT_SAND : MAT_TERRAIN;
     } else if (v_mat == MAT_ROCK) {
         albedo *= 0.7 + 0.5 * fbm3(P * 1.7);
         albedo *= 0.9 + 0.2 * fine;
@@ -253,7 +269,7 @@ void main()
     }
 
     // Разброс яркости от квадрата к квадрату: поверхность читается как текстура низкого разрешения
-    if (snap) albedo *= 0.95 + 0.10 * hash13(floor(P / base) + float(v_mat) * 17.0);
+    if (snap) albedo *= 0.95 + 0.10 * hash13(floor(P / base) + float(texel_mat) * 17.0);
 
     // Листва и трава просвечивают: свет заходит и на обратную сторону
     float ndl = foliage ? 0.25 + 0.5 * max(dot(N, L), 0.0) + 0.25 * abs(dot(N, L)) : max(dot(N, L), 0.0);

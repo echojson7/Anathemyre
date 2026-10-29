@@ -262,10 +262,6 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
     // Кому нужна поза и что рисовать; кости ещё не готовы, элементы ссылаются на их место
     bool lit_any = false;
     for (u32 i = 0; i < p->count; i++) {
-        if (v->valley && p->role[i] != ROLE_SQUAD) {
-            f->age[i] = -1.0f;
-            continue;
-        }
         const Player *b = &f->view[i];
         const CharSheet *cs = &p->sheet[i];
         f32 lit = torch_lit(p->torch[i], p->seed[i], v->night);
@@ -304,7 +300,7 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
         }
     }
     f->posed = f->jobs;
-    if (s && !v->valley) n += arena_figures(f, m, av, s, v->time, items + n);
+    if (s) n += arena_figures(f, m, av, s, v->time, items + n);
     prof_zone(PZ_POSES);
     jobs_for(f->jobs, POSE_GRAIN, pose_job, f->job);
     // Свет факелов — по готовым костям, в том же порядке, что и люди

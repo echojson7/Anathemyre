@@ -228,14 +228,14 @@ static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 
             if (field_awake(fd, s) && fs_lying(fd->w.state[s])) tall = 0.4f;
         } else if (k >= w->squad->count + ARENA_MAX_BOUT) {
             u32 s = k - w->squad->count - ARENA_MAX_BOUT;
-            if (w->alone || fd->flags[s] & FF_PLAYER) continue;
+            if (fd->flags[s] & FF_PLAYER) continue;
             kd = LOOK_FIELD;
             idx = s;
             pos = w->view[s].pos;  // слот поля = номер в таблице
             if (field_awake(fd, s) && fs_lying(fd->w.state[s])) tall = 0.4f;
         } else {
             u32 i = k - w->squad->count;
-            if (w->alone || !w->aview->in_bout || i >= w->arena->n) continue;
+            if (!w->aview->in_bout || i >= w->arena->n) continue;
             kd = LOOK_ARENA;
             idx = w->arena->idx[i];
             hud_arena_pos(w->aview, w->arena, idx, &pos);
