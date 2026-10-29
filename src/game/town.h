@@ -31,8 +31,6 @@ typedef struct Town {
 void town_build(MeshBuilder *mb, Rng *rng, Town *t);
 // Высота яруса под точкой, если она в посёлке; иначе base
 f32  town_ground(f32 x, f32 z, f32 base);
-// Выравнивание рельефа вокруг посёлка: 0 — ровно, 1 — дюны как обычно
-f32  town_flatten(f32 x, f32 z);
 // Жители (People, ROLE_TOWN): торговцы, сторожа и зеваки стоят на местах, прохожие ходят по узлам улиц
 void town_folk_add(People *p, const Town *t, Rng *rng, u32 walkers, u32 variants, u8 team);
 

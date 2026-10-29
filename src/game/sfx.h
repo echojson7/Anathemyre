@@ -10,7 +10,6 @@
 // Звуки одного боя: поля или арены
 typedef struct SfxFight {
     V3   origin;              // начало координат боя в мире
-    bool valley;              // слушатель в долине: в пустоши ничего не слышно, на поле — только свой отряд
     const Field *field;       // для поля: чьи тела где
     GroundFn ground;
     u8   down[FIELD_MAX];     // лежит: падение уже прозвучало
@@ -24,7 +23,6 @@ typedef struct SfxFight {
 
 typedef struct WorldSound {
     V3   lis;
-    bool valley;
     V3   arena_center;
     u32  arena_bout;
     SfxFight field, arena;
@@ -32,8 +30,8 @@ typedef struct WorldSound {
 
 // Подключить наблюдателей к журналам поля и арены
 void sfx_init(WorldSound *s, Field *field, ArenaSession *arena, V3 arena_center, GroundFn ground);
-// Раз в кадр до остальных: слушатель от камеры (eye, точка взгляда, поворот) и фон места
-void sfx_listener(WorldSound *s, V3 eye, V3 target, f32 yaw, bool valley);
+// Раз в кадр до остальных: слушатель от камеры (eye, точка взгляда, поворот) и фон места (зал, пустошь, долина)
+void sfx_listener(WorldSound *s, V3 eye, V3 target, f32 yaw);
 // Шаги, оружие в руках: все тела поля (отряд, бродящие, мобы, зрители, жители Скудели), бойцы арены.
 // view — тела такими, какими их показывает кадр (Figures.view, по слоту): шаги звучат в такт ногам
 void sfx_field(WorldSound *s, const Field *f, const Player *view);

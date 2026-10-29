@@ -7,7 +7,6 @@
 #include "../world/valley.h"
 
 // Пороги детализации: диаметр сферы на экране, пикселей
-#define TERRAIN_LOD_PX0 700.0f
 static const f32 g_tree_lod_px[FLORA_LODS - 1] = { 200.0f, 80.0f, 40.0f };
 #define ROCK_LOD_PX 80.0f
 #define GRASS_LOD_PX 1100.0f
@@ -42,108 +41,9 @@ static f32 smooth(f32 a, f32 b, f32 x)
     return t * t * (3.0f - 2.0f * t);
 }
 
-#define C_LUSH v3(0.05f, 0.078f, 0.022f)
-
-// Земля: сочная трава у воды, сухая на возвышенностях, подстилка в рощах, проплешины, ил и галька у реки.
-// За краем долины деревьев нет, поэтому лес там — тёмная хвоя пятнами
-static f32 ground_dry(f32 x, f32 z, f32 h)
-{
-    f32 wy = valley_water_y(z), d = valley_river_dist(x, z);
-    return clampf(valley_dry(x, z) + smooth(25.0f, 80.0f, h - wy) * 0.25f - smooth(30.0f, 8.0f, d) * 0.3f, 0.0f, 1.0f);
-}
-
-static V3 ground_color(f32 x, f32 z, f32 h, V3 n)
-{
-    bool far = fabsf(x) > VALLEY_HALF || fabsf(z) > VALLEY_HALF;
-    f32 wy = valley_water_y(z), d = valley_river_dist(x, z), w = valley_river_w(z);
-    f32 dry = ground_dry(x, z, h);
-    V3 c = v3_lerp(C_LUSH, v3(0.15f, 0.13f, 0.06f), dry);
-    c = v3_lerp(c, far ? v3(0.035f, 0.05f, 0.028f) : v3(0.085f, 0.07f, 0.04f), smooth(0.45f, 0.85f, valley_forest(x, z)) * (far ? 0.9f : 0.75f));
-    f32 bare = smooth(0.68f, 0.8f, valley_fbm(x * 0.05f + 9.0f, z * 0.05f - 4.0f, 3));
-    c = v3_lerp(c, v3(0.15f, 0.115f, 0.075f), bare * 0.7f);
-    f32 gravel = smooth(0.5f, 0.62f, valley_fbm(x * 0.09f - 3.0f, z * 0.09f + 8.0f, 2));
-    c = v3_lerp(c, v3_lerp(v3(0.09f, 0.075f, 0.055f), v3(0.26f, 0.24f, 0.20f), gravel), smooth(w + 4.0f, w + 0.5f, d));
-    if (h < wy - 0.1f && d < w + 2.0f) c = v3(0.10f, 0.09f, 0.07f);
-    return v3_lerp(c, v3(0.15f, 0.115f, 0.08f), smooth(0.85f, 0.7f, n.y) * 0.6f);
-}
-
 static f32 bare_at(f32 x, f32 z)
 {
     return smooth(0.68f, 0.8f, valley_fbm(x * 0.05f + 9.0f, z * 0.05f - 4.0f, 3));
-}
-
-// Кусок рельефа: узлы карты через 2^lod м, по краям юбка вниз от щелей между уровнями детализации
-static void terrain_chunk(MeshBuilder *mb, i32 cx, i32 cz, u32 lod)
-{
-    u32 step = 1u << lod, cells = VV_CHUNK / step, n = cells + 1;
-    f32 x0 = -VALLEY_HALF + (f32)(cx * VV_CHUNK), z0 = -VALLEY_HALF + (f32)(cz * VV_CHUNK);
-    f32 skirt = 2.0f + 3.0f * (f32)lod;
-    if (!mb_reserve(mb, n * n + 4 * n * 2, cells * cells * 6 + 4 * cells * 12)) return;
-    mb_set(mb, C_LUSH, MAT_TERRAIN, BONE_NONE);
-    u32 base = mb->vcount;
-    for (u32 i = 0; i < n; i++)
-        for (u32 j = 0; j < n; j++) {
-            f32 x = x0 + (f32)(j * step), z = z0 + (f32)(i * step);
-            f32 h = valley_height(x, z);
-            V3 nr = valley_normal(x, z);
-            mb->color = ground_color(x, z, h, nr);
-            mb_vertex(mb, v3(x, h, z), nr);
-        }
-    for (u32 i = 0; i < cells; i++)
-        for (u32 j = 0; j < cells; j++) {
-            u32 p00 = base + i * n + j, p01 = p00 + 1, p10 = p00 + n, p11 = p10 + 1;
-            mb_tri(mb, p00, p10, p11);
-            mb_tri(mb, p00, p11, p01);
-        }
-    // Юбка по четырём краям: копия краевых узлов ниже, обе стороны
-    for (u32 e = 0; e < 4; e++) {
-        u32 sb = mb->vcount;
-        for (u32 k = 0; k < n; k++) {
-            u32 i = e == 0 ? 0 : (e == 1 ? cells : k), j = e < 2 ? k : (e == 2 ? 0 : cells);
-            const Vertex *src = &mb->v[base + i * n + j];
-            V3 p = v3(src->pos[0], src->pos[1] - skirt, src->pos[2]);
-            mb->color = v3((f32)src->color[0] / 255.0f, (f32)src->color[1] / 255.0f, (f32)src->color[2] / 255.0f);
-            mb_vertex(mb, p, v3(src->nrm[0], src->nrm[1], src->nrm[2]));
-        }
-        for (u32 k = 0; k < cells; k++) {
-            u32 i0 = e == 0 ? 0 : (e == 1 ? cells : k), j0 = e < 2 ? k : (e == 2 ? 0 : cells);
-            u32 i1 = e < 2 ? i0 : k + 1, j1 = e < 2 ? k + 1 : j0;
-            u32 a = base + i0 * n + j0, b = base + i1 * n + j1, c = sb + k, d = sb + k + 1;
-            mb_tri(mb, a, c, b);
-            mb_tri(mb, b, c, d);
-            mb_tri(mb, a, b, c);
-            mb_tri(mb, b, d, c);
-        }
-    }
-}
-
-// Горы вокруг долины: крупная сетка по формуле, без середины
-static void terrain_ring(MeshBuilder *mb)
-{
-    const f32 half = 2560.0f, cell = 32.0f;
-    const u32 cells = (u32)(2.0f * half / cell), n = cells + 1;
-    if (!mb_reserve(mb, n * n, cells * cells * 6)) return;
-    mb_set(mb, C_LUSH, MAT_TERRAIN, BONE_NONE);
-    u32 base = mb->vcount;
-    for (u32 i = 0; i < n; i++)
-        for (u32 j = 0; j < n; j++) {
-            f32 x = -half + (f32)j * cell, z = -half + (f32)i * cell;
-            f32 h = valley_height_raw(x, z);
-            const f32 e = 16.0f;
-            f32 dx = valley_height_raw(x + e, z) - valley_height_raw(x - e, z);
-            f32 dz = valley_height_raw(x, z + e) - valley_height_raw(x, z - e);
-            V3 nr = v3_norm(v3(-dx, 2.0f * e, -dz));
-            mb->color = ground_color(x, z, h, nr);
-            mb_vertex(mb, v3(x, h, z), nr);
-        }
-    for (u32 i = 0; i < cells; i++)
-        for (u32 j = 0; j < cells; j++) {
-            f32 x = -half + (f32)j * cell, z = -half + (f32)i * cell;
-            if (x >= -VALLEY_HALF && x + cell <= VALLEY_HALF && z >= -VALLEY_HALF && z + cell <= VALLEY_HALF) continue;
-            u32 p00 = base + i * n + j, p01 = p00 + 1, p10 = p00 + n, p11 = p10 + 1;
-            mb_tri(mb, p00, p10, p11);
-            mb_tri(mb, p00, p11, p01);
-        }
 }
 
 // Вода: полоса вдоль русла, цвет вершин — толща (мелко светлее)
@@ -318,13 +218,15 @@ static u32 pack_tint(V3 t, u32 rank)
     return r | g << 8 | b << 16 | (rank & 255u) << 24;
 }
 
+// pos — в координатах долины; экземпляр — на карте мира
 static void place(Placer *pl, u32 slot, V3 pos, f32 scale, f32 hscale, f32 lean, V3 tint)
 {
     if (pl->n >= pl->cap) return;
     u32 cx = (u32)CLAMP((i32)((pos.x + VALLEY_HALF) / GRID_CELL), 0, GRID_N - 1);
     u32 cz = (u32)CLAMP((i32)((pos.z + VALLEY_HALF) / GRID_CELL), 0, GRID_N - 1);
     Placed *p = &pl->p[pl->n++];
-    p->r = (RInst){ { pos.x, pos.y, pos.z }, rng_range(pl->rng, 0, 2 * PI_F), scale, hscale, lean, pack_tint(tint, rng_u32(pl->rng)) };
+    V3 w = v3_add(pos, VALLEY_ORIGIN);
+    p->r = (RInst){ { w.x, w.y, w.z }, rng_range(pl->rng, 0, 2 * PI_F), scale, hscale, lean, pack_tint(tint, rng_u32(pl->rng)) };
     p->key = (cz * GRID_N + cx) * SLOT_COUNT + slot;
 }
 
@@ -489,7 +391,7 @@ static void place_grass(Placer *pl)
             }
             if (u >= dens) continue;
             // Оттенок травы — как земля здесь: на сухих местах желтее
-            V3 t = v3_lerp(v3(1.0f, 1.0f, 1.0f), v3(1.6f, 1.25f, 0.9f), ground_dry(px, pz, h));
+            V3 t = v3_lerp(v3(1.0f, 1.0f, 1.0f), v3(1.6f, 1.25f, 0.9f), valley_ground_dry(px, pz, h));
             t = v3_hadamard(t, jitter_tint(r, 0.12f));
             f32 s = rng_range(r, 0.8f, 1.25f);
             place(pl, SLOT_GRASS + (u32)k * VV_GRASS_VARIANTS + rng_below(r, VV_GRASS_VARIANTS), v3(px, h, pz), s,
@@ -567,6 +469,18 @@ static void fresh(MeshBuilder *mb, Arena *perm, size_t mark, u32 vcap, u32 icap)
     mb_init(mb, perm, vcap, icap);
 }
 
+// Сетка строилась в координатах долины: перенести на карту мира
+static void upload_placed(GpuMesh *gm, MeshBuilder *mb)
+{
+    V3 o = VALLEY_ORIGIN;
+    for (u32 i = 0; i < mb->vcount; i++) {
+        mb->v[i].pos[0] += o.x;
+        mb->v[i].pos[1] += o.y;
+        mb->v[i].pos[2] += o.z;
+    }
+    gpu_mesh_upload(gm, mb);
+}
+
 bool valley_view_build(ValleyView *v, Arena *perm, u64 seed)
 {
     if (v->built) return true;
@@ -579,32 +493,17 @@ bool valley_view_build(ValleyView *v, Arena *perm, u64 seed)
     if (!v->inst || !v->groups) return false;
     size_t mark = perm->used;
     MeshBuilder mb;
-    u32 tris = 0;
 
-    // Рельеф кусками
-    for (i32 cz = 0; cz < VV_CHUNKS; cz++)
-        for (i32 cx = 0; cx < VV_CHUNKS; cx++) {
-            GpuMesh *lods = v->terrain[cz * VV_CHUNKS + cx];
-            for (u32 l = 0; l < VV_TERRAIN_LODS; l++) {
-                fresh(&mb, perm, mark, 6000, 30000);
-                terrain_chunk(&mb, cx, cz, l);
-                if (!l) tris += mb.icount / 3;
-                gpu_mesh_upload(&lods[l], &mb);
-                if (l) gpu_mesh_set_lod(&lods[l - 1], &lods[l], TERRAIN_LOD_PX0 / (f32)(1u << (l - 1)));
-            }
-        }
-    fresh(&mb, perm, mark, 30000, 160000);
-    terrain_ring(&mb);
-    gpu_mesh_upload(&v->ring, &mb);
+    // Рельеф долины — часть карты мира (map.c); здесь вода, руины и мегаструктура
     fresh(&mb, perm, mark, 8000, 40000);
     water(&mb);
-    gpu_mesh_upload(&v->water, &mb);
+    upload_placed(&v->water, &mb);
     fresh(&mb, perm, mark, 60000, 120000);
     ruins(&mb, &rng);
-    gpu_mesh_upload(&v->ruins, &mb);
+    upload_placed(&v->ruins, &mb);
     fresh(&mb, perm, mark, 2000, 6000);
     megastructure(&mb);
-    gpu_mesh_upload(&v->mega, &mb);
+    upload_placed(&v->mega, &mb);
 
     // Растения и камни: у каждой сетки своё зерно
     u32 tree_tris[TREE_KINDS] = { 0 };
@@ -672,24 +571,26 @@ bool valley_view_build(ValleyView *v, Arena *perm, u64 seed)
     render_upload_instances(v->inst, v->inst_count);
 
     // Отряд появляется на восточном берегу, ниже акведука, лицом вверх по течению
-    v->spawn = valley_spawn();
+    v->spawn = v3_add(valley_spawn(), VALLEY_ORIGIN);
     v->spawn_heading = PI_F;
     v->built = true;
-    log_stat("ДОЛИНА: рельеф %u треугольников вблизи; деревьев и кустов %u, камней и мелочей %u, пучков травы %u, групп %u",
-             tris, n_trees, n_solid - n_trees, pl.n - n_solid, v->group_count);
+    log_stat("ДОЛИНА: деревьев и кустов %u, камней и мелочей %u, пучков травы %u, групп %u", n_trees, n_solid - n_trees,
+             pl.n - n_solid, v->group_count);
     log_stat("ДОЛИНА: дерево LOD0 до %u треугольников (листвень %u, ель %u, берёза %u, сухое %u, куст %u)",
              MAX(MAX(tree_tris[0], tree_tris[1]), MAX(tree_tris[2], tree_tris[3])), tree_tris[0], tree_tris[1], tree_tris[2],
              tree_tris[3], tree_tris[4]);
     return true;
 }
 
-u32 valley_view_draw(const ValleyView *v, DrawItem *out)
+u32 valley_view_draw(const ValleyView *v, V3 eye, DrawItem *out)
 {
     u32 n = 0;
-    for (u32 c = 0; c < VV_CHUNKS * VV_CHUNKS; c++) out[n++] = (DrawItem){ .mesh = &v->terrain[c][0] };
-    out[n++] = (DrawItem){ .mesh = &v->ring, .no_shadow = true };
-    out[n++] = (DrawItem){ .mesh = &v->water, .no_shadow = true };
-    out[n++] = (DrawItem){ .mesh = &v->ruins };
+    // Вода и руины издалека не видны в дымке; мегаструктура видна отовсюду
+    V3 d = v3_sub(eye, VALLEY_ORIGIN);
+    if (fmaxf(fabsf(d.x), fabsf(d.z)) < VALLEY_HALF + 1200.0f) {
+        out[n++] = (DrawItem){ .mesh = &v->water, .no_shadow = true };
+        out[n++] = (DrawItem){ .mesh = &v->ruins };
+    }
     out[n++] = (DrawItem){ .mesh = &v->mega, .no_shadow = true };
     return n;
 }

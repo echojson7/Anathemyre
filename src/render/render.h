@@ -83,7 +83,7 @@ typedef struct FrameView {
     V3  sun_color;
     V3  sky_amb, ground_amb;  // рассеянный свет неба и отражённый от земли
     V3  haze, zenith;         // цвет дымки и неба в зените
-    V3  shadow_center;  // центр области теней
+    V3  shadow_center;  // центр области теней; к нему же сгущается рельеф (не дальше 40 м от глаза)
     const PointLight *lights;  // рендер сам берёт видимые, не больше RENDER_MAX_LIGHTS
     u32 light_count;
     f32 time;
@@ -117,7 +117,14 @@ typedef struct RenderStats {
     bool vrs;           // последний кадр шейдился блоками вблизи
 } RenderStats;
 
+// Источник рельефа (render/terrain.c): заполнить w×h узлов с шагом step от (x0, z0), строками по Z —
+// высоту и цвет земли RGBA8 (альбедо, в альфе вид: 0 — песок, 1 — земля долины). Зовётся из render_frame,
+// когда кольца рельефа сдвигаются за камерой
+typedef void (*TerrainFill)(f32 x0, f32 z0, f32 step, u32 w, u32 h, f32 *height, u32 *color, void *user);
+
 bool render_init(Arena *scratch, const char *data_dir);
+// Рельеф под всей сценой; NULL — без рельефа
+void render_set_terrain(TerrainFill fill, void *user);
 void render_take_stats(RenderStats *out);
 void render_shutdown(void);
 bool render_reload_shaders(void);

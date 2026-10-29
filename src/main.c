@@ -29,6 +29,7 @@
 #include "platform/platform.h"
 #include "render/render.h"
 #include "render/ui.h"
+#include "world/map.h"
 #include "world/sky.h"
 
 typedef struct Options {
@@ -64,7 +65,7 @@ typedef struct Options {
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
     i32         stand;       // стенд фигур сразу при старте: ряд + 1 (0 — нет)
-    bool        valley;      // начать в долине (иначе переход из меню НАСТРОЙКИ)
+    bool        valley;      // начать в долине (иначе пешком или переход из меню НАСТРОЙКИ)
     bool        mute;        // без звука
     const char *sound_demo;  // сценка звука в WAV без окна
 } Options;
@@ -74,6 +75,8 @@ typedef struct Options {
 // В долине: отряд у реки, вверх по течению видны акведук, роща и трава
 #define VALLEY_BENCH_CAM(sp) ((RtsCamera){ .target = (sp), .yaw = 0.35f, .pitch = 0.32f, .dist = 22.0f })
 #define BENCH_TOD 0.31f
+// Камера не дальше этого от главного в отряде, м (кроме снимков --shot)
+#define CAM_LEASH 1000.0f
 
 // Что вернуть после замера
 typedef struct BenchRestore {
@@ -234,7 +237,7 @@ int main(int argc, char **argv)
 
     // Вся память выделяется здесь, один раз
     Arena perm, scratch;
-    // Долина при первом переходе берёт ~70 МБ (экземпляры растений и временные массивы)
+    // Карта ~18 МБ, долина ~70 МБ при старте (экземпляры растений и временные массивы)
     if (!arena_init(&perm, MB(256)) || !arena_init(&scratch, MB(4))) {
         log_error("ПАМЯТЬ: не выделена");
         return 1;
@@ -280,6 +283,9 @@ int main(int argc, char **argv)
     figures_view(fig, world->people, world->field, world->alpha, world_ground);
     humans_row_init(humans, &perm, world_ground);
     stand_init(stand, &perm);
+    // Рельеф карты и растения долины — на весь сеанс
+    render_set_terrain(map_fill, NULL);
+    render_set_groups(world->valley->groups, world->valley->clusters, world->valley->cluster_count);
     bool humans_flip = opt.humans;
     Squad *squad = &world->squad;
     Field *field = world->field;
@@ -304,7 +310,6 @@ int main(int argc, char **argv)
     set.sound_ok = !opt.shot_path && audio_init(&perm);
     set.sound_on = set.sound_ok && !opt.mute;
     if (set.sound_on) audio_start();
-    f32 cam_y = 0.0f;    // высота точки взгляда камеры в долине, сглаженная
     Hud hud;
     hud_init(&hud);
     if (opt.inspect) {
@@ -332,6 +337,8 @@ int main(int argc, char **argv)
     if (opt.shot_path) shot_buf = arena_push(&perm, (size_t)opt.width * (size_t)opt.height * 3, 1);
 
     RtsCamera cam = opt.cam;
+    // Точка взгляда идёт по земле (сглаженно); --cam-y — подъём над ней
+    f32 cam_lift = opt.cam.target.y, cam_y = world_ground(cam.target.x, cam.target.z);
     Input in;
     memset(&in, 0, sizeof in);
     f64 last = time_now();
@@ -363,22 +370,27 @@ int main(int argc, char **argv)
         if (set.stand_moved) {
             set.stand_moved = false;
             stand_show(stand, set.stand, set.stand_row, &mb, &perm, world_ground, &cam);
+            // Высоту взгляда над плитами задаёт стенд: держать её над землёй, пока он открыт
+            if (set.stand) {
+                cam_y = world_ground(cam.target.x, cam.target.z);
+                cam_lift = cam.target.y - cam_y;
+            } else cam_lift = opt.cam.target.y;
         }
-        // Переход между локациями: отряд переносится, камера за ним
+        // Перенос отряда между лагерем и долиной (отладка; пешком тоже можно): камера за ним
+        bool jumped = false;   // фигуры ещё на старом месте: в этом кадре камера за ними не идёт
         if (set.travel) {
             set.travel = false;
-            if (world_travel(world, &perm)) {
-                bool in_valley = world_in_valley();
-                render_set_groups(in_valley ? valley->groups : NULL, valley->clusters, in_valley ? valley->cluster_count : 0);
-                cam = !in_valley || opt.cam_set ? opt.cam : VALLEY_BENCH_CAM(valley->spawn);
-                cam_y = in_valley ? valley->spawn.y : 0.0f;
+            if ((jumped = world_travel(world))) {
+                cam = !world_squad_in_valley(world) || opt.cam_set ? opt.cam : VALLEY_BENCH_CAM(valley->spawn);
+                cam_y = world_ground(cam.target.x, cam.target.z);
                 if (hud.look_kind != LOOK_SQUAD) hud_look(&hud, LOOK_SQUAD, 0);
             }
         }
         if (bench_request && !bench.on) {
             bench_request = false;
             restore = (BenchRestore){ cam, world->tod, world->day_run, set.vsync, set.follow };
-            cam = world_in_valley() ? VALLEY_BENCH_CAM(valley->spawn) : BENCH_CAM;
+            cam = world_squad_in_valley(world) ? VALLEY_BENCH_CAM(valley->spawn) : BENCH_CAM;
+            cam_y = world_ground(cam.target.x, cam.target.z);
             world->tod = BENCH_TOD;
             world->day_run = set.follow = set.vsync = false;
             platform_set_vsync(false);
@@ -404,15 +416,19 @@ int main(int argc, char **argv)
             ww = opt.width;
             wh = opt.height;
         }
-        // В долине точка взгляда идёт по рельефу, а камера не уходит под землю
-        bool in_valley = world_in_valley();
-        if (in_valley) {
-            cam_y += (world_ground(cam.target.x, cam.target.z) - cam_y) * fminf(1.0f, real_dt * 6.0f);
-            cam.target.y = cam_y;
+        // Поводок от главного в отряде и край карты; точка взгляда идёт по земле, камера не уходит под неё
+        if (!opt.shot_path) {
+            f32 dx = cam.target.x - lead_pos.x, dz = cam.target.z - lead_pos.z, d = sqrtf(dx * dx + dz * dz);
+            if (d > CAM_LEASH) cam.target = v3(lead_pos.x + dx * CAM_LEASH / d, 0, lead_pos.z + dz * CAM_LEASH / d);
         }
+        cam.target.x = clampf(cam.target.x, -MAP_HALF, MAP_HALF);
+        cam.target.z = clampf(cam.target.z, -MAP_HALF, MAP_HALF);
+        cam_y += (world_ground(cam.target.x, cam.target.z) - cam_y) * fminf(1.0f, real_dt * 6.0f);
+        cam.target.y = cam_y + cam_lift;
+        f32 valley_k = map_valley(cam.target.x, cam.target.z);
         FrameView fv;
         fv.cam_pos = camera_eye(&cam);
-        if (in_valley) fv.cam_pos.y = fmaxf(fv.cam_pos.y, world_ground(fv.cam_pos.x, fv.cam_pos.z) + 1.5f);
+        fv.cam_pos.y = fmaxf(fv.cam_pos.y, world_ground(fv.cam_pos.x, fv.cam_pos.z) + 1.5f);
         fv.view = m4_look_at(fv.cam_pos, v3_add(cam.target, v3(0, 1.0f, 0)), v3(0, 1, 0));
         fv.proj = m4_perspective(CAM_FOV, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
 
@@ -425,17 +441,16 @@ int main(int argc, char **argv)
         bench_request |= set.bench;
         set.humans = set.bench = false;
         HudWorld hw = { .squad = squad, .arena = world->arena, .aview = &world->aview, .field = field, .view = fig->view,
-                        .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day,
-                        .alone = in_valley };
+                        .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day };
         bool ui_busy = hud_input(&hud, &hin, &hw);
-        if (hud.focus >= 0) {
+        if (hud.focus >= 0 && !jumped) {
             V3 fp = fig->view[squad->member[hud.focus]].pos;
-            cam.target = v3(fp.x, 0, fp.z);
+            cam.target = v3(fp.x, cam.target.y, fp.z);
         }
         // Камера за тем, кого правят в окне ВНЕШНОСТЬ
-        if (editor_follow(&editor) >= 0) {
+        if (editor_follow(&editor) >= 0 && !jumped) {
             V3 fp = fig->view[editor_follow(&editor)].pos;
-            cam.target = v3(fp.x, 0, fp.z);
+            cam.target = v3(fp.x, cam.target.y, fp.z);
         }
         orders_input(&hud, &in, &hin, &hw, ui_busy, fv.cam_pos, ww, wh, world);
 
@@ -447,34 +462,31 @@ int main(int argc, char **argv)
         f32 wtime = world_time(world);
         prof_zone(PZ_SOUND);
         if (set.sound_on) {
-            sfx_listener(wsound, fv.cam_pos, cam.target, cam.yaw, in_valley);
+            sfx_listener(wsound, fv.cam_pos, cam.target, cam.yaw);
             sfx_field(wsound, field, fig->view);
-            if (!in_valley) sfx_arena(wsound, &world->aview, world->arena);
+            sfx_arena(wsound, &world->aview, world->arena);
         }
 
         // Список кадра: статика, люди и бойцы арены, метки, ряд людей; свет — фонари арены и факелы
         prof_zone(PZ_SCENE);
         Sky sky;
         sky_at(world_tod(world), &sky);
-        u32 nl = in_valley ? 0 : arena_view_lights(&world->aview, sky.night, wtime, lights);
+        u32 nl = arena_view_lights(&world->aview, sky.night, wtime, lights);
         u32 n = 0;
-        if (in_valley) n += valley_view_draw(valley, items);
-        else {
-            items[n++] = (DrawItem){ .mesh = &world->hall };
-            items[n++] = (DrawItem){ .mesh = &world->far, .no_shadow = true };
-            items[n++] = (DrawItem){ .mesh = &world->town_mesh };
-        }
+        items[n++] = (DrawItem){ .mesh = &world->hall };
+        items[n++] = (DrawItem){ .mesh = &world->far, .no_shadow = true };
+        items[n++] = (DrawItem){ .mesh = &world->town_mesh };
+        n += valley_view_draw(valley, fv.cam_pos, items + n);
         prof_zone(PZ_FIGURES);
         people_dress_live(world->people);
         FigureView fview = { .view_proj = hw.view_proj, .eye = fv.cam_pos, .light_dir = sky.light_dir, .dt = real_dt,
-                             .time = wtime, .night = sky.night, .valley = in_valley };
+                             .time = wtime, .night = sky.night };
         n += figures_draw(fig, cm, world->people, field, &world->aview, world->arena, &fview, items + n, lights, &nl);
         prof_zone(PZ_SCENE);
         V3 look_pos;
         bool look_field = hud.look_kind == LOOK_FIELD && hud.look < field->w.count;
         if (look_field) look_pos = fig->view[hud.look].pos;  // слот поля = номер в таблице
-        bool look_ring = look_field || (!in_valley && hud.look_kind == LOOK_ARENA &&
-                                        hud_arena_pos(&world->aview, world->arena, hud.look, &look_pos));
+        bool look_ring = look_field || (hud.look_kind == LOOK_ARENA && hud_arena_pos(&world->aview, world->arena, hud.look, &look_pos));
         n += figures_marks(fig, cm, squad, field, look_ring ? &look_pos : NULL, items + n);
         n += humans_row_draw(humans, cm, items + n);
         n += stand_draw(stand, cm, items + n);
@@ -493,10 +505,8 @@ int main(int argc, char **argv)
         fv.ground_amb = sky.ground_amb;
         fv.haze = sky.haze;
         // В долине свет отражается от травы, а не от песка, и дымка не такая пыльная
-        if (in_valley) {
-            fv.ground_amb = v3_hadamard(fv.ground_amb, v3(0.6f, 0.9f, 0.6f));
-            fv.haze = v3_hadamard(fv.haze, v3(0.93f, 0.97f, 1.02f));
-        }
+        fv.ground_amb = v3_hadamard(fv.ground_amb, v3_lerp(v3(1, 1, 1), v3(0.6f, 0.9f, 0.6f), valley_k));
+        fv.haze = v3_hadamard(fv.haze, v3_lerp(v3(1, 1, 1), v3(0.93f, 0.97f, 1.02f), valley_k));
         fv.zenith = sky.zenith;
         fv.shadow_center = cam.target;
         fv.lights = lights;

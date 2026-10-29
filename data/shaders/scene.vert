@@ -7,7 +7,7 @@ layout(location = 4) in uvec4 a_bones;    // до 4 костей; без пот�
 layout(location = 5) in vec4 a_weights;
 
 layout(location = 0) uniform mat4 u_view_proj;
-layout(location = 17) uniform int u_skinned;   // 0 — статика, 1 — кости, 2 — экземпляры статики
+layout(location = 17) uniform int u_skinned;   // 0 — статика, 1 — кости, 2 — экземпляры статики, 3 — рельеф
 layout(location = 19) uniform int u_inst_base;
 layout(location = 20) uniform vec3 u_cam_pos;
 layout(location = 23) uniform float u_time;
@@ -23,6 +23,14 @@ const float MORPH_POS = 0.25, MORPH_NRM = 2.0;  // как в tools/humanconv
 // Экземпляры статики (RInst): a — положение и поворот, b — ширина, высота, наклон; оттенок RGBA8
 struct InstRec { vec4 a; vec3 b; uint tint; };
 layout(std430, binding = 3) readonly buffer StaticInstBuf { InstRec insts[]; };
+// Рельеф кольцами (render/terrain.c): уровень — слой; узел g лежит в (g & 255) текстур уровня
+layout(location = 49) uniform ivec4 u_terr_grid;  // xy — узел (0,0) уровня в узлах уровня, z — уровень
+layout(location = 50) uniform vec4 u_terr_view;   // x — шаг узлов, м; yz — центр колец
+layout(binding = 8) uniform sampler2DArray u_terr_h;  // высота, м
+layout(binding = 9) uniform sampler2DArray u_terr_c;  // альбедо; вид в альфе: 0 — песок, 1 — земля долины
+const int TERR_G = 129, TERR_MASK = 255;  // узлов на сторону уровня (TERRAIN_CELLS + 1), сторона текстур − 1
+// От центра колец: с 46 до 62 клеток уровня высота переходит к уровню крупнее, к краю (не ближе 62) — целиком
+const float TERR_MORPH0 = 46.0, TERR_MORPH_W = 16.0;
 
 out vec3 v_world;
 out vec3 v_nrm;
@@ -34,7 +42,10 @@ flat out vec3 v_tint;  // оттенок экземпляра
 // Проход глубины и сцена должны дать одну и ту же глубину до бита
 invariant gl_Position;
 
-const uint MAT_BARK = 12u, MAT_LEAF = 13u, MAT_GRASS = 14u;
+const uint MAT_TERRAIN = 9u, MAT_BARK = 12u, MAT_LEAF = 13u, MAT_GRASS = 14u;
+
+float terr_h(ivec2 g) { return texelFetch(u_terr_h, ivec3(g & TERR_MASK, u_terr_grid.z), 0).r; }
+vec4 terr_c(ivec2 g) { return texelFetch(u_terr_c, ivec3(g & TERR_MASK, u_terr_grid.z), 0); }
 
 // Ветер: медленные порывы и быстрая дрожь, фаза зависит от места
 vec2 wind(vec3 root)
@@ -107,9 +118,32 @@ void main()
         n = rot * (n / s);
         v_rot = rot;
         v_tint = vec3(tint & 255u, (tint >> 8u) & 255u, (tint >> 16u) & 255u) / 128.0;
+    } else if (u_skinned == 3) {
+        // Рельеф: узел сетки уровня из номера вершины, высота и цвет из текстур уровня. К краю уровня
+        // высота уходит к уровню крупнее (у нечётных узлов — середина соседей, как на его треугольниках)
+        ivec2 g = u_terr_grid.xy + ivec2(gl_VertexID % TERR_G, gl_VertexID / TERR_G);
+        float s = u_terr_view.x;
+        vec2 xz = vec2(g) * s;
+        vec2 dc = abs(xz - u_terr_view.yz) / s;
+        float m = clamp((max(dc.x, dc.y) - TERR_MORPH0) / TERR_MORPH_W, 0.0, 1.0);
+        float h = terr_h(g);
+        v_color = terr_c(g);
+        // Нормаль по соседям; у края — по соседям через один, как у уровня крупнее
+        ivec2 ex = ivec2(1, 0), ez = ivec2(0, 1);
+        n = normalize(vec3(terr_h(g - ex) - terr_h(g + ex), 2.0 * s, terr_h(g - ez) - terr_h(g + ez)));
+        if (m > 0.0) {
+            ivec2 odd = g & 1;
+            ivec2 ga = g - odd, gb = g + odd;
+            h = mix(h, 0.5 * (terr_h(ga) + terr_h(gb)), m);
+            v_color = mix(v_color, 0.5 * (terr_c(ga) + terr_c(gb)), m);
+            vec3 n2 = vec3(terr_h(g - 2 * ex) - terr_h(g + 2 * ex), 4.0 * s, terr_h(g - 2 * ez) - terr_h(g + 2 * ez));
+            n = mix(n, normalize(n2), m);
+        }
+        p = vec4(xz.x, h, xz.y, 1.0);
+        v_local = p.xyz;
     }
     v_world = p.xyz;
     v_nrm = n;
-    v_mat = a_mat_bone.x;
+    v_mat = u_skinned == 3 ? MAT_TERRAIN : a_mat_bone.x;
     gl_Position = u_view_proj * p;
 }

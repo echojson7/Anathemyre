@@ -1,6 +1,9 @@
 #include "valley.h"
 
-static f32 *g_h;  // карта высот VALLEY_RES x VALLEY_RES, строки по Z
+#include "../core/jobs.h"
+
+static f32 *g_h;    // карта высот VALLEY_RES x VALLEY_RES, строки по Z
+static f32 *g_far;  // грубая карта вокруг: склоны, сходящие в пустошь (VALLEY_FAR_RES², шаг VALLEY_FAR_STEP)
 
 static f32 hash2(i32 x, i32 z)
 {
@@ -127,27 +130,57 @@ f32 valley_height_raw(f32 x, f32 z)
     return h;
 }
 
+static void init_rows(void *ctx, u32 begin, u32 end)
+{
+    f32 *h = ctx;
+    for (u32 i = begin; i < end; i++)
+        for (u32 j = 0; j < VALLEY_RES; j++)
+            h[i * VALLEY_RES + j] = valley_height_raw((f32)j - VALLEY_HALF, (f32)i - VALLEY_HALF);
+}
+
+static void init_far_rows(void *ctx, u32 begin, u32 end)
+{
+    f32 *h = ctx;
+    for (u32 i = begin; i < end; i++)
+        for (u32 j = 0; j < VALLEY_FAR_RES; j++)
+            h[i * VALLEY_FAR_RES + j] = valley_height_raw((f32)j * VALLEY_FAR_STEP - VALLEY_FAR_HALF, (f32)i * VALLEY_FAR_STEP - VALLEY_FAR_HALF);
+}
+
 void valley_init(Arena *perm)
 {
     if (g_h) return;
     f32 *h = ARENA_PUSH_ARRAY(perm, f32, (size_t)VALLEY_RES * VALLEY_RES);
-    if (!h) return;
-    for (u32 i = 0; i < VALLEY_RES; i++)
-        for (u32 j = 0; j < VALLEY_RES; j++)
-            h[i * VALLEY_RES + j] = valley_height_raw((f32)j - VALLEY_HALF, (f32)i - VALLEY_HALF);
+    f32 *far = ARENA_PUSH_ARRAY(perm, f32, (size_t)VALLEY_FAR_RES * VALLEY_FAR_RES);
+    if (!h || !far) return;
+    jobs_for(VALLEY_RES, 8, init_rows, h);
+    jobs_for(VALLEY_FAR_RES, 8, init_far_rows, far);
     g_h = h;
+    g_far = far;
+}
+
+// Грубая карта: билинейно; за её краем — по формуле
+static f32 far_height(f32 x, f32 z)
+{
+    f32 u = (x + VALLEY_FAR_HALF) / VALLEY_FAR_STEP, w = (z + VALLEY_FAR_HALF) / VALLEY_FAR_STEP;
+    if (!g_far || u < 0.0f || w < 0.0f || u >= VALLEY_FAR_RES - 1 || w >= VALLEY_FAR_RES - 1) return valley_height_raw(x, z);
+    i32 j = (i32)u, i = (i32)w;
+    f32 fx = u - (f32)j, fz = w - (f32)i;
+    const f32 *r0 = g_far + (size_t)i * VALLEY_FAR_RES + j, *r1 = r0 + VALLEY_FAR_RES;
+    return lerpf(lerpf(r0[0], r0[1], fx), lerpf(r1[0], r1[1], fx), fz);
 }
 
 f32 valley_height(f32 x, f32 z)
 {
     f32 u = x + VALLEY_HALF, w = z + VALLEY_HALF;
-    if (!g_h || u < 0.0f || w < 0.0f || u >= VALLEY_RES - 1 || w >= VALLEY_RES - 1) return valley_height_raw(x, z);
+    if (!g_h || u < 0.0f || w < 0.0f || u >= VALLEY_RES - 1 || w >= VALLEY_RES - 1) return far_height(x, z);
     i32 j = (i32)u, i = (i32)w;
     f32 fx = u - (f32)j, fz = w - (f32)i;
     const f32 *r0 = g_h + (size_t)i * VALLEY_RES + j, *r1 = r0 + VALLEY_RES;
     // Как треугольники сетки рельефа: диагональ из (0,0) в (1,1)
-    if (fx >= fz) return r0[0] + (r0[1] - r0[0]) * fx + (r1[1] - r0[1]) * fz;
-    return r0[0] + (r1[0] - r0[0]) * fz + (r1[1] - r1[0]) * fx;
+    f32 h = fx >= fz ? r0[0] + (r0[1] - r0[0]) * fx + (r1[1] - r0[1]) * fz : r0[0] + (r1[0] - r0[0]) * fz + (r1[1] - r1[0]) * fx;
+    // У края подробной карты — плавно к грубой, без ступеньки
+    f32 edge = clampf((fmaxf(fabsf(x), fabsf(z)) - (VALLEY_HALF - 8.0f)) / 8.0f, 0.0f, 1.0f);
+    return edge > 0.0f ? lerpf(h, far_height(x, z), edge) : h;
 }
 
 V3 valley_normal(f32 x, f32 z)
@@ -156,4 +189,29 @@ V3 valley_normal(f32 x, f32 z)
     f32 dx = valley_height(x + e, z) - valley_height(x - e, z);
     f32 dz = valley_height(x, z + e) - valley_height(x, z - e);
     return v3_norm(v3(-dx, 2.0f * e, -dz));
+}
+
+#define C_LUSH v3(0.05f, 0.078f, 0.022f)
+
+f32 valley_ground_dry(f32 x, f32 z, f32 h)
+{
+    f32 wy = valley_water_y(z), d = valley_river_dist(x, z);
+    return clampf(valley_dry(x, z) + smooth(25.0f, 80.0f, h - wy) * 0.25f - smooth(30.0f, 8.0f, d) * 0.3f, 0.0f, 1.0f);
+}
+
+// Земля: сочная трава у воды, сухая на возвышенностях, подстилка в рощах, проплешины, ил и галька у реки.
+// За краем подробной карты деревьев нет, поэтому лес там — тёмная хвоя пятнами
+V3 valley_color(f32 x, f32 z, f32 h, V3 n)
+{
+    bool far = fabsf(x) > VALLEY_HALF || fabsf(z) > VALLEY_HALF;
+    f32 wy = valley_water_y(z), d = valley_river_dist(x, z), w = valley_river_w(z);
+    f32 dry = valley_ground_dry(x, z, h);
+    V3 c = v3_lerp(C_LUSH, v3(0.15f, 0.13f, 0.06f), dry);
+    c = v3_lerp(c, far ? v3(0.035f, 0.05f, 0.028f) : v3(0.085f, 0.07f, 0.04f), smooth(0.45f, 0.85f, valley_forest(x, z)) * (far ? 0.9f : 0.75f));
+    f32 bare = smooth(0.68f, 0.8f, valley_fbm(x * 0.05f + 9.0f, z * 0.05f - 4.0f, 3));
+    c = v3_lerp(c, v3(0.15f, 0.115f, 0.075f), bare * 0.7f);
+    f32 gravel = smooth(0.5f, 0.62f, valley_fbm(x * 0.09f - 3.0f, z * 0.09f + 8.0f, 2));
+    c = v3_lerp(c, v3_lerp(v3(0.09f, 0.075f, 0.055f), v3(0.26f, 0.24f, 0.20f), gravel), smooth(w + 4.0f, w + 0.5f, d));
+    if (h < wy - 0.1f && d < w + 2.0f) c = v3(0.10f, 0.09f, 0.07f);
+    return v3_lerp(c, v3(0.15f, 0.115f, 0.08f), smooth(0.85f, 0.7f, n.y) * 0.6f);
 }
