@@ -239,72 +239,41 @@ f32 testroom_ground(f32 x, f32 z)
 
 static void pick_target(Crowd *c, Rng *rng, u32 i)
 {
-    c->target_x[i] = rng_range(rng, -14.0f, 14.0f);
-    c->target_z[i] = rng_range(rng, -16.0f, 18.0f);
+    player_order_move(&c->body[i], v3(rng_range(rng, -14.0f, 14.0f), 0.0f, rng_range(rng, -16.0f, 18.0f)));
+    c->body[i].marker = 0.0f;
 }
 
 void crowd_init(Crowd *c, Rng *rng, u32 count)
 {
     c->count = MIN(count, TR_MAX_CHARS);
     for (u32 i = 0; i < c->count; i++) {
-        c->x[i] = rng_range(rng, -8.0f, 8.0f);
-        c->z[i] = rng_range(rng, -12.0f, 14.0f);
-        c->heading[i] = rng_range(rng, 0, 2 * PI_F);
-        c->phase[i] = rng_f32(rng);
-        c->walk[i] = 0;
+        f32 x = rng_range(rng, -8.0f, 8.0f), z = rng_range(rng, -12.0f, 14.0f);
+        player_init(&c->body[i], v3(x, testroom_ground(x, z), z), rng_range(rng, 0, 2 * PI_F));
+        c->body[i].phase = rng_f32(rng);
+        c->body[i].gait = GAIT_WALK;
         c->wait[i] = rng_range(rng, 0.0f, 3.0f);
         c->seed[i] = rng_range(rng, 0, 100.0f);
         c->variant[i] = (u8)(i % 4);
         c->stationary[i] = i % 4 == 3;
-        pick_target(c, rng, i);
     }
     // Первый всегда идёт к камере: сразу видно ходьбу
     if (c->count > 0) {
-        c->x[0] = 3.0f; c->z[0] = 0.0f;
-        c->target_x[0] = 3.0f; c->target_z[0] = 16.0f;
-        c->heading[0] = 0.0f;
+        player_init(&c->body[0], v3(3.0f, testroom_ground(3.0f, 0.0f), 0.0f), 0.0f);
+        player_order_move(&c->body[0], v3(3.0f, 0.0f, 16.0f));
+        c->body[0].marker = 0.0f;
         c->wait[0] = 0;
         c->stationary[0] = false;
     }
 }
 
-static f32 wrap_angle(f32 a)
-{
-    while (a > PI_F) a -= 2 * PI_F;
-    while (a < -PI_F) a += 2 * PI_F;
-    return a;
-}
-
 void crowd_update(Crowd *c, Rng *rng, f32 dt)
 {
-    const f32 speed = 1.15f;
     for (u32 i = 0; i < c->count; i++) {
-        bool moving = false;
-        if (!c->stationary[i]) {
-            if (c->wait[i] > 0) {
-                c->wait[i] -= dt;
-            } else {
-                f32 dx = c->target_x[i] - c->x[i], dz = c->target_z[i] - c->z[i];
-                f32 d = sqrtf(dx * dx + dz * dz);
-                if (d < 0.4f) {
-                    c->wait[i] = rng_range(rng, 2.0f, 7.0f);
-                    pick_target(c, rng, i);
-                } else {
-                    f32 want = atan2f(dx, dz);
-                    f32 diff = wrap_angle(want - c->heading[i]);
-                    f32 turn = 2.5f * dt;
-                    c->heading[i] = wrap_angle(c->heading[i] + clampf(diff, -turn, turn));
-                    f32 v = speed * c->walk[i] * clampf(1.0f - fabsf(diff) / PI_F, 0.2f, 1.0f);
-                    c->x[i] += sinf(c->heading[i]) * v * dt;
-                    c->z[i] += cosf(c->heading[i]) * v * dt;
-                    c->phase[i] += v * dt / CHAR_STRIDE;
-                    moving = true;
-                }
-            }
-        }
-        f32 goal = moving ? 1.0f : 0.0f;
-        c->walk[i] += clampf(goal - c->walk[i], -dt * 3.0f, dt * 3.0f);
-        if (!moving && c->walk[i] > 0.0f) c->phase[i] += dt * c->walk[i] * speed / CHAR_STRIDE;
-        c->phase[i] -= floorf(c->phase[i]);
+        Player *p = &c->body[i];
+        bool was = p->moving;
+        if (!c->stationary[i] && !p->moving && (c->wait[i] -= dt) <= 0.0f) pick_target(c, rng, i);
+        p->vmax = 1.15f;
+        player_update(p, dt, testroom_ground);
+        if (was && !p->moving) c->wait[i] = rng_range(rng, 2.0f, 7.0f);
     }
 }

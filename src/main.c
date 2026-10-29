@@ -13,6 +13,7 @@
 #include "game/battle.h"
 #include "game/character.h"
 #include "game/hud.h"
+#include "game/human.h"
 #include "game/squad.h"
 #include "game/testroom.h"
 #include "platform/platform.h"
@@ -51,6 +52,9 @@ typedef struct Options {
     u32         battle[2];   // полевой бой: бойцов в каждом отряде
     bool        battle_verify;
     u32         threads;     // 0 — по числу ядер
+    bool        move_bench;  // проверка разворотов без окна
+    const char *move_trace;
+    bool        humans;      // мокап: люди из гладких форм рядом с отрядом
 } Options;
 
 // Портрет: неподвижная фигура в покое, камера по кости головы спереди, чуть сверху
@@ -71,6 +75,9 @@ static void portrait(const FrameView *base, u32 slot, i32 size, const GpuMesh *b
     render_portrait(slot, size, &fv, m4_mul(fv.proj, fv.view), items, weapon ? 2 : 1);
 }
 
+// Ближе 4 м камера подходит только в мокапе людей (крупные планы)
+static f32 g_cam_min_dist = 4.0f;
+
 static void camera_update(RtsCamera *c, const Input *in, f32 dt)
 {
     f32 fast = in->key_down[KEY_SHIFT] ? 3.0f : 1.0f;
@@ -89,14 +96,17 @@ static void camera_update(RtsCamera *c, const Input *in, f32 dt)
         c->pitch += (f32)in->mouse_dy * 0.004f;
     }
     c->dist *= powf(0.88f, (f32)in->wheel);
-    c->dist = clampf(c->dist, 4.0f, 120.0f);
+    c->dist = clampf(c->dist, g_cam_min_dist, 120.0f);
     c->pitch = clampf(c->pitch, 0.08f, 1.45f);
 }
 
 static V3 camera_eye(const RtsCamera *c)
 {
     V3 off = v3(sinf(c->yaw) * cosf(c->pitch), sinf(c->pitch), cosf(c->yaw) * cosf(c->pitch));
-    return v3_add(c->target, v3_mul(off, c->dist));
+    V3 eye = v3_add(c->target, v3_mul(off, c->dist));
+    // Крупный план мокапа: камера на уровне точки взгляда
+    if (g_cam_min_dist < 4.0f) eye.y += 1.0f;
+    return eye;
 }
 
 static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
@@ -154,6 +164,7 @@ static bool pick_ground(M4 view_proj, V3 eye, f32 nx, f32 ny, V3 *out)
 static void usage(void)
 {
     puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
+    puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
 }
@@ -168,6 +179,15 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--follow")) o->follow = true;
         else if (!strcmp(a, "--tod") && i + 1 < argc) o->tod = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--inspect")) o->inspect = true;
+        else if (!strcmp(a, "--move-bench")) {
+            o->move_bench = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
+        } else if (!strcmp(a, "--humans")) {
+            // Камера сразу на ряду людей
+            o->humans = true;
+            g_cam_min_dist = 0.8f;
+            o->cam = (RtsCamera){ .target = { 2.55f, 0, 22 }, .yaw = 0.0f, .pitch = 0.2f, .dist = 5.0f };
+        } else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--battle-bench") && i + 2 < argc) {
@@ -226,6 +246,7 @@ int main(int argc, char **argv)
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
+    if (opt.move_bench) return player_bench(opt.move_trace);
     if (opt.arena_bench) return arena_bench(opt.arena_bench, opt.seed, opt.arena_log);
     if (opt.battle[0] || opt.battle[1])
         return battle_bench(opt.battle[0], opt.battle[1], opt.seed, opt.threads, opt.battle_verify);
@@ -239,7 +260,7 @@ int main(int argc, char **argv)
 
     // Вся память выделяется здесь, один раз
     Arena perm, scratch;
-    if (!arena_init(&perm, MB(64)) || !arena_init(&scratch, MB(4))) {
+    if (!arena_init(&perm, MB(96)) || !arena_init(&scratch, MB(4))) {
         log_error("ПАМЯТЬ: не выделена");
         return 1;
     }
@@ -302,6 +323,36 @@ int main(int argc, char **argv)
         weapon_build(&mb, (u8)k);
         gpu_mesh_upload(&weapon_mesh[k], &mb);
         perm.used = mark;
+    }
+
+    // Мокап людей: мужчина, женщина, сухой бритый мужчина с бородой
+    static const HumanShape human_shape[3] = {
+        { 0.0f, 0.6f, 0.15f, { 0.52f, 0.37f, 0.28f }, { 0.10f, 0.08f, 0.06f }, { 0.30f, 0.29f, 0.27f }, 0, false },
+        { 1.0f, 0.3f, 0.25f, { 0.60f, 0.45f, 0.36f }, { 0.20f, 0.13f, 0.08f }, { 0.30f, 0.29f, 0.27f }, 2, false },
+        { 0.0f, 0.2f, 0.0f, { 0.38f, 0.26f, 0.19f }, { 0.07f, 0.06f, 0.05f }, { 0.30f, 0.29f, 0.27f }, 1, true },
+    };
+    // Рядом с каждым — человек из MakeHuman (tools/humanconv) того же сложения, для сравнения
+    static const char *const mh_name[3] = { "mh_male", "mh_female", "mh_thin" };
+    GpuMesh human_mesh[6];
+    u32 human_count = 0;
+    M4 *human_bones = ARENA_PUSH_ARRAY(&perm, M4, 6 * RENDER_MAX_BONES);
+    mark = perm.used;
+    for (u32 k = 0; opt.humans && k < 6; k++) {
+        if (k % 2 == 0) {
+            mb_init(&mb, &perm, 120000, 600000);
+            human_build(&mb, &scratch, &human_shape[k / 2]);
+        } else {
+            char path[700];
+            snprintf(path, sizeof path, "%s/meshes/%s.mesh", data_dir, mh_name[k / 2]);
+            if (!mb_load(&mb, &perm, path)) continue;
+        }
+        gpu_mesh_upload(&human_mesh[human_count], &mb);
+        log_info("ЧЕЛОВЕК %u: %u вершин, %u треугольников", k, mb.vcount, mb.icount / 3);
+        perm.used = mark;
+        f32 x = 0.3f + 0.9f * (f32)k;
+        for (u32 b = 0; b < RENDER_MAX_BONES; b++)
+            human_bones[human_count * RENDER_MAX_BONES + b] = m4_translate(v3(x, ground_height(x, 22.0f), 22.0f));
+        human_count++;
     }
 
     // Метка точки, куда идёт персонаж: бледно-зелёный крест на земле
@@ -448,9 +499,11 @@ int main(int argc, char **argv)
         items[n++] = (DrawItem){ .mesh = &near_mesh };
         items[n++] = (DrawItem){ .mesh = &far_mesh, .no_shadow = true };
         for (u32 i = 0; i < crowd.count; i++) {
+            const Player *cp = &crowd.body[i];
             CharPose p = {
-                .pos = v3(crowd.x[i], 0.1f, crowd.z[i]), .heading = crowd.heading[i],
-                .phase = crowd.phase[i], .walk = crowd.walk[i], .time = sim_time, .seed = crowd.seed[i],
+                .pos = cp->pos, .heading = cp->heading, .phase = cp->phase, .walk = cp->walk, .run = cp->run,
+                .time = sim_time, .seed = crowd.seed[i],
+                .lean_fwd = cp->lean_fwd, .lean_side = cp->lean_side, .look = cp->look,
                 // Разброс сложения внутри класса H: рост ±6%, ширина ±8%
                 .height = 1.0f + 0.06f * sinf(crowd.seed[i] * 7.31f),
                 .width = 1.0f + 0.08f * sinf(crowd.seed[i] * 3.17f + 1.0f),
@@ -467,6 +520,7 @@ int main(int argc, char **argv)
             CharPose p = {
                 .pos = pl->pos, .heading = pl->heading, .phase = pl->phase, .walk = pl->walk, .run = pl->run,
                 .time = sim_time, .seed = 7.0f + (f32)i * 5.3f, .height = cs->d.height / 1.8f,
+                .lean_fwd = pl->lean_fwd, .lean_side = pl->lean_side, .look = pl->look,
             };
             character_pose(&p, NULL, b);
             items[n++] = (DrawItem){ .mesh = &body_mesh[squad->variant[i] % CHAR_VARIANTS], .bones = b };
@@ -483,6 +537,8 @@ int main(int argc, char **argv)
             mk[0] = m4_translate(squad->order_pos);
             items[n++] = (DrawItem){ .mesh = &marker_mesh, .bones = mk, .no_shadow = true };
         }
+        for (u32 k = 0; k < human_count; k++)
+            items[n++] = (DrawItem){ .mesh = &human_mesh[k], .bones = human_bones + k * RENDER_MAX_BONES };
         V3 look_pos;
         if (hud.look_kind == LOOK_ARENA && hud_arena_pos(aview, arena, hud.look, &look_pos)) {
             M4 *rb = squad_bones + (size_t)SQUAD_MAX * 3 * RENDER_MAX_BONES;

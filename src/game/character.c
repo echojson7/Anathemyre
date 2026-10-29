@@ -591,11 +591,13 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     M4 local[BONE_COUNT];
     for (int i = 0; i < BONE_COUNT; i++) local[i] = m4_identity();
     local[BONE_PELVIS] = m4_rot_y(pelvis_yaw);
-    local[BONE_SPINE] = m4_mul(m4_rot_x((0.08f + 0.14f * run) * w + 0.02f * breathe + k.lean), m4_rot_y(-pelvis_yaw * 1.8f + k.twist));
+    local[BONE_SPINE] = m4_mul(m4_rot_x((0.08f + 0.14f * run) * w + 0.02f * breathe + k.lean), m4_rot_y(-pelvis_yaw * 1.8f + k.twist + 0.3f * p->look));
     f32 look = sinf(p->time * 0.31f + p->seed * 3.0f) * 0.55f * (1.0f - w) * (1.0f - guard) * (1.0f - kneel);
     f32 head_x = -0.06f * w + 0.1f * (1.0f - w) - 0.4f * clampf(a->stagger, 0.0f, 1.0f) + 0.35f * kneel;
     // Голова держит противника: скрутку корпуса гасит
-    local[BONE_HEAD] = m4_mul(m4_rot_y(look + pelvis_yaw * 0.8f - k.twist * 0.7f), m4_rot_x(head_x - k.lean * 0.6f));
+    // Голова держит горизонт: наклон тела гасит наполовину
+    local[BONE_HEAD] = m4_mul(m4_rot_y(look + 0.7f * p->look + pelvis_yaw * 0.8f - k.twist * 0.7f),
+                              m4_mul(m4_rot_z(0.5f * p->lean_side), m4_rot_x(head_x - k.lean * 0.6f - 0.5f * p->lean_fwd)));
 
     local[BONE_UPPER_ARM_R] = arm_upper(k.r);
     local[BONE_FOREARM_R] = m4_rot_x(k.r.fx);
@@ -607,6 +609,8 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     // Ноги: цель стопы в пространстве персонажа, IK от тазобедренного сустава.
     // Шаг поворачивается по направлению движения: вбок и назад ноги переступают правильно
     f32 md_s = sinf(p->move_dir), md_c = cosf(p->move_dir);
+    // Тело наклонено от стоп: цели стоп переводятся в наклонённые координаты, чтобы стояли на земле
+    M4 unlean = m4_mul(m4_rot_x(-p->lean_fwd), m4_rot_z(p->lean_side));
     for (int side = 0; side < 2; side++) {
         bool left = side == 0;
         f32 q = ph + (left ? 0.0f : 0.5f);
@@ -617,11 +621,11 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         f32 idle_z = lerpf(left ? 0.06f : -0.05f, left ? 0.20f : -0.18f, guard);
         f32 fx = (left ? 1.0f : -1.0f) * (HIP_X + 0.015f + 0.05f * guard);
         f32 step = z * w;
-        V3 target = v3(fx + md_s * step, ANKLE_Y + lift * w, idle_z * (1.0f - w) + md_c * step);
+        V3 target = m4_point(unlean, v3(fx + md_s * step, ANKLE_Y + lift * w, idle_z * (1.0f - w) + md_c * step));
         V3 hip = v3((left ? HIP_X : -HIP_X) + dx, HIP_Y + dy, dz);
         f32 tp, tr, kn;
         leg_ik(hip, target, &tp, &tr, &kn);
-        f32 foot = -(tp + kn) + pitch * w;
+        f32 foot = -(tp + kn) - p->lean_fwd + pitch * w;
         // На коленях: бедро отвесно, голень назад по земле
         tp = lerpf(tp, -0.1f, kneel);
         tr = lerpf(tr, 0.0f, kneel);
@@ -631,7 +635,7 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         local[thigh] = m4_mul(m4_rot_z(tr), m4_rot_x(tp));
         local[thigh + 1] = m4_rot_x(kn);
         // Стопа параллельна земле плюс перекат с пятки на носок
-        local[thigh + 2] = m4_rot_x(foot);
+        local[thigh + 2] = m4_mul(m4_rot_x(foot), m4_rot_z(p->lean_side - tr));
     }
 
     // Падение: поворот вокруг стоп, к концу таз приходит на место бойца
@@ -640,7 +644,8 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     f32 sh = p->height > 0.0f ? p->height : 1.0f;
     f32 sw = p->width > 0.0f ? p->width : 1.0f;
     M4 lie = m4_mul(m4_translate(v3(0.0f, 0.13f * fall, 0.95f * sh * fall * dir)), m4_rot_x(-dir * PI_F * 0.5f * fall));
-    M4 root = m4_mul(m4_translate(p->pos), m4_mul(m4_rot_y(p->heading), m4_mul(lie, m4_mul(m4_scale(v3(sw, sh, sw)), m4_translate(v3(dx, dy, dz))))));
+    M4 lean = m4_mul(m4_rot_z(-p->lean_side), m4_rot_x(p->lean_fwd));
+    M4 root = m4_mul(m4_translate(p->pos), m4_mul(m4_rot_y(p->heading), m4_mul(lean, m4_mul(lie, m4_mul(m4_scale(v3(sw, sh, sw)), m4_translate(v3(dx, dy, dz)))))));
     M4 world[BONE_COUNT];
     for (int i = 0; i < BONE_COUNT; i++) {
         const BoneDef *b = &g_body_bones[i];
