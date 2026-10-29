@@ -30,12 +30,26 @@ static const Palette g_palettes[] = {
 
 #define SEG 16
 
+// Уровень детализации текущей сборки: 0 — полный, дальше грубее
+static u32 g_lod;
+
+// Сегментов по кругу на текущем уровне
+static u32 segs(u32 n)
+{
+    static const f32 k[CHAR_LODS] = { 1.0f, 0.5f, 0.3f };
+    u32 s = (u32)((f32)n * k[g_lod] + 0.5f);
+    return s < 4 ? 4 : s;
+}
+
+// Мелкие детали, которых на самом грубом уровне не видно
+static bool fine(void) { return g_lod + 1 < CHAR_LODS; }
+
 static V3 mirror(V3 p) { return v3(-p.x, p.y, p.z); }
 static V3 side_x(V3 p, bool left) { return left ? p : mirror(p); }
 
 static void caps(MeshBuilder *mb, V3 a, V3 b, f32 r0, f32 r1, f32 ex, f32 ez)
 {
-    mb_capsule(mb, a, b, r0, r1, SEG, ex, ez);
+    mb_capsule(mb, a, b, r0, r1, segs(SEG), ex, ez);
 }
 
 static void box_at(MeshBuilder *mb, V3 c, V3 size, f32 rx, f32 ry, f32 rz)
@@ -85,10 +99,10 @@ static void arm(MeshBuilder *mb, const Palette *pal, bool left)
     mb_set(mb, pal->wrap, MAT_CLOTH, fore);
     caps(mb, side_x(v3(0.24f, 1.16f, 0), left), side_x(v3(0.25f, 0.93f, 0.01f), left), 0.052f, 0.04f, 1.0f, 1.0f);
     // Витки обмоток
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 4 && fine(); i++) {
         f32 y = 1.10f - (f32)i * 0.05f;
         V2 ring[] = { { 0.0f, 0.052f - (f32)i * 0.003f }, { 0.018f, 0.052f - (f32)i * 0.003f } };
-        mb_lathe(mb, side_x(v3(0.245f, y, 0.004f), left), side_x(v3(0.25f, y - 1.0f, 0.04f), left), ring, 2, SEG, 1.0f, 1.0f);
+        mb_lathe(mb, side_x(v3(0.245f, y, 0.004f), left), side_x(v3(0.25f, y - 1.0f, 0.04f), left), ring, 2, segs(SEG), 1.0f, 1.0f);
     }
     u8 hand = left ? BONE_HAND_L : BONE_HAND_R;
     mb_set(mb, pal->leather, MAT_LEATHER, hand);
@@ -120,7 +134,7 @@ static void leg(MeshBuilder *mb, const Palette *pal, bool left)
     caps(mb, side_x(v3(HIP_X, 0.33f, -0.004f), left), side_x(v3(HIP_X, 0.13f, 0.0f), left), 0.066f, 0.064f, 1.0f, 1.08f);
     {
         V2 cuff[] = { { 0.0f, 0.072f }, { 0.035f, 0.072f } };
-        mb_lathe(mb, side_x(v3(HIP_X, 0.31f, -0.004f), left), side_x(v3(HIP_X, 1.0f, -0.004f), left), cuff, 2, SEG, 1.0f, 1.1f);
+        mb_lathe(mb, side_x(v3(HIP_X, 0.31f, -0.004f), left), side_x(v3(HIP_X, 1.0f, -0.004f), left), cuff, 2, segs(SEG), 1.0f, 1.1f);
     }
     // Стопа: носок, подъём, каблук, подошва
     mb_set(mb, pal->boots, MAT_LEATHER, foot);
@@ -131,12 +145,13 @@ static void leg(MeshBuilder *mb, const Palette *pal, bool left)
     box_at(mb, side_x(v3(HIP_X, 0.03f, -0.055f), left), v3(0.1f, 0.04f, 0.07f), 0, 0, 0);
     // Ремешки на подъёме
     mb_set(mb, pal->rust, MAT_METAL, foot);
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < 2 && fine(); i++)
         box_at(mb, side_x(v3(HIP_X, 0.1f + (f32)i * 0.04f, 0.035f + (f32)i * 0.01f), left), v3(0.125f, 0.014f, 0.06f), -0.3f, 0, 0);
 }
 
-void character_build(MeshBuilder *mb, u32 variant, bool armed)
+void character_build(MeshBuilder *mb, u32 variant, bool armed, u32 lod)
 {
+    g_lod = lod < CHAR_LODS ? lod : CHAR_LODS - 1;
     const Palette *pal = &g_palettes[variant % ARRAY_COUNT(g_palettes)];
     u32 seed = variant * 977u + 13u;
 
@@ -146,7 +161,7 @@ void character_build(MeshBuilder *mb, u32 variant, bool armed)
     mb_set(mb, pal->leather, MAT_LEATHER, BONE_PELVIS);
     {
         V2 belt[] = { { 0.0f, 0.162f }, { 0.055f, 0.162f } };
-        mb_lathe(mb, v3(0, 0.995f, 0), v3(0, 1.2f, 0), belt, 2, SEG, 1.0f, 0.82f);
+        mb_lathe(mb, v3(0, 0.995f, 0), v3(0, 1.2f, 0), belt, 2, segs(SEG), 1.0f, 0.82f);
     }
     mb_set(mb, pal->dark_metal, MAT_METAL, BONE_PELVIS);
     box_at(mb, v3(0, 1.02f, 0.135f), v3(0.07f, 0.05f, 0.02f), 0, 0, 0);
@@ -166,7 +181,7 @@ void character_build(MeshBuilder *mb, u32 variant, bool armed)
             { 0.00f, 0.00f }, { 0.00f, 0.145f }, { 0.10f, 0.152f }, { 0.22f, 0.175f }, { 0.32f, 0.195f },
             { 0.40f, 0.20f }, { 0.45f, 0.185f }, { 0.49f, 0.15f }, { 0.52f, 0.09f }, { 0.53f, 0.0f },
         };
-        mb_lathe(mb, v3(0, 0.97f, 0), v3(0, 2.0f, 0), torso, ARRAY_COUNT(torso), SEG + 4, 1.0f, 0.66f);
+        mb_lathe(mb, v3(0, 0.97f, 0), v3(0, 2.0f, 0), torso, ARRAY_COUNT(torso), segs(SEG + 4), 1.0f, 0.66f);
     }
     // Нагрудник и ремни крест-накрест
     mb_set(mb, pal->rust, MAT_RUST, BONE_CHEST);
@@ -180,7 +195,7 @@ void character_build(MeshBuilder *mb, u32 variant, bool armed)
     mb_set(mb, pal->wrap, MAT_CLOTH, BONE_HEAD);
     {
         V2 scarf[] = { { 0.0f, 0.10f }, { 0.04f, 0.115f }, { 0.08f, 0.10f }, { 0.11f, 0.075f } };
-        mb_lathe(mb, v3(0, 1.45f, 0.0f), v3(0, 2.0f, 0.01f), scarf, ARRAY_COUNT(scarf), SEG, 1.0f, 1.0f);
+        mb_lathe(mb, v3(0, 1.45f, 0.0f), v3(0, 2.0f, 0.01f), scarf, ARRAY_COUNT(scarf), segs(SEG), 1.0f, 1.0f);
     }
 
     // Накидка на плечах со складками и рваным подолом
@@ -191,8 +206,8 @@ void character_build(MeshBuilder *mb, u32 variant, bool armed)
             { 0.32f, 0.31f }, { 0.40f, 0.32f }, { 0.46f, 0.325f },
         };
         u32 v0 = mb->vcount, i0 = mb->icount;
-        mb_lathe(mb, v3(0, 1.56f, 0), v3(0, 0.0f, 0), mantle, ARRAY_COUNT(mantle), 40, 1.0f, 0.82f);
-        cloth_folds(mb, v0, i0, 1.50f, 1.10f, 9, 0.018f, 0.08f, seed);
+        mb_lathe(mb, v3(0, 1.56f, 0), v3(0, 0.0f, 0), mantle, ARRAY_COUNT(mantle), segs(40), 1.0f, 0.82f);
+        cloth_folds(mb, v0, i0, 1.50f, 1.10f, 9, fine() ? 0.018f : 0.0f, 0.08f, seed);
     }
 
     // Капюшон, респиратор и линзы
@@ -203,26 +218,26 @@ void character_build(MeshBuilder *mb, u32 variant, bool armed)
             { 0.28f, 0.075f }, { 0.31f, 0.03f }, { 0.32f, 0.0f },
         };
         u32 v0 = mb->vcount, i0 = mb->icount;
-        mb_lathe(mb, v3(0, 1.50f, -0.02f), v3(0.0f, 2.0f, -0.08f), hood, ARRAY_COUNT(hood), 24, 1.0f, 1.14f);
-        cloth_folds(mb, v0, i0, 1.80f, 1.52f, 5, 0.008f, 0.0f, seed + 1);
+        mb_lathe(mb, v3(0, 1.50f, -0.02f), v3(0.0f, 2.0f, -0.08f), hood, ARRAY_COUNT(hood), segs(24), 1.0f, 1.14f);
+        cloth_folds(mb, v0, i0, 1.80f, 1.52f, 5, fine() ? 0.008f : 0.0f, 0.0f, seed + 1);
     }
     // Тень лица внутри капюшона
     mb_set(mb, v3(0.03f, 0.03f, 0.03f), MAT_LEATHER, BONE_HEAD);
     caps(mb, v3(0, 1.62f, 0.07f), v3(0, 1.72f, 0.07f), 0.085f, 0.075f, 1.0f, 0.8f);
     mb_set(mb, pal->dark_metal, MAT_METAL, BONE_HEAD);
     caps(mb, v3(0, 1.605f, 0.12f), v3(0, 1.585f, 0.19f), 0.056f, 0.045f, 1.0f, 1.0f);
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 3 && fine(); i++)
         box_at(mb, v3(0, 1.575f + (f32)i * 0.017f, 0.193f), v3(0.05f, 0.006f, 0.008f), 0, 0, 0);
     mb_set(mb, pal->rust, MAT_RUST, BONE_HEAD);
-    mb_cylinder(mb, v3(0.05f, 1.59f, 0.16f), v3(0.11f, 1.565f, 0.18f), 0.036f, 12);
-    mb_cylinder(mb, v3(-0.05f, 1.59f, 0.16f), v3(-0.11f, 1.565f, 0.18f), 0.036f, 12);
+    mb_cylinder(mb, v3(0.05f, 1.59f, 0.16f), v3(0.11f, 1.565f, 0.18f), 0.036f, segs(12));
+    mb_cylinder(mb, v3(-0.05f, 1.59f, 0.16f), v3(-0.11f, 1.565f, 0.18f), 0.036f, segs(12));
     mb_set(mb, pal->dark_metal, MAT_METAL, BONE_HEAD);
-    mb_cylinder(mb, v3(0.046f, 1.685f, 0.125f), v3(0.046f, 1.685f, 0.16f), 0.032f, 12);
-    mb_cylinder(mb, v3(-0.046f, 1.685f, 0.125f), v3(-0.046f, 1.685f, 0.16f), 0.032f, 12);
+    mb_cylinder(mb, v3(0.046f, 1.685f, 0.125f), v3(0.046f, 1.685f, 0.16f), 0.032f, segs(12));
+    mb_cylinder(mb, v3(-0.046f, 1.685f, 0.125f), v3(-0.046f, 1.685f, 0.16f), 0.032f, segs(12));
     box_at(mb, v3(0, 1.685f, 0.13f), v3(0.17f, 0.03f, 0.03f), 0, 0, 0);
     mb_set(mb, pal->lens, MAT_EMISSIVE, BONE_HEAD);
-    mb_cylinder(mb, v3(0.046f, 1.685f, 0.16f), v3(0.046f, 1.685f, 0.166f), 0.025f, 12);
-    mb_cylinder(mb, v3(-0.046f, 1.685f, 0.16f), v3(-0.046f, 1.685f, 0.166f), 0.025f, 12);
+    mb_cylinder(mb, v3(0.046f, 1.685f, 0.16f), v3(0.046f, 1.685f, 0.166f), 0.025f, segs(12));
+    mb_cylinder(mb, v3(-0.046f, 1.685f, 0.16f), v3(-0.046f, 1.685f, 0.166f), 0.025f, segs(12));
 
     arm(mb, pal, true);
     arm(mb, pal, false);
@@ -234,7 +249,7 @@ void character_build(MeshBuilder *mb, u32 variant, bool armed)
     box_at(mb, v3(0.25f, 1.535f, 0.0f), v3(0.2f, 0.035f, 0.27f), 0, 0, -0.5f);
     box_at(mb, v3(0.32f, 1.44f, 0.0f), v3(0.035f, 0.15f, 0.24f), 0, 0, -0.18f);
     mb_set(mb, pal->dark_metal, MAT_METAL, BONE_CHEST);
-    for (int i = -1; i <= 1; i += 2) box_at(mb, v3(0.26f, 1.55f, 0.09f * (f32)i), v3(0.025f, 0.02f, 0.025f), 0, 0, -0.5f);
+    for (int i = -1; i <= 1 && fine(); i += 2) box_at(mb, v3(0.26f, 1.55f, 0.09f * (f32)i), v3(0.025f, 0.02f, 0.025f), 0, 0, -0.5f);
 
     if (variant % 3 != 1) {
         // Рюкзак с каркасом, скаткой и котелком
@@ -246,9 +261,11 @@ void character_build(MeshBuilder *mb, u32 variant, bool armed)
         mb_set(mb, pal->cloak, MAT_CLOTH, BONE_CHEST);
         caps(mb, v3(-0.16f, 1.51f, -0.25f), v3(0.16f, 1.51f, -0.25f), 0.075f, 0.075f, 1.0f, 1.0f);
         mb_set(mb, pal->rust, MAT_RUST, BONE_CHEST);
-        mb_cylinder(mb, v3(0.18f, 1.06f, -0.26f), v3(0.18f, 1.52f, -0.26f), 0.013f, 8);
-        mb_cylinder(mb, v3(-0.18f, 1.06f, -0.26f), v3(-0.18f, 1.52f, -0.26f), 0.013f, 8);
-        mb_cylinder(mb, v3(-0.07f, 1.05f, -0.29f), v3(0.07f, 1.05f, -0.29f), 0.06f, 12);
+        if (fine()) {
+            mb_cylinder(mb, v3(0.18f, 1.06f, -0.26f), v3(0.18f, 1.52f, -0.26f), 0.013f, segs(8));
+            mb_cylinder(mb, v3(-0.18f, 1.06f, -0.26f), v3(-0.18f, 1.52f, -0.26f), 0.013f, segs(8));
+        }
+        mb_cylinder(mb, v3(-0.07f, 1.05f, -0.29f), v3(0.07f, 1.05f, -0.29f), 0.06f, segs(12));
     }
 
     // Оружие в правой руке
@@ -256,25 +273,25 @@ void character_build(MeshBuilder *mb, u32 variant, bool armed)
     if (variant % 2 == 0) {
         // Длинный клинок из обрезка листа
         mb_set(mb, pal->leather, MAT_LEATHER, BONE_HAND_R);
-        mb_cylinder(mb, v3(-0.25f, 0.93f, 0.05f), v3(-0.25f, 0.76f, 0.05f), 0.019f, 10);
+        mb_cylinder(mb, v3(-0.25f, 0.93f, 0.05f), v3(-0.25f, 0.76f, 0.05f), 0.019f, segs(10));
         mb_set(mb, pal->dark_metal, MAT_METAL, BONE_HAND_R);
         box_at(mb, v3(-0.25f, 0.755f, 0.05f), v3(0.035f, 0.025f, 0.16f), 0, 0, 0);
-        mb_cylinder(mb, v3(-0.25f, 0.95f, 0.05f), v3(-0.25f, 0.93f, 0.05f), 0.028f, 10);
+        mb_cylinder(mb, v3(-0.25f, 0.95f, 0.05f), v3(-0.25f, 0.93f, 0.05f), 0.028f, segs(10));
         mb_set(mb, v3(0.36f, 0.35f, 0.33f), MAT_METAL, BONE_HAND_R);
         box_at(mb, v3(-0.25f, 0.37f, 0.085f), v3(0.012f, 0.76f, 0.07f), -0.08f, 0, 0);
         box_at(mb, v3(-0.25f, -0.02f, 0.115f), v3(0.011f, 0.06f, 0.05f), -0.5f, 0, 0);
     } else {
         // Дубина из трубы с намотанной проволокой
         mb_set(mb, pal->rust, MAT_RUST, BONE_HAND_R);
-        mb_cylinder(mb, v3(-0.25f, 0.96f, 0.03f), v3(-0.26f, 0.22f, 0.12f), 0.024f, 10);
-        mb_cylinder(mb, v3(-0.26f, 0.40f, 0.098f), v3(-0.26f, 0.20f, 0.124f), 0.05f, 10);
+        mb_cylinder(mb, v3(-0.25f, 0.96f, 0.03f), v3(-0.26f, 0.22f, 0.12f), 0.024f, segs(10));
+        mb_cylinder(mb, v3(-0.26f, 0.40f, 0.098f), v3(-0.26f, 0.20f, 0.124f), 0.05f, segs(10));
         mb_set(mb, pal->dark_metal, MAT_METAL, BONE_HAND_R);
         for (int i = 0; i < 4; i++) {
             f32 t = 0.22f + (f32)i * 0.045f;
-            mb_cylinder(mb, v3(-0.26f, t + 0.01f, 0.098f + (0.4f - t) * 0.13f), v3(-0.26f, t, 0.1f + (0.4f - t) * 0.13f), 0.056f, 10);
+            mb_cylinder(mb, v3(-0.26f, t + 0.01f, 0.098f + (0.4f - t) * 0.13f), v3(-0.26f, t, 0.1f + (0.4f - t) * 0.13f), 0.056f, segs(10));
         }
         mb_set(mb, pal->leather, MAT_LEATHER, BONE_HAND_R);
-        mb_cylinder(mb, v3(-0.25f, 0.93f, 0.035f), v3(-0.252f, 0.76f, 0.055f), 0.03f, 10);
+        mb_cylinder(mb, v3(-0.25f, 0.93f, 0.035f), v3(-0.252f, 0.76f, 0.055f), 0.03f, segs(10));
     }
 }
 
@@ -317,11 +334,12 @@ static void wbox(MeshBuilder *mb, const WeaponFrame *wf, f32 d0, f32 d1, f32 wid
 static void wcyl(MeshBuilder *mb, const WeaponFrame *wf, f32 d0, f32 d1, f32 r, f32 off)
 {
     V3 o = v3_add(GRIP, v3_mul(wf->f, off));
-    mb_cylinder(mb, v3_add(o, v3_mul(wf->a, d0)), v3_add(o, v3_mul(wf->a, d1)), r, 10);
+    mb_cylinder(mb, v3_add(o, v3_mul(wf->a, d0)), v3_add(o, v3_mul(wf->a, d1)), r, segs(10));
 }
 
 void weapon_build(MeshBuilder *mb, u8 weapon)
 {
+    g_lod = 0;
     const WeaponFrame wf = weapon_frame();
     const V3 wrap = v3(0.30f, 0.26f, 0.20f), steel = v3(0.34f, 0.33f, 0.31f), dark = v3(0.13f, 0.13f, 0.14f);
     const V3 rust = v3(0.42f, 0.24f, 0.13f), wood = v3(0.24f, 0.17f, 0.11f);

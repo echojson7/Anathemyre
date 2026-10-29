@@ -49,8 +49,11 @@ static inline f32 char_stride(f32 run) { return lerpf(CHAR_STRIDE, CHAR_STRIDE_R
 // Походка под скорость, м/с: до 1.6 шаг, к 4.8 полный бег
 static inline f32 char_run_from_speed(f32 v) { return clampf((v - 1.6f) / 3.2f, 0.0f, 1.0f); }
 
-// Вариант 0..N задаёт одежду; armed — встроенное оружие тестовой комнаты
-void character_build(MeshBuilder *mb, u32 variant, bool armed);
+// Уровни детализации фигуры: 0 — полный, каждый следующий грубее
+#define CHAR_LODS 3
+
+// Вариант 0..N задаёт одежду; armed — встроенное оружие тестовой комнаты; lod — уровень детализации
+void character_build(MeshBuilder *mb, u32 variant, bool armed, u32 lod);
 // Оружие отдельной сеткой в правой руке: рисуется с матрицами того же персонажа
 void weapon_build(MeshBuilder *mb, u8 weapon);
 // Пишет BONE_COUNT матриц скиннинга; act == NULL — только походка
