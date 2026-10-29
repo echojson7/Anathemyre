@@ -11,9 +11,9 @@
 #define SHADOW_SIZE 2048
 #define SHADOW_EXTENT 45.0f   // полуразмер области теней, м
 // Размер пикселя по глубине (pixel.glsl): k = PIXEL_K * s^PIXEL_P, s — пикселей кадра на метр в точке.
-// При 1080p: 4 м — 6, 10 м — 3, 25 м — 2, дальше 1
-#define PIXEL_K 0.095f
-#define PIXEL_P 0.756f
+// При 1080p: 3 м — 6, 4 м — 5, 5–6 м — 4, 7–9 м — 3, с 10 м — 2 и дальше не меняется (pixel.glsl PIXEL_MIN)
+#define PIXEL_K 0.0522f
+#define PIXEL_P 0.823f
 
 // Расположения uniform задаются явно в GLSL (layout(location = N))
 enum {
