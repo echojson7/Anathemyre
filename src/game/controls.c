@@ -45,7 +45,7 @@ void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool h
         u32 mins = (u32)(w->tod * 24.0f * 60.0f);
         snprintf(val, sizeof val, "%02u:%02u", mins / 60 % 24, mins % 60);
         hud_debug_slider(h, "ВРЕМЯ СУТОК", &w->tod, 0.0f, 0.999f, val);
-        static const char *speed_name[] = { "ПАУЗА", "x1", "x2", "x3" };
+        static const char *speed_name[] = { "ПАУЗА", "x1", "x2", "x5" };
         f32 sp = (f32)h->speed;
         if (hud_debug_slider(h, "СКОРОСТЬ", &sp, 0.0f, 3.0f, speed_name[h->speed])) {
             h->speed = (u8)(sp + 0.5f);

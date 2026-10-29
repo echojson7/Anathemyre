@@ -106,6 +106,28 @@ void player_update(Player *p, f32 dt, GroundFn ground)
     p->idle = p->speed < 0.05f && fabsf(p->turn_rate) < 0.2f ? p->idle + dt : 0.0f;
 }
 
+void player_lerp(const Player *a, const Player *b, f32 t, Player *out)
+{
+    *out = *b;
+    out->pos = v3_lerp(a->pos, b->pos, t);
+    out->heading = wrap_angle(a->heading + wrap_angle(b->heading - a->heading) * t);
+    out->move_yaw = wrap_angle(a->move_yaw + wrap_angle(b->move_yaw - a->move_yaw) * t);
+    out->speed = lerpf(a->speed, b->speed, t);
+    out->turn_rate = lerpf(a->turn_rate, b->turn_rate, t);
+    out->lean_fwd = lerpf(a->lean_fwd, b->lean_fwd, t);
+    out->lean_side = lerpf(a->lean_side, b->lean_side, t);
+    out->look = lerpf(a->look, b->look, t);
+    out->idle = lerpf(a->idle, b->idle, t);
+    out->walk = lerpf(a->walk, b->walk, t);
+    out->run = lerpf(a->run, b->run, t);
+    out->marker = lerpf(a->marker, b->marker, t);
+    // Фаза шага по кругу: за шаг мира она проходит меньше половины круга
+    f32 dp = b->phase - a->phase;
+    dp -= floorf(dp + 0.5f);
+    out->phase = a->phase + dp * t;
+    out->phase -= floorf(out->phase);
+}
+
 // ---------------------------------------------------------------- проверка разворотов
 
 static f32 flat_ground(f32 x, f32 z) { (void)x; (void)z; return 0.0f; }
@@ -116,7 +138,7 @@ int player_bench(const char *trace_path)
     if (tr) fputs("case,t,x,z,speed,heading,lean_side\n", tr);
     static const char *gname[GAIT_COUNT] = { "ШАГ   ", "ТРУСЦА", "БЕГ   " };
     static const f32 angles[] = { 90.0f, 135.0f, 180.0f };
-    const f32 dt = 1.0f / 60.0f;
+    const f32 dt = 1.0f / 20.0f;  // как шаг мира (TICK_HZ)
     puts("РЕЖИМ  СТАРТ    УГОЛ  ВРЕМЯ,С  МИН.СКОРОСТЬ  ОСТАНОВКА  КРЕН,°  ПУТЬ/ПРЯМАЯ");
     u32 id = 0;
     for (u32 g = 0; g < GAIT_COUNT; g++)

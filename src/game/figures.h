@@ -43,6 +43,9 @@ typedef struct PoseJob {
 #define MARK_SETS (SQUAD_MAX * 2 + 2)
 
 typedef struct Figures {
+    // Люди для кадра (figures_view): между двумя шагами мира, бойцы — как их показывает вид боя.
+    // По номеру в таблице, он же слот поля. Читают позы, метки, звук шагов, выбор мышью, камера
+    Player  view[PEOPLE_MAX];
     f32     age[PEOPLE_MAX];  // сколько секунд поза не пересчитывалась; < 0 — не было в кадре, считать сразу
     M4     *bones;            // PEOPLE_MAX наборов костей
     M4     *drop;             // PEOPLE_MAX наборов: оружие, выпавшее на землю
@@ -65,6 +68,8 @@ typedef struct FigureView {
 
 // Сетки людей в m (m->gear и m->gear_lod уже выделены), кости фигур
 bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const char *data_dir);
+// Люди для кадра: alpha — доля шага мира после последнего (World.alpha), после field_present
+void figures_view(Figures *f, const People *p, const Field *fd, f32 alpha, GroundFn ground);
 // Люди и бойцы арены (s == NULL — арены нет): элементы в items, свет факелов в lights после *nl.
 // Позы считаются здесь же, в пуле потоков. Возвращает число элементов
 u32  figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *fd, const ArenaView *av,

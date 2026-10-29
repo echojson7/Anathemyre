@@ -254,12 +254,12 @@ static void fighter(WorldSound *s, SfxFight *f, u32 i, const FightAnim *a, V3 fo
     f->dropped[i] = a->dropped;
 }
 
-void sfx_field(WorldSound *s, const Field *f)
+void sfx_field(WorldSound *s, const Field *f, const Player *view)
 {
     const CombatWorld *w = &f->w;
     SfxFight *sf = &s->field;
     for (u32 i = 0; i < w->count && i < FIELD_MAX; i++) {
-        const Player *p = f->body[i];
+        const Player *p = &view[i];
         // В долине из тел поля есть только свой отряд
         if (s->valley && !(f->flags[i] & FF_PLAYER)) continue;
         if (field_awake(f, i)) {

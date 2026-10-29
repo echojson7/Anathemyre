@@ -273,6 +273,7 @@ int main(int argc, char **argv)
         platform_shutdown();
         return 1;
     }
+    figures_view(fig, world->people, world->field, world->alpha, world_ground);
     humans_row_init(humans, &perm, world_ground);
     bool humans_flip = opt.humans;
     Squad *squad = &world->squad;
@@ -377,14 +378,16 @@ int main(int argc, char **argv)
         f64 now = time_now();
         f32 dt = opt.shot_path ? 1.0f / 60.0f : (f32)fmin(now - last, 0.05);
         last = now;
-        // Скорость времени из интерфейса; камера живёт в реальном времени
+        // Скорость времени из интерфейса (пауза, ×1, ×2, ×5): больше шагов мира за кадр. Камера — в реальном
         f32 real_dt = dt;
-        dt *= (f32)hud.speed;
+        dt *= (f32)g_speed_scale[hud.speed];
         real_time += real_dt;
 
         if (!bench.on) camera_update(&cam, &in, real_dt);
+        // Камера и интерфейс видят людей такими, какими их показал прошлый кадр (figures_view)
         i32 lead = MAX(0, squad_primary(squad));
-        if (set.follow) cam.target = v3(squad_body(squad, (u32)lead)->pos.x, 0, squad_body(squad, (u32)lead)->pos.z);
+        V3 lead_pos = fig->view[squad->member[lead]].pos;
+        if (set.follow) cam.target = v3(lead_pos.x, 0, lead_pos.z);
         i32 ww, wh;
         platform_window_size(&ww, &wh);
         if (opt.shot_path) {
@@ -411,26 +414,34 @@ int main(int argc, char **argv)
         humans_flip |= set.humans;
         bench_request |= set.bench;
         set.humans = set.bench = false;
-        HudWorld hw = { .squad = squad, .arena = world->arena, .aview = &world->aview, .field = field,
+        HudWorld hw = { .squad = squad, .arena = world->arena, .aview = &world->aview, .field = field, .view = fig->view,
                         .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day,
                         .alone = in_valley };
         bool ui_busy = hud_input(&hud, &hin, &hw);
-        if (hud.focus >= 0) cam.target = v3(squad_body(squad, (u32)hud.focus)->pos.x, 0, squad_body(squad, (u32)hud.focus)->pos.z);
+        if (hud.focus >= 0) {
+            V3 fp = fig->view[squad->member[hud.focus]].pos;
+            cam.target = v3(fp.x, 0, fp.z);
+        }
         orders_input(&hud, &in, &hin, &hw, ui_busy, fv.cam_pos, ww, wh, world);
 
         world_update(world, dt);
+        // Вид мира для кадра: бой между шагами, люди между двумя последними шагами
+        prof_zone(PZ_FIGURES);
+        world_present(world, dt);
+        figures_view(fig, world->people, field, world->alpha, world_ground);
+        f32 wtime = world_time(world);
         prof_zone(PZ_SOUND);
         if (set.sound_on) {
             sfx_listener(wsound, fv.cam_pos, cam.target, cam.yaw, in_valley);
-            sfx_field(wsound, field);
+            sfx_field(wsound, field, fig->view);
             if (!in_valley) sfx_arena(wsound, &world->aview, world->arena);
         }
 
         // Список кадра: статика, люди и бойцы арены, метки, ряд людей; свет — фонари арены и факелы
         prof_zone(PZ_SCENE);
         Sky sky;
-        sky_at(world->tod, &sky);
-        u32 nl = in_valley ? 0 : arena_view_lights(&world->aview, sky.night, world->time, lights);
+        sky_at(world_tod(world), &sky);
+        u32 nl = in_valley ? 0 : arena_view_lights(&world->aview, sky.night, wtime, lights);
         u32 n = 0;
         if (in_valley) n += valley_view_draw(valley, items);
         else {
@@ -441,12 +452,12 @@ int main(int argc, char **argv)
         prof_zone(PZ_FIGURES);
         people_dress_live(world->people);
         FigureView fview = { .view_proj = hw.view_proj, .eye = fv.cam_pos, .light_dir = sky.light_dir, .dt = real_dt,
-                             .time = world->time, .night = sky.night, .valley = in_valley };
+                             .time = wtime, .night = sky.night, .valley = in_valley };
         n += figures_draw(fig, cm, world->people, field, &world->aview, world->arena, &fview, items + n, lights, &nl);
         prof_zone(PZ_SCENE);
         V3 look_pos;
         bool look_field = hud.look_kind == LOOK_FIELD && hud.look < field->w.count;
-        if (look_field) look_pos = field->body[hud.look]->pos;
+        if (look_field) look_pos = fig->view[hud.look].pos;  // слот поля = номер в таблице
         bool look_ring = look_field || (!in_valley && hud.look_kind == LOOK_ARENA &&
                                         hud_arena_pos(&world->aview, world->arena, hud.look, &look_pos));
         n += figures_marks(fig, cm, squad, field, look_ring ? &look_pos : NULL, items + n);
@@ -474,7 +485,7 @@ int main(int argc, char **argv)
         fv.shadow_center = cam.target;
         fv.lights = lights;
         fv.light_count = nl;
-        fv.time = world->time;
+        fv.time = wtime;
         fv.frame = frame;
         // Полное разрешение окна, размер пикселя задаёт глубина (pixel.glsl); либо весь кадр в 1/2, 1/3 окна
         set.rs.internal_h = set.rs.pixel && set.rs.pixel_div > 1 ? wh / set.rs.pixel_div : wh;

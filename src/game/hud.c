@@ -181,6 +181,8 @@ static void gait_btn_rect(const Layout *L, u32 g, f32 *x, f32 *y, f32 *w)
 }
 static void formation_btn_rect(const Layout *L, f32 *x, f32 *y) { *x = L->sel_x + 92; *y = L->bottom + 86; }
 static f32 win_btn_y(const Layout *L, u32 k) { return L->btn_y + (f32)k * (BTN_H + 4); }
+const u8 g_speed_scale[4] = { 0, 1, 2, 5 };
+
 static f32 speed_btn_x(const Layout *L, u32 k) { return L->clock_x + 62 + (f32)k * 21; }
 
 // Экранная точка в логических координатах; false — за камерой
@@ -224,7 +226,7 @@ static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 
         u8 kd = LOOK_SQUAD;
         u32 idx = k;
         if (k < w->squad->count) {
-            pos = squad_body(w->squad, k)->pos;
+            pos = w->view[w->squad->member[k]].pos;
             u32 s = (u32)squad_body(w->squad, k)->slot;
             if (field_awake(fd, s) && fs_lying(fd->w.state[s])) tall = 0.4f;
         } else if (k >= w->squad->count + ARENA_MAX_BOUT) {
@@ -232,7 +234,7 @@ static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 
             if (w->alone || fd->flags[s] & FF_PLAYER) continue;
             kd = LOOK_FIELD;
             idx = s;
-            pos = fd->body[s]->pos;
+            pos = w->view[s].pos;  // слот поля = номер в таблице
             if (field_awake(fd, s) && fs_lying(fd->w.state[s])) tall = 0.4f;
         } else {
             u32 i = k - w->squad->count;
@@ -593,7 +595,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
                 bool in_box = false;
                 for (u32 k = 0; k <= 12 && !in_box; k++) {
                     f32 a = (f32)k * (2.0f * PI_F / 12.0f), r = k ? SELECT_RING_R : 0.0f, px, py;
-                    V3 p = v3_add(squad_body(sq, i)->pos, v3(sinf(a) * r, 0.03f, cosf(a) * r));
+                    V3 p = v3_add(w->view[sq->member[i]].pos, v3(sinf(a) * r, 0.03f, cosf(a) * r));
                     in_box = project(w->view_proj, p, &px, &py) && px >= x0 && px <= x1 && py >= y0 && py <= y1;
                 }
                 if (in_box) sq->selected[i] = true;
