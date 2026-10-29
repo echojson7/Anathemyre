@@ -8,6 +8,7 @@
 #include "../core/clock.h"
 #include "../core/log.h"
 #include "gl.h"
+#include "terrain.h"
 
 #define SHADOW_SIZE 2048
 #define SHADOW_EXTENT 45.0f   // полуразмер области теней, м
@@ -36,6 +37,8 @@ enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2, SB_STATIC_INST = 3 };
 #define SKIN_INSTANCED 2
 // Разных сеток среди экземпляров прохода (с учётом уровней детализации)
 #define MAX_INST_MESHES 256
+// Участки экземпляров (деревья, трава, камни) дальше этого от глаза не рисуются: их не видно в дымке
+#define INST_FAR 1200.0f
 
 // Кости и списки экземпляров пишутся каждый кадр; кольцо буферов, чтобы не ждать GPU с прошлым кадром
 #define STREAM_FRAMES 3
@@ -372,7 +375,7 @@ bool render_init(Arena *scratch, const char *data_dir)
         glShadingRateImagePaletteNV(0, 0, 3, rates);
     }
     log_info("РЕНДЕР: частота шейдинга по блокам %s", R.vrs ? "есть" : "нет (каждый пиксель)");
-    if (!render_reload_shaders()) return false;
+    if (!render_reload_shaders() || !terrain_init(scratch)) return false;
 
     glCreateVertexArrays(1, &R.empty_vao);
     noise_make();
@@ -399,8 +402,11 @@ bool render_init(Arena *scratch, const char *data_dir)
     return target_make(&R.portrait, RENDER_PORTRAIT_PX * RENDER_PORTRAIT_SLOTS, RENDER_PORTRAIT_PX, GL_RGBA16F, true);
 }
 
+void render_set_terrain(TerrainFill fill, void *user) { terrain_source(fill, user); }
+
 void render_shutdown(void)
 {
+    terrain_shutdown();
     target_free(&R.scene);
     target_free(&R.rays);
     target_free(&R.ao);
@@ -915,6 +921,7 @@ static u32 gather_groups(const PassView *pv, bool shadow, InstDraw *draws)
     ga.nb = ga.nv = 0;
     for (u32 c = 0; c < R.cluster_count; c++) {
         const InstCluster *cl = &R.clusters[c];
+        if (v3_len(v3_sub(v3(cl->bound.x, cl->bound.y, cl->bound.z), R.cam_eye)) - cl->bound.w > INST_FAR) continue;
         u32 vis = sphere_test(&pv->fr, cl->bound);
         if (!vis) continue;
         for (u32 g = cl->first; g < cl->first + cl->count; g++)
@@ -967,6 +974,18 @@ static void draw_groups(const InstDraw *draws, u32 n, u32 pass)
     R.stat_draws[pass] += n;
     R.stat_tris[pass] += tris;
     R.stat_visible[pass] += vis;
+}
+
+// Рельеф кольцами: видимые куски уровней. Тени отбрасывает только ближний уровень (±64 м) и не там, где
+// ровно: дальние горы дали бы тень лишь в окне карты теней вокруг камеры
+static void draw_terrain(const PassView *pv, u32 pass)
+{
+    u32 draws = 0;
+    f64 tris = 0;
+    terrain_draw(pv->fr.p, pass == 0 ? 1 : TERRAIN_LEVELS, pass == 0 ? 0.25f : -1.0f, &draws, &tris);
+    if (pass >= 2) return;
+    R.stat_draws[pass] += draws;
+    R.stat_tris[pass] += tris;
 }
 
 // Наборы костей элементов — в буфер кадра после уже занятых; одинаковые подряд — один набор
@@ -1105,6 +1124,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         .px_k = fv->proj.m[5] * 0.5f * (f32)ih, .inst_lod_k = 1.0f,
     };
     R.cam_eye = fv->cam_pos;
+    // Рельеф: кольца за камерой, новые полосы — у источника
+    terrain_update(fv->cam_pos, fv->shadow_center);
     stream_lights(fv, &scene_view.fr);
     u32 n_shadow = gather(items, count, &shadow_view, true, g_inst[0]);
     u32 n_scene = gather(items, count, &scene_view, false, g_inst[1]);
@@ -1128,6 +1149,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glCullFace(GL_BACK);
     glEnable(GL_POLYGON_OFFSET_FILL);
     glPolygonOffset(1.5f, 2.0f);
+    // Что ближе к солнцу, чем ближняя плоскость, всё равно отбрасывает тень (а не режется срезом)
+    glEnable(GL_DEPTH_CLAMP);
     glClear(GL_DEPTH_BUFFER_BIT);
     glUseProgram(R.prog_shadow);
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, light_vp.m);
@@ -1136,7 +1159,9 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform1f(U_TIME, fv->time);
     draw_insts(g_inst[0], n_shadow, base_shadow, 0);
     draw_groups(g_idraw[0], ng_shadow, 0);
+    draw_terrain(&shadow_view, 0);
     glDisable(GL_POLYGON_OFFSET_FILL);
+    glDisable(GL_DEPTH_CLAMP);
     if (timing) mark(1);
 
     // 2. Сцена в низком разрешении
@@ -1150,6 +1175,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     draw_insts(g_inst[1], n_scene, base_scene, 2);
     draw_groups(g_idraw[1], ng_scene, 2);
+    draw_terrain(&scene_view, 2);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);
@@ -1216,6 +1242,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindTextureUnit(0, R.shadow_tex);
     draw_insts(g_inst[1], n_scene, base_scene, 1);
     draw_groups(g_idraw[1], ng_scene, 1);
+    draw_terrain(&scene_view, 1);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
     if (timing) mark(3);

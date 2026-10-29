@@ -8,48 +8,14 @@
 #include "names.h"
 #include "squad.h"
 #include "town.h"
+#include "../world/map.h"
 
 // Цвета поверхностей (альбедо, линейные)
 #define C_CONCRETE v3(0.42f, 0.40f, 0.37f)
 #define C_CONCRETE_DARK v3(0.30f, 0.29f, 0.27f)
 #define C_RUST v3(0.42f, 0.24f, 0.13f)
-#define C_SAND v3(0.40f, 0.34f, 0.26f)
 #define C_GLYPH_GREEN v3(0.25f, 1.0f, 0.40f)
 #define C_GLYPH_RED v3(0.95f, 0.18f, 0.10f)
-
-static f32 hash2(i32 x, i32 z)
-{
-    u32 h = (u32)x * 374761393u + (u32)z * 668265263u;
-    h = (h ^ (h >> 13)) * 1274126177u;
-    h ^= h >> 16;
-    return (f32)(h & 0xFFFFFF) / 16777215.0f;
-}
-
-static f32 vnoise(f32 x, f32 z)
-{
-    i32 ix = (i32)floorf(x), iz = (i32)floorf(z);
-    f32 fx = x - (f32)ix, fz = z - (f32)iz;
-    fx = fx * fx * (3 - 2 * fx);
-    fz = fz * fz * (3 - 2 * fz);
-    f32 a = hash2(ix, iz), b = hash2(ix + 1, iz), c = hash2(ix, iz + 1), d = hash2(ix + 1, iz + 1);
-    return lerpf(lerpf(a, b, fx), lerpf(c, d, fx), fz);
-}
-
-static f32 terrain_height(f32 x, f32 z, void *user)
-{
-    (void)user;
-    f32 r = sqrtf(x * x + z * z);
-    f32 dunes = 0.0f, amp = 1.0f, freq = 0.012f;
-    for (int i = 0; i < 5; i++) {
-        dunes += vnoise(x * freq, z * freq) * amp;
-        amp *= 0.5f;
-        freq *= 2.1f;
-    }
-    // Площадки у зала и посёлка ровные, дальше дюны, у горизонта гряды
-    f32 flat = fminf(clampf((r - 45.0f) / 60.0f, 0.0f, 1.0f), town_flatten(x, z));
-    f32 far = clampf((r - 400.0f) / 900.0f, 0.0f, 1.0f);
-    return -0.05f + flat * flat * (dunes - 0.6f) * 9.0f + far * dunes * 70.0f;
-}
 
 static M4 xf_box(V3 c, V3 size, f32 rx, f32 ry, f32 rz)
 {
@@ -232,8 +198,6 @@ void testroom_build_near(MeshBuilder *mb, Rng *rng)
 
 void testroom_build_far(MeshBuilder *mb, Rng *rng)
 {
-    mb_set(mb, C_SAND, MAT_SAND, BONE_NONE);
-    mb_terrain(mb, 3000.0f, 220, terrain_height, NULL);
     megastructures(mb, rng);
 }
 
@@ -241,7 +205,7 @@ f32 testroom_ground(f32 x, f32 z)
 {
     // Плита пола зала: верх на 0.1
     if (fabsf(x) <= 32.0f && z >= -28.0f && z <= 24.0f) return 0.1f;
-    f32 h = town_ground(x, z, terrain_height(x, z, NULL));
+    f32 h = town_ground(x, z, map_height(x, z));
     // Плита арены
     f32 dx = x - ARENA_CENTER.x, dz = z - ARENA_CENTER.z;
     if (dx * dx + dz * dz < 8.5f * 8.5f) h = fmaxf(h, 0.125f);

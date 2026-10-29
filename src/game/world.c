@@ -5,18 +5,20 @@
 #include "../core/clock.h"
 #include "../core/log.h"
 #include "../core/prof.h"
-#include "../world/valley.h"
+#include "../world/map.h"
 #include "testroom.h"
 
 #define CROWD_SIZE 9
 #define TOWN_WALKERS 20
 #define ARENA_SHOW_AFTER_BOUT_S 12.0f
 
-// Где сейчас отряд: пустошь с залом и ареной или долина у реки
-static bool g_in_valley;
+f32 world_ground(f32 x, f32 z) { return testroom_ground(x, z); }
 
-f32 world_ground(f32 x, f32 z) { return g_in_valley ? valley_height(x, z) : testroom_ground(x, z); }
-bool world_in_valley(void) { return g_in_valley; }
+bool world_squad_in_valley(const World *w)
+{
+    V3 p = squad_body(&w->squad, (u32)MAX(0, squad_primary(&w->squad)))->pos;
+    return map_valley(p.x, p.z) > 0.5f;
+}
 
 // Своя точка появления в пустоши: у края зала, лицом к арене
 static V3  squad_home(void) { return v3(9.0f, 0.0f, 22.0f); }
@@ -26,6 +28,16 @@ bool world_init(World *w, Arena *perm, MeshBuilder *mb, u64 seed, f32 tod, bool 
 {
     *w = (World){ .seed = seed, .tod = tod, .day = 1, .day_run = day_run };
     rng_seed(&w->rng, seed, 1);
+    // Карта: крупный рельеф из зерна, затем долина на ней (подробная карта высот, вода, руины, растения)
+    f64 t0 = time_now();
+    if (!map_init(perm, seed)) return false;
+    f64 t1 = time_now();
+    w->valley = ARENA_PUSH_ARRAY(perm, ValleyView, 1);
+    if (!valley_view_build(w->valley, perm, seed)) {
+        log_error("ДОЛИНА: не построена");
+        return false;
+    }
+    log_stat("МИР: карта %.2f с, долина %.2f с", t1 - t0, time_now() - t1);
     // Статика пустоши. Посёлок отдельной сеткой: вне кадра и вне области теней отсекается целиком.
     // У посёлка свой поток случайных чисел, чтобы остальная сцена от него не зависела
     size_t mark = perm->used;
@@ -70,7 +82,6 @@ bool world_init(World *w, Arena *perm, MeshBuilder *mb, u64 seed, f32 tod, bool 
     field_init(w->field, perm, seed);
     people_join_field(p, w->field);
     memcpy(p->last, p->body, p->count * sizeof *p->body);
-    w->valley = ARENA_PUSH_ARRAY(perm, ValleyView, 1);
     return true;
 }
 
@@ -132,17 +143,9 @@ bool world_squad_fighting(const World *w)
     return fighting;
 }
 
-bool world_travel(World *w, Arena *perm)
+bool world_travel(World *w)
 {
-    bool to_valley = !g_in_valley;
-    if (to_valley && !w->valley->built) {
-        f64 t0 = time_now();
-        if (!valley_view_build(w->valley, perm, w->seed)) {
-            log_error("ДОЛИНА: не построена");
-            return false;
-        }
-        log_stat("ДОЛИНА: построена за %.2f с", time_now() - t0);
-    }
+    bool to_valley = !world_squad_in_valley(w);
     // В бою не уйти; приказы атаки снимаются
     if (world_squad_fighting(w)) {
         log_info("ПЕРЕХОД: нельзя, отряд в бою");
@@ -151,8 +154,7 @@ bool world_travel(World *w, Arena *perm)
     Squad *sq = &w->squad;
     for (u32 i = 0; i < sq->count; i++)
         if (squad_body(sq, i)->slot >= 0) field_cancel(w->field, (u32)squad_body(sq, i)->slot, false);
-    g_in_valley = to_valley;
-    if (g_in_valley) {
+    if (to_valley) {
         squad_place(sq, w->valley->spawn, w->valley->spawn_heading, world_ground);
         log_info("ПЕРЕХОД: отряд в долине у реки");
     } else {

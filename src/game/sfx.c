@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "../audio/audio.h"
+#include "../world/map.h"
 #include "../world/valley.h"
 #include "testroom.h"
 #include "town.h"
@@ -19,9 +20,12 @@ static bool armor_metal(u8 a) { return a == A_PLATE || a == A_BUCKET || a == A_G
 
 static bool in_hall(f32 x, f32 z) { return fabsf(x) <= HALL_X && z >= HALL_Z0 && z <= HALL_Z1; }
 
-static u8 surface(const WorldSound *s, bool valley, f32 x, f32 z)
+static u8 surface(const WorldSound *s, f32 x, f32 z)
 {
-    if (valley) return valley_river_dist(x, z) < valley_river_w(z) ? SFX_STEP_WATER : SFX_STEP_GRASS;
+    if (map_valley(x, z) > 0.5f) {
+        f32 lx = x - VALLEY_ORIGIN.x, lz = z - VALLEY_ORIGIN.z;
+        return valley_river_dist(lx, lz) < valley_river_w(lz) ? SFX_STEP_WATER : SFX_STEP_GRASS;
+    }
     f32 dx = x - s->arena_center.x, dz = z - s->arena_center.z;
     if (in_hall(x, z) || dx * dx + dz * dz < ARENA_SLAB_R * ARENA_SLAB_R) return SFX_STEP_CONCRETE;
     // Мостовая посёлка
@@ -36,7 +40,7 @@ static f32 dist2(V3 a, V3 b)
 }
 
 // Шаг — когда фаза проходит 0 (левая нога) или 0.5 (правая)
-static void step(WorldSound *s, bool valley, f32 *prev, f32 phase, f32 walk, f32 speed, V3 pos)
+static void step(WorldSound *s, f32 *prev, f32 phase, f32 walk, f32 speed, V3 pos)
 {
     f32 p0 = *prev;
     *prev = phase;
@@ -46,7 +50,7 @@ static void step(WorldSound *s, bool valley, f32 *prev, f32 phase, f32 walk, f32
     if (dist2(pos, s->lis) > 22.0f * 22.0f) return;
     // Бег громче шага, тяжёлый шаг ниже
     f32 run = clampf((speed - 1.6f) / 3.2f, 0.0f, 1.0f);
-    audio_play(surface(s, valley, pos.x, pos.z), pos, 0.45f + 0.55f * run, 1.0f - 0.08f * run, 0.0f);
+    audio_play(surface(s, pos.x, pos.z), pos, 0.45f + 0.55f * run, 1.0f - 0.08f * run, 0.0f);
 }
 
 static void sfx_on_events(void *user, const CombatWorld *w);
@@ -65,22 +69,20 @@ void sfx_init(WorldSound *s, Field *field, ArenaSession *arena, V3 arena_center,
     arena->w.sink_user = &s->arena;
 }
 
-void sfx_listener(WorldSound *s, V3 eye, V3 target, f32 yaw, bool valley)
+void sfx_listener(WorldSound *s, V3 eye, V3 target, f32 yaw)
 {
     // Слушатель между точкой взгляда и камерой: приблизил — услышал ближе
     V3 lis = v3_add(target, v3_mul(v3_sub(eye, target), 0.35f));
     lis.y = fmaxf(lis.y, target.y + 1.0f);
     s->lis = lis;
-    s->valley = valley;
-    s->field.valley = valley;
-    s->arena.valley = valley;
     f32 zoom = clampf(v3_len(v3_sub(eye, target)) / 60.0f, 0.0f, 1.0f);
     AudioScene sc;
-    if (valley) {
+    if (map_valley(lis.x, lis.z) > 0.5f) {
         // Долина: ветер тише, гула почти нет, эхо слабое, вода рядом
         sc = (AudioScene){ .wind = 0.35f + 0.2f * zoom, .hum = 0.12f, .room = 0.18f, .far = 0.3f, .river = true, .green = true };
-        f32 rx = valley_river_x(lis.z), w = valley_river_w(lis.z), dx = lis.x - rx;
-        sc.river_pos = v3(rx + (dx < 0.0f ? -1.0f : 1.0f) * fminf(w, fabsf(dx)), valley_water_y(lis.z), lis.z);
+        V3 o = VALLEY_ORIGIN;
+        f32 lz = lis.z - o.z, rx = valley_river_x(lz), w = valley_river_w(lz), dx = lis.x - o.x - rx;
+        sc.river_pos = v3_add(o, v3(rx + (dx < 0.0f ? -1.0f : 1.0f) * fminf(w, fabsf(dx)), valley_water_y(lz), lz));
     } else if (in_hall(target.x, target.z)) {
         // Под сводом зала: ветер глуше, эхо от бетона сильнее
         sc = (AudioScene){ .wind = 0.5f + 0.3f * zoom, .hum = 1.0f, .room = 0.85f, .far = 0.8f };
@@ -144,12 +146,9 @@ static void fall(SfxFight *f, const CombatWorld *w, u32 i, f32 delay)
 static void sfx_on_events(void *user, const CombatWorld *w)
 {
     SfxFight *f = user;
-    // Арена и чужие на поле остались в пустоши
-    if (f->valley && !f->field) return;
     for (u32 k = 0; k < w->ev_count; k++) {
         const CombatEvent *e = &w->ev[k];
         if (e->a >= w->count || e->b >= w->count) continue;
-        if (f->valley && !((f->field->flags[e->a] | f->field->flags[e->b]) & FF_PLAYER)) continue;
         const WeaponDef *wa = weapon_of(w, e->a), *wb = weapon_of(w, e->b);
         switch (e->kind) {
         case EV_ATTACK:
@@ -240,7 +239,7 @@ static void sfx_on_events(void *user, const CombatWorld *w)
 static void fighter(WorldSound *s, SfxFight *f, u32 i, const FightAnim *a, V3 foot)
 {
     V3 p = v3_add(foot, v3(0, 1.0f, 0));
-    step(s, f->valley, &f->phase[i], a->phase, a->walk, a->speed, foot);
+    step(s, &f->phase[i], a->phase, a->walk, a->speed, foot);
     f32 w0 = f->wield[i];
     f->wield[i] = a->wield;
     bool near = dist2(p, s->lis) < 30.0f * 30.0f;
@@ -260,8 +259,6 @@ void sfx_field(WorldSound *s, const Field *f, const Player *view)
     SfxFight *sf = &s->field;
     for (u32 i = 0; i < w->count && i < FIELD_MAX; i++) {
         const Player *p = &view[i];
-        // В долине из тел поля есть только свой отряд
-        if (s->valley && !(f->flags[i] & FF_PLAYER)) continue;
         if (field_awake(f, i)) {
             if (!sf->awake[i]) {
                 // Проснулся: оружие ещё в ножнах, падений не было
@@ -281,7 +278,7 @@ void sfx_field(WorldSound *s, const Field *f, const Player *view)
                 audio_play(SFX_SHEATH, v3_add(p->pos, v3(0, 1, 0)), 1.0f, 1.0f, 0.3f);
             sf->phase[i] = p->phase;
         }
-        step(s, s->valley, &sf->phase[i], p->phase, p->walk, p->speed, p->pos);
+        step(s, &sf->phase[i], p->phase, p->walk, p->speed, p->pos);
     }
 }
 
@@ -289,7 +286,7 @@ void sfx_arena(WorldSound *s, const ArenaView *v, const ArenaSession *a)
 {
     SfxFight *f = &s->arena;
     const CombatWorld *w = &a->w;
-    if (!v->in_bout || s->valley) return;
+    if (!v->in_bout) return;
     if (a->bout != s->arena_bout) {
         // Новый бой: в слотах другие люди
         s->arena_bout = a->bout;

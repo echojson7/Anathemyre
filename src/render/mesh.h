@@ -82,7 +82,5 @@ void mb_capsule(MeshBuilder *mb, V3 a, V3 b, f32 r0, f32 r1, u32 segs, f32 ex, f
 void mb_cylinder(MeshBuilder *mb, V3 a, V3 b, f32 r, u32 segs);
 // Прямоугольник: центр, полуоси right/up; лицевая сторона по cross(right, up)
 void mb_quad(MeshBuilder *mb, V3 c, V3 right, V3 up);
-// Рельеф вокруг начала координат: height(x, z) в мировых координатах
-void mb_terrain(MeshBuilder *mb, f32 half_size, u32 cells, f32 (*height)(f32 x, f32 z, void *u), void *user);
 
 #endif
