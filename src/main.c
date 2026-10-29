@@ -324,17 +324,28 @@ int main(int argc, char **argv)
         { 1.0f, 0.3f, 0.25f, { 0.60f, 0.45f, 0.36f }, { 0.20f, 0.13f, 0.08f }, { 0.30f, 0.29f, 0.27f }, 2, false },
         { 0.0f, 0.2f, 0.0f, { 0.38f, 0.26f, 0.19f }, { 0.07f, 0.06f, 0.05f }, { 0.30f, 0.29f, 0.27f }, 1, true },
     };
-    GpuMesh human_mesh[3];
-    M4 *human_bones = ARENA_PUSH_ARRAY(&perm, M4, 3 * RENDER_MAX_BONES);
+    // Рядом с каждым — человек из MakeHuman (tools/humanconv) того же сложения, для сравнения
+    static const char *const mh_name[3] = { "mh_male", "mh_female", "mh_thin" };
+    GpuMesh human_mesh[6];
+    u32 human_count = 0;
+    M4 *human_bones = ARENA_PUSH_ARRAY(&perm, M4, 6 * RENDER_MAX_BONES);
     mark = perm.used;
-    for (u32 k = 0; opt.humans && k < 3; k++) {
-        mb_init(&mb, &perm, 120000, 600000);
-        human_build(&mb, &scratch, &human_shape[k]);
-        gpu_mesh_upload(&human_mesh[k], &mb);
+    for (u32 k = 0; opt.humans && k < 6; k++) {
+        if (k % 2 == 0) {
+            mb_init(&mb, &perm, 120000, 600000);
+            human_build(&mb, &scratch, &human_shape[k / 2]);
+        } else {
+            char path[700];
+            snprintf(path, sizeof path, "%s/meshes/%s.mesh", data_dir, mh_name[k / 2]);
+            if (!mb_load(&mb, &perm, path)) continue;
+        }
+        gpu_mesh_upload(&human_mesh[human_count], &mb);
         log_info("ЧЕЛОВЕК %u: %u вершин, %u треугольников", k, mb.vcount, mb.icount / 3);
         perm.used = mark;
+        f32 x = 0.3f + 0.9f * (f32)k;
         for (u32 b = 0; b < RENDER_MAX_BONES; b++)
-            human_bones[k * RENDER_MAX_BONES + b] = m4_mul(m4_translate(v3(4.8f + 0.9f * (f32)k, ground_height(4.8f + 0.9f * (f32)k, 22.0f), 22.0f)), m4_rot_y(0.0f));
+            human_bones[human_count * RENDER_MAX_BONES + b] = m4_translate(v3(x, ground_height(x, 22.0f), 22.0f));
+        human_count++;
     }
 
     // Метка точки, куда идёт персонаж: бледно-зелёный крест на земле
@@ -522,7 +533,7 @@ int main(int argc, char **argv)
             mk[0] = m4_translate(squad->order_pos);
             items[n++] = (DrawItem){ .mesh = &marker_mesh, .bones = mk, .no_shadow = true };
         }
-        for (u32 k = 0; opt.humans && k < 3; k++)
+        for (u32 k = 0; k < human_count; k++)
             items[n++] = (DrawItem){ .mesh = &human_mesh[k], .bones = human_bones + k * RENDER_MAX_BONES };
         V3 look_pos;
         if (hud.look_kind == LOOK_ARENA && hud_arena_pos(aview, arena, hud.look, &look_pos)) {
