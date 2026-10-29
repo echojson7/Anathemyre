@@ -9,10 +9,13 @@
 #include "look.h"
 #include "fight_anim.h"
 
+// Зрители — обычные люди на поле (main.c): арена только расставляет их за оградой
 #define AV_SPECTATORS 14
 // Сколько элементов отрисовки и наборов костей нужно арене
-#define AV_DRAW_ITEMS (ARENA_MAX_BOUT * 2 + AV_SPECTATORS)
-#define AV_BONE_SETS (ARENA_MAX_BOUT * 2 + AV_SPECTATORS)
+#define AV_DRAW_ITEMS (ARENA_MAX_BOUT * 2)
+#define AV_BONE_SETS (ARENA_MAX_BOUT * 2)
+// Свет арены: два прожектора и две лампы на воротах
+#define AV_LIGHTS 4
 
 typedef struct ArenaView {
     V3  center;
@@ -23,8 +26,9 @@ typedef struct ArenaView {
     // Бойцы текущего боя: вид каждого (сглаживание, позы, выпавшее оружие)
     FightAnim fa[ARENA_MAX_BOUT];
 
-    // Зрители за оградой
-    f32 sx[AV_SPECTATORS], sz[AV_SPECTATORS], sh[AV_SPECTATORS], sseed[AV_SPECTATORS];
+    // Места зрителей за оградой: точка в мире, куда смотрит, зерно позы
+    V3  spos[AV_SPECTATORS];
+    f32 sh[AV_SPECTATORS], sseed[AV_SPECTATORS];
 } ArenaView;
 
 // Ринг, ограда, прожекторы, круг знаков: статика с тенями
@@ -36,6 +40,8 @@ void arena_view_update(ArenaView *v, ArenaSession *s, f32 dt);
 // body — сетки тел (BODY_KIND_COUNT вариантов), weapons — по W_COUNT (в руке или в ножнах — по позе)
 // Внешность бойца ростера ri (матрица слота RENDER_LOOK_SLOT)
 M4  arena_view_look(const ArenaSession *s, u32 ri);
+// Свет арены: зажигается с темнотой night (Sky.night), в out — до AV_LIGHTS источников
+u32 arena_view_lights(const ArenaView *v, f32 night, f32 time, PointLight *out);
 u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const GpuMesh *body, u32 variants,
                     const GpuMesh *weapons, M4 *bones, DrawItem *items);
 

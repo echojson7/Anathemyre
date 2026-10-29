@@ -86,6 +86,26 @@ float ambient_occlusion(vec2 uv, vec3 P, float view_dist)
     return clamp(1.0 - occ / float(N_SAMPLES) * 1.6, 0.0, 1.0);
 }
 
+// Свечение пыли вокруг факелов и фонарей: свет, рассеянный вдоль луча взгляда до поверхности.
+// Интеграл 1/d² по лучу считается точно: (atan((t1 - tc)/h) - atan(-tc/h)) / h
+vec3 light_glow(vec3 dir, float dist)
+{
+    vec3 s = vec3(0.0);
+    for (int i = 0; i < l_count.x; i++) {
+        if (l_dir[i].w <= 0.0) continue;
+        vec3 q = l_pos[i].xyz - u_cam;
+        float tc = dot(q, dir);
+        float r = l_pos[i].w * 0.5;   // светится пыль только близко к огню
+        float h2 = max(dot(q, q) - tc * tc, 0.0025);
+        if (h2 >= r * r) continue;
+        float h = sqrt(h2);
+        float a = (atan((dist - tc) / h) + atan(tc / h)) / h;
+        float w = 1.0 - h2 / (r * r);
+        s += l_col[i].rgb * (l_dir[i].w * a * w * w);
+    }
+    return s;
+}
+
 void main()
 {
     vec2 uv = v_uv;
@@ -123,6 +143,7 @@ void main()
     float g = 0.55;
     float phase = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5) * 0.08;
     col += u_sun_color * lit * 0.004 * (phase + 0.02);
+    if (l_count.x > 0) col += light_glow(dir, min(dist, 300.0));
 
     o_color = vec4(col, 1.0);
 }

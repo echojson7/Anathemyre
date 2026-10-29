@@ -13,12 +13,16 @@
 // У каждого лист бойца и оружие: на них можно напасть, и они отобьются
 typedef struct Crowd {
     u32    count;
+    u32    look_base;               // зерно внешности: у разных толп разные лица
     Player body[TR_MAX_CHARS];
     CharSheet sheet[TR_MAX_CHARS];
     f32    wait[TR_MAX_CHARS];
     f32    seed[TR_MAX_CHARS];
     u8     variant[TR_MAX_CHARS];
     bool   stationary[TR_MAX_CHARS];
+    bool   torch[TR_MAX_CHARS];     // с темнотой зажигает факел
+    V3     home[TR_MAX_CHARS];      // стоящие после боя возвращаются на место
+    f32    home_h[TR_MAX_CHARS];
 } Crowd;
 
 // Мобы: люди со снаряжением ходят кругом вокруг локации, на углах стоят;
@@ -28,6 +32,7 @@ typedef struct Crowd {
 
 typedef struct Mobs {
     u32       count;
+    bool      torch[MOB_MAX];
     Player    body[MOB_MAX];
     CharSheet sheet[MOB_MAX];
     u8        variant[MOB_MAX];
@@ -46,7 +51,9 @@ void testroom_build_far(MeshBuilder *mb, Rng *rng);
 // Высота поверхности под ногами: пол зала, ярусы посёлка или рельеф (без обломков)
 f32  testroom_ground(f32 x, f32 z);
 void crowd_init(Crowd *c, Rng *rng, u32 count);
+// Стоящая толпа в заданных точках (зрители арены): лица к рингу, у некоторых факелы
+void crowd_init_still(Crowd *c, const V3 *pos, const f32 *heading, const f32 *seed, u32 count, GroundFn ground);
 // Тела, которыми правит поле боя (бой, погоня), бродить не уходят
-void crowd_update(Crowd *c, Rng *rng, f32 dt);
+void crowd_update(Crowd *c, Rng *rng, f32 dt, GroundFn ground);
 
 #endif

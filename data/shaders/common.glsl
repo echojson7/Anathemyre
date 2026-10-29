@@ -48,3 +48,20 @@ float ign(vec2 px, int frame)
     px += 5.588238 * float(frame & 63);
     return fract(52.9829189 * fract(0.06711056 * px.x + 0.00583715 * px.y));
 }
+
+// Точечный свет кадра (render.c, stream_lights): факелы, фонари, прожекторы. Без теней
+#define MAX_LIGHTS 16
+layout(std140, binding = 0) uniform Lights {
+    ivec4 l_count;
+    vec4  l_pos[MAX_LIGHTS];   // xyz, w — радиус
+    vec4  l_col[MAX_LIGHTS];   // rgb — цвет с яркостью, a — косинус конуса (-1 — во все стороны)
+    vec4  l_dir[MAX_LIGHTS];   // xyz — ось конуса, w — свечение пыли
+};
+
+// Спад по квадрату расстояния, к радиусу плавно до нуля
+float light_falloff(float d2, float r)
+{
+    float x = d2 / (r * r);
+    float w = clamp(1.0 - x * x, 0.0, 1.0);
+    return w * w / (1.0 + d2);
+}
