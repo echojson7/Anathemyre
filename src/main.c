@@ -230,7 +230,7 @@ static u32 torch_draw(const M4 *b, f32 lit, f32 seed, f32 time, const GpuMesh *s
     l->color = v3_mul(v3(1.0f, 0.50f, 0.18f), 2.6f * lit * fl);
     l->cone = -1.0f;
     l->dir = v3(0, -1, 0);
-    l->glow = 0.02f;
+    l->glow = 0.006f;
     return n;
 }
 

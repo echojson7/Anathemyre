@@ -153,7 +153,7 @@ void arena_view_build(MeshBuilder *mb, V3 center)
             f32 a = (f32)i * PI_F * 0.5f + 0.3f;
             mb_box(mb, xf_box(v3(c.x + sinf(a) * 0.07f, c.y - 0.02f, c.z + cosf(a) * 0.07f), v3(0.012f, 0.22f, 0.012f), 0, a, 0));
         }
-        mb_set(mb, C_LAMP, MAT_EMISSIVE, BONE_NONE);
+        mb_set(mb, v3_mul(C_LAMP, 0.5f), MAT_EMISSIVE, BONE_NONE);
         mb_box(mb, xf_box(v3_add(c, v3(0, -0.02f, 0)), v3(0.07f, 0.11f, 0.07f), 0, 0.3f, 0));
     }
 
@@ -285,7 +285,7 @@ u32 arena_view_lights(const ArenaView *v, f32 night, f32 time, PointLight *out)
             l->cone = 0.80f;
             l->radius = 30.0f;
             l->color = v3_mul(C_LAMP, 80.0f * on * hum);
-            l->glow = 0.0002f;
+            l->glow = 0.00006f;
         } else {
             // Лампа в сетке на стойке ворот
             V3 p = oct_corner(c, FENCE_R, (int)k + 1, 2.6f);
@@ -295,7 +295,7 @@ u32 arena_view_lights(const ArenaView *v, f32 night, f32 time, PointLight *out)
             l->cone = -1.0f;
             l->radius = 9.0f;
             l->color = v3_mul(C_LAMP, 2.2f * on * hum);
-            l->glow = 0.012f;
+            l->glow = 0.004f;
         }
     }
     return n;

@@ -100,9 +100,9 @@ void torch_build(MeshBuilder *mb, bool flame)
         return;
     }
     // Пламя: яркое ядро и языки вокруг, повёрнутые по-разному
-    mb_set(mb, v3(1.0f, 0.62f, 0.22f), MAT_EMISSIVE, B);
+    mb_set(mb, v3(0.55f, 0.32f, 0.10f), MAT_EMISSIVE, B);
     wbox(mb, 0.49f, 0.66f, 0.05f, 0.05f, 0.0f, 0.0f);
-    mb_set(mb, v3(0.85f, 0.32f, 0.08f), MAT_EMISSIVE, B);
+    mb_set(mb, v3(0.42f, 0.15f, 0.04f), MAT_EMISSIVE, B);
     wbox(mb, 0.48f, 0.62f, 0.075f, 0.03f, 0.008f, 0.12f);
     wbox(mb, 0.48f, 0.60f, 0.03f, 0.075f, -0.006f, -0.1f);
     wbox(mb, 0.58f, 0.74f, 0.028f, 0.028f, 0.01f, 0.2f);
