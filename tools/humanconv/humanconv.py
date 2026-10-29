@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Люди из MakeHuman (CC0) -> .mesh игры. Офлайн, в игре не нужен.
 # Морфы пола и сложения, руки вниз и ноги прямо (поза привязки игры), пальцы в хвате, рост 1.80 м,
-# раскраска по граням (кожа, бельё, губы, брови), волосы над кожей головы, глаза.
+# раскраска по граням (кожа, губы, брови), волосы над кожей головы, глаза.
 # Три LOD по LOD_TRIS, упрощение своё, лицо дороже остального. Веса до 4 костей на вершину.
 # Нужен только numpy.
 #   python3 -I tools/humanconv/humanconv.py <папка MakeHuman> <targets.npz> <data/meshes>
@@ -20,18 +20,18 @@ LOD_TRIS = (8500, 1800, 500)
 # Сложение и цвета как у нашей тройки (src/main.c human_shape), чтобы сравнивать честно
 PEOPLE = [
     dict(name='mh_male', gender=1.0, muscle=0.8, weight=0.5, hair='short', beard=False,
-         skin=(0.52, 0.37, 0.28), hcol=(0.10, 0.08, 0.06), under=(0.30, 0.29, 0.27),
+         skin=(0.52, 0.37, 0.28), hcol=(0.10, 0.08, 0.06),
          mods={'torso/torso-muscle-pectoral-incr': 0.5,
                'measure/measure-upperarm-length-decr': 0.4, 'measure/measure-lowerarm-length-decr': 0.4}),
     # Песочные часы: талия узкая, бёдра и плечи шире, грудь больше и ближе друг к другу, лобок ниже
     dict(name='mh_female', gender=0.0, muscle=0.5, weight=0.55, hair='long', beard=False,
-         skin=(0.60, 0.45, 0.36), hcol=(0.20, 0.13, 0.08), under=(0.30, 0.29, 0.27),
+         skin=(0.60, 0.45, 0.36), hcol=(0.20, 0.13, 0.08),
          cup=0.65, firm=0.7, waist_depth=0.2,
          mods={'measure/measure-waist-circ-decr': 1.0, 'bodyshapes/bodyshapes-elvs-fem-neat-hourglass': 0.8,
                'measure/measure-hips-circ-incr': 0.1, 'buttocks/buttocks-volume-decr': 1.0, 'measure/measure-shoulder-dist-incr': 0.35,
                'breast/breast-dist-decr': 0.15, 'pelvis/bulge-decr': 1.0}),
     dict(name='mh_thin', gender=1.0, muscle=0.45, weight=0.15, hair='bald', beard=True,
-         skin=(0.38, 0.26, 0.19), hcol=(0.07, 0.06, 0.05), under=(0.30, 0.29, 0.27),
+         skin=(0.38, 0.26, 0.19), hcol=(0.07, 0.06, 0.05),
          mods={'torso/torso-muscle-pectoral-incr': 0.4,
                'measure/measure-upperarm-length-decr': 0.4, 'measure/measure-lowerarm-length-decr': 0.4}),
 ]
@@ -352,42 +352,32 @@ def build(p, base, faces, Z, skel, W):
     sk = skin_weights(acc, bone)
     get = lambda *ns: sum((wt[n] for n in ns if n in wt), np.zeros(nv))
 
-    skin = np.array(p['skin']); hcol = np.array(p['hcol']); under = np.array(p['under'])
+    skin = np.array(p['skin']); hcol = np.array(p['hcol'])
     col = np.tile(skin, (nv, 1)); mat = np.full(nv, MAT_SKIN)
     n = normals(v, tri(body))
     x, y, z = v[:, 0], v[:, 1], v[:, 2]
     ax = np.abs(x)
 
-    # Бельё: трусы по линии паха и бёдер, у женщины топ по чашкам груди
+    # Белья нет: пах (и грудь у женщин) закрывает размытие в кадре (atmos.frag). Метка — эллипсоиды
+    # вокруг этих мест, в альфе цвета вершин кожи: 1 — открыто, 0 — размыть; край мягкий
     hip = J['upperleg01.L____head'][1]
     trunk = np.isin(bone, [PELVIS, SPINE, TH_L, TH_R])
     isbody = np.zeros(nv, bool); isbody[used] = True
     mid = trunk & isbody & (ax < 0.012) & (y > 0.6) & (y < hip)
     crotch = y[mid].min()
-    # У мужчин боксеры: штанина ровно чуть ниже паха; у женщин трусы с вырезом по бедру
-    if p['gender'] > 0.5:
-        top = hip + 0.065
-        leg = crotch - 0.05 + 0.08 * np.maximum(0.0, ax - 0.06)
-    else:
-        top = hip + 0.08
-        leg = crotch + 0.012 + 0.75 * np.maximum(0.0, ax - 0.025)
-    briefs = trunk & (y < top) & (y > leg)
-    under_m = briefs
-    # Резинка по поясу и подгиб штанин темнее
-    hem = briefs & ((y > top - 0.016) | (y < leg + 0.009))
+    cy = crotch + (0.055 if p['gender'] > 0.5 else 0.045)
+    front = trunk & isbody & (ax < 0.015) & (np.abs(y - cy) < 0.01)
+    spots = [(np.array([0.0, cy, z[front].max() - 0.03]), np.array([0.075, 0.085, 0.085]))]
     if p['gender'] < 0.5:
-        # Топ без лямок: полоса вокруг груди, как бельё в Kenshi
-        torso = np.isin(bone, [SPINE, CHEST, CLAV_L, CLAV_R])
-        nip = J['breast.L____tail']
-        rise = 0.02 * np.clip((z - nip[2] + 0.12) / 0.08, 0, 1)  # спереди край выше, чем на спине
-        lo, hi = nip[1] - 0.06, nip[1] + 0.035 + rise
-        top_m = torso & (y > lo) & (y < hi)
-        under_m = under_m | top_m
-        hem = hem | (top_m & ((y < lo + 0.012) | (y > hi - 0.007) | ((ax < 0.008) & (z > 0))))
-    col[under_m] = under; mat[under_m] = MAT_CLOTH
-    col[hem] = under * 0.72
-    # Ткань на 1.2 мм над кожей: по краю виден срез
-    v[under_m] += n[under_m] * 0.0012
+        for sd in ('L', 'R'):
+            nj = J['breast.%s____tail' % sd]
+            near = isbody & (np.abs(x - nj[0]) < 0.012) & (np.abs(y - nj[1]) < 0.012)
+            spots.append((v[np.where(near)[0][z[near].argmax()]] - np.array([0.0, 0.01, 0.02]), np.array([0.075, 0.075, 0.07])))
+
+    def censor(q):
+        # Сколько размывать в точке q (0..1)
+        d = np.min([np.linalg.norm((q - c) / r, axis=1) for c, r in spots], axis=0)
+        return np.clip((1.0 - d) / 0.3, 0.0, 1.0)
 
     if p['gender'] > 0.5:
         # Соски: ореол вокруг самой выступающей точки груди
@@ -559,11 +549,11 @@ def build(p, base, faces, Z, skel, W):
     lods.append(merge(parts))
 
     # Дальние LOD: своё упрощение с учётом швов окраски (decimate). Окраска проще:
-    # кожа, бельё без резинки, губы, брови, борода, волосы — окраска кожи головы.
+    # кожа, губы, брови, борода, волосы — окраска кожи головы.
     # Глаза упрощаются отдельно и не меньше чем до 24 треугольников: иначе уходят под веки
-    fcol = np.where(under_m[:, None], under, skin)
+    fcol = np.tile(skin, (nv, 1))
     fcol[lips] = col[lips]; fcol[brows] = col[brows]
-    fmat = np.where(under_m, MAT_CLOTH, MAT_SKIN)
+    fmat = np.full(nv, MAT_SKIN)
     if p['beard']:
         fcol[beard] = skin * 0.15 + hcol * 0.85
     if p['hair'] != 'bald':
@@ -588,6 +578,9 @@ def build(p, base, faces, Z, skel, W):
             parts.append(ponytail(rings, segs, md))
         lods.append(merge(parts))
     gear = garments(dict(vl=vl, sk=sk, bone=bone, J=J, src=src, ear_d=ear_d, hd=hd, top_y=top_y, female=p['gender'] < 0.5))
+    # Метка размытия — четвёртый столбец цвета, только на коже
+    for m in lods:
+        m[2] = np.concatenate([m[2], 1.0 - np.where(m[3] == MAT_SKIN, censor(m[0]), 0.0)[:, None]], 1)
     return lods, J, gear
 
 
@@ -1022,7 +1015,9 @@ def write_mesh(path, V, N, C, M, L, S, D, T):
     dt = np.dtype([('pos', '<f4', 3), ('nrm', '<f4', 3), ('col', 'u1', 4), ('mat', 'u1'), ('bone', 'u1'), ('pad', 'u1', 2)])
     a = np.zeros(len(V), dt)
     a['pos'] = V; a['nrm'] = N
-    a['col'][:, :3] = np.clip(np.round(C * 255), 0, 255); a['col'][:, 3] = 255
+    a['col'][:, :C.shape[1]] = np.clip(np.round(C * 255), 0, 255)
+    if C.shape[1] == 3:
+        a['col'][:, 3] = 255
     a['mat'] = M; a['bone'] = sk[:, 0]; a['pad'][:, 0] = L
     q = D / np.array([MORPH_POS] * 3 + [MORPH_NRM] * 3)
     assert np.abs(q).max() <= 1.0, 'сдвиг морфа вне диапазона файла'
