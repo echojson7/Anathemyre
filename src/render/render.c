@@ -11,22 +11,28 @@
 #define SHADOW_SIZE 2048
 #define SHADOW_EXTENT 45.0f   // полуразмер области теней, м
 // Размер пикселя по глубине (pixel.glsl): k = PIXEL_K * s^PIXEL_P, s — пикселей кадра на метр в точке.
-// Шаг 0.5 пикселя, ниже 2 — 0.25. При 1080p: 3 м — 6, 4 м — 4.5, 5 м — 3.5, 6 м — 3, 7 м — 2.5, 8 м — 2,
-// 9 м — 1.75, 10–11 м — 1.5, с 12 м — 1.25 и дальше не меняется
-#define PIXEL_K 0.0097f
+// Шаг 0.5 пикселя, ниже 2 — 0.25. При 1080p: 3 м — 4.5, 4 м — 3.5, 5 м — 2.5, 6 м — 2, 7 м — 1.75,
+// 8 м — 1.5, с 9 м — 1.25 и дальше не меняется
+#define PIXEL_K 0.00728f
 #define PIXEL_P 1.1f
 
 // Расположения uniform задаются явно в GLSL (layout(location = N))
 enum {
     U_VIEW_PROJ = 0, U_SKINNED = 17, U_LIGHT_VP = 18, U_INST_BASE = 19,
     U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26, U_TEXEL = 27, U_MORPHS = 28,
+    U_FADE = 29,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
-    U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44, U_V_TILE = 45,
+    U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44, U_V_TILE = 45, U_S_PIX_INT = 46,
 };
 
 // Буферы хранения (layout(binding = N) в scene.vert)
-enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2 };
+enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2, SB_STATIC_INST = 3 };
+#define SKIN_STATIC 0
+#define SKIN_BONES 1
+#define SKIN_INSTANCED 2
+// Разных сеток среди экземпляров прохода (с учётом уровней детализации)
+#define MAX_INST_MESHES 256
 
 // Кости и списки экземпляров пишутся каждый кадр; кольцо буферов, чтобы не ждать GPU с прошлым кадром
 #define STREAM_FRAMES 3
@@ -38,6 +44,12 @@ typedef struct Inst {
     u32            pose;   // NO_POSE — статика
 } Inst;
 
+// Вызов для экземпляров одной сетки: номера экземпляров лежат в потоке с base
+typedef struct InstDraw {
+    const GpuMesh *mesh;
+    u32            base, count;
+} InstDraw;
+
 typedef struct Frustum {
     V4 p[6];   // плоскости: нормаль внутрь xyz, смещение w
 } Frustum;
@@ -47,6 +59,7 @@ typedef struct PassView {
     Frustum fr;
     V3      eye, fwd;   // для теней fwd нулевой: размер не зависит от дальности
     f32     px_k;       // пикселей на метр на единичной дальности (или просто на метр для теней)
+    f32     inst_lod_k; // множитель размера экземпляров при выборе LOD (тени — грубее)
     bool    full;       // всегда полный уровень детализации (портреты)
 } PassView;
 
@@ -62,10 +75,12 @@ typedef struct Target {
 static struct {
     Arena *scratch;
     char   data_dir[512];
-    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_src_map, prog_vrs_block, prog_vrs;
+    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_src_map, prog_vrs_block, prog_vrs, prog_level, prog_level_max;
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
     Target scene, rays, atmos, ldr;
+    Target level;     // размер пикселя каждой точки (R8UI), level.frag
+    Target level_max; // самый крупный размер в блоке 8x8 (R8UI), level_max.frag
     Target src_map;   // откуда каждый пиксель берёт цвет (RG16UI), src_map.frag
     Target block;     // частота шейдинга блоков 4x4 (R8UI)
     Target rate;      // карта частоты шейдинга (R8UI), клетка vrs_tile пикселей
@@ -84,14 +99,24 @@ static struct {
     f64    stat_draws[2], stat_tris[2], stat_visible[2];
     bool   stat_vrs;
     u32    stat_frames, stat_items;
-    bool   warned_items, warned_poses;
+    bool   warned_items, warned_poses, warned_inst;
+    u32    static_inst_buf;          // постоянный буфер RInst
+    const RInst *inst_cpu;           // его копия для отсечения
+    u32    inst_total;
+    const InstGroup *groups;
+    const InstCluster *clusters;
+    u32    cluster_count;
+    V3     cam_eye;                  // для прореживания по дальности во всех проходах
 } R;
 
 // Данные кадра на CPU: размер постоянный, выделяются один раз
 static V4   g_sphere[RENDER_MAX_ITEMS];
 static u32  g_pose[RENDER_MAX_ITEMS];
 static Inst g_inst[2][RENDER_MAX_ITEMS];
-static u32  g_inst_pose[2 * RENDER_MAX_ITEMS];
+static u32  g_inst_pose[2 * RENDER_MAX_ITEMS + 2 * RENDER_MAX_VIS_INST];
+static InstDraw g_idraw[2][MAX_INST_MESHES];
+static u32  g_vis_id[RENDER_MAX_VIS_INST];
+static u16  g_vis_bucket[RENDER_MAX_VIS_INST];
 static M4   g_bones[RENDER_MAX_POSED * RENDER_MAX_BONES];
 
 static char *read_file(const char *path)
@@ -179,6 +204,8 @@ bool render_reload_shaders(void)
     const char *style_fs[] = { "common.glsl", "pixel.glsl", "style.frag" };
     const char *src_map_fs[] = { "pixel.glsl", "src_map.frag" };
     const char *vrs_block_fs[] = { "vrs_block.frag" };
+    const char *level_fs[] = { "pixel.glsl", "level.frag" };
+    const char *level_max_fs[] = { "level_max.frag" };
     const char *vrs_fs[] = { "vrs.frag" };
     const char *upscale_fs[] = { "upscale.frag" };
 
@@ -196,14 +223,16 @@ bool render_reload_shaders(void)
     u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 2));
     u32 style = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, style_fs, 3));
     u32 src_map = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, src_map_fs, 2));
+    u32 level = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, level_fs, 2));
+    u32 level_max = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, level_max_fs, 1));
     u32 vrs_block = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_block_fs, 1));
     u32 vrs = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_fs, 1));
     u32 upscale = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, upscale_fs, 1));
     R.scratch->used = mark;
 
-    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, src_map, vrs_block, vrs };
+    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, src_map, vrs_block, vrs, level, level_max };
     u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style, &R.prog_upscale,
-                     &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs };
+                     &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs, &R.prog_level, &R.prog_level_max };
     bool ok = true;
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) {
@@ -322,6 +351,8 @@ void render_shutdown(void)
     target_free(&R.atmos);
     target_free(&R.ldr);
     target_free(&R.src_map);
+    target_free(&R.level);
+    target_free(&R.level_max);
     target_free(&R.block);
     target_free(&R.rate);
     target_free(&R.portrait);
@@ -332,10 +363,11 @@ void render_shutdown(void)
         if (R.bone_buf[i]) glDeleteBuffers(1, &R.bone_buf[i]);
         if (R.inst_buf[i]) glDeleteBuffers(1, &R.inst_buf[i]);
     }
+    if (R.static_inst_buf) glDeleteBuffers(1, &R.static_inst_buf);
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
     u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style, R.prog_upscale,
-                    R.prog_src_map, R.prog_vrs_block, R.prog_vrs };
+                    R.prog_src_map, R.prog_vrs_block, R.prog_vrs, R.prog_level, R.prog_level_max };
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
         if (progs[i]) glDeleteProgram(progs[i]);
     memset(&R, 0, sizeof R);
@@ -394,6 +426,8 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
     gm->index_count = mb->icount;
     gm->lod_next = NULL;
     gm->lod_px = 0.0f;
+    gm->fade[0] = gm->fade[1] = 0.0f;
+    gm->two_sided = false;
 
     // Границы: сфера вокруг рамки вершин, для всей сетки и для каждой кости.
     // Вершина с весами входит в сферы всех своих костей: смесь поз лежит внутри их объединения
@@ -441,6 +475,30 @@ void gpu_mesh_set_lod(GpuMesh *fine, const GpuMesh *coarse, f32 min_px)
 {
     fine->lod_next = coarse;
     fine->lod_px = min_px;
+}
+
+_Static_assert(sizeof(RInst) == 32, "RInst — 32 байта, как InstRec в scene.vert");
+
+bool render_upload_instances(const RInst *inst, u32 count)
+{
+    if (R.static_inst_buf) glDeleteBuffers(1, &R.static_inst_buf);
+    R.static_inst_buf = 0;
+    R.inst_cpu = inst;
+    R.inst_total = count;
+    R.groups = NULL;
+    R.clusters = NULL;
+    R.cluster_count = 0;
+    if (!count) return true;
+    glCreateBuffers(1, &R.static_inst_buf);
+    glNamedBufferStorage(R.static_inst_buf, (GLsizeiptr)(sizeof(RInst) * count), inst, 0);
+    return true;
+}
+
+void render_set_groups(const InstGroup *groups, const InstCluster *clusters, u32 cluster_count)
+{
+    R.groups = groups;
+    R.clusters = clusters;
+    R.cluster_count = groups && clusters && R.inst_cpu ? cluster_count : 0;
 }
 
 // Забирает результаты самого старого кадра в кольце, если GPU их уже посчитал
@@ -510,6 +568,18 @@ static bool sphere_visible(const Frustum *f, V4 s)
     for (u32 i = 0; i < 6; i++)
         if (f->p[i].x * s.x + f->p[i].y * s.y + f->p[i].z * s.z + f->p[i].w < -s.w) return false;
     return true;
+}
+
+// 0 — снаружи, 1 — пересекает границу, 2 — целиком внутри
+static u32 sphere_test(const Frustum *f, V4 s)
+{
+    u32 res = 2;
+    for (u32 i = 0; i < 6; i++) {
+        f32 d = f->p[i].x * s.x + f->p[i].y * s.y + f->p[i].z * s.z + f->p[i].w;
+        if (d < -s.w) return 0;
+        if (d < s.w) res = 1;
+    }
+    return res;
 }
 
 // Мировая сфера элемента: у скелетной сетки — вокруг сфер её костей в текущей позе
@@ -584,10 +654,10 @@ static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
             while (j < n && in[j].mesh == m && in[j].pose != NO_POSE) j++;
         glBindVertexArray(m->vao);
         if (in[i].pose == NO_POSE) {
-            glUniform1i(U_SKINNED, 0);
+            glUniform1i(U_SKINNED, SKIN_STATIC);
             glDrawElements(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT, NULL);
         } else {
-            glUniform1i(U_SKINNED, 1);
+            glUniform1i(U_SKINNED, SKIN_BONES);
             glUniform1i(U_INST_BASE, (GLint)(base + i));
             glUniform1i(U_MORPHS, (GLint)m->morph_count);
             if (m->morph_count) glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_MORPH, m->morph_buf);
@@ -601,6 +671,128 @@ static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
     R.stat_draws[pass] += draws;
     R.stat_tris[pass] += tris;
     R.stat_visible[pass] += n;
+}
+
+// Сбор видимых экземпляров: корзина на каждую сетку (с учётом LOD)
+typedef struct Gather {
+    const GpuMesh *mesh[MAX_INST_MESHES];
+    u32 count[MAX_INST_MESHES];
+    u32 nb, nv, last;
+} Gather;
+
+static void gather_add(Gather *ga, const GpuMesh *m, u32 id)
+{
+    // Корзина обычно та же, что у предыдущего экземпляра
+    if (ga->last >= ga->nb || ga->mesh[ga->last] != m) {
+        for (ga->last = 0; ga->last < ga->nb && ga->mesh[ga->last] != m; ga->last++) {}
+        if (ga->last == ga->nb) {
+            if (ga->nb == MAX_INST_MESHES) return;
+            ga->mesh[ga->nb] = m;
+            ga->count[ga->nb++] = 0;
+        }
+    }
+    ga->count[ga->last]++;
+    g_vis_bucket[ga->nv] = (u16)ga->last;
+    g_vis_id[ga->nv++] = id;
+}
+
+// Группа: прореживание по дальности, отсечение, LOD. inside — сфера группы целиком в пирамиде
+static void gather_group(Gather *ga, const InstGroup *gr, const PassView *pv, bool inside)
+{
+    const GpuMesh *m = gr->mesh;
+    u32 n = gr->count;
+    if (m->fade[1] > 0.0f) {
+        // Сколько первых экземпляров может быть видно с ближней точки группы
+        f32 d = v3_len(v3_sub(v3(gr->bound.x, gr->bound.y, gr->bound.z), R.cam_eye)) - gr->bound.w;
+        if (d >= m->fade[1]) return;
+        n = (u32)ceilf((f32)n * clampf((m->fade[1] - d) / (m->fade[1] - m->fade[0]), 0.0f, 1.0f));
+    }
+    if (!inside) {
+        u32 vis = sphere_test(&pv->fr, gr->bound);
+        if (!vis) return;
+        inside = vis == 2;
+    }
+    if (n > RENDER_MAX_VIS_INST - ga->nv) {
+        n = RENDER_MAX_VIS_INST - ga->nv;
+        if (!R.warned_inst) log_error("РЕНДЕР: видимых экземпляров больше %u, лишние не рисуются", RENDER_MAX_VIS_INST);
+        R.warned_inst = true;
+    }
+    V4 gsph = gr->bound;
+    gsph.w *= pv->inst_lod_k;
+    const GpuMesh *lm = pick_lod(m, gsph, pv);
+    if (gr->bulk) {
+        for (u32 i = 0; i < n; i++) gather_add(ga, lm, gr->first + i);
+        return;
+    }
+    V4 lb = m->bound;
+    f32 lxz = sqrtf(lb.x * lb.x + lb.z * lb.z);
+    for (u32 i = 0; i < n; i++) {
+        const RInst *r = &R.inst_cpu[gr->first + i];
+        f32 s = fmaxf(r->scale, r->hscale);
+        V4 sph = { r->pos[0], r->pos[1] + lb.y * r->hscale, r->pos[2], (lb.w + lxz) * s + fabsf(r->lean) * lb.y * r->hscale };
+        if (!inside && !sphere_visible(&pv->fr, sph)) continue;
+        if (m->lod_next) {
+            sph.w *= pv->inst_lod_k;
+            lm = pick_lod(m, sph, pv);
+        }
+        gather_add(ga, lm, gr->first + i);
+    }
+}
+
+// Видимые экземпляры прохода по участкам. Номера экземпляров раскладываются по сеткам
+// и уходят в поток кадра; возвращает число вызовов в draws
+static u32 gather_groups(const PassView *pv, bool shadow, InstDraw *draws)
+{
+    static Gather ga;
+    ga.nb = ga.nv = ga.last = 0;
+    for (u32 c = 0; c < R.cluster_count; c++) {
+        const InstCluster *cl = &R.clusters[c];
+        u32 vis = sphere_test(&pv->fr, cl->bound);
+        if (!vis) continue;
+        for (u32 g = cl->first; g < cl->first + cl->count; g++)
+            if (!shadow || !R.groups[g].no_shadow) gather_group(&ga, &R.groups[g], pv, vis == 2);
+    }
+    // Раскладка по сеткам: смещения, затем номера в поток кадра
+    u32 base = R.used_insts;
+    u32 nv = MIN(ga.nv, (u32)ARRAY_COUNT(g_inst_pose) - base);
+    u32 off = base;
+    for (u32 b = 0; b < ga.nb; b++) {
+        draws[b] = (InstDraw){ ga.mesh[b], off, 0 };
+        off += ga.count[b];
+    }
+    for (u32 i = 0; i < nv; i++) {
+        InstDraw *d = &draws[g_vis_bucket[i]];
+        g_inst_pose[d->base + d->count++] = g_vis_id[i];
+    }
+    if (nv)
+        glNamedBufferSubData(R.inst_buf[R.stream], (GLintptr)(sizeof(u32) * base), (GLsizeiptr)(sizeof(u32) * nv),
+                             &g_inst_pose[base]);
+    R.used_insts += nv;
+    return ga.nb;
+}
+
+static void draw_groups(const InstDraw *draws, u32 n, u32 pass)
+{
+    if (!n) return;
+    glUniform1i(U_SKINNED, SKIN_INSTANCED);
+    f64 tris = 0, vis = 0;
+    for (u32 i = 0; i < n; i++) {
+        const InstDraw *d = &draws[i];
+        if (!d->count) continue;
+        const GpuMesh *m = d->mesh;
+        glBindVertexArray(m->vao);
+        if (m->two_sided) glDisable(GL_CULL_FACE);
+        glUniform1i(U_INST_BASE, (GLint)d->base);
+        glUniform2f(U_FADE, m->fade[0], m->fade[1]);
+        glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT, NULL, (GLsizei)d->count);
+        if (m->two_sided) glEnable(GL_CULL_FACE);
+        tris += (f64)(m->index_count / 3) * d->count;
+        vis += d->count;
+    }
+    if (pass >= 2) return;
+    R.stat_draws[pass] += n;
+    R.stat_tris[pass] += tris;
+    R.stat_visible[pass] += vis;
 }
 
 // Наборы костей элементов — в буфер кадра после уже занятых; одинаковые подряд — один набор
@@ -669,6 +861,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         target_make(&R.src_map, iw, ih, GL_RG16UI, false);
+        target_make(&R.level, iw, ih, GL_R8UI, false);
+        target_make(&R.level_max, (iw + 7) / 8, (ih + 7) / 8, GL_R8UI, false);
         if (R.vrs && !(target_make(&R.block, (iw + 3) / 4, (ih + 3) / 4, GL_R8UI, false) &&
                        target_make(&R.rate, (iw + R.vrs_tile[0] - 1) / R.vrs_tile[0], (ih + R.vrs_tile[1] - 1) / R.vrs_tile[1],
                                    GL_R8UI, false)))
@@ -694,18 +888,23 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     R.stream = (R.stream + 1) % STREAM_FRAMES;
     R.used_poses = R.used_insts = 0;
     stream_poses(items, count);
-    PassView shadow_view = { .fr = frustum_from(light_vp), .px_k = SHADOW_SIZE / (2.0f * SHADOW_EXTENT) };
+    // Экземпляры в тенях берут уровень детализации грубее: тень мельче деталей
+    PassView shadow_view = { .fr = frustum_from(light_vp), .px_k = SHADOW_SIZE / (2.0f * SHADOW_EXTENT), .inst_lod_k = 0.3f };
     PassView scene_view = {
         .fr = frustum_from(vp), .eye = fv->cam_pos,
         .fwd = v3(-fv->view.m[2], -fv->view.m[6], -fv->view.m[10]),
-        .px_k = fv->proj.m[5] * 0.5f * (f32)ih,
+        .px_k = fv->proj.m[5] * 0.5f * (f32)ih, .inst_lod_k = 1.0f,
     };
+    R.cam_eye = fv->cam_pos;
     u32 n_shadow = gather(items, count, &shadow_view, true, g_inst[0]);
     u32 n_scene = gather(items, count, &scene_view, false, g_inst[1]);
     u32 base_shadow = stream_insts(g_inst[0], &n_shadow);
     u32 base_scene = stream_insts(g_inst[1], &n_scene);
+    u32 ng_shadow = gather_groups(&shadow_view, true, g_idraw[0]);
+    u32 ng_scene = gather_groups(&scene_view, false, g_idraw[1]);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_BONES, R.bone_buf[R.stream]);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_INST, R.inst_buf[R.stream]);
+    if (R.static_inst_buf) glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_STATIC_INST, R.static_inst_buf);
     R.stat_frames++;
     R.stat_items = count;
 
@@ -721,7 +920,11 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glClear(GL_DEPTH_BUFFER_BIT);
     glUseProgram(R.prog_shadow);
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, light_vp.m);
+    // Ветер и прореживание в вершинном шейдере: те же значения во всех проходах
+    glUniform3f(U_CAM_POS, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
+    glUniform1f(U_TIME, fv->time);
     draw_insts(g_inst[0], n_shadow, base_shadow, 0);
+    draw_groups(g_idraw[0], ng_shadow, 0);
     glDisable(GL_POLYGON_OFFSET_FILL);
     if (timing) mark(1);
 
@@ -735,20 +938,35 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, vp.m);
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     draw_insts(g_inst[1], n_scene, base_scene, 2);
+    draw_groups(g_idraw[1], ng_scene, 2);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);
     // Размер пикселя на дальности 1 м; s^P = (px_m / d)^P = PIXEL_K * px_m^P * (1/d)^P
-    f32 px_k = rs->pixel ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
+    f32 px_k = rs->pixel && rs->pixel_div <= 1 ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
     bool vrs = R.vrs && rs->vrs && rs->pixel;
     R.stat_vrs = vrs;
-    // По готовой глубине: откуда каждый пиксель берёт цвет, раз за кадр (фильтр и карта частоты)
-    glBindFramebuffer(GL_FRAMEBUFFER, R.src_map.fbo);
+    // По готовой глубине: размер пикселя в каждой точке и его максимум по блокам 8x8,
+    // затем откуда каждый пиксель берёт цвет, раз за кадр (фильтр и карта частоты)
     glDisable(GL_DEPTH_TEST);
+    glBindVertexArray(R.empty_vao);
+    glBindTextureUnit(1, R.scene.depth);
+    glBindFramebuffer(GL_FRAMEBUFFER, R.level.fbo);
+    glUseProgram(R.prog_level);
+    glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
+    glUniform1i(U_S_PIX_INT, rs->pixel_int ? 1 : 0);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindFramebuffer(GL_FRAMEBUFFER, R.level_max.fbo);
+    glViewport(0, 0, R.level_max.w, R.level_max.h);
+    glUseProgram(R.prog_level_max);
+    glBindTextureUnit(4, R.level.color);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindFramebuffer(GL_FRAMEBUFFER, R.src_map.fbo);
+    glViewport(0, 0, iw, ih);
     glUseProgram(R.prog_src_map);
     glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
-    glBindTextureUnit(1, R.scene.depth);
-    glBindVertexArray(R.empty_vao);
+    glUniform1i(U_S_PIX_INT, rs->pixel_int ? 1 : 0);
+    glBindTextureUnit(5, R.level_max.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (vrs) {
         // Где фильтр сольёт пиксели в блоки, материалы и атмосфера считаются раз на блок
@@ -785,6 +1003,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform1f(U_TEXEL, rs->pixel ? 1.0f : 0.0f);
     glBindTextureUnit(0, R.shadow_tex);
     draw_insts(g_inst[1], n_scene, base_scene, 1);
+    draw_groups(g_idraw[1], ng_scene, 1);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
     if (timing) mark(3);
