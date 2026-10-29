@@ -432,3 +432,11 @@ void render_read_pixels(u8 *rgb, i32 w, i32 h)
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, rgb);
 }
+
+u32 render_program(const char *vs_file, const char *fs_file)
+{
+    size_t mark = R.scratch->used;
+    u32 p = link(compile(GL_VERTEX_SHADER, NULL, &vs_file, 1), compile(GL_FRAGMENT_SHADER, NULL, &fs_file, 1));
+    R.scratch->used = mark;
+    return p;
+}

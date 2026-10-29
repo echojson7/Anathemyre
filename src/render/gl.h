@@ -47,6 +47,10 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_DEPTH_COMPONENT 0x1902
 #define GL_RGB 0x1907
 #define GL_RGBA 0x1908
+#define GL_RED 0x1903
+#define GL_SRC_ALPHA 0x0302
+#define GL_ONE_MINUS_SRC_ALPHA 0x0303
+#define GL_R8 0x8229
 #define GL_VENDOR 0x1F00
 #define GL_RENDERER 0x1F01
 #define GL_VERSION 0x1F02
@@ -95,6 +99,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, Viewport, (GLint x, GLint y, GLsizei w, GLsizei h)) \
     X(void, Enable, (GLenum cap)) \
     X(void, Disable, (GLenum cap)) \
+    X(void, BlendFunc, (GLenum sfactor, GLenum dfactor)) \
     X(void, CullFace, (GLenum mode)) \
     X(void, DepthFunc, (GLenum func)) \
     X(void, PolygonOffset, (GLfloat factor, GLfloat units)) \
@@ -106,6 +111,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, DrawElements, (GLenum mode, GLsizei count, GLenum type, const void *indices)) \
     X(void, CreateBuffers, (GLsizei n, GLuint *buffers)) \
     X(void, NamedBufferStorage, (GLuint buffer, GLsizeiptr size, const void *data, GLbitfield flags)) \
+    X(void, NamedBufferSubData, (GLuint buffer, GLintptr offset, GLsizeiptr size, const void *data)) \
     X(void, DeleteBuffers, (GLsizei n, const GLuint *buffers)) \
     X(void, CreateVertexArrays, (GLsizei n, GLuint *arrays)) \
     X(void, DeleteVertexArrays, (GLsizei n, const GLuint *arrays)) \
@@ -119,6 +125,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, CreateTextures, (GLenum target, GLsizei n, GLuint *textures)) \
     X(void, DeleteTextures, (GLsizei n, const GLuint *textures)) \
     X(void, TextureStorage2D, (GLuint texture, GLsizei levels, GLenum internalformat, GLsizei w, GLsizei h)) \
+    X(void, TextureSubImage2D, (GLuint texture, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum fmt, GLenum type, const void *pixels)) \
     X(void, TextureParameteri, (GLuint texture, GLenum pname, GLint param)) \
     X(void, TextureParameterfv, (GLuint texture, GLenum pname, const GLfloat *param)) \
     X(void, BindTextureUnit, (GLuint unit, GLuint texture)) \

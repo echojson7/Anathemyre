@@ -61,6 +61,8 @@ bool arena_bout_tick(ArenaSession *s);
 void arena_bout_end(ArenaSession *s);
 // Имя бойца по его номеру в текущем бою
 const char *arena_name(const ArenaSession *s, u32 fighter);
+// Имя бойца по номеру в ростере
+const char *arena_roster_name(const ArenaSession *s, u32 roster);
 
 // Прогнать N боёв без окна и напечатать статистику; log_bouts — сколько первых боёв печатать подробно
 int arena_bench(u32 bouts, u64 seed, u32 log_bouts);
