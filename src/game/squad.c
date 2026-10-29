@@ -72,6 +72,20 @@ void squad_init(Squad *s, Rng *rng, V3 origin, f32 heading, GroundFn ground)
     hurt->d.fracture = (u8)(1u << PART_ARM_L);
 }
 
+void squad_place(Squad *s, V3 origin, f32 heading, GroundFn ground)
+{
+    V3 fwd = v3(sinf(heading), 0, cosf(heading)), right = v3(cosf(heading), 0, -sinf(heading));
+    for (u32 i = 0; i < s->count; i++) {
+        V3 p = v3_add(origin, v3_add(v3_mul(right, ((f32)(i % 2) - 0.5f) * 1.2f), v3_mul(fwd, -(f32)(i / 2) * 1.3f)));
+        p.y = ground(p.x, p.z);
+        Player *b = &s->body[i];
+        u8 gait = b->gait;
+        player_init(b, p, heading);
+        b->gait = gait;
+    }
+    s->order_marker = 0.0f;
+}
+
 void squad_order_move(Squad *s, V3 target)
 {
     u32 n = 0;

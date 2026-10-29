@@ -16,10 +16,12 @@
 #include "game/look.h"
 #include "game/squad.h"
 #include "game/testroom.h"
+#include "game/valley_view.h"
 #include "platform/platform.h"
 #include "render/render.h"
 #include "render/ui.h"
 #include "world/sky.h"
+#include "world/valley.h"
 
 #define BODY_KINDS BODY_KIND_COUNT
 #define CROWD_SIZE 9
@@ -60,6 +62,7 @@ typedef struct Options {
     bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
+    bool        valley;      // начать в долине (иначе переход из меню НАСТРОЙКИ)
 } Options;
 
 // Что сейчас нарисовано в ячейке атласа портретов: портрет неподвижен, перерисовка только при смене
@@ -133,6 +136,8 @@ static void camera_update(RtsCamera *c, const Input *in, f32 dt)
 #define BENCH_S 10.0
 #define BENCH_MAX_FRAMES 200000
 #define BENCH_CAM ((RtsCamera){ .target = ARENA_CENTER, .yaw = -0.5f, .pitch = 0.42f, .dist = 4.0f })
+// В долине: отряд у реки, вверх по течению видны акведук, роща и трава
+#define VALLEY_BENCH_CAM(sp) ((RtsCamera){ .target = (sp), .yaw = 0.35f, .pitch = 0.32f, .dist = 22.0f })
 #define BENCH_TOD 0.31f
 
 typedef struct Bench {
@@ -205,9 +210,13 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
     return true;
 }
 
-// Высота под ногами: пол зала, рельеф, плита арены
+// Текущая локация: пустошь с залом и ареной или долина у реки
+static bool g_in_valley;
+
+// Высота под ногами: пол зала, рельеф, плита арены; в долине — её рельеф
 static f32 ground_height(f32 x, f32 z)
 {
+    if (g_in_valley) return valley_height(x, z);
     f32 h = testroom_ground(x, z);
     f32 dx = x - ARENA_CENTER.x, dz = z - ARENA_CENTER.z;
     if (dx * dx + dz * dz < 8.5f * 8.5f) h = fmaxf(h, 0.125f);
@@ -248,7 +257,7 @@ static bool pick_ground(M4 view_proj, V3 eye, f32 nx, f32 ny, V3 *out)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench]");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--valley]");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
@@ -271,6 +280,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         } else if (!strcmp(a, "--humans")) o->humans = true;
         else if (!strcmp(a, "--no-pixel")) o->no_pixel = true;
         else if (!strcmp(a, "--pixel-div") && i + 1 < argc) o->pixel_div = atoi(argv[++i]);
+        else if (!strcmp(a, "--valley")) o->valley = true;
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
@@ -348,7 +358,8 @@ int main(int argc, char **argv)
 
     // Вся память выделяется здесь, один раз
     Arena perm, scratch;
-    if (!arena_init(&perm, MB(96)) || !arena_init(&scratch, MB(4))) {
+    // Долина при первом переходе берёт ~70 МБ (экземпляры растений и временные массивы)
+    if (!arena_init(&perm, MB(256)) || !arena_init(&scratch, MB(4))) {
         log_error("ПАМЯТЬ: не выделена");
         return 1;
     }
@@ -474,7 +485,11 @@ int main(int argc, char **argv)
     M4 *squad_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)(SQUAD_MAX * 3 + 1) * RENDER_MAX_BONES);
     M4 *portrait_bones = ARENA_PUSH_ARRAY(&perm, M4, 2 * RENDER_MAX_BONES);
     M4 *bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)TR_MAX_CHARS * RENDER_MAX_BONES);
-    DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS * 2 + 2 + AV_DRAW_ITEMS + SQUAD_MAX * 4 + MOB_MAX * 2 + 1);
+    DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS * 2 + 2 + AV_DRAW_ITEMS + SQUAD_MAX * 4 + MOB_MAX * 2 + 1 + VV_ITEMS);
+    // Долина строится при первом переходе
+    ValleyView *valley = ARENA_PUSH_ARRAY(&perm, ValleyView, 1);
+    bool loc_flip = opt.valley;
+    f32 cam_y = 0.0f;    // высота точки взгляда камеры в долине, сглаженная
     Hud hud;
     hud_init(&hud);
     if (opt.inspect) {
@@ -542,6 +557,32 @@ int main(int argc, char **argv)
                 human_count++;
             }
         }
+        // Переход между локациями: отряд переносится, камера за ним
+        if (loc_flip) {
+            loc_flip = false;
+            bool to_valley = !g_in_valley;
+            if (to_valley && !valley->built) {
+                f64 t0 = time_now();
+                if (!valley_view_build(valley, &perm, opt.seed)) log_error("ДОЛИНА: не построена");
+                else log_stat("ДОЛИНА: построена за %.2f с", time_now() - t0);
+            }
+            if (!to_valley || valley->built) {
+                g_in_valley = to_valley;
+                render_set_groups(g_in_valley ? valley->groups : NULL, valley->clusters, g_in_valley ? valley->cluster_count : 0);
+                if (g_in_valley) {
+                    squad_place(squad, valley->spawn, valley->spawn_heading, ground_height);
+                    cam = opt.cam_set ? opt.cam : VALLEY_BENCH_CAM(valley->spawn);
+                    cam_y = valley->spawn.y;
+                    log_info("ПЕРЕХОД: отряд в долине у реки");
+                } else {
+                    squad_place(squad, v3(9.0f, 0.0f, 22.0f), atan2f(ARENA_CENTER.x - 9.0f, ARENA_CENTER.z - 22.0f), ground_height);
+                    cam = opt.cam;
+                    cam_y = 0.0f;
+                    log_info("ПЕРЕХОД: отряд в пустоши у арены");
+                }
+                for (u32 i = 0; i < squad->count; i++) squad->selected[i] = false;
+            }
+        }
         if (bench_request && !bench.on && !opt.shot_path) {
             bench_request = false;
             bench.on = true;
@@ -550,7 +591,7 @@ int main(int argc, char **argv)
             bench.day_run = day_run;
             bench.vsync = vsync;
             bench.follow = opt.follow;
-            cam = BENCH_CAM;
+            cam = g_in_valley ? VALLEY_BENCH_CAM(valley->spawn) : BENCH_CAM;
             tod = BENCH_TOD;
             day_run = opt.follow = vsync = false;
             platform_set_vsync(false);
@@ -585,8 +626,14 @@ int main(int argc, char **argv)
             ww = opt.width;
             wh = opt.height;
         }
+        // В долине точка взгляда идёт по рельефу, а камера не уходит под землю
+        if (g_in_valley) {
+            cam_y += (ground_height(cam.target.x, cam.target.z) - cam_y) * fminf(1.0f, real_dt * 6.0f);
+            cam.target.y = cam_y;
+        }
         FrameView fv;
         fv.cam_pos = camera_eye(&cam);
+        if (g_in_valley) fv.cam_pos.y = fmaxf(fv.cam_pos.y, ground_height(fv.cam_pos.x, fv.cam_pos.z) + 1.5f);
         fv.view = m4_look_at(fv.cam_pos, v3_add(cam.target, v3(0, 1.0f, 0)), v3(0, 1, 0));
         fv.proj = m4_perspective(CAM_FOV, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
 
@@ -609,6 +656,7 @@ int main(int argc, char **argv)
             if (hud_debug_check(&hud, "СУТКИ ИДУТ", &day_run)) log_info("СУТКИ: %s", day_run ? "идут" : "остановлены");
             if (hud_debug_check(&hud, "КАМЕРА СЛЕДУЕТ", &opt.follow) && opt.follow) cam.dist = MIN(cam.dist, 8.0f);
             bool humans_want = humans_on;
+            if (hud_debug_button(&hud, g_in_valley ? "ПЕРЕХОД: В ПУСТОШЬ" : "ПЕРЕХОД: В ДОЛИНУ")) loc_flip = true;
             if (hud_debug_check(&hud, "ЛЮДИ ДЛЯ СРАВНЕНИЯ", &humans_want)) {
                 humans_flip = true;
                 if (humans_want) cam = (RtsCamera){ .target = { 3.4f, 0, 22 }, .yaw = 0.0f, .pitch = 0.15f, .dist = 6.5f };
@@ -662,9 +710,12 @@ int main(int argc, char **argv)
         squad_update(squad, dt, ground_height);
 
         u32 n = 0;
-        items[n++] = (DrawItem){ .mesh = &near_mesh };
-        items[n++] = (DrawItem){ .mesh = &far_mesh, .no_shadow = true };
-        for (u32 i = 0; i < crowd.count; i++) {
+        if (g_in_valley) n += valley_view_draw(valley, items);
+        else {
+            items[n++] = (DrawItem){ .mesh = &near_mesh };
+            items[n++] = (DrawItem){ .mesh = &far_mesh, .no_shadow = true };
+        }
+        for (u32 i = 0; !g_in_valley && i < crowd.count; i++) {
             const Player *cp = &crowd.body[i];
             // Половина бродящих при оружии: клинок или арматура на поясе
             u8 wid = crowd.variant[i] % 2 ? W_ARMATURA : W_RESSORA;
@@ -689,7 +740,7 @@ int main(int argc, char **argv)
             items[n++] = (DrawItem){ .mesh = &body_mesh[kind], .bones = b };
             if (armed) items[n++] = (DrawItem){ .mesh = &weapon_mesh[wid], .bones = b };
         }
-        for (u32 i = 0; i < mobs->count; i++) {
+        for (u32 i = 0; !g_in_valley && i < mobs->count; i++) {
             const Player *mp = &mobs->body[i];
             const CharSheet *cs = &mobs->sheet[i];
             u8 wid = cs->equip[SLOT_WEAPON].id;
@@ -707,7 +758,7 @@ int main(int argc, char **argv)
             items[n++] = (DrawItem){ .mesh = &body_mesh[mobs->variant[i] % BODY_KINDS], .bones = b };
             items[n++] = (DrawItem){ .mesh = &weapon_mesh[wid], .bones = b };
         }
-        n += arena_view_draw(aview, arena, sim_time, body_mesh, BODY_KINDS, weapon_mesh, arena_bones, items + n);
+        if (!g_in_valley) n += arena_view_draw(aview, arena, sim_time, body_mesh, BODY_KINDS, weapon_mesh, arena_bones, items + n);
         for (u32 i = 0; i < squad->count; i++) {
             const Player *pl = &squad->body[i];
             const CharSheet *cs = &squad->sheet[i];
@@ -739,7 +790,7 @@ int main(int argc, char **argv)
         for (u32 j = 0; humans_on && j < LOOKS_N; j++)
             items[n++] = (DrawItem){ .mesh = &body_mesh[j % BODY_KINDS], .bones = looks_bones + j * RENDER_MAX_BONES };
         V3 look_pos;
-        if (hud.look_kind == LOOK_ARENA && hud_arena_pos(aview, arena, hud.look, &look_pos)) {
+        if (!g_in_valley && hud.look_kind == LOOK_ARENA && hud_arena_pos(aview, arena, hud.look, &look_pos)) {
             M4 *rb = squad_bones + (size_t)SQUAD_MAX * 3 * RENDER_MAX_BONES;
             rb[0] = m4_translate(look_pos);
             items[n++] = (DrawItem){ .mesh = &ring_mesh[1], .bones = rb, .no_shadow = true };
@@ -761,6 +812,11 @@ int main(int argc, char **argv)
         fv.sky_amb = sky.sky_amb;
         fv.ground_amb = sky.ground_amb;
         fv.haze = sky.haze;
+        // В долине свет отражается от травы, а не от песка, и дымка не такая пыльная
+        if (g_in_valley) {
+            fv.ground_amb = v3_hadamard(fv.ground_amb, v3(0.6f, 0.9f, 0.6f));
+            fv.haze = v3_hadamard(fv.haze, v3(0.93f, 0.97f, 1.02f));
+        }
         fv.zenith = sky.zenith;
         fv.shadow_center = cam.target;
         fv.time = sim_time;

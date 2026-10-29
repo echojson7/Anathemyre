@@ -16,6 +16,12 @@ typedef enum Material {
     MAT_EMISSIVE = 6,
     MAT_SKIN     = 7,
     MAT_METAL    = 8,
+    MAT_TERRAIN  = 9,   // земля: цвет вершин, на крутых склонах порода
+    MAT_ROCK     = 10,
+    MAT_WATER    = 11,  // цвет вершин — толща воды
+    MAT_BARK     = 12,  // параметр < 0.5 — светлая кора с тёмными метками
+    MAT_LEAF     = 13,  // параметр — глубина в кроне: 0 внутри, 1 снаружи
+    MAT_GRASS    = 14,  // параметр — высота по травинке
 } Material;
 
 #define BONE_NONE 255
@@ -49,6 +55,7 @@ typedef struct MeshBuilder {
     V3      color;
     u8      mat;
     u8      bone;
+    f32     param;   // параметр материала в альфе цвета (1 по умолчанию; у бетона 1 - мох)
 } MeshBuilder;
 
 bool mb_init(MeshBuilder *mb, Arena *arena, u32 vcap, u32 icap);
@@ -56,6 +63,11 @@ bool mb_init(MeshBuilder *mb, Arena *arena, u32 vcap, u32 icap);
 // с версии 2 следом VertexSkin[], с версии 3 — u32 число морфов и их сдвиги. Буферы берутся из арены по размеру файла
 bool mb_load(MeshBuilder *mb, Arena *arena, const char *path);
 void mb_set(MeshBuilder *mb, V3 color, Material mat, u8 bone);
+// Вершина и треугольник вручную (для своих форм: трава, рельеф)
+u32  mb_vertex(MeshBuilder *mb, V3 p, V3 n);
+void mb_tri(MeshBuilder *mb, u32 a, u32 b, u32 c);
+// Место под nv вершин и ni индексов; false — буфер полон
+bool mb_reserve(MeshBuilder *mb, u32 nv, u32 ni);
 
 // Единичный куб [-0.5, 0.5]^3, преобразованный матрицей; плоские нормали
 void mb_box(MeshBuilder *mb, M4 xf);
