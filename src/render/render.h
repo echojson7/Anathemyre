@@ -7,6 +7,9 @@
 #include "mesh.h"
 
 #define RENDER_MAX_BONES 24
+// Последний слот набора — не кость, а внешность экземпляра (scene.vert): числа 0..7 — веса морфов,
+// 8..10 и 12..14 — оттенок кожи и волос минус 1. Нулевая матрица — сетка как есть
+#define RENDER_LOOK_SLOT 23
 #define RENDER_MAX_ITEMS 4096    // элементов отрисовки за кадр
 #define RENDER_MAX_POSED 1024    // разных наборов костей за кадр (персонаж с оружием — один набор)
 #define RENDER_PORTRAIT_PX 96     // наибольший портрет, пикселей
@@ -14,6 +17,7 @@
 
 typedef struct GpuMesh {
     u32 vao, vbo, ibo, skin_vbo;  // skin_vbo — веса до 4 костей, 0 у жёстких сеток
+    u32 morph_buf, morph_count;   // сдвиги морфов внешности (mesh.h), 0 — нет
     u32 index_count;
     V4  bound;                          // сфера всей сетки: центр xyz, радиус w
     V4  bone_bound[RENDER_MAX_BONES];   // сфера вершин каждой кости в позе привязки
@@ -47,6 +51,7 @@ typedef struct RenderSettings {
     i32  internal_h;    // высота внутреннего разрешения
     bool post;          // фильтр кадра вкл/выкл
     bool pixel;         // пиксельность (квадраты на поверхностях и блоки вблизи) вкл/выкл
+    i32  pixel_div;     // 1 — размер пикселя по глубине; 2, 3 — весь кадр в 1/2, 1/3 окна (internal_h), ровные пиксели
     bool vrs;           // шейдинг блоками там, где фильтр сливает пиксели (если есть у видеокарты)
 } RenderSettings;
 
