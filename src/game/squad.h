@@ -24,6 +24,8 @@ typedef struct Squad {
 void sheet_random(CharSheet *c, Rng *rng, const char *name, u32 tier, u8 weapon);
 // Стартовый отряд из четырёх у точки origin
 void squad_init(Squad *s, Rng *rng, V3 origin, f32 heading, GroundFn ground);
+// Переставить весь отряд в другое место (переход между локациями): стоят строем у origin
+void squad_place(Squad *s, V3 origin, f32 heading, GroundFn ground);
 // Выбранные идут к точке строем: ряды по три поперёк направления движения
 void squad_order_move(Squad *s, V3 target);
 // Режим передвижения выбранным

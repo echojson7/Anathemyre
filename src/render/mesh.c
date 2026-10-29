@@ -21,6 +21,7 @@ bool mb_init(MeshBuilder *mb, Arena *arena, u32 vcap, u32 icap)
     mb->color = v3(1, 1, 1);
     mb->mat = MAT_CONCRETE;
     mb->bone = BONE_NONE;
+    mb->param = 1.0f;
     return mb->v && mb->idx;
 }
 
@@ -70,6 +71,7 @@ void mb_set(MeshBuilder *mb, V3 color, Material mat, u8 bone)
     mb->color = color;
     mb->mat = (u8)mat;
     mb->bone = bone;
+    mb->param = 1.0f;
 }
 
 static bool reserve(MeshBuilder *mb, u32 nv, u32 ni)
@@ -95,7 +97,7 @@ static u32 put(MeshBuilder *mb, V3 p, V3 n)
     v->color[0] = to_u8(mb->color.x);
     v->color[1] = to_u8(mb->color.y);
     v->color[2] = to_u8(mb->color.z);
-    v->color[3] = 255;
+    v->color[3] = to_u8(mb->param);
     v->mat = mb->mat;
     v->bone = mb->bone;
     v->tint = v->pad1 = 0;
@@ -108,6 +110,10 @@ static void tri(MeshBuilder *mb, u32 a, u32 b, u32 c)
     mb->idx[mb->icount++] = b;
     mb->idx[mb->icount++] = c;
 }
+
+u32 mb_vertex(MeshBuilder *mb, V3 p, V3 n) { return put(mb, p, n); }
+void mb_tri(MeshBuilder *mb, u32 a, u32 b, u32 c) { tri(mb, a, b, c); }
+bool mb_reserve(MeshBuilder *mb, u32 nv, u32 ni) { return reserve(mb, nv, ni); }
 
 // Плоский четырёхугольник; сам разворачивает обход наружу относительно center
 static void flat_face(MeshBuilder *mb, V3 p0, V3 p1, V3 p2, V3 p3, V3 center)

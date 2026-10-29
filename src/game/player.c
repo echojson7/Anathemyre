@@ -2,7 +2,7 @@
 
 #include <stdio.h>
 
-#include "character.h"
+#include "anim.h"
 
 #define ARRIVE_DIST 0.15f
 #define MARKER_S    1.2f

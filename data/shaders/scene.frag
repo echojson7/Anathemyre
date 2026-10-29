@@ -2,10 +2,11 @@
 
 in vec3 v_world;
 in vec3 v_nrm;
-in vec3 v_color;
+in vec4 v_color;   // a — параметр материала (1 по умолчанию): мох на бетоне, светлая кора, глубина листвы
 flat in uint v_mat;
 in vec3 v_local;
 flat in mat3 v_rot;
+flat in vec3 v_tint;
 
 layout(location = 17) uniform int u_skinned;
 layout(location = 18) uniform mat4 u_light_vp;
@@ -22,7 +23,8 @@ layout(binding = 0) uniform sampler2DShadow u_shadow;
 out vec4 o_color;
 
 const uint MAT_CONCRETE = 0u, MAT_RUST = 1u, MAT_SAND = 2u, MAT_CLOTH = 3u, MAT_LEATHER = 4u,
-           MAT_GLYPH = 5u, MAT_EMISSIVE = 6u, MAT_SKIN = 7u, MAT_METAL = 8u;
+           MAT_GLYPH = 5u, MAT_EMISSIVE = 6u, MAT_SKIN = 7u, MAT_METAL = 8u,
+           MAT_TERRAIN = 9u, MAT_ROCK = 10u, MAT_WATER = 11u, MAT_BARK = 12u, MAT_LEAF = 13u, MAT_GRASS = 14u;
 
 const float TEXEL = 1.0 / 10.0;  // «пиксель» на поверхностях, м
 
@@ -98,7 +100,7 @@ void main()
     mpp /= float(gl_FragmentSizeNV.x);
 #endif
     // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
-    float base = u_skinned != 0 ? TEXEL * 0.5 : TEXEL;
+    float base = u_skinned == 1 ? TEXEL * 0.5 : TEXEL;
     bool snap = mpp < base * u_texel_on;
     vec3 dl = snap ? texel_snap(v_local, Nl, base) : vec3(0.0);
     vec3 P = v_local + dl;           // материал: прилипает к телу
@@ -106,7 +108,8 @@ void main()
     vec3 V = normalize(u_cam_pos - W);
     vec3 L = u_sun_dir;
 
-    vec3 albedo = v_color;
+    vec3 albedo = v_color.rgb * v_tint;
+    bool foliage = false;
     vec3 emissive = vec3(0.0);
     float spec = 0.0;
     float gloss = 16.0;
@@ -137,6 +140,12 @@ void main()
         float rust = smoothstep(0.62, 0.8, mid * streak + 0.2 * big) * vertical;
         albedo = mix(albedo, vec3(0.30, 0.13, 0.05), rust * 0.6);
         albedo *= 0.92 + 0.16 * fine;
+        // Мох на заросшем бетоне: сверху и пятнами
+        float mossy = 1.0 - v_color.a;
+        if (mossy > 0.0) {
+            float mm = smoothstep(0.4, 0.62, fbm3(P * 0.6 + 11.0) + N.y * 0.3 - vertical * 0.1);
+            albedo = mix(albedo, vec3(0.055, 0.08, 0.03) * (0.8 + 0.4 * fine), mm * mossy);
+        }
         // Грязь у основания стен
         if (u_skinned == 0) ao = mix(1.0, smoothstep(-0.2, 2.5, P.y), vertical * 0.6);
     } else if (v_mat == MAT_RUST) {
@@ -181,19 +190,73 @@ void main()
         float flicker = 0.75 + 0.25 * step(0.15, noise3(vec3(u_time * 7.0, uv.y * 0.5, 0.0)));
         float dim = 0.6 + 0.4 * noise3(vec3(uv * 0.7, u_time * 0.3));
         albedo = vec3(0.07, 0.07, 0.065) * (0.8 + 0.4 * fbm3(P * 3.0));
-        emissive = v_color * ink * flicker * dim * 1.1;
+        emissive = v_color.rgb * ink * flicker * dim * 1.1;
         albedo *= 1.0 - ink * 0.6;
     } else if (v_mat == MAT_EMISSIVE) {
         float flicker = 0.85 + 0.15 * noise3(vec3(u_time * 11.0, P.x, P.z));
-        emissive = v_color * 3.0 * flicker;
+        emissive = v_color.rgb * 3.0 * flicker;
         // Почти чёрный цвет — проём в темноту (двери, окна): солнце его не освещает
         albedo = vec3(max(v_color.r, max(v_color.g, v_color.b)) < 0.02 ? 0.006 : 0.05);
+    } else if (v_mat == MAT_TERRAIN) {
+        // Земля: цвет вершин — трава, сухая трава, глина, ил; на крутом склоне слоистая порода
+        float spots = fbm3(vec3(P.xz * 0.45, 3.0));
+        albedo *= 0.78 + 0.32 * spots;
+        albedo *= 0.88 + 0.22 * noise3(vec3(P.xz * 2.3, 7.0));
+        albedo *= 0.92 + 0.16 * fine;
+        float rock = smoothstep(0.80, 0.62, N.y + 0.1 * (spots - 0.5));
+        float strata = noise3(vec3(P.x * 0.15, P.y * 1.6 + fbm3(P * 0.2) * 2.0, P.z * 0.15));
+        vec3 stone = vec3(0.14, 0.135, 0.125) * (0.6 + 0.6 * strata) * (0.85 + 0.3 * fbm3(P * 1.3));
+        stone = mix(stone, vec3(0.30, 0.19, 0.11), smoothstep(0.6, 0.8, fbm3(P * 0.4 + 9.0)) * 0.5);
+        albedo = mix(albedo, stone, rock);
+        spec = 0.04;
+    } else if (v_mat == MAT_ROCK) {
+        albedo *= 0.7 + 0.5 * fbm3(P * 1.7);
+        albedo *= 0.9 + 0.2 * fine;
+        // Лишайник пятнами и мох сверху
+        albedo = mix(albedo, vec3(0.24, 0.25, 0.18), smoothstep(0.64, 0.72, fbm3(P * 2.3 + 5.0)) * 0.5);
+        float moss = smoothstep(0.45, 0.85, N.y) * smoothstep(0.35, 0.6, fbm3(P * 0.9 + 2.0));
+        albedo = mix(albedo, vec3(0.06, 0.09, 0.03), moss * 0.85);
+        spec = 0.08;
+        gloss = 20.0;
+    } else if (v_mat == MAT_BARK) {
+        // Кора: продольные борозды по оси ствола, мох у комля
+        albedo *= 0.6 + 0.6 * noise3(vec3(P.x * 14.0, P.y * 1.2, P.z * 14.0));
+        albedo *= 0.85 + 0.3 * fbm3(P * 2.0);
+        if (v_color.a < 0.5) albedo *= 1.0 - 0.8 * step(0.78, noise3(vec3(P.x * 7.0, P.y * 11.0, P.z * 7.0)));
+        float moss = smoothstep(0.5, 0.75, fbm3(P * 1.5 + 1.0)) * smoothstep(2.5, 0.0, P.y);
+        albedo = mix(albedo, vec3(0.06, 0.09, 0.03), moss * 0.7);
+    } else if (v_mat == MAT_LEAF) {
+        // Листва: глубже в кроне темнее
+        albedo *= 0.72 + 0.5 * noise3(P * 2.2);
+        albedo *= 0.9 + 0.2 * fine;
+        ao = mix(0.4, 1.0, v_color.a);
+        spec = 0.08;
+        gloss = 10.0;
+        foliage = true;
+    } else if (v_mat == MAT_GRASS) {
+        albedo *= 0.85 + 0.3 * noise3(P * 5.0);
+        ao = mix(0.5, 1.0, v_color.a);
+        foliage = true;
+    } else if (v_mat == MAT_WATER) {
+        // Вода: рябь по течению (+Z), небо по Френелю, блик солнца; цвет вершин — толща воды
+        vec2 q = P.xz * vec2(0.9, 0.6) + vec2(0.0, -u_time * 0.45);
+        float tq = u_time * 0.25, e = 0.15;
+        float h0 = fbm3(vec3(q, tq));
+        float hx = fbm3(vec3(q + vec2(e, 0.0), tq));
+        float hz = fbm3(vec3(q + vec2(0.0, e), tq));
+        N = normalize(vec3(-(hx - h0) / e * 0.3, 1.0, -(hz - h0) / e * 0.3));
+        float fres = 0.02 + 0.98 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
+        albedo *= 1.0 - fres;
+        emissive = u_sky_amb * 2.0 * fres;
+        spec = 2.0;
+        gloss = 300.0;
     }
 
     // Разброс яркости от квадрата к квадрату: поверхность читается как текстура низкого разрешения
     if (snap) albedo *= 0.95 + 0.10 * hash13(floor(P / base) + float(v_mat) * 17.0);
 
-    float ndl = max(dot(N, L), 0.0);
+    // Листва и трава просвечивают: свет заходит и на обратную сторону
+    float ndl = foliage ? 0.25 + 0.5 * max(dot(N, L), 0.0) + 0.25 * abs(dot(N, L)) : max(dot(N, L), 0.0);
     float sh = ndl > 0.0 ? sun_shadow(W, N) : 0.0;
 
     // Небо и отражённый от песка свет (0.6 — тени темнее, решение пользователя 2026-10-29)
@@ -207,7 +270,7 @@ void main()
 
     vec3 col = albedo * (u_sun_color * ndl * sh + ambient * ao) + u_sun_color * sp + emissive;
     // Контровой свет от дымки: фигуры читаются силуэтом
-    if (u_skinned != 0) {
+    if (u_skinned == 1) {
         float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
         col += (u_sky_amb + u_ground_amb) * rim * 0.35;
     }
