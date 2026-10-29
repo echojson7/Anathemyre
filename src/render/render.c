@@ -10,7 +10,7 @@
 
 #define SHADOW_SIZE 2048
 #define SHADOW_EXTENT 45.0f   // полуразмер области теней, м
-#define PIXEL_M (1.0f / 40.0f)  // пиксель мира вблизи, м: мельче не рисуется (style.frag)
+#define PIXEL_M (1.0f / 80.0f)  // пиксель мира вблизи, м: мельче не рисуется (style.frag)
 
 // Расположения uniform задаются явно в GLSL (layout(location = N))
 enum {
