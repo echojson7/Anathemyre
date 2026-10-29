@@ -57,6 +57,7 @@ typedef struct Options {
     bool        move_bench;  // проверка разворотов без окна
     const char *move_trace;
     bool        no_pixel;    // кадр без пиксельности (сравнение моделей)
+    i32         pixel_div;   // --pixel-div: 1 — пиксель по глубине, 2/3 — кадр в 1/2, 1/3 окна
     bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
@@ -259,6 +260,7 @@ static bool parse_args(int argc, char **argv, Options *o)
             if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
         } else if (!strcmp(a, "--humans")) o->humans = true;
         else if (!strcmp(a, "--no-pixel")) o->no_pixel = true;
+        else if (!strcmp(a, "--pixel-div") && i + 1 < argc) o->pixel_div = atoi(argv[++i]);
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
@@ -464,7 +466,7 @@ int main(int argc, char **argv)
     for (u32 i = 0; i < TR_MAX_CHARS * RENDER_MAX_BONES; i++) bones[i] = m4_identity();
 
     RtsCamera cam = opt.cam;
-    RenderSettings rs = { .post = true, .pixel = !opt.no_pixel, .vrs = !opt.no_vrs };
+    RenderSettings rs = { .post = true, .pixel = !opt.no_pixel, .pixel_div = CLAMP(opt.pixel_div, 1, 3), .vrs = !opt.no_vrs };
 
     Input in;
     memset(&in, 0, sizeof in);
@@ -574,6 +576,9 @@ int main(int argc, char **argv)
             char val[32];
             hud_debug_check(&hud, "ФИЛЬТР КАДРА", &rs.post);
             hud_debug_check(&hud, "ПИКСЕЛЬНОСТЬ", &rs.pixel);
+            // Способ пиксельности: по глубине или весь кадр в низком разрешении (как в пиксельных 3D-играх)
+            static const char *px_mode[] = { "", "ПИКСЕЛИ: ПО ГЛУБИНЕ", "ПИКСЕЛИ: КАДР 1/2", "ПИКСЕЛИ: КАДР 1/3" };
+            if (hud_debug_button(&hud, px_mode[rs.pixel_div])) rs.pixel_div = rs.pixel_div % 3 + 1;
             hud_debug_check(&hud, "ШЕЙДИНГ БЛОКАМИ", &rs.vrs);
             if (hud_debug_check(&hud, "VSYNC", &vsync)) {
                 platform_set_vsync(vsync);
@@ -726,8 +731,8 @@ int main(int argc, char **argv)
         fv.shadow_center = cam.target;
         fv.time = sim_time;
         fv.frame = frame;
-        // Полное разрешение окна; размер пикселя задаёт глубина по одному правилу (style.frag)
-        rs.internal_h = wh;
+        // Полное разрешение окна, размер пикселя задаёт глубина (pixel.glsl); либо весь кадр в 1/2, 1/3 окна
+        rs.internal_h = rs.pixel && rs.pixel_div > 1 ? wh / rs.pixel_div : wh;
         render_frame(&fv, items, n, &rs, ww, wh);
         // Портреты: миниатюры отряда и крупно выбранный
         for (u32 i = 0; i <= squad->count; i++) {

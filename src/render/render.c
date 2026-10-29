@@ -11,9 +11,9 @@
 #define SHADOW_SIZE 2048
 #define SHADOW_EXTENT 45.0f   // полуразмер области теней, м
 // Размер пикселя по глубине (pixel.glsl): k = PIXEL_K * s^PIXEL_P, s — пикселей кадра на метр в точке.
-// Шаг 0.5 пикселя, ниже 2 — 0.25. При 1080p: 3 м — 6, 4 м — 4.5, 5 м — 3.5, 6 м — 3, 7 м — 2.5, 8 м — 2,
-// 9 м — 1.75, 10–11 м — 1.5, с 12 м — 1.25 и дальше не меняется
-#define PIXEL_K 0.0097f
+// Шаг 0.5 пикселя, ниже 2 — 0.25. При 1080p: 3 м — 4.5, 4 м — 3.5, 5 м — 2.5, 6 м — 2, 7 м — 1.75,
+// 8 м — 1.5, с 9 м — 1.25 и дальше не меняется
+#define PIXEL_K 0.00728f
 #define PIXEL_P 1.1f
 
 // Расположения uniform задаются явно в GLSL (layout(location = N))
@@ -731,7 +731,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);
     // Размер пикселя на дальности 1 м; s^P = (px_m / d)^P = PIXEL_K * px_m^P * (1/d)^P
-    f32 px_k = rs->pixel ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
+    f32 px_k = rs->pixel && rs->pixel_div <= 1 ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
     bool vrs = R.vrs && rs->vrs && rs->pixel;
     R.stat_vrs = vrs;
     // По готовой глубине: откуда каждый пиксель берёт цвет, раз за кадр (фильтр и карта частоты)
