@@ -94,7 +94,9 @@ void main()
     // Вдали квадрат не мельче пикселя экрана (как мипы), иначе узор рябит
     vec3 Nl = normalize(transpose(v_rot) * N);
     float mpp = max(length(dFdx(v_local)), length(dFdy(v_local)));
-    float tex = max(TEXEL, exp2(ceil(log2(max(mpp, 1e-6)))));
+    // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
+    float base = u_skinned != 0 ? TEXEL * 0.5 : TEXEL;
+    float tex = max(base, exp2(ceil(log2(max(mpp, 1e-6)))));
     vec3 dl = texel_snap(v_local, Nl, tex);
     vec3 P = v_local + dl;           // материал: прилипает к телу
     vec3 W = v_world + v_rot * dl;   // свет и тени
