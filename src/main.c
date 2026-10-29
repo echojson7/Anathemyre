@@ -441,7 +441,7 @@ int main(int argc, char **argv)
     for (u32 i = 0; i < TR_MAX_CHARS * RENDER_MAX_BONES; i++) bones[i] = m4_identity();
 
     RtsCamera cam = opt.cam;
-    RenderSettings rs = { .post = true };
+    RenderSettings rs = { .post = true, .pixel = true };
 
     Input in;
     memset(&in, 0, sizeof in);

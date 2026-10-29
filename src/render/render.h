@@ -46,6 +46,7 @@ typedef struct FrameView {
 typedef struct RenderSettings {
     i32  internal_h;    // высота внутреннего разрешения
     bool post;          // фильтр кадра вкл/выкл
+    bool pixel;         // пиксельность (квадраты на поверхностях и блоки вблизи) вкл/выкл
 } RenderSettings;
 
 // Время проходов на GPU, мс, среднее с прошлого render_take_stats

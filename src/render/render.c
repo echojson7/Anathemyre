@@ -15,7 +15,7 @@
 // Расположения uniform задаются явно в GLSL (layout(location = N))
 enum {
     U_VIEW_PROJ = 0, U_SKINNED = 17, U_LIGHT_VP = 18, U_INST_BASE = 19,
-    U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26,
+    U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26, U_TEXEL = 27,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
     U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44,
@@ -651,6 +651,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform1f(U_TIME, fv->time);
     glUniform3f(U_SKY_AMB, fv->sky_amb.x, fv->sky_amb.y, fv->sky_amb.z);
     glUniform3f(U_GROUND_AMB, fv->ground_amb.x, fv->ground_amb.y, fv->ground_amb.z);
+    glUniform1f(U_TEXEL, rs->pixel ? 1.0f : 0.0f);
     glBindTextureUnit(0, R.shadow_tex);
     draw_insts(g_inst[1], n_scene, base_scene, 1);
     if (timing) mark(2);
@@ -695,7 +696,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUseProgram(R.prog_style);
     glUniform1i(U_S_POST, rs->post ? 1 : 0);
     glUniform1i(U_S_FRAME, (GLint)fv->frame);
-    glUniform3f(U_S_PIX, fv->proj.m[5] * 0.5f * (f32)ih * PIXEL_M, fv->proj.m[10], fv->proj.m[14]);
+    glUniform3f(U_S_PIX, rs->pixel ? fv->proj.m[5] * 0.5f * (f32)ih * PIXEL_M : 0.0f, fv->proj.m[10], fv->proj.m[14]);
     glBindTextureUnit(0, R.atmos.color);
     glBindTextureUnit(1, R.scene.depth);
     glDrawArrays(GL_TRIANGLES, 0, 3);
