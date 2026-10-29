@@ -22,7 +22,7 @@ out vec4 o_color;
 const uint MAT_CONCRETE = 0u, MAT_RUST = 1u, MAT_SAND = 2u, MAT_CLOTH = 3u, MAT_LEATHER = 4u,
            MAT_GLYPH = 5u, MAT_EMISSIVE = 6u, MAT_SKIN = 7u, MAT_METAL = 8u;
 
-const float TEXEL = 1.0 / 16.0;  // «пиксель» на поверхностях, м
+const float TEXEL = 1.0 / 10.0;  // «пиксель» на поверхностях, м
 
 // Сдвиг точки p к центру квадрата сетки t в плоскости грани с нормалью n.
 // Вдоль оси грани точка не прыгает, а возвращается на плоскость грани

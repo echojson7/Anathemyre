@@ -53,6 +53,21 @@ typedef struct Options {
     u32         threads;     // 0 — по числу ядер
 } Options;
 
+// Портрет по кости головы: камера спереди, чуть сверху
+static void portrait(const FrameView *base, u32 slot, i32 size, const DrawItem *items, u32 count)
+{
+    if (!count) return;
+    M4 hb = items[0].bones[BONE_HEAD];
+    V3 head = m4_point(hb, v3(0, 1.62f, 0));
+    V3 fwd = v3_norm(m4_dir(hb, v3(0, 0, 1)));
+    V3 up = v3_norm(m4_dir(hb, v3(0, 1, 0)));
+    FrameView fv = *base;
+    fv.cam_pos = v3_add(v3_add(head, v3_mul(fwd, 1.05f)), v3_mul(up, 0.1f));
+    fv.view = m4_look_at(fv.cam_pos, v3_sub(head, v3_mul(up, 0.06f)), up);
+    fv.proj = m4_perspective(0.55f, 1.0f, 0.05f, 20.0f);
+    render_portrait(slot, size, &fv, m4_mul(fv.proj, fv.view), items, count);
+}
+
 static void camera_update(RtsCamera *c, const Input *in, f32 dt)
 {
     f32 fast = in->key_down[KEY_SHIFT] ? 3.0f : 1.0f;
@@ -331,7 +346,8 @@ int main(int argc, char **argv)
     hud_init(&hud);
     if (opt.inspect) {
         for (u32 i = 0; i < squad->count; i++) squad->selected[i] = true;
-        hud_open_inspect(&hud, LOOK_SQUAD, 0);
+        hud_look(&hud, LOOK_SQUAD, 0);
+        hud.win_inv = hud.win_char = true;
     }
     u8 *shot_buf = NULL;
     if (opt.shot_path) shot_buf = arena_push(&perm, (size_t)opt.width * (size_t)opt.height * 3, 1);
@@ -347,17 +363,18 @@ int main(int argc, char **argv)
     u32 stat_frames = 0;
     f64 cpu_logic = 0, cpu_submit = 0, cpu_swap = 0;
     bool vsync = !opt.no_vsync && opt.shot_path == NULL;
-    f32 sim_time = 0;
+    f32 sim_time = 0, real_time = 0;
     f32 tod = opt.tod;
+    u32 day = 1;
     bool day_run = true;
     u32 frame = 0;
 
-    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — осмотр, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F3 — vsync, F4 — остановить сутки, F5 — шейдеры");
+    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — инвентарь, P — персонаж, пробел — пауза, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F3 — vsync, F4 — остановить сутки, F5 — шейдеры");
 
     while (!in.quit) {
         platform_poll(&in);
-        // Esc сначала закрывает окно осмотра
-        if (in.key_pressed[KEY_ESCAPE] && !hud.inspect) break;
+        // Esc сначала закрывает окна
+        if (in.key_pressed[KEY_ESCAPE] && !hud_window_open(&hud)) break;
         if (in.key_pressed[KEY_F1]) rs.post = !rs.post;
         if (in.key_pressed[KEY_F5]) render_reload_shaders();
         if (in.key_pressed[KEY_F4]) {
@@ -377,10 +394,14 @@ int main(int argc, char **argv)
         f64 now = time_now();
         f32 dt = opt.shot_path ? 1.0f / 60.0f : (f32)fmin(now - last, 0.05);
         last = now;
+        // Скорость времени из интерфейса; камера живёт в реальном времени
+        f32 real_dt = dt;
+        dt *= (f32)hud.speed;
         sim_time += dt;
+        real_time += real_dt;
 
         f64 t_logic = time_now();
-        camera_update(&cam, &in, dt);
+        camera_update(&cam, &in, real_dt);
         crowd_update(&crowd, &rng, dt);
         arena_view_update(aview, arena, dt);
         i32 lead = MAX(0, squad_primary(squad));
@@ -398,7 +419,8 @@ int main(int argc, char **argv)
         fv.proj = m4_perspective(CAM_FOV, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
 
         ui_begin(ww, wh);
-        HudWorld hw = { .squad = squad, .arena = arena, .aview = aview, .view_proj = m4_mul(fv.proj, fv.view), .time = sim_time };
+        HudWorld hw = { .squad = squad, .arena = arena, .aview = aview, .view_proj = m4_mul(fv.proj, fv.view),
+                        .time = real_time, .tod = tod, .day = day };
         bool ui_busy = hud_input(&hud, &in, &hw);
         if (hud.focus >= 0) cam.target = v3(squad->body[hud.focus].pos.x, 0, squad->body[hud.focus].pos.z);
 
@@ -410,7 +432,7 @@ int main(int argc, char **argv)
             if (pick_ground(hw.view_proj, fv.cam_pos, nx, ny, &hit)) squad_order_move(squad, hit);
         }
         // Z шаг, X трусца, C бег — выбранным; G — держать строй
-        if (!hud.inspect) {
+        if (!hud_window_open(&hud)) {
             if (in.key_pressed[KEY_Z]) squad_set_gait(squad, GAIT_WALK);
             if (in.key_pressed[KEY_X]) squad_set_gait(squad, GAIT_JOG);
             if (in.key_pressed[KEY_C]) squad_set_gait(squad, GAIT_RUN);
@@ -433,8 +455,11 @@ int main(int argc, char **argv)
             character_pose(&p, NULL, b);
             items[n++] = (DrawItem){ .mesh = &char_mesh[crowd.variant[i]], .bones = b };
         }
+        u32 arena_first = n;
         n += arena_view_draw(aview, arena, sim_time, body_mesh, CHAR_VARIANTS, weapon_mesh, arena_bones, items + n);
+        u32 squad_first[SQUAD_MAX], squad_end[SQUAD_MAX];
         for (u32 i = 0; i < squad->count; i++) {
+            squad_first[i] = n;
             const Player *pl = &squad->body[i];
             const CharSheet *cs = &squad->sheet[i];
             M4 *b = squad_bones + (size_t)i * 3 * RENDER_MAX_BONES;
@@ -446,19 +471,20 @@ int main(int argc, char **argv)
             items[n++] = (DrawItem){ .mesh = &body_mesh[squad->variant[i] % CHAR_VARIANTS], .bones = b };
             if (cs->equip[SLOT_WEAPON].kind == IK_WEAPON)
                 items[n++] = (DrawItem){ .mesh = &weapon_mesh[cs->equip[SLOT_WEAPON].id], .bones = b };
+            squad_end[i] = n;
             if (squad->selected[i]) {
                 M4 *rb = b + RENDER_MAX_BONES;
                 rb[0] = m4_translate(pl->pos);
                 items[n++] = (DrawItem){ .mesh = &ring_mesh[0], .bones = rb, .no_shadow = true };
             }
-            if (pl->marker > 0.0f && pl->moving) {
-                M4 *mk = b + 2 * RENDER_MAX_BONES;
-                mk[0] = m4_translate(pl->target);
-                items[n++] = (DrawItem){ .mesh = &marker_mesh, .bones = mk, .no_shadow = true };
-            }
+        }
+        if (squad->order_marker > 0.0f) {
+            M4 *mk = squad_bones + 2 * RENDER_MAX_BONES;
+            mk[0] = m4_translate(squad->order_pos);
+            items[n++] = (DrawItem){ .mesh = &marker_mesh, .bones = mk, .no_shadow = true };
         }
         V3 look_pos;
-        if (hud.inspect && hud.look_kind == LOOK_ARENA && hud_arena_pos(aview, arena, hud.look, &look_pos)) {
+        if (hud.look_kind == LOOK_ARENA && hud_arena_pos(aview, arena, hud.look, &look_pos)) {
             M4 *rb = squad_bones + (size_t)SQUAD_MAX * 3 * RENDER_MAX_BONES;
             rb[0] = m4_translate(look_pos);
             items[n++] = (DrawItem){ .mesh = &ring_mesh[1], .bones = rb, .no_shadow = true };
@@ -466,7 +492,13 @@ int main(int argc, char **argv)
 
         f64 t_submit = time_now();
         cpu_logic += t_submit - t_logic;
-        if (day_run) tod = fmodf(tod + dt / DAY_LENGTH_S, 1.0f);
+        if (day_run) {
+            tod += dt / DAY_LENGTH_S;
+            if (tod >= 1.0f) {
+                tod -= 1.0f;
+                day++;
+            }
+        }
         Sky sky;
         sky_at(tod, &sky);
         fv.sun_dir = sky.light_dir;
@@ -478,9 +510,22 @@ int main(int argc, char **argv)
         fv.shadow_center = cam.target;
         fv.time = sim_time;
         fv.frame = frame;
-        // Полное разрешение окна: пиксельность нарисована на поверхностях (см. scene.frag, TEXEL)
-        rs.internal_h = wh;
+        // Половина окна, апскейл ровно ×2: лёгкий экранный пиксель без мыла вдали; основная пиксельность на поверхностях (scene.frag, TEXEL)
+        rs.internal_h = wh / 2;
         render_frame(&fv, items, n, &rs, ww, wh);
+        // Портреты: миниатюры отряда и крупно выбранный, тем же светом и тенью
+        for (u32 i = 0; i < squad->count; i++)
+            portrait(&fv, i, HUD_PORTRAIT_CARD_PX, items + squad_first[i], squad_end[i] - squad_first[i]);
+        if (hud.look_kind == LOOK_SQUAD && hud.look < squad->count) {
+            u32 i = hud.look;
+            portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, items + squad_first[i], squad_end[i] - squad_first[i]);
+        } else if (hud.look_kind == LOOK_ARENA) {
+            i32 b = hud_arena_fighter(aview, arena, hud.look);
+            // Брошенное оружие лежит на полу: в портрет только тело
+            if (b >= 0) portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, items + arena_first + 2 * (u32)b, aview->dropped[b] ? 1 : 2);
+        }
+        ui_set_image(render_portrait_texture());
+        ui_set_time(real_time);
         hud_draw(&hud, &in, &hw);
         ui_end();
         f64 t_swap = time_now();

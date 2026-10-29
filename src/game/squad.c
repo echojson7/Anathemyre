@@ -97,10 +97,11 @@ void squad_order_move(Squad *s, V3 target)
         V3 p = v3_add(target, v3_add(v3_mul(right, col * FORMATION_STEP), v3_mul(fwd, -(f32)row * FORMATION_STEP)));
         player_order_move(&s->body[i], p);
         s->body[i].group = group;
-        // Метку цели показывает только первый
-        if (k) s->body[i].marker = 0.0f;
         k++;
     }
+    // Метка там, куда щёлкнули, а не на месте первого в строю
+    s->order_pos = target;
+    s->order_marker = 1.2f;
 }
 
 void squad_set_gait(Squad *s, Gait g)
@@ -132,6 +133,7 @@ f32 squad_member_speed(const Squad *s, u32 i, Gait g)
 
 void squad_update(Squad *s, f32 dt, GroundFn ground)
 {
+    s->order_marker = fmaxf(0.0f, s->order_marker - dt);
     for (u32 i = 0; i < s->count; i++) s->body[i].vmax = squad_member_speed(s, i, (Gait)s->body[i].gait);
     // Строй: все идущие по одному приказу держат темп самого медленного из них
     if (s->formation) {
