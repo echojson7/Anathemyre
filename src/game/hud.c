@@ -210,11 +210,12 @@ bool hud_arena_pos(const ArenaView *v, const ArenaSession *s, u32 roster, V3 *ou
     return true;
 }
 
-// Кто под курсором: свои и бойцы на ринге
+// Кто под курсором: свои, бойцы на ринге, чужие на поле
 static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 *head)
 {
     f32 best = 1e9f;
-    u32 total = w->squad->count + ARENA_MAX_BOUT;
+    const Field *fd = w->field;
+    u32 total = w->squad->count + ARENA_MAX_BOUT + fd->w.count;
     for (u32 k = 0; k < total; k++) {
         V3 pos;
         f32 tall = 1.75f;
@@ -222,6 +223,15 @@ static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 
         u32 idx = k;
         if (k < w->squad->count) {
             pos = w->squad->body[k].pos;
+            u32 s = (u32)w->squad->body[k].slot;
+            if (field_awake(fd, s) && fs_lying(fd->w.state[s])) tall = 0.4f;
+        } else if (k >= w->squad->count + ARENA_MAX_BOUT) {
+            u32 s = k - w->squad->count - ARENA_MAX_BOUT;
+            if (fd->flags[s] & FF_PLAYER) continue;
+            kd = LOOK_FIELD;
+            idx = s;
+            pos = fd->body[s]->pos;
+            if (field_awake(fd, s) && fs_lying(fd->w.state[s])) tall = 0.4f;
         } else {
             u32 i = k - w->squad->count;
             if (!w->aview->in_bout || i >= w->arena->n) continue;
@@ -247,11 +257,20 @@ static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 
     return best < 1e9f;
 }
 
-// Режим передвижения видно и когда стоит: «БЕГ» — побежит по приказу
-static const char *move_state(const Player *p)
+// Режим передвижения видно и когда стоит: «БЕГ» — побежит по приказу.
+// В бою — состояние боя, в погоне — к цели
+static const char *move_state(const Field *f, const Player *p)
 {
     static const char *go[GAIT_COUNT] = { "ИДЁТ ШАГОМ", "ТРУСИТ", "БЕЖИТ" };
+    if (p->slot >= 0 && field_awake(f, (u32)p->slot)) return g_state_name[f->w.state[p->slot]];
+    if (p->ctrl == CTRL_CHASE) return "К ЦЕЛИ";
     return p->moving ? go[p->gait] : "СТОИТ";
+}
+
+// Враждует ли чужой слот с отрядом
+static bool foe_of_squad(const HudWorld *w, u32 slot)
+{
+    return w->squad->count && w->squad->body[0].slot >= 0 && field_hostile(w->field, (u32)w->squad->body[0].slot, slot);
 }
 
 static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
@@ -263,7 +282,8 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
         o->name = c->name;
         o->role = "ОТРЯД";
         o->body = &w->squad->body[look];
-        o->state = move_state(o->body);
+        o->state = move_state(w->field, o->body);
+        if (o->body->slot >= 0 && field_awake(w->field, (u32)o->body->slot)) o->bleed = w->field->w.bleed[o->body->slot];
         memcpy(o->hp, c->d.hp, sizeof o->hp);
         o->blood = c->d.blood;
         o->blood_max = 100.0f * c->d.mass / 75.0f;
@@ -274,6 +294,26 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
         o->skill = c->d.skill;
         memcpy(o->equip, c->equip, sizeof o->equip);
         o->sheet = c;
+        return true;
+    }
+    if (kind == LOOK_FIELD) {
+        // Чужой на поле: лист читается, но не меняется
+        const Field *fd = w->field;
+        if (look >= fd->w.count) return false;
+        const CharSheet *c = fd->sheet[look];
+        o->name = c->name;
+        o->role = foe_of_squad(w, look) ? "ВРАГ" : "ПРОХОЖИЙ";
+        o->state = move_state(fd, fd->body[look]);
+        if (field_awake(fd, look)) o->bleed = fd->w.bleed[look];
+        memcpy(o->hp, c->d.hp, sizeof o->hp);
+        o->blood = c->d.blood;
+        o->blood_max = 100.0f * c->d.mass / 75.0f;
+        o->height = c->d.height;
+        o->mass = c->d.mass;
+        o->fracture = c->d.fracture;
+        o->severed = c->d.severed;
+        o->skill = c->d.skill;
+        memcpy(o->equip, c->equip, sizeof o->equip);
         return true;
     }
     if (kind != LOOK_ARENA || look >= ARENA_ROSTER) return false;
@@ -334,6 +374,13 @@ void hud_look(Hud *h, u8 kind, u32 index)
 }
 
 bool hud_window_open(const Hud *h) { return h->win_inv || h->win_char; }
+
+bool hud_pick(const Hud *h, const Input *in, const HudWorld *w, u8 *kind, u32 *index)
+{
+    Layout L = layout(h, in);
+    V3 head;
+    return L.my < L.bottom_top && pick_at(w, L.mx, L.my, kind, index, &head);
+}
 
 
 // Вещь с курсора обратно в мешок; некуда — false, окно не закрывается
@@ -567,7 +614,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
                 if (sq->selected[idx]) look_at(h, sq, LOOK_SQUAD, idx);
             } else {
                 // Чужого можно только осмотреть
-                look_at(h, sq, LOOK_ARENA, idx);
+                look_at(h, sq, kind, idx);
             }
         }
     }
@@ -881,7 +928,14 @@ static void draw_card(const Hud *h, const HudWorld *w, const Layout *L, u32 i)
         ui_rect(x + CARD_W - 7 - (f32)g * 4, y + 5, 3, 5, pl->moving ? C_ACCENT : C_FAINT);
     portrait(x + 4, y + 13, HUD_PORTRAIT_CARD_PX, i, HUD_PORTRAIT_CARD_PX);
     text_fit(x + 4, y + 71, CARD_W - 8, sq->selected[i] ? C_SEL : C_TEXT, c->name);
-    text_fit(x + 4, y + 80, CARD_W - 8, C_DIM, pl->moving ? (pl->gait == GAIT_RUN ? "БЕЖИТ" : "ИДЁТ") : "СТОИТ");
+    // В бою — что делает в бою; выбыл — красным
+    const Field *fd = w->field;
+    if (pl->slot >= 0 && field_awake(fd, (u32)pl->slot)) {
+        u8 st = fd->w.state[pl->slot];
+        text_fit(x + 4, y + 80, CARD_W - 8, fs_out(st) ? C_BAD : C_ACCENT, fs_out(st) ? g_state_name[st] : "В БОЮ");
+    } else {
+        text_fit(x + 4, y + 80, CARD_W - 8, C_DIM, pl->ctrl == CTRL_CHASE ? "К ЦЕЛИ" : (pl->moving ? (pl->gait == GAIT_RUN ? "БЕЖИТ" : "ИДЁТ") : "СТОИТ"));
+    }
     f32 r = vital_ratio(c->d.hp);
     bar(x + 4, y + 91, CARD_W - 8, 3, r, health_color(r));
     bar(x + 4, y + 96, CARD_W - 8, 2, c->d.blood / (100.0f * c->d.mass / 75.0f), C_BLOOD);
@@ -1074,8 +1128,11 @@ void hud_draw(const Hud *h, const Input *in, const HudWorld *w)
             f32 tw = ui_text_width(d.name);
             f32 x = floorf(sx - tw * 0.5f), y = floorf(sy - 10);
             ui_rect(x - 4, y - 3, tw + 8, 13, UI_RGBA(10, 10, 9, 200));
-            brackets(x - 4, y - 3, tw + 8, 13, 3, kind == LOOK_SQUAD ? C_SEL : C_BRACKET);
-            ui_text(x, y, kind == LOOK_SQUAD ? C_SEL : C_TEXT, d.name);
+            // Свои — бледно-зелёные, враги на поле — красные
+            bool foe = kind == LOOK_FIELD && foe_of_squad(w, idx);
+            u32 edge = kind == LOOK_SQUAD ? C_SEL : (foe ? C_BAD : C_BRACKET);
+            brackets(x - 4, y - 3, tw + 8, 13, 3, edge);
+            ui_text(x, y, kind == LOOK_SQUAD ? C_SEL : (foe ? C_BAD : C_TEXT), d.name);
         }
     }
 

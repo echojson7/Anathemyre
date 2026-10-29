@@ -1,6 +1,7 @@
 #include "testroom.h"
 
 #include "character.h"
+#include "squad.h"
 
 // Цвета поверхностей (альбедо, линейные)
 #define C_CONCRETE v3(0.42f, 0.40f, 0.37f)
@@ -243,10 +244,20 @@ static void pick_target(Crowd *c, Rng *rng, u32 i)
     c->body[i].marker = 0.0f;
 }
 
+static const char *g_crowd_names[TR_MAX_CHARS] = {
+    "ЧУРИЛА", "ВЕЛИМИР", "ФЕОДУЛ", "ГОСТЯТА", "КАЛЛИСТ", "ТУЛЛ", "НЕЖДАН", "ПРОКЛ",
+    "МАМЕРК", "ДОМАСЛАВ", "ЕВТИХ", "СЕВЕР", "ИЗЯСЛАВ", "ПАНКРАТ", "РУФ", "ВЫШЕСЛАВ",
+};
+
 void crowd_init(Crowd *c, Rng *rng, u32 count)
 {
     c->count = MIN(count, TR_MAX_CHARS);
     for (u32 i = 0; i < c->count; i++) {
+        // Большинство новички с ломом в руках, изредка бывалый
+        // Свой поток случайных чисел: расстановка фигур та же, что без листов
+        Rng sr;
+        rng_seed(&sr, 0xC0DEu + i, 91);
+        sheet_random(&c->sheet[i], &sr, g_crowd_names[i], i % 4 == 1 ? 1 : 0, (u8)(i % W_COUNT));
         f32 x = rng_range(rng, -8.0f, 8.0f), z = rng_range(rng, -12.0f, 14.0f);
         player_init(&c->body[i], v3(x, testroom_ground(x, z), z), rng_range(rng, 0, 2 * PI_F));
         c->body[i].phase = rng_f32(rng);
@@ -270,6 +281,12 @@ void crowd_update(Crowd *c, Rng *rng, f32 dt)
 {
     for (u32 i = 0; i < c->count; i++) {
         Player *p = &c->body[i];
+        if (p->ctrl != CTRL_FREE) {
+            // Бой или погоня: поле боя ведёт тело, после — постоит и пойдёт дальше
+            c->wait[i] = rng_range(rng, 3.0f, 8.0f);
+            player_update(p, dt, testroom_ground);
+            continue;
+        }
         bool was = p->moving;
         if (!c->stationary[i] && !p->moving && (c->wait[i] -= dt) <= 0.0f) pick_target(c, rng, i);
         p->vmax = 1.15f;

@@ -128,8 +128,8 @@ static void wake(Field *f, u32 i)
         w->order[i] = -1;
         f->soft[i] = 0;
     }
-    // Шёл по приказу игрока — уйдёт из боя, как только сможет
-    f->leave[i] = (f->flags[i] & FF_PLAYER) && p->moving && p->ctrl == CTRL_FREE;
+    // Догнали — дерётся, приказ идти пропал; уйти можно новым приказом
+    f->leave[i] = 0;
     f->px[i] = w->x[i];
     f->pz[i] = w->z[i];
     f->ph[i] = w->heading[i];
