@@ -77,8 +77,15 @@ typedef struct CharAction {
     u8   severed;    // маска BodyPart: отсечённые конечности
 } CharAction;
 
-// Длина полного цикла шага (два шага), м: темп растёт со скоростью, шаг удлиняется
-static inline f32 char_cadence(f32 v) { return 0.9f + 0.12f * v; }
+// Циклов шага (по два шага) в секунду. Шагом темп растёт быстро (0.8 м/с — 92 шага в минуту,
+// 1.6 — 118), бегом почти стоит, растёт длина шага (3.2 — 161, 4.8 — 172). Между 1.9 и 2.8 — переход
+static inline f32 char_cadence(f32 v)
+{
+    f32 t = clampf((v - 1.9f) / 0.9f, 0.0f, 1.0f);
+    t = t * t * (3.0f - 2.0f * t);
+    return (0.533f + 0.283f * v) * (1.0f - t) + (1.167f + 0.056f * v) * t;
+}
+// Длина полного цикла шага (два шага), м
 static inline f32 char_stride(f32 v) { return fmaxf(v, 0.5f) / char_cadence(fmaxf(v, 0.5f)); }
 // Походка под скорость, м/с: до 1.6 шаг, к 4.8 полный бег
 static inline f32 char_run_from_speed(f32 v) { return clampf((v - 1.6f) / 3.2f, 0.0f, 1.0f); }
