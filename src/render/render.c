@@ -15,7 +15,7 @@ enum {
     U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
-    U_S_TIME = 40, U_S_FILTER = 41, U_S_FRAME = 42, U_D_DT = 45, U_D_LEVEL = 46,
+    U_S_POST = 41, U_S_FRAME = 42,
     U_BONES = 50,  // занимает 50..50+RENDER_MAX_BONES-1
 };
 
@@ -31,16 +31,10 @@ typedef struct Target {
 static struct {
     Arena *scratch;
     char   data_dir[512];
-    u32    prog_scene, prog_shadow, prog_atmos, prog_style, prog_lum, prog_adapt;
+    u32    prog_scene, prog_shadow, prog_atmos, prog_style;
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
     Target scene, atmos, ldr;
-    // Уменьшенный кадр с мипами (средняя яркость, размытие) и привыкшая яркость, 1×1 туда-обратно
-    u32    lum_fbo, lum_tex;
-    i32    lum_w, lum_h, lum_levels;
-    u32    ev_fbo[2], ev_tex[2], ev_cur;
-    bool   ev_reset;
-    f32    last_time;
     u32    timer[TIMER_FRAMES][TIMER_MARKS];
     bool   timer_pending[TIMER_FRAMES];
     u32    timer_slot;
@@ -130,19 +124,16 @@ bool render_reload_shaders(void)
     const char *full_vs[] = { "fullscreen.vert" };
     const char *atmos_fs[] = { "common.glsl", "atmos.frag" };
     const char *style_fs[] = { "common.glsl", "style.frag" };
-    const char *lum_fs[] = { "lum.frag" };
 
     u32 scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, scene_fs, 2));
     u32 shadow = link(compile(GL_VERTEX_SHADER, "#define SHADOW_PASS\n", scene_vs, 1),
                       compile(GL_FRAGMENT_SHADER, NULL, shadow_fs, 1));
     u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 2));
     u32 style = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, style_fs, 2));
-    u32 lum = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, lum_fs, 1));
-    u32 adapt = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, "#define ADAPT\n", lum_fs, 1));
     R.scratch->used = mark;
 
-    u32 progs[] = { scene, shadow, atmos, style, lum, adapt };
-    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_atmos, &R.prog_style, &R.prog_lum, &R.prog_adapt };
+    u32 progs[] = { scene, shadow, atmos, style };
+    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_atmos, &R.prog_style };
     bool ok = true;
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) {
@@ -230,33 +221,7 @@ bool render_init(Arena *scratch, const char *data_dir)
         log_error("FBO: теневая карта неполна");
         return false;
     }
-    for (u32 i = 0; i < 2; i++) {
-        R.ev_tex[i] = make_tex(GL_R32F, 1, 1, GL_NEAREST);
-        glCreateFramebuffers(1, &R.ev_fbo[i]);
-        glNamedFramebufferTexture(R.ev_fbo[i], GL_COLOR_ATTACHMENT0, R.ev_tex[i], 0);
-    }
-    R.ev_reset = true;
     return true;
-}
-
-// Уменьшенный вдвое кадр с полной цепочкой мипов
-static void lum_make(i32 w, i32 h)
-{
-    if (R.lum_fbo) glDeleteFramebuffers(1, &R.lum_fbo);
-    if (R.lum_tex) glDeleteTextures(1, &R.lum_tex);
-    R.lum_w = MAX(w / 2, 1);
-    R.lum_h = MAX(h / 2, 1);
-    R.lum_levels = 1;
-    while ((R.lum_w | R.lum_h) >> R.lum_levels) R.lum_levels++;
-    glCreateTextures(GL_TEXTURE_2D, 1, &R.lum_tex);
-    glTextureStorage2D(R.lum_tex, R.lum_levels, GL_RGBA16F, R.lum_w, R.lum_h);
-    glTextureParameteri(R.lum_tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTextureParameteri(R.lum_tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTextureParameteri(R.lum_tex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTextureParameteri(R.lum_tex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glCreateFramebuffers(1, &R.lum_fbo);
-    glNamedFramebufferTexture(R.lum_fbo, GL_COLOR_ATTACHMENT0, R.lum_tex, 0);
-    R.ev_reset = true;
 }
 
 void render_shutdown(void)
@@ -264,16 +229,12 @@ void render_shutdown(void)
     target_free(&R.scene);
     target_free(&R.atmos);
     target_free(&R.ldr);
-    if (R.lum_fbo) glDeleteFramebuffers(1, &R.lum_fbo);
-    if (R.lum_tex) glDeleteTextures(1, &R.lum_tex);
-    glDeleteFramebuffers(2, R.ev_fbo);
-    glDeleteTextures(2, R.ev_tex);
     if (R.shadow_fbo) glDeleteFramebuffers(1, &R.shadow_fbo);
     if (R.shadow_tex) glDeleteTextures(1, &R.shadow_tex);
     if (R.empty_vao) glDeleteVertexArrays(1, &R.empty_vao);
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
-    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_atmos, R.prog_style, R.prog_lum, R.prog_adapt };
+    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_atmos, R.prog_style };
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
         if (progs[i]) glDeleteProgram(progs[i]);
     memset(&R, 0, sizeof R);
@@ -374,7 +335,6 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         target_make(&R.scene, iw, ih, GL_RGBA16F, true);
         target_make(&R.atmos, iw, ih, GL_RGBA16F, false);
         target_make(&R.ldr, iw, ih, GL_RGBA8, false);
-        lum_make(iw, ih);
         log_info("РЕНДЕР: внутреннее разрешение %dx%d -> окно %dx%d", iw, ih, win_w, win_h);
     }
 
@@ -444,36 +404,12 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (timing) mark(3);
 
-    // 4. Яркость кадра и привыкание глаза, затем фильтр
-    glBindFramebuffer(GL_FRAMEBUFFER, R.lum_fbo);
-    glViewport(0, 0, R.lum_w, R.lum_h);
-    glUseProgram(R.prog_lum);
-    glBindTextureUnit(0, R.atmos.color);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glGenerateTextureMipmap(R.lum_tex);
-
-    u32 ev_next = R.ev_cur ^ 1;
-    glBindFramebuffer(GL_FRAMEBUFFER, R.ev_fbo[ev_next]);
-    glViewport(0, 0, 1, 1);
-    glUseProgram(R.prog_adapt);
-    glUniform1f(U_D_DT, R.ev_reset ? -1.0f : CLAMP(fv->time - R.last_time, 0.0f, 0.25f));
-    glUniform1f(U_D_LEVEL, (f32)(R.lum_levels - 1));
-    glBindTextureUnit(0, R.lum_tex);
-    glBindTextureUnit(1, R.ev_tex[R.ev_cur]);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    R.ev_cur = ev_next;
-    R.ev_reset = false;
-    R.last_time = fv->time;
-
+    // 4. Фильтр: виньетка, зерно, сканлайны, аберрация
     glBindFramebuffer(GL_FRAMEBUFFER, R.ldr.fbo);
-    glViewport(0, 0, iw, ih);
     glUseProgram(R.prog_style);
-    glUniform1i(U_S_FILTER, (GLint)rs->filter);
-    glUniform1f(U_S_TIME, fv->time);
+    glUniform1i(U_S_POST, rs->post ? 1 : 0);
     glUniform1i(U_S_FRAME, (GLint)fv->frame);
     glBindTextureUnit(0, R.atmos.color);
-    glBindTextureUnit(1, R.lum_tex);
-    glBindTextureUnit(2, R.ev_tex[R.ev_cur]);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (timing) mark(4);
 

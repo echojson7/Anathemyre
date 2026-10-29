@@ -52,7 +52,6 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_VERSION 0x1F02
 #define GL_NEAREST 0x2600
 #define GL_LINEAR 0x2601
-#define GL_LINEAR_MIPMAP_LINEAR 0x2703
 #define GL_TEXTURE_MAG_FILTER 0x2800
 #define GL_TEXTURE_MIN_FILTER 0x2801
 #define GL_TEXTURE_WRAP_S 0x2802
@@ -68,7 +67,6 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_TEXTURE_COMPARE_FUNC 0x884D
 #define GL_COMPARE_REF_TO_TEXTURE 0x884E
 #define GL_RGBA16F 0x881A
-#define GL_R32F 0x822E
 #define GL_ARRAY_BUFFER 0x8892
 #define GL_ELEMENT_ARRAY_BUFFER 0x8893
 #define GL_FRAGMENT_SHADER 0x8B30
@@ -124,7 +122,6 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, TextureParameteri, (GLuint texture, GLenum pname, GLint param)) \
     X(void, TextureParameterfv, (GLuint texture, GLenum pname, const GLfloat *param)) \
     X(void, BindTextureUnit, (GLuint unit, GLuint texture)) \
-    X(void, GenerateTextureMipmap, (GLuint texture)) \
     X(void, CreateFramebuffers, (GLsizei n, GLuint *framebuffers)) \
     X(void, DeleteFramebuffers, (GLsizei n, const GLuint *framebuffers)) \
     X(void, NamedFramebufferTexture, (GLuint fb, GLenum attachment, GLuint texture, GLint level)) \
