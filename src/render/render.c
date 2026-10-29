@@ -96,6 +96,11 @@ static struct {
     bool   timer_pending[TIMER_FRAMES];
     u32    timer_slot;
     bool   timing;    // текущий кадр пишет метки времени
+    u64    timer_frame[TIMER_FRAMES]; // номер кадра в слоте
+    u64    frame_no;
+    u64    last_frame, last_end;      // последний прочитанный кадр и его конец на GPU
+    f64    stat_gap;
+    u32    stat_gaps;
     f64    stat_ms[PASS_COUNT];
     u32    stat_samples;
     u32    bone_buf[STREAM_FRAMES], inst_buf[STREAM_FRAMES];
@@ -565,6 +570,13 @@ static void timer_collect(u32 slot)
     for (u32 i = 0; i < TIMER_MARKS; i++) glGetQueryObjectui64v(R.timer[slot][i], GL_QUERY_RESULT, &t[i]);
     for (u32 p = 0; p < PASS_COUNT; p++) R.stat_ms[p] += (f64)(t[p + 1] - t[p]) * 1e-6;
     R.stat_samples++;
+    // Между концом прошлого кадра и началом этого: простой GPU или работа вне проходов
+    if (R.last_end && R.timer_frame[slot] == R.last_frame + 1 && t[0] > R.last_end) {
+        R.stat_gap += (f64)(t[0] - R.last_end) * 1e-6;
+        R.stat_gaps++;
+    }
+    R.last_frame = R.timer_frame[slot];
+    R.last_end = t[TIMER_MARKS - 1];
     R.timer_pending[slot] = false;
 }
 
@@ -583,8 +595,11 @@ void render_take_stats(RenderStats *out)
             out->gpu_total_ms += out->gpu_ms[p];
         }
     }
+    out->gap_ms = R.stat_gaps ? R.stat_gap / R.stat_gaps : -1.0;
     memset(R.stat_ms, 0, sizeof R.stat_ms);
     R.stat_samples = 0;
+    R.stat_gap = 0.0;
+    R.stat_gaps = 0;
     f64 k = R.stat_frames ? 1.0 / R.stat_frames : 0.0;
     for (u32 p = 0; p < 2; p++) {
         out->draws[p] = R.stat_draws[p] * k;
@@ -1283,13 +1298,16 @@ void render_frame_end(void)
     if (R.timing) {
         mark(7);
         R.timer_pending[R.timer_slot] = true;
+        R.timer_frame[R.timer_slot] = R.frame_no;
         R.timing = false;
     }
+    R.frame_no++;
     R.timer_slot = (R.timer_slot + 1) % TIMER_FRAMES;
     // Кадр уходит на GPU сразу: при swap после логики GPU рисует, пока CPU считает следующий
     glFlush();
     // Старые кадры, до которых очередь дойдёт не скоро, забираем сразу
-    for (u32 i = 0; i < TIMER_FRAMES; i++) timer_collect(i);
+    // по порядку от самого старого, чтобы соседние кадры шли подряд
+    for (u32 i = 0; i < TIMER_FRAMES; i++) timer_collect((R.timer_slot + i) % TIMER_FRAMES);
 }
 
 void render_read_pixels(u8 *rgb, i32 w, i32 h)

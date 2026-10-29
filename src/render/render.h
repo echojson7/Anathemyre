@@ -107,6 +107,7 @@ enum { PASS_SHADOW, PASS_DEPTH, PASS_SCENE, PASS_ATMOS, PASS_STYLE, PASS_BLIT, P
 typedef struct RenderStats {
     f64 gpu_ms[PASS_COUNT];
     f64 gpu_total_ms;
+    f64 gap_ms;         // GPU между соседними кадрами: простой или работа вне проходов (-1 — не замерено)
     u32 samples;
     // Среднее за кадр: вызовы отрисовки и треугольники в проходах теней и сцены, видимые элементы
     f64 draws[2], tris[2], visible[2];
