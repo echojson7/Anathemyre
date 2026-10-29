@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "arena.h"
-#include "character.h"
+#include "anim.h"
 
 // Цвета поверхностей (альбедо, линейные)
 #define C_CONCRETE v3(0.42f, 0.40f, 0.37f)
