@@ -2,6 +2,11 @@
 
 #include "../core/log.h"
 
+#include <stdio.h>
+#include <string.h>
+
+_Static_assert(sizeof(Vertex) == 32, "формат .mesh рассчитан на вершину в 32 байта");
+
 bool mb_init(MeshBuilder *mb, Arena *arena, u32 vcap, u32 icap)
 {
     mb->v = ARENA_PUSH_ARRAY(arena, Vertex, vcap);
@@ -14,6 +19,33 @@ bool mb_init(MeshBuilder *mb, Arena *arena, u32 vcap, u32 icap)
     mb->mat = MAT_CONCRETE;
     mb->bone = BONE_NONE;
     return mb->v && mb->idx;
+}
+
+bool mb_load(MeshBuilder *mb, Arena *arena, const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        log_error("СЕТКА: нет файла %s", path);
+        return false;
+    }
+    char magic[4];
+    u32 head[3];
+    bool ok = fread(magic, 4, 1, f) == 1 && fread(head, sizeof head, 1, f) == 1 && !memcmp(magic, "AMSH", 4) && head[0] == 1 &&
+              mb_init(mb, arena, head[1], head[2]) &&
+              fread(mb->v, sizeof(Vertex), head[1], f) == head[1] && fread(mb->idx, sizeof(u32), head[2], f) == head[2];
+    fclose(f);
+    if (!ok) {
+        log_error("СЕТКА: файл %s повреждён", path);
+        return false;
+    }
+    mb->vcount = head[1];
+    mb->icount = head[2];
+    for (u32 i = 0; i < mb->icount; i++)
+        if (mb->idx[i] >= mb->vcount) {
+            log_error("СЕТКА: индекс вне сетки в %s", path);
+            return false;
+        }
+    return true;
 }
 
 void mb_set(MeshBuilder *mb, V3 color, Material mat, u8 bone)
