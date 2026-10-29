@@ -26,7 +26,7 @@ static f32 angle_from(const CombatWorld *w, u32 i, u32 j)
 // Можно ли бить этого бойца: выбывших (без сознания, сдавшихся) при милосердии не трогают
 static bool valid_target(const CombatWorld *w, u32 i, u32 j)
 {
-    if (j == i || w->team[j] == w->team[i]) return false;
+    if (j == i || !combat_hostile(w, i, j) || w->idle[j]) return false;
     u8 s = w->state[j];
     if (s == FS_DEAD) return false;
     if (w->mercy && fs_out(s)) return false;
@@ -50,7 +50,7 @@ static i32 pick_target(const CombatWorld *w, u32 i)
 {
     u32 near[COMBAT_NEAR_MAX];
     // Метки сетки, среди которых может быть цель
-    u32 want = TAGS_FIGHTING & ~TEAM_BIT(w->team[i]);
+    u32 want = combat_foe_tags(w, w->team[i]);
     if (!w->mercy) want |= TAG_BIT(TAG_OUT);
     // Текущая цель считается сразу: только ей положена прибавка «не метаться»
     i32 cur = w->target[i], best = -1;
@@ -93,7 +93,7 @@ static void count_arc(const CombatWorld *w, u32 i, u8 kind, u32 *enemies, u32 *a
         u32 j = near[q];
         if (j == i || w->state[j] == FS_DEAD || fs_lying(w->state[j])) continue;
         if (dist2(w, i, j) > reach * reach || fabsf(angle_from(w, i, j)) > half) continue;
-        if (w->team[j] == w->team[i]) (*allies)++;
+        if (!combat_hostile(w, i, j)) (*allies)++;
         else if (!fs_out(w->state[j])) (*enemies)++;
     }
 }
@@ -125,7 +125,7 @@ static void march_to_enemy(const FighterAI *ai, CombatWorld *w, u32 i)
 {
     f32 best = 1e30f, dx = 0.0f, dz = 0.0f;
     for (u32 t = 0; t < COMBAT_MAX_TEAMS; t++) {
-        if (t == w->team[i] || !ai->cn[t]) continue;
+        if (!((w->foe[w->team[i]] >> t) & 1u) || !ai->cn[t]) continue;
         f32 ex = ai->cx[t] - w->x[i], ez = ai->cz[t] - w->z[i];
         f32 d2 = ex * ex + ez * ez;
         if (d2 < best) {
@@ -147,7 +147,7 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
     ai->act[i] = 0;
     ai->target[i] = w->target[i];
     w->mvx[i] = w->mvz[i] = 0.0f;
-    if (fs_out(s) || fs_lying(s)) return;
+    if (w->idle[i] || fs_out(s) || fs_lying(s)) return;
 
     // Численный перевес врага рядом подтачивает мораль
     u32 en = 0, al = 1;
@@ -157,11 +157,13 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
         u32 j = near[q];
         if (j == i || fs_out(w->state[j]) || dist2(w, i, j) > 64.0f) continue;
         if (w->team[j] == w->team[i]) al++;
-        else en++;
+        else if (combat_hostile(w, i, j)) en++;
     }
     if (en > al + 1) w->morale[i] -= 0.1f * (f32)(en - al);
 
-    i32 t = pick_target(w, i);
+    // По приказу бьёт только указанного, пока тот в бою; иначе выбирает сам
+    i32 o = w->order[i];
+    i32 t = o >= 0 && valid_target(w, i, (u32)o) ? o : pick_target(w, i);
     ai->target[i] = t;
     if (t < 0) {
         if (s == FS_RETREAT) ai->act[i] = ACT_RALLY;
@@ -223,7 +225,7 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
     if (w->state[tt] == FS_WINDUP && w->target[tt] == (i32)i) return;
 
     u8 kind = choose_attack(w, i, tt);
-    if (w->pause[i] <= 0.0f && d <= combat_reach(w, i, kind) &&
+    if (!w->disarmed[i] && w->pause[i] <= 0.0f && d <= combat_reach(w, i, kind) &&
         fabsf(angle_from(w, i, tt)) < 25.0f * (PI_F / 180.0f)) {
         ai->act[i] |= ACT_ATTACK;
         ai->kind[i] = kind;
@@ -234,6 +236,7 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
 // поэтому каждое намерение перепроверяется по тому, что сделали бойцы с меньшим номером
 static void apply(FighterAI *ai, CombatWorld *w, u32 i)
 {
+    if (w->idle[i]) return;
     w->target[i] = ai->target[i];
     u8 act = ai->act[i], s = w->state[i];
     if (act & ACT_SURRENDER) {
@@ -291,7 +294,7 @@ void fighter_think_all(FighterAI *ai, CombatWorld *w)
     memset(ai->cn, 0, sizeof ai->cn);
     for (u32 i = 0; i < w->count; i++) {
         u8 t = w->team[i];
-        if (t >= COMBAT_MAX_TEAMS || fs_out(w->state[i])) continue;
+        if (t >= COMBAT_MAX_TEAMS || w->idle[i] || fs_out(w->state[i])) continue;
         ai->cx[t] += w->x[i];
         ai->cz[t] += w->z[i];
         ai->cn[t]++;
