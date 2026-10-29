@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../core/clock.h"
 #include "../core/log.h"
 #include "gl.h"
 
@@ -101,7 +102,7 @@ static struct {
     u32    light_buf[STREAM_FRAMES];
     u32    stream;
     u32    used_poses, used_insts;   // занято в буферах текущего кадра (кадр, затем портреты)
-    f64    stat_draws[2], stat_tris[2], stat_visible[2];
+    f64    stat_draws[2], stat_tris[2], stat_visible[2], stat_prep, stat_poses;
     bool   stat_vrs;
     u32    stat_frames, stat_items;
     bool   warned_items, warned_poses, warned_inst;
@@ -591,6 +592,9 @@ void render_take_stats(RenderStats *out)
         out->visible[p] = R.stat_visible[p] * k;
     }
     out->items = R.stat_items;
+    out->prep_ms = R.stat_prep * 1000.0 * k;
+    out->poses = R.stat_poses * k;
+    R.stat_prep = R.stat_poses = 0;
     out->vrs = R.stat_vrs;
     memset(R.stat_draws, 0, sizeof R.stat_draws);
     memset(R.stat_tris, 0, sizeof R.stat_tris);
@@ -634,31 +638,50 @@ static u32 sphere_test(const Frustum *f, V4 s)
     return res;
 }
 
+// Масштаб костей набора: наибольшая длина оси каждой матрицы. Одежда и оружие делят набор с телом,
+// поэтому он считается раз на набор, а не на каждый элемент (stream_poses сбрасывает перед кадром)
+static struct {
+    const M4 *bones;
+    f32       scale[RENDER_MAX_BONES];
+} g_bone_scale;
+
+static const f32 *bone_scales(const M4 *bones)
+{
+    if (g_bone_scale.bones != bones) {
+        g_bone_scale.bones = bones;
+        for (u32 b = 0; b < RENDER_MAX_BONES; b++) {
+            const M4 *x = &bones[b];
+            f32 sx = v3_len(v3(x->m[0], x->m[1], x->m[2]));
+            f32 sy = v3_len(v3(x->m[4], x->m[5], x->m[6]));
+            f32 sz = v3_len(v3(x->m[8], x->m[9], x->m[10]));
+            g_bone_scale.scale[b] = maxf(sx, maxf(sy, sz));
+        }
+    }
+    return g_bone_scale.scale;
+}
+
 // Мировая сфера элемента: у скелетной сетки — вокруг сфер её костей в текущей позе
 static V4 item_sphere(const DrawItem *it)
 {
     const GpuMesh *m = it->mesh;
     if (!it->bones) return m->bound;
+    const f32 *scale = bone_scales(it->bones);
     V4 bs[RENDER_MAX_BONES];
     u32 n = 0;
     V3 lo = v3(FLT_MAX, FLT_MAX, FLT_MAX), hi = v3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
-    for (u32 b = 0; b < RENDER_MAX_BONES; b++) {
-        if (!(m->bone_mask & (1u << b))) continue;
-        const M4 *x = &it->bones[b];
+    for (u32 mask = m->bone_mask; mask; mask &= mask - 1) {
+        u32 b = (u32)__builtin_ctz(mask);
         V4 l = m->bone_bound[b];
-        V3 c = m4_point(*x, v3(l.x, l.y, l.z));
-        f32 sx = v3_len(v3(x->m[0], x->m[1], x->m[2]));
-        f32 sy = v3_len(v3(x->m[4], x->m[5], x->m[6]));
-        f32 sz = v3_len(v3(x->m[8], x->m[9], x->m[10]));
-        f32 r = l.w * fmaxf(sx, fmaxf(sy, sz));
+        V3 c = m4_point(it->bones[b], v3(l.x, l.y, l.z));
+        f32 r = l.w * scale[b];
         bs[n++] = (V4){ c.x, c.y, c.z, r };
-        lo = v3(fminf(lo.x, c.x - r), fminf(lo.y, c.y - r), fminf(lo.z, c.z - r));
-        hi = v3(fmaxf(hi.x, c.x + r), fmaxf(hi.y, c.y + r), fmaxf(hi.z, c.z + r));
+        lo = v3(minf(lo.x, c.x - r), minf(lo.y, c.y - r), minf(lo.z, c.z - r));
+        hi = v3(maxf(hi.x, c.x + r), maxf(hi.y, c.y + r), maxf(hi.z, c.z + r));
     }
     if (!n) return (V4){ 0, 0, 0, 0 };
     V3 c = v3_mul(v3_add(lo, hi), 0.5f);
     f32 r = 0.0f;
-    for (u32 i = 0; i < n; i++) r = fmaxf(r, v3_len(v3_sub(v3(bs[i].x, bs[i].y, bs[i].z), c)) + bs[i].w);
+    for (u32 i = 0; i < n; i++) r = maxf(r, v3_len(v3_sub(v3(bs[i].x, bs[i].y, bs[i].z), c)) + bs[i].w);
     return (V4){ c.x, c.y, c.z, r };
 }
 
@@ -667,7 +690,7 @@ static const GpuMesh *pick_lod(const GpuMesh *m, V4 s, const PassView *pv)
 {
     f32 depth = v3_dot(v3_sub(v3(s.x, s.y, s.z), pv->eye), pv->fwd);
     bool ortho = pv->fwd.x == 0.0f && pv->fwd.y == 0.0f && pv->fwd.z == 0.0f;
-    f32 px = 2.0f * s.w * pv->px_k / (ortho ? 1.0f : fmaxf(depth, s.w));
+    f32 px = 2.0f * s.w * pv->px_k / (ortho ? 1.0f : maxf(depth, s.w));
     while (!pv->full && m->lod_next && px < m->lod_px) m = m->lod_next;
     return m;
 }
@@ -679,18 +702,70 @@ static int inst_cmp(const void *pa, const void *pb)
     return a->pose < b->pose ? -1 : (a->pose > b->pose);
 }
 
-// Видимые экземпляры прохода, сгруппированные по сетке
+// Видимые экземпляры прохода, сгруппированные по сетке: сетки по возрастанию адреса, внутри сетки —
+// по возрастанию набора костей, статика последней (тот же порядок, что сортировка по паре).
+// Корзины по сеткам за линейное время: элементы и так идут по возрастанию набора
+#define SORT_HASH 512   // степень двойки, больше разных сеток в проходе
+#define SORT_MESHES 256
+
+static inline u32 mesh_hash(const GpuMesh *m) { return (u32)(((uintptr_t)m >> 4) * 2654435761u) & (SORT_HASH - 1); }
+
 static u32 gather(const DrawItem *items, u32 count, const PassView *pv, bool shadow, Inst *out)
 {
-    u32 n = 0;
+    static Inst vis[RENDER_MAX_ITEMS];
+    static u16 vis_b[RENDER_MAX_ITEMS];
+    static const GpuMesh *slot_mesh[SORT_HASH];
+    static u16 slot_b[SORT_HASH];
+    const GpuMesh *bm[SORT_MESHES];
+    u32 bslot[SORT_MESHES], bcount[SORT_MESHES], border[SORT_MESHES], boff[SORT_MESHES];
+    u32 nb = 0, n = 0;
+    bool overflow = false;
     for (u32 i = 0; i < count; i++) {
         const DrawItem *it = &items[i];
         if (shadow && it->no_shadow) continue;
         if (it->bones && g_pose[i] == NO_POSE) continue;
         if (!sphere_visible(&pv->fr, g_sphere[i])) continue;
-        out[n++] = (Inst){ pick_lod(it->mesh, g_sphere[i], pv), it->bones ? g_pose[i] : NO_POSE };
+        const GpuMesh *m = pick_lod(it->mesh, g_sphere[i], pv);
+        vis[n] = (Inst){ m, it->bones ? g_pose[i] : NO_POSE };
+        if (!overflow) {
+            u32 h = mesh_hash(m);
+            while (slot_mesh[h] && slot_mesh[h] != m) h = (h + 1) & (SORT_HASH - 1);
+            if (!slot_mesh[h]) {
+                if (nb == SORT_MESHES) overflow = true;
+                else {
+                    slot_mesh[h] = m;
+                    slot_b[h] = (u16)nb;
+                    bm[nb] = m;
+                    bslot[nb] = h;
+                    bcount[nb++] = 0;
+                }
+            }
+            if (!overflow) {
+                vis_b[n] = slot_b[h];
+                bcount[slot_b[h]]++;
+            }
+        }
+        n++;
     }
-    qsort(out, n, sizeof *out, inst_cmp);
+    for (u32 b = 0; b < nb; b++) slot_mesh[bslot[b]] = NULL;
+    if (overflow) {
+        memcpy(out, vis, sizeof *vis * n);
+        qsort(out, n, sizeof *out, inst_cmp);
+        return n;
+    }
+    // Корзины по адресу сетки (вставками: их десятки), затем раскладка с сохранением порядка
+    for (u32 b = 0; b < nb; b++) {
+        u32 j = b;
+        for (; j > 0 && (uintptr_t)bm[border[j - 1]] > (uintptr_t)bm[b]; j--) border[j] = border[j - 1];
+        border[j] = b;
+    }
+    for (u32 k = 0, off = 0; k < nb; k++) {
+        boff[border[k]] = off;
+        off += bcount[border[k]];
+    }
+    for (u32 pass = 0; pass < 2; pass++)
+        for (u32 i = 0; i < n; i++)
+            if ((vis[i].pose == NO_POSE) == (pass == 1)) out[boff[vis_b[i]]++] = vis[i];
     return n;
 }
 
@@ -729,22 +804,33 @@ static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
 typedef struct Gather {
     const GpuMesh *mesh[MAX_INST_MESHES];
     u32 count[MAX_INST_MESHES];
-    u32 nb, nv, last;
+    u32 nb, nv;
+    // Поиск корзины по адресу сетки: открытая адресация, SORT_HASH ячеек; пустые — NULL
+    const GpuMesh *slot_mesh[SORT_HASH];
+    u16 slot_b[SORT_HASH];
 } Gather;
 
-static void gather_add(Gather *ga, const GpuMesh *m, u32 id)
+#define CHAIN_MAX 8  // уровней детализации у сетки, не больше
+
+// Корзина сетки: найти или завести; ~0u — корзин больше нет
+static u32 gather_bucket(Gather *ga, const GpuMesh *m)
 {
-    // Корзина обычно та же, что у предыдущего экземпляра
-    if (ga->last >= ga->nb || ga->mesh[ga->last] != m) {
-        for (ga->last = 0; ga->last < ga->nb && ga->mesh[ga->last] != m; ga->last++) {}
-        if (ga->last == ga->nb) {
-            if (ga->nb == MAX_INST_MESHES) return;
-            ga->mesh[ga->nb] = m;
-            ga->count[ga->nb++] = 0;
-        }
-    }
-    ga->count[ga->last]++;
-    g_vis_bucket[ga->nv] = (u16)ga->last;
+    u32 h = mesh_hash(m);
+    while (ga->slot_mesh[h] && ga->slot_mesh[h] != m) h = (h + 1) & (SORT_HASH - 1);
+    if (ga->slot_mesh[h]) return ga->slot_b[h];
+    if (ga->nb == MAX_INST_MESHES) return ~0u;
+    ga->slot_mesh[h] = m;
+    ga->slot_b[h] = (u16)ga->nb;
+    ga->mesh[ga->nb] = m;
+    ga->count[ga->nb] = 0;
+    return ga->nb++;
+}
+
+static inline void gather_add(Gather *ga, u32 b, u32 id)
+{
+    if (b == ~0u) return;
+    ga->count[b]++;
+    g_vis_bucket[ga->nv] = (u16)b;
     g_vis_id[ga->nv++] = id;
 }
 
@@ -773,21 +859,36 @@ static void gather_group(Gather *ga, const InstGroup *gr, const PassView *pv, bo
     gsph.w *= pv->inst_lod_k;
     const GpuMesh *lm = pick_lod(m, gsph, pv);
     if (gr->bulk) {
-        for (u32 i = 0; i < n; i++) gather_add(ga, lm, gr->first + i);
+        u32 b = gather_bucket(ga, lm);
+        for (u32 i = 0; i < n; i++) gather_add(ga, b, gr->first + i);
         return;
+    }
+    // Корзины уровней этой сетки ищутся раз на группу: соседние экземпляры часто разного уровня
+    const GpuMesh *chain[CHAIN_MAX];
+    u32 chain_b[CHAIN_MAX], nc = 0;
+    for (const GpuMesh *c = m; c && nc < CHAIN_MAX; c = c->lod_next) {
+        chain[nc] = c;
+        chain_b[nc++] = ~1u;  // ещё не искали
     }
     V4 lb = m->bound;
     f32 lxz = sqrtf(lb.x * lb.x + lb.z * lb.z);
     for (u32 i = 0; i < n; i++) {
         const RInst *r = &R.inst_cpu[gr->first + i];
-        f32 s = fmaxf(r->scale, r->hscale);
+        f32 s = maxf(r->scale, r->hscale);
         V4 sph = { r->pos[0], r->pos[1] + lb.y * r->hscale, r->pos[2], (lb.w + lxz) * s + fabsf(r->lean) * lb.y * r->hscale };
         if (!inside && !sphere_visible(&pv->fr, sph)) continue;
         if (m->lod_next) {
             sph.w *= pv->inst_lod_k;
             lm = pick_lod(m, sph, pv);
         }
-        gather_add(ga, lm, gr->first + i);
+        u32 c = 0;
+        while (c + 1 < nc && chain[c] != lm) c++;
+        if (chain[c] != lm) {
+            gather_add(ga, gather_bucket(ga, lm), gr->first + i);
+            continue;
+        }
+        if (chain_b[c] == ~1u) chain_b[c] = gather_bucket(ga, lm);
+        gather_add(ga, chain_b[c], gr->first + i);
     }
 }
 
@@ -796,13 +897,19 @@ static void gather_group(Gather *ga, const InstGroup *gr, const PassView *pv, bo
 static u32 gather_groups(const PassView *pv, bool shadow, InstDraw *draws)
 {
     static Gather ga;
-    ga.nb = ga.nv = ga.last = 0;
+    ga.nb = ga.nv = 0;
     for (u32 c = 0; c < R.cluster_count; c++) {
         const InstCluster *cl = &R.clusters[c];
         u32 vis = sphere_test(&pv->fr, cl->bound);
         if (!vis) continue;
         for (u32 g = cl->first; g < cl->first + cl->count; g++)
             if (!shadow || !R.groups[g].no_shadow) gather_group(&ga, &R.groups[g], pv, vis == 2);
+    }
+    // Таблица поиска пуста к следующему проходу
+    for (u32 b = 0; b < ga.nb; b++) {
+        u32 h = mesh_hash(ga.mesh[b]);
+        while (ga.slot_mesh[h] != ga.mesh[b]) h = (h + 1) & (SORT_HASH - 1);
+        ga.slot_mesh[h] = NULL;
     }
     // Раскладка по сеткам: смещения, затем номера в поток кадра
     u32 base = R.used_insts;
@@ -851,6 +958,7 @@ static void draw_groups(const InstDraw *draws, u32 n, u32 pass)
 static void stream_poses(const DrawItem *items, u32 count)
 {
     u32 first = R.used_poses, poses = first;
+    g_bone_scale.bones = NULL;
     for (u32 i = 0; i < count; i++) {
         g_sphere[i] = item_sphere(&items[i]);
         g_pose[i] = NO_POSE;
@@ -969,9 +1077,11 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         R.warned_items = true;
         count = RENDER_MAX_ITEMS;
     }
+    f64 t_prep = time_now();
     R.stream = (R.stream + 1) % STREAM_FRAMES;
     R.used_poses = R.used_insts = 0;
     stream_poses(items, count);
+    R.stat_poses += R.used_poses;
     // Экземпляры в тенях берут уровень детализации грубее: тень мельче деталей
     PassView shadow_view = { .fr = frustum_from(light_vp), .px_k = SHADOW_SIZE / (2.0f * SHADOW_EXTENT), .inst_lod_k = 0.3f };
     PassView scene_view = {
@@ -987,6 +1097,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     u32 base_scene = stream_insts(g_inst[1], &n_scene);
     u32 ng_shadow = gather_groups(&shadow_view, true, g_idraw[0]);
     u32 ng_scene = gather_groups(&scene_view, false, g_idraw[1]);
+    R.stat_prep += time_now() - t_prep;
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_BONES, R.bone_buf[R.stream]);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_INST, R.inst_buf[R.stream]);
     if (R.static_inst_buf) glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_STATIC_INST, R.static_inst_buf);
@@ -1175,6 +1286,8 @@ void render_frame_end(void)
         R.timing = false;
     }
     R.timer_slot = (R.timer_slot + 1) % TIMER_FRAMES;
+    // Кадр уходит на GPU сразу: при swap после логики GPU рисует, пока CPU считает следующий
+    glFlush();
     // Старые кадры, до которых очередь дойдёт не скоро, забираем сразу
     for (u32 i = 0; i < TIMER_FRAMES; i++) timer_collect(i);
 }

@@ -32,6 +32,9 @@ static inline V3 v3_norm(V3 a)
 static inline V3 v3_lerp(V3 a, V3 b, f32 t) { return v3_add(a, v3_mul(v3_sub(b, a), t)); }
 static inline f32 lerpf(f32 a, f32 b, f32 t) { return a + (b - a) * t; }
 static inline f32 clampf(f32 x, f32 lo, f32 hi) { return x < lo ? lo : (x > hi ? hi : x); }
+// fminf/fmaxf из libm не встраиваются (правила NaN) и в горячих циклах стоят вызова; эти — одна инструкция
+static inline f32 minf(f32 a, f32 b) { return a < b ? a : b; }
+static inline f32 maxf(f32 a, f32 b) { return a > b ? a : b; }
 
 static inline M4 m4_identity(void)
 {
