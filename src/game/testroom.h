@@ -41,7 +41,7 @@ void mobs_update(Mobs *m, Rng *rng, f32 dt);
 void testroom_build_near(MeshBuilder *mb, Rng *rng);
 // Рельеф и мегаструктуры: тени не отбрасывают, в теневую карту не попадают
 void testroom_build_far(MeshBuilder *mb, Rng *rng);
-// Высота поверхности под ногами: пол зала или рельеф (без обломков)
+// Высота поверхности под ногами: пол зала, ярусы посёлка или рельеф (без обломков)
 f32  testroom_ground(f32 x, f32 z);
 void crowd_init(Crowd *c, Rng *rng, u32 count);
 void crowd_update(Crowd *c, Rng *rng, f32 dt);
