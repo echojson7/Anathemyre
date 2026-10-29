@@ -15,6 +15,7 @@ layout(location = 22) uniform vec3 u_sun_color;
 layout(location = 23) uniform float u_time;
 layout(location = 24) uniform vec3 u_sky_amb;
 layout(location = 25) uniform vec3 u_ground_amb;
+layout(location = 27) uniform float u_texel_on; // 0 — пиксельность выключена (F8)
 layout(location = 26) uniform int u_unlit;   // портреты интерфейса: свой неподвижный свет
 layout(binding = 0) uniform sampler2DShadow u_shadow;
 
@@ -94,7 +95,7 @@ void main()
     float mpp = max(length(dFdx(v_local)), length(dFdy(v_local)));
     // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
     float base = u_skinned != 0 ? TEXEL * 0.5 : TEXEL;
-    bool snap = mpp < base;
+    bool snap = mpp < base * u_texel_on;
     vec3 dl = snap ? texel_snap(v_local, Nl, base) : vec3(0.0);
     vec3 P = v_local + dl;           // материал: прилипает к телу
     vec3 W = v_world + v_rot * dl;   // свет и тени
