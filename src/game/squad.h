@@ -1,18 +1,18 @@
-// Свой отряд: тела на земле (Player) и листы персонажей; выбор и приказы как в Kenshi
+// Свой отряд: люди из общей таблицы (People, ROLE_SQUAD); выбор и приказы как в Kenshi
 #ifndef ANA_SQUAD_H
 #define ANA_SQUAD_H
 
 #include "../core/rng.h"
 #include "../sim/inventory.h"
+#include "people.h"
 #include "player.h"
 
 #define SQUAD_MAX 8
 
 typedef struct Squad {
     u32       count;
-    Player    body[SQUAD_MAX];
-    CharSheet sheet[SQUAD_MAX];
-    u8        variant[SQUAD_MAX];   // тело (main.c, g_body_file)
+    People   *people;
+    u32       member[SQUAD_MAX];    // номера в таблице людей
     bool      selected[SQUAD_MAX];
     V3        order_pos;            // куда щёлкнули последним приказом: там метка
     f32       order_marker;         // сколько ещё секунд видна метка
@@ -20,10 +20,13 @@ typedef struct Squad {
     u16       next_group;
 } Squad;
 
+static inline Player    *squad_body(const Squad *s, u32 i) { return &s->people->body[s->member[i]]; }
+static inline CharSheet *squad_sheet(const Squad *s, u32 i) { return &s->people->sheet[s->member[i]]; }
+
 // Лист чужого: случайный боец уровня tier (0 новичок .. 2 ветеран), оружие weapon (W_*), лохмотья
 void sheet_random(CharSheet *c, Rng *rng, const char *name, u32 tier, u8 weapon);
-// Стартовый отряд из четырёх у точки origin
-void squad_init(Squad *s, Rng *rng, V3 origin, f32 heading, GroundFn ground);
+// Стартовый отряд из четырёх у точки origin: люди дописываются в таблицу p
+void squad_init(Squad *s, People *p, Rng *rng, V3 origin, f32 heading, GroundFn ground);
 // Переставить весь отряд в другое место (переход между локациями): стоят строем у origin
 void squad_place(Squad *s, V3 origin, f32 heading, GroundFn ground);
 // Выбранные идут к точке строем: ряды по три поперёк направления движения

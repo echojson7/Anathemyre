@@ -241,123 +241,117 @@ f32 testroom_ground(f32 x, f32 z)
 {
     // Плита пола зала: верх на 0.1
     if (fabsf(x) <= 32.0f && z >= -28.0f && z <= 24.0f) return 0.1f;
-    return town_ground(x, z, terrain_height(x, z, NULL));
+    f32 h = town_ground(x, z, terrain_height(x, z, NULL));
+    // Плита арены
+    f32 dx = x - ARENA_CENTER.x, dz = z - ARENA_CENTER.z;
+    if (dx * dx + dz * dz < 8.5f * 8.5f) h = fmaxf(h, 0.125f);
+    return h;
 }
 
-static void pick_target(Crowd *c, Rng *rng, u32 i)
-{
-    player_order_move(&c->body[i], v3(rng_range(rng, -14.0f, 14.0f), 0.0f, rng_range(rng, -16.0f, 18.0f)));
-    c->body[i].marker = 0.0f;
-}
-
-static const char *g_crowd_names[TR_MAX_CHARS] = {
+static const char *g_crowd_names[] = {
     "ЧУРИЛА", "ВЕЛИМИР", "ФЕОДУЛ", "ГОСТЯТА", "КАЛЛИСТ", "ТУЛЛ", "НЕЖДАН", "ПРОКЛ",
     "МАМЕРК", "ДОМАСЛАВ", "ЕВТИХ", "СЕВЕР", "ИЗЯСЛАВ", "ПАНКРАТ", "РУФ", "ВЫШЕСЛАВ",
 };
 
-void crowd_init(Crowd *c, Rng *rng, u32 count)
+void crowd_add(People *p, Rng *rng, u32 count)
 {
-    memset(c, 0, sizeof *c);
-    c->count = MIN(count, TR_MAX_CHARS);
-    c->look_base = 101u;
-    for (u32 i = 0; i < c->count; i++) {
-        // Большинство новички с ломом в руках, изредка бывалый
+    count = MIN(count, (u32)ARRAY_COUNT(g_crowd_names));
+    u32 first = p->count;
+    for (u32 k = 0; k < count; k++) {
+        f32 x = rng_range(rng, -8.0f, 8.0f), z = rng_range(rng, -12.0f, 14.0f);
+        // Каждый сам по себе: своя команда, за чужого не вступается
+        u32 i = people_add(p, ROLE_WANDER, v3(x, testroom_ground(x, z), z), rng_range(rng, 0, 2 * PI_F), (u8)(TEAM_WANDER + k), 0);
+        // Большинство новички с ломом в руках, изредка бывалый.
         // Свой поток случайных чисел: расстановка фигур та же, что без листов
         Rng sr;
-        rng_seed(&sr, 0xC0DEu + i, 91);
-        sheet_random(&c->sheet[i], &sr, g_crowd_names[i], i % 4 == 1 ? 1 : 0, (u8)(i % W_COUNT));
-        f32 x = rng_range(rng, -8.0f, 8.0f), z = rng_range(rng, -12.0f, 14.0f);
-        player_init(&c->body[i], v3(x, testroom_ground(x, z), z), rng_range(rng, 0, 2 * PI_F));
-        c->body[i].phase = rng_f32(rng);
-        c->body[i].gait = GAIT_WALK;
-        c->home[i] = c->body[i].pos;
-        c->home_h[i] = c->body[i].heading;
-        c->gear_seed[i] = i * 131u + 9u;
-        c->wait[i] = rng_range(rng, 0.0f, 3.0f);
-        c->seed[i] = rng_range(rng, 0, 100.0f);
-        c->variant[i] = (u8)(i % 4);
-        c->stationary[i] = i % 4 == 3;
+        rng_seed(&sr, 0xC0DEu + k, 91);
+        sheet_random(&p->sheet[i], &sr, g_crowd_names[k], k % 4 == 1 ? 1 : 0, (u8)(k % W_COUNT));
+        p->body[i].phase = rng_f32(rng);
+        p->body[i].gait = GAIT_WALK;
+        p->wait[i] = rng_range(rng, 0.0f, 3.0f);
+        p->seed[i] = rng_range(rng, 0, 100.0f);
+        p->variant[i] = (u8)(k % 4 % BODY_KIND_COUNT);
+        p->stand[i] = k % 4 == 3;
         // Факел — у кого вторая рука свободна
-        u8 wc = g_weapons[i % W_COUNT].wclass;
-        c->torch[i] = i % 3 == 1 && wc != WC_POLEARM && wc != WC_HEAVY;
+        u8 wc = g_weapons[k % W_COUNT].wclass;
+        p->torch[i] = k % 3 == 1 && wc != WC_POLEARM && wc != WC_HEAVY;
+        people_look_random(p, i, k * 7919u + 101u, k * 131u + 9u);
     }
     // Первый всегда идёт к камере: сразу видно ходьбу
-    if (c->count > 0) {
-        player_init(&c->body[0], v3(3.0f, testroom_ground(3.0f, 0.0f), 0.0f), 0.0f);
-        player_order_move(&c->body[0], v3(3.0f, 0.0f, 16.0f));
-        c->body[0].marker = 0.0f;
-        c->wait[0] = 0;
-        c->stationary[0] = false;
+    if (count > 0) {
+        Player *b = &p->body[first];
+        player_init(b, v3(3.0f, testroom_ground(3.0f, 0.0f), 0.0f), 0.0f);
+        player_order_move(b, v3(3.0f, 0.0f, 16.0f));
+        b->marker = 0.0f;
+        p->wait[first] = 0;
+        p->stand[first] = false;
     }
 }
 
-void crowd_init_still(Crowd *c, const V3 *pos, const f32 *heading, const f32 *seed, u32 count, GroundFn ground)
+void watchers_add(People *p, const V3 *pos, const f32 *heading, const f32 *seed, u32 count, u8 team)
 {
-    memset(c, 0, sizeof *c);
-    c->count = MIN(count, TR_MAX_CHARS);
-    c->look_base = 5000u;
-    for (u32 i = 0; i < c->count; i++) {
-        c->variant[i] = (u8)((i + 2) % BODY_KIND_COUNT);
+    for (u32 k = 0; k < count; k++) {
+        // Одна толпа: не вступаются, только отбиваются
+        u32 i = people_add(p, ROLE_WATCHER, v3(pos[k].x, testroom_ground(pos[k].x, pos[k].z), pos[k].z), heading[k], team, 0);
+        p->variant[i] = (u8)((k + 2) % BODY_KIND_COUNT);
         // Глазеть на бои ходят с чем попало: у одних лом, у других ничего, у кого-то факел
         Rng sr;
-        rng_seed(&sr, 0x5EE0u + i, 92);
-        bool armed = i % 3 == 0;
-        u8 weapon = i % 2 ? W_ARMATURA : W_RESSORA;
-        sheet_random(&c->sheet[i], &sr, name_next(c->variant[i] == BODY_FEMALE), i % 5 == 2 ? 1 : 0, weapon);
+        rng_seed(&sr, 0x5EE0u + k, 92);
+        bool armed = k % 3 == 0;
+        u8 weapon = k % 2 ? W_ARMATURA : W_RESSORA;
+        sheet_random(&p->sheet[i], &sr, name_next(p->variant[i] == BODY_FEMALE), k % 5 == 2 ? 1 : 0, weapon);
         if (!armed) {
             Item old;
-            sheet_equip(&c->sheet[i], SLOT_WEAPON, (Item){ 0 }, &old);
+            sheet_equip(&p->sheet[i], SLOT_WEAPON, (Item){ 0 }, &old);
         }
-        c->sheet[i].role = "ЗРИТЕЛЬ АРЕНЫ";
-        V3 p = v3(pos[i].x, ground(pos[i].x, pos[i].z), pos[i].z);
-        player_init(&c->body[i], p, heading[i]);
-        c->body[i].phase = rng_f32(&sr);
-        c->body[i].gait = GAIT_WALK;
-        c->seed[i] = seed[i];
-        c->stationary[i] = true;
-        c->torch[i] = i % 5 == 1;
-        c->home[i] = p;
-        c->home_h[i] = heading[i];
-        c->gear_seed[i] = 7000u + i;
+        p->sheet[i].role = "ЗРИТЕЛЬ АРЕНЫ";
+        p->body[i].phase = rng_f32(&sr);
+        p->body[i].gait = GAIT_WALK;
+        p->seed[i] = seed[k];
+        p->stand[i] = true;
+        p->torch[i] = k % 5 == 1;
+        people_look_random(p, i, k * 7919u + 5000u, 7000u + k);
     }
 }
 
-void crowd_update(Crowd *c, Rng *rng, f32 dt, GroundFn ground)
+void crowd_step(People *pp, u32 i, Rng *rng, f32 dt, GroundFn ground)
 {
-    for (u32 i = 0; i < c->count; i++) {
-        Player *p = &c->body[i];
-        if (p->ctrl != CTRL_FREE) {
-            // Бой или погоня: поле боя ведёт тело, после — постоит и пойдёт дальше
-            c->wait[i] = rng_range(rng, 3.0f, 8.0f);
-            player_update(p, dt, ground);
-            continue;
-        }
-        bool was = p->moving;
-        if (!c->stationary[i] && !p->moving && (c->wait[i] -= dt) <= 0.0f) pick_target(c, rng, i);
-        if (c->stationary[i] && !p->moving) {
-            // Стоящий после боя возвращается на своё место и поворачивается как стоял
-            V3 d = v3_sub(c->home[i], p->pos);
-            if (d.x * d.x + d.z * d.z > 0.5f * 0.5f) {
-                if ((c->wait[i] -= dt) <= 0.0f) {
-                    player_order_move(p, c->home[i]);
-                    p->marker = 0.0f;
-                }
-            } else {
-                f32 dh = c->home_h[i] - p->heading;
-                while (dh > PI_F) dh -= 2.0f * PI_F;
-                while (dh < -PI_F) dh += 2.0f * PI_F;
-                p->heading += dh * fminf(1.0f, dt * 1.5f);
-            }
-        }
-        p->vmax = 1.15f;
+    Player *p = &pp->body[i];
+    if (p->ctrl != CTRL_FREE) {
+        // Бой или погоня: поле боя ведёт тело, после — постоит и пойдёт дальше
+        pp->wait[i] = rng_range(rng, 3.0f, 8.0f);
         player_update(p, dt, ground);
-        if (was && !p->moving) c->wait[i] = rng_range(rng, 2.0f, 7.0f);
+        return;
     }
+    bool was = p->moving;
+    if (!pp->stand[i] && !p->moving && (pp->wait[i] -= dt) <= 0.0f) {
+        player_order_move(p, v3(rng_range(rng, -14.0f, 14.0f), 0.0f, rng_range(rng, -16.0f, 18.0f)));
+        p->marker = 0.0f;
+    }
+    if (pp->stand[i] && !p->moving) {
+        // Стоящий после боя возвращается на своё место и поворачивается как стоял
+        V3 d = v3_sub(pp->home[i], p->pos);
+        if (d.x * d.x + d.z * d.z > 0.5f * 0.5f) {
+            if ((pp->wait[i] -= dt) <= 0.0f) {
+                player_order_move(p, pp->home[i]);
+                p->marker = 0.0f;
+            }
+        } else {
+            f32 dh = pp->home_h[i] - p->heading;
+            while (dh > PI_F) dh -= 2.0f * PI_F;
+            while (dh < -PI_F) dh += 2.0f * PI_F;
+            p->heading += dh * fminf(1.0f, dt * 1.5f);
+        }
+    }
+    p->vmax = 1.15f;
+    player_update(p, dt, ground);
+    if (was && !p->moving) pp->wait[i] = rng_range(rng, 2.0f, 7.0f);
 }
 
 // ---------------------------------------------------------------- мобы
 
 // Маршрут вокруг зала и арены, против часовой
+#define MOB_ROUTE 6
 static const V2 g_route[MOB_ROUTE] = {
     { -36.0f, -33.0f }, { 0.0f, -36.0f }, { 37.0f, -32.0f }, { 38.0f, 30.0f }, { 14.0f, 50.0f }, { -37.0f, 32.0f },
 };
@@ -368,7 +362,7 @@ typedef struct MobDef {
     u8 armor[3];
 } MobDef;
 
-static const MobDef g_mob_defs[MOB_MAX] = {
+static const MobDef g_mob_defs[] = {
     { "ВЫШАТА", 1, W_RESSORA, GAIT_WALK, { A_RAGS, A_JACKET, ARMOR_NONE } },
     { "ФЕОКТИСТ", 1, W_BAGOR, GAIT_JOG, { A_QUILT, ARMOR_NONE, ARMOR_NONE } },
     { "ГОРДИАН", 2, W_BALKA, GAIT_WALK, { A_QUILT, A_PLATE, A_BUCKET } },
@@ -376,66 +370,70 @@ static const MobDef g_mob_defs[MOB_MAX] = {
     { "КАССИЙ", 1, W_SEKACH, GAIT_JOG, { A_JACKET, A_GREAVES, ARMOR_NONE } },
 };
 
-void mobs_init(Mobs *m, Rng *rng)
+void mobs_add(People *p, Rng *rng)
 {
-    memset(m, 0, sizeof *m);
-    m->count = MOB_MAX;
-    for (u32 i = 0; i < m->count; i++) {
-        const MobDef *d = &g_mob_defs[i];
-        CharSheet *c = &m->sheet[i];
-        c->name = d->name;
-        arena_random_fighter(&c->d, rng, d->tier);
-        for (u32 s = 0; s < SLOT_COUNT; s++) c->d.armor[s] = ARMOR_NONE;
-        for (u32 p = 0; p < PART_COUNT; p++) c->d.hp[p] = g_part_hp[p];
-        c->d.blood = 100.0f * c->d.mass / 75.0f;
+    u32 n = ARRAY_COUNT(g_mob_defs);
+    for (u32 k = 0; k < n; k++) {
+        const MobDef *d = &g_mob_defs[k];
+        // Персонаж раньше места: так шли случайные числа и прежде
+        CharSheet c;
+        memset(&c, 0, sizeof c);
+        c.name = d->name;
+        arena_random_fighter(&c.d, rng, d->tier);
+        for (u32 s = 0; s < SLOT_COUNT; s++) c.d.armor[s] = ARMOR_NONE;
+        for (u32 q = 0; q < PART_COUNT; q++) c.d.hp[q] = g_part_hp[q];
+        c.d.blood = 100.0f * c.d.mass / 75.0f;
         Item old;
-        c->d.weapon = d->weapon;
-        sheet_equip(c, SLOT_WEAPON, item_make(IK_WEAPON, d->weapon, Q_WORN, 1), &old);
-        for (u32 k = 0; k < 3 && d->armor[k] != ARMOR_NONE; k++) {
-            Item it = item_make(IK_ARMOR, d->armor[k], Q_WORN, 1);
-            sheet_equip(c, item_slot(it), it, &old);
+        c.d.weapon = d->weapon;
+        sheet_equip(&c, SLOT_WEAPON, item_make(IK_WEAPON, d->weapon, Q_WORN, 1), &old);
+        for (u32 a = 0; a < 3 && d->armor[a] != ARMOR_NONE; a++) {
+            Item it = item_make(IK_ARMOR, d->armor[a], Q_WORN, 1);
+            sheet_equip(&c, item_slot(it), it, &old);
         }
-        sheet_equip(c, SLOT_BACK, item_make(IK_GOODS, G_PACK, Q_WORN, 1), &old);
-        sheet_equip(c, SLOT_PANTS, item_make(IK_ARMOR, A_PANTS, Q_WORN, 1), &old);
-        // Разнесены по кругу, у каждого своя точка старта
-        u32 at = (i * 7u + 1u) % MOB_ROUTE;
+        sheet_equip(&c, SLOT_BACK, item_make(IK_GOODS, G_PACK, Q_WORN, 1), &old);
+        sheet_equip(&c, SLOT_PANTS, item_make(IK_ARMOR, A_PANTS, Q_WORN, 1), &old);
+        // Разнесены по кругу, у каждого своя точка старта. Одна шайка: вступаются друг за друга
+        u32 at = (k * 7u + 1u) % MOB_ROUTE;
         V2 a = g_route[at], b = g_route[(at + 1) % MOB_ROUTE];
         f32 t = rng_range(rng, 0.1f, 0.8f);
         f32 x = lerpf(a.x, b.x, t), z = lerpf(a.y, b.y, t);
-        player_init(&m->body[i], v3(x, testroom_ground(x, z), z), atan2f(b.x - a.x, b.y - a.y));
-        m->body[i].gait = d->gait;
-        m->body[i].phase = rng_f32(rng);
-        m->next[i] = (u8)((at + 1) % MOB_ROUTE);
-        m->variant[i] = (u8)(i % 4);
-        m->seed[i] = rng_range(rng, 0.0f, 100.0f);
+        u32 i = people_add(p, ROLE_MOB, v3(x, testroom_ground(x, z), z), atan2f(b.x - a.x, b.y - a.y), TEAM_MOBS, FF_ASSIST);
+        p->sheet[i] = c;
+        p->body[i].gait = d->gait;
+        p->body[i].phase = rng_f32(rng);
+        p->node[i] = (u8)((at + 1) % MOB_ROUTE);
+        p->variant[i] = (u8)(k % 4 % BODY_KIND_COUNT);
+        p->seed[i] = rng_range(rng, 0.0f, 100.0f);
+        p->height[i] = c.d.height / 1.8f;
+        p->width[i] = 1.0f + 0.08f * sinf(p->seed[i] * 3.17f + 1.0f);
+        p->look_seed[i] = 2000u + k;
         // Ночью шайка ходит с огнём: первый и последний, у них вторая рука свободна
-        m->torch[i] = i == 0 || i == MOB_MAX - 1;
-        player_order_move(&m->body[i], v3(b.x, 0.0f, b.y));
-        m->body[i].marker = 0.0f;
+        p->torch[i] = k == 0 || k == n - 1;
+        player_order_move(&p->body[i], v3(b.x, 0.0f, b.y));
+        p->body[i].marker = 0.0f;
+        people_dress(p, i);
     }
 }
 
-void mobs_update(Mobs *m, Rng *rng, f32 dt)
+void mob_step(People *pp, u32 i, Rng *rng, f32 dt, GroundFn ground)
 {
-    for (u32 i = 0; i < m->count; i++) {
-        Player *p = &m->body[i];
-        if (p->ctrl != CTRL_FREE) {
-            // Бой или погоня: поле боя ведёт тело, после — постоит и пойдёт дальше по кругу
-            m->wait[i] = rng_range(rng, 4.0f, 10.0f);
-            player_update(p, dt, testroom_ground);
-            continue;
-        }
-        bool was = p->moving;
-        p->vmax = g_gait_speed[p->gait] * (0.9f + 0.002f * m->sheet[i].d.skill[SK_ATHLETICS]);
-        if (!p->moving && (m->wait[i] -= dt) <= 0.0f) {
-            V2 t = g_route[m->next[i]];
-            // Не точно в точку: каждый круг немного иначе
-            player_order_move(p, v3(t.x + rng_range(rng, -2.0f, 2.0f), 0.0f, t.y + rng_range(rng, -2.0f, 2.0f)));
-            p->marker = 0.0f;
-            m->next[i] = (u8)((m->next[i] + 1) % MOB_ROUTE);
-        }
-        player_update(p, dt, testroom_ground);
-        // Дошёл: иногда стоит, переводит дух, иногда сразу дальше
-        if (was && !p->moving) m->wait[i] = rng_f32(rng) < 0.55f ? rng_range(rng, 6.0f, 16.0f) : 0.0f;
+    Player *p = &pp->body[i];
+    if (p->ctrl != CTRL_FREE) {
+        // Бой или погоня: поле боя ведёт тело, после — постоит и пойдёт дальше по кругу
+        pp->wait[i] = rng_range(rng, 4.0f, 10.0f);
+        player_update(p, dt, ground);
+        return;
     }
+    bool was = p->moving;
+    p->vmax = g_gait_speed[p->gait] * (0.9f + 0.002f * pp->sheet[i].d.skill[SK_ATHLETICS]);
+    if (!p->moving && (pp->wait[i] -= dt) <= 0.0f) {
+        V2 t = g_route[pp->node[i]];
+        // Не точно в точку: каждый круг немного иначе
+        player_order_move(p, v3(t.x + rng_range(rng, -2.0f, 2.0f), 0.0f, t.y + rng_range(rng, -2.0f, 2.0f)));
+        p->marker = 0.0f;
+        pp->node[i] = (u8)((pp->node[i] + 1) % MOB_ROUTE);
+    }
+    player_update(p, dt, ground);
+    // Дошёл: иногда стоит, переводит дух, иногда сразу дальше
+    if (was && !p->moving) pp->wait[i] = rng_f32(rng) < 0.55f ? rng_range(rng, 6.0f, 16.0f) : 0.0f;
 }
