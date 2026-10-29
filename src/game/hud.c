@@ -300,7 +300,7 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
         if (look >= fd->w.count) return false;
         const CharSheet *c = fd->sheet[look];
         o->name = c->name;
-        o->role = foe_of_squad(w, look) ? "ВРАГ" : "ПРОХОЖИЙ";
+        o->role = foe_of_squad(w, look) ? "ВРАГ" : c->role ? c->role : "ПРОХОЖИЙ";
         o->state = move_state(fd, fd->body[look]);
         if (field_awake(fd, look)) o->bleed = fd->w.bleed[look];
         memcpy(o->hp, c->d.hp, sizeof o->hp);

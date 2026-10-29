@@ -269,6 +269,21 @@ void main()
     float sp = spec * pow(max(dot(N, H), 0.0), gloss) * sh;
 
     vec3 col = albedo * (u_sun_color * ndl * sh + ambient * ao) + u_sun_color * sp + emissive;
+    // Факелы и фонари: свет без теней, считается в том же квадрате TEXEL
+    for (int i = 0; i < l_count.x; i++) {
+        vec3 d = l_pos[i].xyz - W;
+        float d2 = dot(d, d);
+        float r = l_pos[i].w;
+        if (d2 >= r * r) continue;
+        vec3 Ld = d * inversesqrt(d2);
+        float nl = dot(N, Ld);
+        float k = foliage ? 0.3 + 0.7 * abs(nl) : max(nl, 0.0);
+        float c = l_col[i].a;
+        if (c > -1.0) k *= smoothstep(c, c + (1.0 - c) * 0.5, dot(-Ld, l_dir[i].xyz));
+        if (k <= 0.0) continue;
+        vec3 li = l_col[i].rgb * (k * light_falloff(d2, r));
+        col += albedo * li + li * spec * pow(max(dot(N, normalize(Ld + V)), 0.0), gloss);
+    }
     // Контровой свет от дымки: фигуры читаются силуэтом
     if (u_skinned == 1) {
         float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);

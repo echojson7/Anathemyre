@@ -11,8 +11,8 @@
 #define SHADOW_SIZE 2048
 #define SHADOW_EXTENT 45.0f   // полуразмер области теней, м
 // Размер пикселя по глубине (pixel.glsl): k = PIXEL_K * s^PIXEL_P, s — пикселей кадра на метр в точке.
-// Шаг 0.5 пикселя, ниже 2 — 0.25. При 1080p: 3 м — 4.5, 4 м — 3.5, 5 м — 2.5, 6 м — 2, 7 м — 1.75,
-// 8 м — 1.5, с 9 м — 1.25 и дальше не меняется
+// Шаг 0.5 пикселя, ниже 2 — 0.25; ближе ~6 м рост вдвое медленнее (pixel.glsl PIXEL_KNEE).
+// При 1080p: 2 м — 4.5, 3 м — 3, 4 м — 2.5, 5–6 м — 2, 7 м — 1.75, 8 м — 1.5, с 9 м — 1.25 и дальше не меняется
 #define PIXEL_K 0.00728f
 #define PIXEL_P 1.1f
 
@@ -22,12 +22,14 @@ enum {
     U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26, U_TEXEL = 27, U_MORPHS = 28,
     U_FADE = 29,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
-    U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
+    U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39, U_A_AO_HALF = 47, U_NOISE_TEX = 48,
     U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44, U_V_TILE = 45, U_S_PIX_INT = 46,
 };
 
 // Буферы хранения (layout(binding = N) в scene.vert)
 enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2, SB_STATIC_INST = 3 };
+// Буфер констант со светом кадра (common.glsl, блок Lights)
+#define UB_LIGHTS 0
 #define SKIN_STATIC 0
 #define SKIN_BONES 1
 #define SKIN_INSTANCED 2
@@ -75,10 +77,12 @@ typedef struct Target {
 static struct {
     Arena *scratch;
     char   data_dir[512];
-    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_src_map, prog_vrs_block, prog_vrs, prog_level, prog_level_max;
+    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_src_map, prog_vrs_block, prog_vrs, prog_level, prog_level_max, prog_ao;
+    u32    noise_tex;  // значения hash13 в узлах решётки NOISE_N³: noise3 одной выборкой (common.glsl)
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
     Target scene, rays, atmos, ldr;
+    Target ao;        // AO в половинном разрешении (RG16F), ao.frag
     Target level;     // размер пикселя каждой точки (R8UI), level.frag
     Target level_max; // самый крупный размер в блоке 8x8 (R8UI), level_max.frag
     Target src_map;   // откуда каждый пиксель берёт цвет (RG16UI), src_map.frag
@@ -94,6 +98,7 @@ static struct {
     f64    stat_ms[PASS_COUNT];
     u32    stat_samples;
     u32    bone_buf[STREAM_FRAMES], inst_buf[STREAM_FRAMES];
+    u32    light_buf[STREAM_FRAMES];
     u32    stream;
     u32    used_poses, used_insts;   // занято в буферах текущего кадра (кадр, затем портреты)
     f64    stat_draws[2], stat_tris[2], stat_visible[2];
@@ -118,6 +123,15 @@ static InstDraw g_idraw[2][MAX_INST_MESHES];
 static u32  g_vis_id[RENDER_MAX_VIS_INST];
 static u16  g_vis_bucket[RENDER_MAX_VIS_INST];
 static M4   g_bones[RENDER_MAX_POSED * RENDER_MAX_BONES];
+
+// Свет кадра в раскладке std140 (common.glsl): число, затем три массива vec4
+typedef struct GpuLights {
+    i32 count[4];
+    f32 pos[RENDER_MAX_LIGHTS][4];   // xyz, w — радиус
+    f32 col[RENDER_MAX_LIGHTS][4];   // rgb, a — косинус конуса
+    f32 dir[RENDER_MAX_LIGHTS][4];   // xyz — ось конуса, w — свечение пыли
+} GpuLights;
+static GpuLights g_lights;
 
 static char *read_file(const char *path)
 {
@@ -200,7 +214,8 @@ bool render_reload_shaders(void)
     const char *shadow_fs[] = { "shadow.frag" };
     const char *full_vs[] = { "fullscreen.vert" };
     const char *rays_fs[] = { "common.glsl", "rays.frag" };
-    const char *atmos_fs[] = { "common.glsl", "atmos.frag" };
+    const char *atmos_fs[] = { "common.glsl", "ao.glsl", "atmos.frag" };
+    const char *ao_fs[] = { "common.glsl", "ao.glsl", "ao.frag" };
     const char *style_fs[] = { "common.glsl", "pixel.glsl", "style.frag" };
     const char *src_map_fs[] = { "pixel.glsl", "src_map.frag" };
     const char *vrs_block_fs[] = { "vrs_block.frag" };
@@ -220,7 +235,8 @@ bool render_reload_shaders(void)
     u32 shadow = link(compile(GL_VERTEX_SHADER, "#define SHADOW_PASS\n", scene_vs, 1),
                       compile(GL_FRAGMENT_SHADER, NULL, shadow_fs, 1));
     u32 rays = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, rays_fs, 2));
-    u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 2));
+    u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 3));
+    u32 ao = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, ao_fs, 3));
     u32 style = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, style_fs, 3));
     u32 src_map = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, src_map_fs, 2));
     u32 level = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, level_fs, 2));
@@ -230,9 +246,9 @@ bool render_reload_shaders(void)
     u32 upscale = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, upscale_fs, 1));
     R.scratch->used = mark;
 
-    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, src_map, vrs_block, vrs, level, level_max };
+    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, src_map, vrs_block, vrs, level, level_max, ao };
     u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style, &R.prog_upscale,
-                     &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs, &R.prog_level, &R.prog_level_max };
+                     &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs, &R.prog_level, &R.prog_level_max, &R.prog_ao };
     bool ok = true;
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) {
@@ -292,6 +308,36 @@ static bool target_make(Target *t, i32 w, i32 h, GLenum color_fmt, bool depth)
     return true;
 }
 
+// hash13 из common.glsl теми же операциями: узлы решётки для шума одной выборкой
+#define NOISE_N 128
+static f32 fract_f(f32 x) { return x - floorf(x); }
+static f32 hash13_c(f32 x, f32 y, f32 z)
+{
+    x = fract_f(x * 0.1031f); y = fract_f(y * 0.1031f); z = fract_f(z * 0.1031f);
+    f32 d = x * (z + 31.32f) + y * (y + 31.32f) + z * (x + 31.32f);
+    x += d; y += d; z += d;
+    return fract_f((x + y) * z);
+}
+
+static void noise_make(void)
+{
+    static u16 slice[NOISE_N * NOISE_N];
+    glCreateTextures(GL_TEXTURE_3D, 1, &R.noise_tex);
+    glTextureStorage3D(R.noise_tex, 1, GL_R16, NOISE_N, NOISE_N, NOISE_N);
+    for (u32 z = 0; z < NOISE_N; z++) {
+        for (u32 y = 0; y < NOISE_N; y++)
+            for (u32 x = 0; x < NOISE_N; x++)
+                slice[y * NOISE_N + x] = (u16)(hash13_c((f32)x, (f32)y, (f32)z) * 65535.0f + 0.5f);
+        glTextureSubImage3D(R.noise_tex, 0, 0, 0, (GLint)z, NOISE_N, NOISE_N, 1, GL_RED, GL_UNSIGNED_SHORT, slice);
+    }
+    glTextureParameteri(R.noise_tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(R.noise_tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(R.noise_tex, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTextureParameteri(R.noise_tex, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTextureParameteri(R.noise_tex, GL_TEXTURE_WRAP_R, GL_REPEAT);
+    glBindTextureUnit(7, R.noise_tex);  // блок 7 больше никто не занимает
+}
+
 bool render_init(Arena *scratch, const char *data_dir)
 {
     R.scratch = scratch;
@@ -323,11 +369,14 @@ bool render_init(Arena *scratch, const char *data_dir)
     if (!render_reload_shaders()) return false;
 
     glCreateVertexArrays(1, &R.empty_vao);
+    noise_make();
     for (u32 i = 0; i < STREAM_FRAMES; i++) {
         glCreateBuffers(1, &R.bone_buf[i]);
         glNamedBufferStorage(R.bone_buf[i], (GLsizeiptr)sizeof g_bones, NULL, GL_DYNAMIC_STORAGE_BIT);
         glCreateBuffers(1, &R.inst_buf[i]);
         glNamedBufferStorage(R.inst_buf[i], (GLsizeiptr)sizeof g_inst_pose, NULL, GL_DYNAMIC_STORAGE_BIT);
+        glCreateBuffers(1, &R.light_buf[i]);
+        glNamedBufferStorage(R.light_buf[i], (GLsizeiptr)sizeof g_lights, NULL, GL_DYNAMIC_STORAGE_BIT);
     }
     for (u32 i = 0; i < TIMER_FRAMES; i++) glCreateQueries(GL_TIMESTAMP, TIMER_MARKS, R.timer[i]);
 
@@ -348,6 +397,8 @@ void render_shutdown(void)
 {
     target_free(&R.scene);
     target_free(&R.rays);
+    target_free(&R.ao);
+    if (R.noise_tex) glDeleteTextures(1, &R.noise_tex);
     target_free(&R.atmos);
     target_free(&R.ldr);
     target_free(&R.src_map);
@@ -362,12 +413,13 @@ void render_shutdown(void)
     for (u32 i = 0; i < STREAM_FRAMES; i++) {
         if (R.bone_buf[i]) glDeleteBuffers(1, &R.bone_buf[i]);
         if (R.inst_buf[i]) glDeleteBuffers(1, &R.inst_buf[i]);
+        if (R.light_buf[i]) glDeleteBuffers(1, &R.light_buf[i]);
     }
     if (R.static_inst_buf) glDeleteBuffers(1, &R.static_inst_buf);
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
     u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style, R.prog_upscale,
-                    R.prog_src_map, R.prog_vrs_block, R.prog_vrs, R.prog_level, R.prog_level_max };
+                    R.prog_src_map, R.prog_vrs_block, R.prog_vrs, R.prog_level, R.prog_level_max, R.prog_ao };
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
         if (progs[i]) glDeleteProgram(progs[i]);
     memset(&R, 0, sizeof R);
@@ -848,6 +900,37 @@ static M4 light_matrix(const FrameView *fv)
     return m4_mul(lp, lv);
 }
 
+// Свет кадра: видимые источники, ближайшие к камере (по краю сферы), не больше RENDER_MAX_LIGHTS
+static void stream_lights(const FrameView *fv, const Frustum *fr)
+{
+    u32 n = 0;
+    f32 key[RENDER_MAX_LIGHTS];
+    const PointLight *pick[RENDER_MAX_LIGHTS];
+    for (u32 i = 0; fv->lights && i < fv->light_count; i++) {
+        const PointLight *l = &fv->lights[i];
+        if (!sphere_visible(fr, (V4){ l->pos.x, l->pos.y, l->pos.z, l->radius })) continue;
+        f32 k = v3_len(v3_sub(l->pos, fv->cam_pos)) - l->radius;
+        if (n == RENDER_MAX_LIGHTS && k >= key[n - 1]) continue;
+        u32 j = n < RENDER_MAX_LIGHTS ? n++ : n - 1;
+        for (; j > 0 && key[j - 1] > k; j--) {
+            key[j] = key[j - 1];
+            pick[j] = pick[j - 1];
+        }
+        key[j] = k;
+        pick[j] = l;
+    }
+    g_lights.count[0] = (i32)n;
+    for (u32 i = 0; i < n; i++) {
+        const PointLight *l = pick[i];
+        V3 d = v3_len(l->dir) > 0.0f ? v3_norm(l->dir) : v3(0, -1, 0);
+        memcpy(g_lights.pos[i], (f32[4]){ l->pos.x, l->pos.y, l->pos.z, l->radius }, sizeof g_lights.pos[i]);
+        memcpy(g_lights.col[i], (f32[4]){ l->color.x, l->color.y, l->color.z, l->cone }, sizeof g_lights.col[i]);
+        memcpy(g_lights.dir[i], (f32[4]){ d.x, d.y, d.z, l->glow }, sizeof g_lights.dir[i]);
+    }
+    glNamedBufferSubData(R.light_buf[R.stream], 0, (GLsizeiptr)sizeof g_lights, &g_lights);
+    glBindBufferBase(GL_UNIFORM_BUFFER, UB_LIGHTS, R.light_buf[R.stream]);
+}
+
 void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const RenderSettings *rs, i32 win_w, i32 win_h)
 {
     if (win_w <= 0 || win_h <= 0 || !R.prog_scene) return;
@@ -856,6 +939,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     if (R.scene.w != iw || R.scene.h != ih) {
         target_make(&R.scene, iw, ih, GL_RGBA16F, true);
         target_make(&R.rays, (iw + 1) / 2, (ih + 1) / 2, GL_RG16F, false);
+        target_make(&R.ao, (iw + 1) / 2, (ih + 1) / 2, GL_RG16F, false);
         target_make(&R.atmos, iw, ih, GL_RGBA16F, false);
         target_make(&R.ldr, iw, ih, GL_RGBA8, false);
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -896,6 +980,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         .px_k = fv->proj.m[5] * 0.5f * (f32)ih, .inst_lod_k = 1.0f,
     };
     R.cam_eye = fv->cam_pos;
+    stream_lights(fv, &scene_view.fr);
     u32 n_shadow = gather(items, count, &shadow_view, true, g_inst[0]);
     u32 n_scene = gather(items, count, &scene_view, false, g_inst[1]);
     u32 base_shadow = stream_insts(g_inst[0], &n_shadow);
@@ -992,6 +1077,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     }
     if (timing) mark(2);
     glUseProgram(R.prog_scene);
+    glUniform1i(U_NOISE_TEX, rs->noise_tex ? 1 : 0);
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, vp.m);
     glUniformMatrix4fv(U_LIGHT_VP, 1, GL_FALSE, light_vp.m);
     glUniform3f(U_CAM_POS, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
@@ -1024,10 +1110,23 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindTextureUnit(1, R.scene.depth);
     glBindTextureUnit(2, R.shadow_tex);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+    if (rs->ao_half) {
+        // AO в половинном разрешении; блоки сцены к этой цели не относятся
+        if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
+        glBindFramebuffer(GL_FRAMEBUFFER, R.ao.fbo);
+        glUseProgram(R.prog_ao);
+        glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
+        glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
+        glUniform1i(U_A_FRAME, (GLint)fv->frame);
+        glUniform1f(U_A_PROJ_SCALE, fv->proj.m[5] * 0.5f * (f32)ih);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        if (vrs) glEnable(GL_SHADING_RATE_IMAGE_NV);
+    }
 
     glBindFramebuffer(GL_FRAMEBUFFER, R.atmos.fbo);
     glViewport(0, 0, iw, ih);
     glUseProgram(R.prog_atmos);
+    glUniform1i(U_NOISE_TEX, rs->noise_tex ? 1 : 0);
     glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
     glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
     glUniform3f(U_A_SUN_DIR, L.x, L.y, L.z);
@@ -1039,7 +1138,9 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform3f(U_A_ZENITH, fv->zenith.x, fv->zenith.y, fv->zenith.z);
     glBindTextureUnit(0, R.scene.color);
     glBindTextureUnit(1, R.scene.depth);
+    glUniform1i(U_A_AO_HALF, rs->ao_half ? 1 : 0);
     glBindTextureUnit(3, R.rays.color);
+    glBindTextureUnit(4, R.ao.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
     if (timing) mark(4);
@@ -1109,7 +1210,7 @@ void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, cons
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
-    glUseProgram(R.prog_scene);
+    glUseProgram(R.prog_scene);  // шум материалов — как в последнем кадре (U_NOISE_TEX хранится в программе)
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, view_proj.m);
     glUniform3f(U_CAM_POS, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
     glUniform1f(U_TIME, fv->time);

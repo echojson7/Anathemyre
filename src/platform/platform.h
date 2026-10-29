@@ -34,6 +34,8 @@ void         platform_shutdown(void);
 void         platform_poll(Input *in);
 void         platform_swap(void);
 void         platform_set_vsync(bool on);
+// Окно без рамки на весь монитор и обратно
+void         platform_set_fullscreen(bool on);
 void         platform_window_size(i32 *w, i32 *h);
 PlatformProc platform_gl_proc(const char *name);
 // Папка исполняемого файла, без завершающего '/'
@@ -52,5 +54,11 @@ void            platform_sema_destroy(PlatformSema *s);
 void            platform_sema_post(PlatformSema *s, u32 count);
 void            platform_sema_wait(PlatformSema *s);
 void            platform_cpu_relax(void);
+
+// Звук: свой поток просит у fn frames кадров стерео (L, R по очереди, -1..1).
+// Устройства нет — false, игра идёт без звука. Реализация в audio_<ОС>.c
+typedef void (*PlatformAudioFn)(f32 *out, u32 frames, void *user);
+bool platform_audio_start(u32 rate, PlatformAudioFn fn, void *user);
+void platform_audio_stop(void);
 
 #endif

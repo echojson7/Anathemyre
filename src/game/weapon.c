@@ -83,6 +83,33 @@ void weapon_build(MeshBuilder *mb, u8 weapon)
     }
 }
 
+#define TORCH_FLAME_Y 0.56f  // середина пламени над кулаком, м
+
+void torch_build(MeshBuilder *mb, bool flame)
+{
+    const u8 B = CHAR_BONE_TORCH;
+    if (!flame) {
+        // Обломок древка, сверху ветошь в мазуте, перетянутая проволокой
+        mb_set(mb, v3(0.22f, 0.15f, 0.09f), MAT_LEATHER, B);
+        wcyl(mb, -0.16f, 0.44f, 0.017f, 0.0f);
+        mb_set(mb, v3(0.07f, 0.06f, 0.05f), MAT_CLOTH, B);
+        wcyl(mb, 0.36f, 0.52f, 0.034f, 0.0f);
+        mb_set(mb, v3(0.20f, 0.19f, 0.18f), MAT_METAL, B);
+        wcyl(mb, 0.40f, 0.415f, 0.037f, 0.0f);
+        wcyl(mb, 0.47f, 0.485f, 0.037f, 0.0f);
+        return;
+    }
+    // Пламя: яркое ядро и языки вокруг, повёрнутые по-разному
+    mb_set(mb, v3(1.0f, 0.62f, 0.22f), MAT_EMISSIVE, B);
+    wbox(mb, 0.49f, 0.66f, 0.05f, 0.05f, 0.0f, 0.0f);
+    mb_set(mb, v3(0.85f, 0.32f, 0.08f), MAT_EMISSIVE, B);
+    wbox(mb, 0.48f, 0.62f, 0.075f, 0.03f, 0.008f, 0.12f);
+    wbox(mb, 0.48f, 0.60f, 0.03f, 0.075f, -0.006f, -0.1f);
+    wbox(mb, 0.58f, 0.74f, 0.028f, 0.028f, 0.01f, 0.2f);
+}
+
+V3 torch_flame_pos(const M4 *bones) { return m4_point(bones[CHAR_BONE_TORCH], v3(0.0f, TORCH_FLAME_Y, 0.0f)); }
+
 void weapon_ground_pose(V3 pos, f32 yaw, M4 *out)
 {
     // Ось оружия ложится горизонтально, лезвие на ребро не встаёт: плашмя
