@@ -29,7 +29,7 @@ typedef struct Hud {
     f32  last_click_t;
     i32  last_click_card;
     i32  focus;                 // запрос камере: навестись на члена отряда, -1 — нет
-    u8   speed, speed_before;   // 0 пауза, 1..3 — множитель времени
+    u8   speed, speed_before;   // 0 пауза, 1..3 — скорость времени g_speed_scale
     u8   win_drag;              // окно тянут за шапку: 1 инвентарь, 2 персонаж
     f32  grab_x, grab_y;        // где взяли относительно угла окна
     f32  inv_x, inv_y;          // углы окон; < 0 — место по умолчанию
@@ -53,12 +53,16 @@ typedef struct HudWorld {
     const ArenaSession *arena;
     const ArenaView    *aview;
     const Field        *field;
+    const Player       *view;       // люди такими, какими их показал кадр (Figures.view), по номеру в таблице
     M4                  view_proj;
     f32                 time;       // реальное время, с
     f32                 tod;        // время суток 0..1
     u32                 day;
     bool                alone;      // отряд в другой локации: чужих и арену не выбирать
 } HudWorld;
+
+// Скорость времени по кнопкам часов: пауза, ×1, ×2, ×5 (шагов мира за секунду — в столько раз больше)
+extern const u8 g_speed_scale[4];
 
 void hud_init(Hud *h);
 // Между ui_begin и отрисовкой кадра. true — мышь над интерфейсом или занята им: ПКМ не приказ

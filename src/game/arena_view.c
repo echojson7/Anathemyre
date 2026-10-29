@@ -192,27 +192,27 @@ static void bout_started(ArenaView *v, const ArenaSession *s)
     for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) fight_anim_reset(&v->fa[i], w, i, (f32)s->idx[i] * 13.7f + 3.0f);
 }
 
-void arena_view_update(ArenaView *v, ArenaSession *s, f32 dt)
+void arena_view_tick(ArenaView *v, ArenaSession *s)
 {
     CombatWorld *w = &s->w;
-    v->acc += dt;
-    for (u32 steps = 0; v->acc >= COMBAT_DT && steps < 8; steps++) {
-        v->acc -= COMBAT_DT;
-        if (!v->in_bout) {
-            // Все отдыхают: время идёт, пока кто-то не встанет
-            for (u32 tries = 0; tries < 64 && !v->in_bout; tries++) v->in_bout = arena_bout_begin(s);
-            if (v->in_bout) bout_started(v, s);
-            continue;
-        }
-        for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) fight_anim_pre_tick(&v->fa[i], w, i);
-        if (arena_bout_tick(s)) {
-            arena_bout_end(s);
-            v->in_bout = false;
-        }
+    if (!v->in_bout) {
+        // Все отдыхают: время идёт, пока кто-то не встанет
+        for (u32 tries = 0; tries < 64 && !v->in_bout; tries++) v->in_bout = arena_bout_begin(s);
+        if (v->in_bout) bout_started(v, s);
+        return;
     }
-    if (v->acc > COMBAT_DT) v->acc = COMBAT_DT;  // кадр слишком долгий: не догонять
+    for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) fight_anim_pre_tick(&v->fa[i], w, i);
+    if (arena_bout_tick(s)) {
+        arena_bout_end(s);
+        v->in_bout = false;
+    }
+}
+
+void arena_view_present(ArenaView *v, const ArenaSession *s, f32 alpha, f32 dt)
+{
+    const CombatWorld *w = &s->w;
+    v->alpha = alpha;
     if (!v->in_bout) return;
-    f32 alpha = v->acc / COMBAT_DT;
     for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) fight_anim_update(&v->fa[i], w, i, alpha, dt);
 }
 
