@@ -22,7 +22,7 @@ enum {
     U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26, U_TEXEL = 27, U_MORPHS = 28,
     U_FADE = 29,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
-    U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
+    U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39, U_A_AO_HALF = 47,
     U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44, U_V_TILE = 45, U_S_PIX_INT = 46,
 };
 
@@ -75,10 +75,11 @@ typedef struct Target {
 static struct {
     Arena *scratch;
     char   data_dir[512];
-    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_src_map, prog_vrs_block, prog_vrs, prog_level, prog_level_max;
+    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_src_map, prog_vrs_block, prog_vrs, prog_level, prog_level_max, prog_ao;
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
     Target scene, rays, atmos, ldr;
+    Target ao;        // AO в половинном разрешении (RG16F), ao.frag
     Target level;     // размер пикселя каждой точки (R8UI), level.frag
     Target level_max; // самый крупный размер в блоке 8x8 (R8UI), level_max.frag
     Target src_map;   // откуда каждый пиксель берёт цвет (RG16UI), src_map.frag
@@ -200,7 +201,8 @@ bool render_reload_shaders(void)
     const char *shadow_fs[] = { "shadow.frag" };
     const char *full_vs[] = { "fullscreen.vert" };
     const char *rays_fs[] = { "common.glsl", "rays.frag" };
-    const char *atmos_fs[] = { "common.glsl", "atmos.frag" };
+    const char *atmos_fs[] = { "common.glsl", "ao.glsl", "atmos.frag" };
+    const char *ao_fs[] = { "common.glsl", "ao.glsl", "ao.frag" };
     const char *style_fs[] = { "common.glsl", "pixel.glsl", "style.frag" };
     const char *src_map_fs[] = { "pixel.glsl", "src_map.frag" };
     const char *vrs_block_fs[] = { "vrs_block.frag" };
@@ -220,7 +222,8 @@ bool render_reload_shaders(void)
     u32 shadow = link(compile(GL_VERTEX_SHADER, "#define SHADOW_PASS\n", scene_vs, 1),
                       compile(GL_FRAGMENT_SHADER, NULL, shadow_fs, 1));
     u32 rays = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, rays_fs, 2));
-    u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 2));
+    u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 3));
+    u32 ao = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, ao_fs, 3));
     u32 style = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, style_fs, 3));
     u32 src_map = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, src_map_fs, 2));
     u32 level = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, level_fs, 2));
@@ -230,9 +233,9 @@ bool render_reload_shaders(void)
     u32 upscale = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, upscale_fs, 1));
     R.scratch->used = mark;
 
-    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, src_map, vrs_block, vrs, level, level_max };
+    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, src_map, vrs_block, vrs, level, level_max, ao };
     u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style, &R.prog_upscale,
-                     &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs, &R.prog_level, &R.prog_level_max };
+                     &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs, &R.prog_level, &R.prog_level_max, &R.prog_ao };
     bool ok = true;
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) {
@@ -348,6 +351,7 @@ void render_shutdown(void)
 {
     target_free(&R.scene);
     target_free(&R.rays);
+    target_free(&R.ao);
     target_free(&R.atmos);
     target_free(&R.ldr);
     target_free(&R.src_map);
@@ -367,7 +371,7 @@ void render_shutdown(void)
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
     u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style, R.prog_upscale,
-                    R.prog_src_map, R.prog_vrs_block, R.prog_vrs, R.prog_level, R.prog_level_max };
+                    R.prog_src_map, R.prog_vrs_block, R.prog_vrs, R.prog_level, R.prog_level_max, R.prog_ao };
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
         if (progs[i]) glDeleteProgram(progs[i]);
     memset(&R, 0, sizeof R);
@@ -856,6 +860,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     if (R.scene.w != iw || R.scene.h != ih) {
         target_make(&R.scene, iw, ih, GL_RGBA16F, true);
         target_make(&R.rays, (iw + 1) / 2, (ih + 1) / 2, GL_RG16F, false);
+        target_make(&R.ao, (iw + 1) / 2, (ih + 1) / 2, GL_RG16F, false);
         target_make(&R.atmos, iw, ih, GL_RGBA16F, false);
         target_make(&R.ldr, iw, ih, GL_RGBA8, false);
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -1024,6 +1029,18 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindTextureUnit(1, R.scene.depth);
     glBindTextureUnit(2, R.shadow_tex);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+    if (rs->ao_half) {
+        // AO в половинном разрешении; блоки сцены к этой цели не относятся
+        if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
+        glBindFramebuffer(GL_FRAMEBUFFER, R.ao.fbo);
+        glUseProgram(R.prog_ao);
+        glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
+        glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
+        glUniform1i(U_A_FRAME, (GLint)fv->frame);
+        glUniform1f(U_A_PROJ_SCALE, fv->proj.m[5] * 0.5f * (f32)ih);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        if (vrs) glEnable(GL_SHADING_RATE_IMAGE_NV);
+    }
 
     glBindFramebuffer(GL_FRAMEBUFFER, R.atmos.fbo);
     glViewport(0, 0, iw, ih);
@@ -1039,7 +1056,9 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform3f(U_A_ZENITH, fv->zenith.x, fv->zenith.y, fv->zenith.z);
     glBindTextureUnit(0, R.scene.color);
     glBindTextureUnit(1, R.scene.depth);
+    glUniform1i(U_A_AO_HALF, rs->ao_half ? 1 : 0);
     glBindTextureUnit(3, R.rays.color);
+    glBindTextureUnit(4, R.ao.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
     if (timing) mark(4);

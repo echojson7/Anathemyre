@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "arena.h"
-#include "character.h"
+#include "anim.h"
 #include "squad.h"
 #include "town.h"
 

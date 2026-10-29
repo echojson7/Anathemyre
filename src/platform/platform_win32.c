@@ -36,6 +36,8 @@ static struct {
     Input    *in;          // куда оконная процедура пишет события во время poll
     bool      have_mouse;
     bool      quit;
+    bool      fullscreen;
+    WINDOWPLACEMENT placement;  // окно до перехода на весь экран
 
     PFN_wglDeleteContext  DeleteContext;
     PFN_wglMakeCurrent    MakeCurrent;
@@ -292,6 +294,26 @@ void platform_set_vsync(bool on)
 {
     PFN_wglSwapIntervalEXT f = (PFN_wglSwapIntervalEXT)wgl_proc("wglSwapIntervalEXT");
     if (f) f(on ? 1 : 0);
+}
+
+void platform_set_fullscreen(bool on)
+{
+    if (on == g_w.fullscreen) return;
+    g_w.fullscreen = on;
+    if (on) {
+        // Без рамки ровно по монитору: драйвер может показывать кадр мимо композитора
+        MONITORINFO mi = { .cbSize = sizeof mi };
+        g_w.placement.length = sizeof g_w.placement;
+        GetWindowPlacement(g_w.hwnd, &g_w.placement);
+        GetMonitorInfoW(MonitorFromWindow(g_w.hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+        SetWindowLongPtrW(g_w.hwnd, GWL_STYLE, (LONG_PTR)(WS_POPUP | WS_VISIBLE));
+        SetWindowPos(g_w.hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
+    } else {
+        SetWindowLongPtrW(g_w.hwnd, GWL_STYLE, (LONG_PTR)(WS_OVERLAPPEDWINDOW | WS_VISIBLE));
+        SetWindowPlacement(g_w.hwnd, &g_w.placement);
+        SetWindowPos(g_w.hwnd, NULL, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+    }
 }
 
 void platform_window_size(i32 *w, i32 *h)
