@@ -1,6 +1,8 @@
 #include "render.h"
 
+#include <float.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "../core/log.h"
@@ -11,13 +13,36 @@
 
 // Расположения uniform задаются явно в GLSL (layout(location = N))
 enum {
-    U_VIEW_PROJ = 0, U_SKINNED = 17, U_LIGHT_VP = 18,
+    U_VIEW_PROJ = 0, U_SKINNED = 17, U_LIGHT_VP = 18, U_INST_BASE = 19,
     U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
     U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43,
-    U_BONES = 50,  // занимает 50..50+RENDER_MAX_BONES-1
 };
+
+// Буферы хранения (layout(binding = N) в scene.vert)
+enum { SB_BONES = 0, SB_INST = 1 };
+
+// Кости и списки экземпляров пишутся каждый кадр; кольцо буферов, чтобы не ждать GPU с прошлым кадром
+#define STREAM_FRAMES 3
+#define NO_POSE 0xFFFFFFFFu
+
+// Экземпляр в проходе: сетка выбранного уровня детализации и набор костей
+typedef struct Inst {
+    const GpuMesh *mesh;
+    u32            pose;   // NO_POSE — статика
+} Inst;
+
+typedef struct Frustum {
+    V4 p[6];   // плоскости: нормаль внутрь xyz, смещение w
+} Frustum;
+
+// Проход отрисовки: что видно и в каком размере на экране
+typedef struct PassView {
+    Frustum fr;
+    V3      eye, fwd;   // для теней fwd нулевой: размер не зависит от дальности
+    f32     px_k;       // пикселей на метр на единичной дальности (или просто на метр для теней)
+} PassView;
 
 // Метки времени GPU: кольцо из нескольких кадров, чтобы чтение не ждало GPU
 #define TIMER_FRAMES 4
@@ -40,7 +65,19 @@ static struct {
     u32    timer_slot;
     f64    stat_ms[PASS_COUNT];
     u32    stat_samples;
+    u32    bone_buf[STREAM_FRAMES], inst_buf[STREAM_FRAMES];
+    u32    stream;
+    f64    stat_draws[2], stat_tris[2], stat_visible[2];
+    u32    stat_frames, stat_items;
+    bool   warned_items, warned_poses;
 } R;
+
+// Данные кадра на CPU: размер постоянный, выделяются один раз
+static V4   g_sphere[RENDER_MAX_ITEMS];
+static u32  g_pose[RENDER_MAX_ITEMS];
+static Inst g_inst[2][RENDER_MAX_ITEMS];
+static u32  g_inst_pose[2 * RENDER_MAX_ITEMS];
+static M4   g_bones[RENDER_MAX_POSED * RENDER_MAX_BONES];
 
 static char *read_file(const char *path)
 {
@@ -211,6 +248,12 @@ bool render_init(Arena *scratch, const char *data_dir)
     if (!render_reload_shaders()) return false;
 
     glCreateVertexArrays(1, &R.empty_vao);
+    for (u32 i = 0; i < STREAM_FRAMES; i++) {
+        glCreateBuffers(1, &R.bone_buf[i]);
+        glNamedBufferStorage(R.bone_buf[i], (GLsizeiptr)sizeof g_bones, NULL, GL_DYNAMIC_STORAGE_BIT);
+        glCreateBuffers(1, &R.inst_buf[i]);
+        glNamedBufferStorage(R.inst_buf[i], (GLsizeiptr)sizeof g_inst_pose, NULL, GL_DYNAMIC_STORAGE_BIT);
+    }
     for (u32 i = 0; i < TIMER_FRAMES; i++) glCreateQueries(GL_TIMESTAMP, TIMER_MARKS, R.timer[i]);
 
     R.shadow_tex = make_tex(GL_DEPTH_COMPONENT24, SHADOW_SIZE, SHADOW_SIZE, GL_LINEAR);
@@ -234,6 +277,10 @@ void render_shutdown(void)
     if (R.shadow_fbo) glDeleteFramebuffers(1, &R.shadow_fbo);
     if (R.shadow_tex) glDeleteTextures(1, &R.shadow_tex);
     if (R.empty_vao) glDeleteVertexArrays(1, &R.empty_vao);
+    for (u32 i = 0; i < STREAM_FRAMES; i++) {
+        if (R.bone_buf[i]) glDeleteBuffers(1, &R.bone_buf[i]);
+        if (R.inst_buf[i]) glDeleteBuffers(1, &R.inst_buf[i]);
+    }
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
     u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_atmos, R.prog_style, R.prog_upscale };
@@ -261,7 +308,51 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
     glVertexArrayAttribIFormat(gm->vao, 3, 2, GL_UNSIGNED_BYTE, offsetof(Vertex, mat));
     for (u32 i = 0; i < 4; i++) glVertexArrayAttribBinding(gm->vao, i, 0);
     gm->index_count = mb->icount;
+    gm->lod_next = NULL;
+    gm->lod_px = 0.0f;
+
+    // Границы: сфера вокруг рамки вершин, для всей сетки и для каждой кости
+    V3 lo[RENDER_MAX_BONES + 1], hi[RENDER_MAX_BONES + 1];
+    for (u32 b = 0; b <= RENDER_MAX_BONES; b++) {
+        lo[b] = v3(FLT_MAX, FLT_MAX, FLT_MAX);
+        hi[b] = v3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+    }
+    gm->bone_mask = 0;
+    for (u32 i = 0; i < mb->vcount; i++) {
+        const Vertex *v = &mb->v[i];
+        V3 p = v3(v->pos[0], v->pos[1], v->pos[2]);
+        u32 bone = MIN((u32)v->bone, RENDER_MAX_BONES - 1u);  // как в scene.vert
+        u32 slots[2] = { bone, RENDER_MAX_BONES };
+        for (u32 k = 0; k < 2; k++) {
+            u32 b = slots[k];
+            lo[b] = v3(fminf(lo[b].x, p.x), fminf(lo[b].y, p.y), fminf(lo[b].z, p.z));
+            hi[b] = v3(fmaxf(hi[b].x, p.x), fmaxf(hi[b].y, p.y), fmaxf(hi[b].z, p.z));
+        }
+        gm->bone_mask |= 1u << bone;
+    }
+    V4 sph[RENDER_MAX_BONES + 1];
+    for (u32 b = 0; b <= RENDER_MAX_BONES; b++) {
+        V3 c = lo[b].x <= hi[b].x ? v3_mul(v3_add(lo[b], hi[b]), 0.5f) : v3(0, 0, 0);
+        sph[b] = (V4){ c.x, c.y, c.z, 0.0f };
+    }
+    for (u32 i = 0; i < mb->vcount; i++) {
+        const Vertex *v = &mb->v[i];
+        V3 p = v3(v->pos[0], v->pos[1], v->pos[2]);
+        u32 slots[2] = { MIN((u32)v->bone, RENDER_MAX_BONES - 1u), RENDER_MAX_BONES };
+        for (u32 k = 0; k < 2; k++) {
+            V4 *s = &sph[slots[k]];
+            s->w = fmaxf(s->w, v3_len(v3_sub(p, v3(s->x, s->y, s->z))));
+        }
+    }
+    memcpy(gm->bone_bound, sph, sizeof gm->bone_bound);
+    gm->bound = sph[RENDER_MAX_BONES];
     return true;
+}
+
+void gpu_mesh_set_lod(GpuMesh *fine, const GpuMesh *coarse, f32 min_px)
+{
+    fine->lod_next = coarse;
+    fine->lod_px = min_px;
 }
 
 // Забирает результаты самого старого кадра в кольце, если GPU их уже посчитал
@@ -295,22 +386,129 @@ void render_take_stats(RenderStats *out)
     }
     memset(R.stat_ms, 0, sizeof R.stat_ms);
     R.stat_samples = 0;
+    f64 k = R.stat_frames ? 1.0 / R.stat_frames : 0.0;
+    for (u32 p = 0; p < 2; p++) {
+        out->draws[p] = R.stat_draws[p] * k;
+        out->tris[p] = R.stat_tris[p] * k;
+        out->visible[p] = R.stat_visible[p] * k;
+    }
+    out->items = R.stat_items;
+    memset(R.stat_draws, 0, sizeof R.stat_draws);
+    memset(R.stat_tris, 0, sizeof R.stat_tris);
+    memset(R.stat_visible, 0, sizeof R.stat_visible);
+    R.stat_frames = 0;
 }
 
-static void draw_items(const DrawItem *items, u32 count, bool shadow_pass)
+// Плоскости отсечения из матрицы view-proj (по строкам, как у Gribb и Hartmann)
+static Frustum frustum_from(M4 m)
 {
+    V4 row[4];
+    for (u32 i = 0; i < 4; i++) row[i] = (V4){ m.m[i], m.m[4 + i], m.m[8 + i], m.m[12 + i] };
+    Frustum f;
+    for (u32 i = 0; i < 3; i++) {
+        f.p[i * 2 + 0] = (V4){ row[3].x + row[i].x, row[3].y + row[i].y, row[3].z + row[i].z, row[3].w + row[i].w };
+        f.p[i * 2 + 1] = (V4){ row[3].x - row[i].x, row[3].y - row[i].y, row[3].z - row[i].z, row[3].w - row[i].w };
+    }
+    for (u32 i = 0; i < 6; i++) {
+        f32 k = 1.0f / v3_len(v3(f.p[i].x, f.p[i].y, f.p[i].z));
+        f.p[i] = (V4){ f.p[i].x * k, f.p[i].y * k, f.p[i].z * k, f.p[i].w * k };
+    }
+    return f;
+}
+
+static bool sphere_visible(const Frustum *f, V4 s)
+{
+    for (u32 i = 0; i < 6; i++)
+        if (f->p[i].x * s.x + f->p[i].y * s.y + f->p[i].z * s.z + f->p[i].w < -s.w) return false;
+    return true;
+}
+
+// Мировая сфера элемента: у скелетной сетки — вокруг сфер её костей в текущей позе
+static V4 item_sphere(const DrawItem *it)
+{
+    const GpuMesh *m = it->mesh;
+    if (!it->bones) return m->bound;
+    V4 bs[RENDER_MAX_BONES];
+    u32 n = 0;
+    V3 lo = v3(FLT_MAX, FLT_MAX, FLT_MAX), hi = v3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+    for (u32 b = 0; b < RENDER_MAX_BONES; b++) {
+        if (!(m->bone_mask & (1u << b))) continue;
+        const M4 *x = &it->bones[b];
+        V4 l = m->bone_bound[b];
+        V3 c = m4_point(*x, v3(l.x, l.y, l.z));
+        f32 sx = v3_len(v3(x->m[0], x->m[1], x->m[2]));
+        f32 sy = v3_len(v3(x->m[4], x->m[5], x->m[6]));
+        f32 sz = v3_len(v3(x->m[8], x->m[9], x->m[10]));
+        f32 r = l.w * fmaxf(sx, fmaxf(sy, sz));
+        bs[n++] = (V4){ c.x, c.y, c.z, r };
+        lo = v3(fminf(lo.x, c.x - r), fminf(lo.y, c.y - r), fminf(lo.z, c.z - r));
+        hi = v3(fmaxf(hi.x, c.x + r), fmaxf(hi.y, c.y + r), fmaxf(hi.z, c.z + r));
+    }
+    if (!n) return (V4){ 0, 0, 0, 0 };
+    V3 c = v3_mul(v3_add(lo, hi), 0.5f);
+    f32 r = 0.0f;
+    for (u32 i = 0; i < n; i++) r = fmaxf(r, v3_len(v3_sub(v3(bs[i].x, bs[i].y, bs[i].z), c)) + bs[i].w);
+    return (V4){ c.x, c.y, c.z, r };
+}
+
+// Уровень детализации по размеру сферы в пикселях прохода
+static const GpuMesh *pick_lod(const GpuMesh *m, V4 s, const PassView *pv)
+{
+    f32 depth = v3_dot(v3_sub(v3(s.x, s.y, s.z), pv->eye), pv->fwd);
+    bool ortho = pv->fwd.x == 0.0f && pv->fwd.y == 0.0f && pv->fwd.z == 0.0f;
+    f32 px = 2.0f * s.w * pv->px_k / (ortho ? 1.0f : fmaxf(depth, s.w));
+    while (m->lod_next && px < m->lod_px) m = m->lod_next;
+    return m;
+}
+
+static int inst_cmp(const void *pa, const void *pb)
+{
+    const Inst *a = pa, *b = pb;
+    if (a->mesh != b->mesh) return (uintptr_t)a->mesh < (uintptr_t)b->mesh ? -1 : 1;
+    return a->pose < b->pose ? -1 : (a->pose > b->pose);
+}
+
+// Видимые экземпляры прохода, сгруппированные по сетке
+static u32 gather(const DrawItem *items, u32 count, const PassView *pv, bool shadow, Inst *out)
+{
+    u32 n = 0;
     for (u32 i = 0; i < count; i++) {
         const DrawItem *it = &items[i];
-        if (shadow_pass && it->no_shadow) continue;
-        if (it->bones) {
-            glUniform1i(U_SKINNED, 1);
-            glUniformMatrix4fv(U_BONES, RENDER_MAX_BONES, GL_FALSE, it->bones[0].m);
-        } else {
-            glUniform1i(U_SKINNED, 0);
-        }
-        glBindVertexArray(it->mesh->vao);
-        glDrawElements(GL_TRIANGLES, (GLsizei)it->mesh->index_count, GL_UNSIGNED_INT, NULL);
+        if (shadow && it->no_shadow) continue;
+        if (it->bones && g_pose[i] == NO_POSE) continue;
+        if (!sphere_visible(&pv->fr, g_sphere[i])) continue;
+        out[n++] = (Inst){ pick_lod(it->mesh, g_sphere[i], pv), it->bones ? g_pose[i] : NO_POSE };
     }
+    qsort(out, n, sizeof *out, inst_cmp);
+    return n;
+}
+
+// Статика — по вызову на сетку, скелетные — один вызов на все экземпляры одной сетки
+static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
+{
+    u32 draws = 0;
+    f64 tris = 0;
+    for (u32 i = 0; i < n;) {
+        const GpuMesh *m = in[i].mesh;
+        u32 j = i + 1;
+        if (in[i].pose != NO_POSE)
+            while (j < n && in[j].mesh == m && in[j].pose != NO_POSE) j++;
+        glBindVertexArray(m->vao);
+        if (in[i].pose == NO_POSE) {
+            glUniform1i(U_SKINNED, 0);
+            glDrawElements(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT, NULL);
+        } else {
+            glUniform1i(U_SKINNED, 1);
+            glUniform1i(U_INST_BASE, (GLint)(base + i));
+            glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT, NULL, (GLsizei)(j - i));
+        }
+        draws++;
+        tris += (f64)(m->index_count / 3) * (f64)(j - i);
+        i = j;
+    }
+    R.stat_draws[pass] += draws;
+    R.stat_tris[pass] += tris;
+    R.stat_visible[pass] += n;
 }
 
 // Матрица света; привязка к текселю убирает дрожание теней при движении камеры
@@ -351,6 +549,46 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     M4 light_vp = light_matrix(fv);
     V3 L = v3_norm(fv->sun_dir);
 
+    // Границы и позы: наборы костей уходят на GPU одним буфером, подряд идущие одинаковые — один набор
+    if (count > RENDER_MAX_ITEMS) {
+        if (!R.warned_items) log_error("РЕНДЕР: элементов %u, рисуются первые %u", count, RENDER_MAX_ITEMS);
+        R.warned_items = true;
+        count = RENDER_MAX_ITEMS;
+    }
+    u32 poses = 0;
+    for (u32 i = 0; i < count; i++) {
+        g_sphere[i] = item_sphere(&items[i]);
+        g_pose[i] = NO_POSE;
+        if (!items[i].bones) continue;
+        if (i > 0 && items[i - 1].bones == items[i].bones && g_pose[i - 1] != NO_POSE) {
+            g_pose[i] = g_pose[i - 1];
+        } else if (poses < RENDER_MAX_POSED) {
+            memcpy(&g_bones[(size_t)poses * RENDER_MAX_BONES], items[i].bones, sizeof(M4) * RENDER_MAX_BONES);
+            g_pose[i] = poses++;
+        } else if (!R.warned_poses) {
+            log_error("РЕНДЕР: наборов костей больше %u, лишние не рисуются", RENDER_MAX_POSED);
+            R.warned_poses = true;
+        }
+    }
+    PassView shadow_view = { .fr = frustum_from(light_vp), .px_k = SHADOW_SIZE / (2.0f * SHADOW_EXTENT) };
+    PassView scene_view = {
+        .fr = frustum_from(vp), .eye = fv->cam_pos,
+        .fwd = v3(-fv->view.m[2], -fv->view.m[6], -fv->view.m[10]),
+        .px_k = fv->proj.m[5] * 0.5f * (f32)ih,
+    };
+    u32 n_shadow = gather(items, count, &shadow_view, true, g_inst[0]);
+    u32 n_scene = gather(items, count, &scene_view, false, g_inst[1]);
+    for (u32 i = 0; i < n_shadow; i++) g_inst_pose[i] = g_inst[0][i].pose;
+    for (u32 i = 0; i < n_scene; i++) g_inst_pose[n_shadow + i] = g_inst[1][i].pose;
+    u32 bone_buf = R.bone_buf[R.stream], inst_buf = R.inst_buf[R.stream];
+    R.stream = (R.stream + 1) % STREAM_FRAMES;
+    if (poses) glNamedBufferSubData(bone_buf, 0, (GLsizeiptr)(sizeof(M4) * RENDER_MAX_BONES * poses), g_bones);
+    if (n_shadow + n_scene) glNamedBufferSubData(inst_buf, 0, (GLsizeiptr)(sizeof(u32) * (n_shadow + n_scene)), g_inst_pose);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_BONES, bone_buf);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_INST, inst_buf);
+    R.stat_frames++;
+    R.stat_items = count;
+
     // 1. Тени
     glBindFramebuffer(GL_FRAMEBUFFER, R.shadow_fbo);
     glViewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
@@ -363,7 +601,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glClear(GL_DEPTH_BUFFER_BIT);
     glUseProgram(R.prog_shadow);
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, light_vp.m);
-    draw_items(items, count, true);
+    draw_insts(g_inst[0], n_shadow, 0, 0);
     glDisable(GL_POLYGON_OFFSET_FILL);
     if (timing) mark(1);
 
@@ -382,7 +620,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform3f(U_SKY_AMB, fv->sky_amb.x, fv->sky_amb.y, fv->sky_amb.z);
     glUniform3f(U_GROUND_AMB, fv->ground_amb.x, fv->ground_amb.y, fv->ground_amb.z);
     glBindTextureUnit(0, R.shadow_tex);
-    draw_items(items, count, false);
+    draw_insts(g_inst[1], n_scene, n_shadow, 1);
     if (timing) mark(2);
 
     // 3. Атмосфера: небо, туман, объёмный свет, AO

@@ -504,6 +504,8 @@ int main(int argc, char **argv)
             log_info("КАДР: %.2f мс, %.0f к/с | CPU: логика %.3f, отправка %.3f, swap %.3f | %s",
                      (now - stat_t) * k, stat_frames / (now - stat_t),
                      cpu_logic * k, cpu_submit * k, cpu_swap * k, gpu);
+            log_info("ОТРИСОВКА: элементов %u | сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk",
+                     st.items, st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0);
             stat_t = now;
             stat_frames = 0;
             cpu_logic = cpu_submit = cpu_swap = 0;

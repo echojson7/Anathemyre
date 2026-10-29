@@ -7,13 +7,22 @@
 #include "mesh.h"
 
 #define RENDER_MAX_BONES 24
+#define RENDER_MAX_ITEMS 4096    // элементов отрисовки за кадр
+#define RENDER_MAX_POSED 1024    // разных наборов костей за кадр (персонаж с оружием — один набор)
 
 typedef struct GpuMesh {
     u32 vao, vbo, ibo;
     u32 index_count;
+    V4  bound;                          // сфера всей сетки: центр xyz, радиус w
+    V4  bone_bound[RENDER_MAX_BONES];   // сфера вершин каждой кости в позе привязки
+    u32 bone_mask;                      // какие кости есть в сетке
+    // Уровень детализации: если сфера на экране меньше lod_px пикселей, рисуется lod_next
+    const struct GpuMesh *lod_next;
+    f32 lod_px;
 } GpuMesh;
 
-// Один вызов отрисовки; bones == NULL для статики (вершины уже в мировых координатах)
+// Что рисовать; bones == NULL для статики (вершины уже в мировых координатах).
+// Видимость и уровень детализации рендер выбирает сам по границам сетки
 typedef struct DrawItem {
     const GpuMesh *mesh;
     const M4      *bones;
@@ -43,6 +52,9 @@ typedef struct RenderStats {
     f64 gpu_ms[PASS_COUNT];
     f64 gpu_total_ms;
     u32 samples;
+    // Среднее за кадр: вызовы отрисовки и треугольники в проходах теней и сцены, видимые элементы
+    f64 draws[2], tris[2], visible[2];
+    u32 items;          // элементов в последнем кадре
 } RenderStats;
 
 bool render_init(Arena *scratch, const char *data_dir);
@@ -50,6 +62,8 @@ void render_take_stats(RenderStats *out);
 void render_shutdown(void);
 bool render_reload_shaders(void);
 bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb);
+// Сделать coarse следующим уровнем детализации fine: fine рисуется, пока сфера не меньше min_px пикселей
+void gpu_mesh_set_lod(GpuMesh *fine, const GpuMesh *coarse, f32 min_px);
 void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const RenderSettings *rs, i32 win_w, i32 win_h);
 // Программа из двух файлов data/shaders (для слоёв поверх сцены: интерфейс)
 u32  render_program(const char *vs_file, const char *fs_file);
