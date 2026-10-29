@@ -230,6 +230,13 @@ void testroom_build_far(MeshBuilder *mb, Rng *rng)
     megastructures(mb, rng);
 }
 
+f32 testroom_ground(f32 x, f32 z)
+{
+    // Плита пола зала: верх на 0.1
+    if (fabsf(x) <= 32.0f && z >= -28.0f && z <= 24.0f) return 0.1f;
+    return terrain_height(x, z, NULL);
+}
+
 static void pick_target(Crowd *c, Rng *rng, u32 i)
 {
     c->target_x[i] = rng_range(rng, -14.0f, 14.0f);

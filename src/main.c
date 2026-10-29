@@ -12,6 +12,7 @@
 #include "game/arena_view.h"
 #include "game/battle.h"
 #include "game/character.h"
+#include "game/player.h"
 #include "game/testroom.h"
 #include "platform/platform.h"
 #include "render/render.h"
@@ -36,7 +37,7 @@ typedef struct Options {
     RtsCamera   cam;
     u64         seed;
     bool        no_vsync;
-    i32         follow;      // камера следует за фигурой с этим номером, -1 нет
+    bool        follow;      // камера следует за своим персонажем
     u32         arena_bench; // прогнать N боёв арены без окна
     u32         arena_log;   // сколько первых боёв печатать подробно
     u32         battle[2];   // полевой бой: бойцов в каждом отряде
@@ -56,7 +57,8 @@ static void camera_update(RtsCamera *c, const Input *in, f32 dt)
     if (in->key_down[KEY_A] || in->key_down[KEY_LEFT]) c->target = v3_sub(c->target, v3_mul(right, pan));
     if (in->key_down[KEY_Q]) c->yaw += 1.5f * dt;
     if (in->key_down[KEY_E]) c->yaw -= 1.5f * dt;
-    if (in->mouse_down[MOUSE_RIGHT] || in->mouse_down[MOUSE_MIDDLE]) {
+    // ПКМ отдан приказам, камеру крутит средняя кнопка (как в Kenshi)
+    if (in->mouse_down[MOUSE_MIDDLE]) {
         c->yaw -= (f32)in->mouse_dx * 0.005f;
         c->pitch += (f32)in->mouse_dy * 0.004f;
     }
@@ -82,9 +84,50 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
     return true;
 }
 
+// Высота под ногами: пол зала, рельеф, плита арены
+static f32 ground_height(f32 x, f32 z)
+{
+    f32 h = testroom_ground(x, z);
+    f32 dx = x - ARENA_CENTER.x, dz = z - ARENA_CENTER.z;
+    if (dx * dx + dz * dz < 8.5f * 8.5f) h = fmaxf(h, 0.125f);
+    return h;
+}
+
+// Луч из камеры через точку экрана до земли. nx, ny — координаты в -1..1
+static bool pick_ground(M4 view_proj, V3 eye, f32 nx, f32 ny, V3 *out)
+{
+    M4 inv = m4_inverse(view_proj);
+    const f32 *m = inv.m;
+    f32 w = m[3] * nx + m[7] * ny + m[11] + m[15];
+    if (fabsf(w) < 1e-9f) return false;
+    V3 far_p = v3_mul(m4_point(inv, v3(nx, ny, 1.0f)), 1.0f / w);
+    V3 dir = v3_norm(v3_sub(far_p, eye));
+    // Шаг по лучу до пересечения с рельефом, затем уточнение делением пополам
+    const f32 step = 0.5f, max_t = 1500.0f;
+    f32 t0 = 0.0f;
+    for (f32 t = step; t < max_t; t += step) {
+        V3 p = v3_add(eye, v3_mul(dir, t));
+        if (p.y > ground_height(p.x, p.z)) {
+            t0 = t;
+            continue;
+        }
+        f32 a = t0, b = t;
+        for (int i = 0; i < 20; i++) {
+            f32 c = 0.5f * (a + b);
+            V3 q = v3_add(eye, v3_mul(dir, c));
+            if (q.y > ground_height(q.x, q.z)) a = c;
+            else b = c;
+        }
+        V3 hit = v3_add(eye, v3_mul(dir, b));
+        *out = v3(hit.x, ground_height(hit.x, hit.z), hit.z);
+        return true;
+    }
+    return false;
+}
+
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--follow N] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
+    puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--follow] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
 }
@@ -96,7 +139,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         if (!strcmp(a, "--shot") && i + 1 < argc) o->shot_path = argv[++i];
         else if (!strcmp(a, "--frames") && i + 1 < argc) o->shot_frames = atoi(argv[++i]);
         else if (!strcmp(a, "--novsync")) o->no_vsync = true;
-        else if (!strcmp(a, "--follow") && i + 1 < argc) o->follow = atoi(argv[++i]);
+        else if (!strcmp(a, "--follow")) o->follow = true;
         else if (!strcmp(a, "--res") && i + 1 < argc) o->internal_h = atoi(argv[++i]);
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
@@ -152,7 +195,7 @@ int main(int argc, char **argv)
     platform_preinit();
     time_init();
     Options opt = {
-        .shot_frames = 90, .follow = -1, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337,
+        .shot_frames = 90, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337,
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
@@ -228,6 +271,15 @@ int main(int argc, char **argv)
         perm.used = mark;
     }
 
+    // Метка точки, куда идёт персонаж: бледно-зелёный крест на земле
+    GpuMesh marker_mesh;
+    mb_init(&mb, &perm, 200, 600);
+    mb_set(&mb, v3(0.35f, 0.9f, 0.45f), MAT_EMISSIVE, 0);
+    mb_box(&mb, m4_mul(m4_translate(v3(0, 0.02f, 0)), m4_mul(m4_rot_y(PI_F * 0.25f), m4_scale(v3(0.5f, 0.02f, 0.06f)))));
+    mb_box(&mb, m4_mul(m4_translate(v3(0, 0.02f, 0)), m4_mul(m4_rot_y(-PI_F * 0.25f), m4_scale(v3(0.5f, 0.02f, 0.06f)))));
+    gpu_mesh_upload(&marker_mesh, &mb);
+    perm.used = mark;
+
     // Арена: те же бои, что в --arena-bench с этим seed, но в реальном времени
     ArenaSession *arena = ARENA_PUSH_ARRAY(&perm, ArenaSession, 1);
     arena_session_init(arena, &perm, opt.seed);
@@ -239,8 +291,12 @@ int main(int argc, char **argv)
 
     Crowd crowd;
     crowd_init(&crowd, &rng, CROWD_SIZE);
+    // Свой персонаж появляется у края зала, лицом к арене
+    Player player;
+    player_init(&player, v3(9.0f, ground_height(9.0f, 22.0f), 22.0f), atan2f(ARENA_CENTER.x - 9.0f, ARENA_CENTER.z - 22.0f));
+    M4 *player_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)2 * RENDER_MAX_BONES);
     M4 *bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)TR_MAX_CHARS * RENDER_MAX_BONES);
-    DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS + 2 + AV_DRAW_ITEMS);
+    DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS + 2 + AV_DRAW_ITEMS + 3);
     u8 *shot_buf = NULL;
     if (opt.shot_path) shot_buf = arena_push(&perm, (size_t)opt.width * (size_t)opt.height * 3, 1);
     for (u32 i = 0; i < TR_MAX_CHARS * RENDER_MAX_BONES; i++) bones[i] = m4_identity();
@@ -260,7 +316,7 @@ int main(int argc, char **argv)
     f32 sim_time = 0;
     u32 frame = 0;
 
-    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, Q/E и ПКМ — поворот, колесо — дистанция, F — следовать за фигурой, F1 — стиль, F2 — разрешение, F3 — vsync, F5 — шейдеры");
+    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ПКМ — идти, средняя кнопка и Q/E — поворот, F — следовать за персонажем, F1 — стиль, F2 — разрешение, F3 — vsync, F5 — шейдеры");
 
     while (!in.quit) {
         platform_poll(&in);
@@ -272,8 +328,8 @@ int main(int argc, char **argv)
         }
         if (in.key_pressed[KEY_F5]) render_reload_shaders();
         if (in.key_pressed[KEY_F]) {
-            opt.follow = opt.follow < 0 ? 0 : (opt.follow + 1 < (i32)crowd.count ? opt.follow + 1 : -1);
-            if (opt.follow >= 0) cam.dist = MIN(cam.dist, 6.0f);
+            opt.follow = !opt.follow;
+            if (opt.follow) cam.dist = MIN(cam.dist, 8.0f);
         }
         if (in.key_pressed[KEY_F3]) {
             vsync = !vsync;
@@ -290,7 +346,27 @@ int main(int argc, char **argv)
         camera_update(&cam, &in, dt);
         crowd_update(&crowd, &rng, dt);
         arena_view_update(aview, arena, dt);
-        if (opt.follow >= 0 && opt.follow < (i32)crowd.count) cam.target = v3(crowd.x[opt.follow], 0, crowd.z[opt.follow]);
+        if (opt.follow) cam.target = v3(player.pos.x, 0, player.pos.z);
+
+        i32 ww, wh;
+        platform_window_size(&ww, &wh);
+        if (opt.shot_path) {
+            ww = opt.width;
+            wh = opt.height;
+        }
+        FrameView fv;
+        fv.cam_pos = camera_eye(&cam);
+        fv.view = m4_look_at(fv.cam_pos, v3_add(cam.target, v3(0, 1.0f, 0)), v3(0, 1, 0));
+        fv.proj = m4_perspective(0.95f, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
+
+        // ПКМ по земле: идти туда
+        if (in.mouse_pressed[MOUSE_RIGHT] && ww > 0 && wh > 0) {
+            f32 nx = 2.0f * ((f32)in.mouse_x + 0.5f) / (f32)ww - 1.0f;
+            f32 ny = 1.0f - 2.0f * ((f32)in.mouse_y + 0.5f) / (f32)wh;
+            V3 hit;
+            if (pick_ground(m4_mul(fv.proj, fv.view), fv.cam_pos, nx, ny, &hit)) player_order_move(&player, hit);
+        }
+        player_update(&player, dt, ground_height);
 
         u32 n = 0;
         items[n++] = (DrawItem){ .mesh = &near_mesh };
@@ -308,19 +384,23 @@ int main(int argc, char **argv)
             items[n++] = (DrawItem){ .mesh = &char_mesh[crowd.variant[i]], .bones = b };
         }
         n += arena_view_draw(aview, arena, sim_time, body_mesh, CHAR_VARIANTS, weapon_mesh, arena_bones, items + n);
+        {
+            CharPose p = {
+                .pos = player.pos, .heading = player.heading, .phase = player.phase, .walk = player.walk,
+                .time = sim_time, .seed = 7.0f,
+            };
+            character_pose(&p, NULL, player_bones);
+            items[n++] = (DrawItem){ .mesh = &body_mesh[0], .bones = player_bones };
+            items[n++] = (DrawItem){ .mesh = &weapon_mesh[W_RESSORA], .bones = player_bones };
+            if (player.marker > 0.0f && player.moving) {
+                M4 *mk = player_bones + RENDER_MAX_BONES;
+                mk[0] = m4_translate(player.target);
+                items[n++] = (DrawItem){ .mesh = &marker_mesh, .bones = mk, .no_shadow = true };
+            }
+        }
 
         f64 t_submit = time_now();
         cpu_logic += t_submit - t_logic;
-        i32 ww, wh;
-        platform_window_size(&ww, &wh);
-        if (opt.shot_path) {
-            ww = opt.width;
-            wh = opt.height;
-        }
-        FrameView fv;
-        fv.cam_pos = camera_eye(&cam);
-        fv.view = m4_look_at(fv.cam_pos, v3_add(cam.target, v3(0, 1.0f, 0)), v3(0, 1, 0));
-        fv.proj = m4_perspective(0.95f, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
         // Низкое солнце сбоку и сзади: длинные тени через зал
         fv.sun_dir = v3_norm(v3(0.70f, 0.30f, -0.62f));
         fv.sun_color = v3(2.2f, 1.75f, 1.1f);

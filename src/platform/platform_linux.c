@@ -230,6 +230,7 @@ static Key map_key(KeySym ks)
 void platform_poll(Input *in)
 {
     memset(in->key_pressed, 0, sizeof in->key_pressed);
+    memset(in->mouse_pressed, 0, sizeof in->mouse_pressed);
     in->mouse_dx = in->mouse_dy = 0;
     in->wheel = 0;
 
@@ -249,7 +250,12 @@ void platform_poll(Input *in)
         case ButtonRelease: {
             bool down = ev.type == ButtonPress;
             unsigned b = ev.xbutton.button;
-            if (b >= 1 && b <= 3) in->mouse_down[b - 1] = down;
+            if (b >= 1 && b <= 3) {
+                if (down && !in->mouse_down[b - 1]) in->mouse_pressed[b - 1] = true;
+                in->mouse_down[b - 1] = down;
+                in->mouse_x = ev.xbutton.x;
+                in->mouse_y = ev.xbutton.y;
+            }
             else if (down && b == 4) in->wheel++;
             else if (down && b == 5) in->wheel--;
         } break;

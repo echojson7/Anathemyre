@@ -89,7 +89,10 @@ static Key map_key(WPARAM vk)
 
 static void set_button(int b, bool down)
 {
-    if (g_w.in) g_w.in->mouse_down[b] = down;
+    if (g_w.in) {
+        if (down && !g_w.in->mouse_down[b]) g_w.in->mouse_pressed[b] = true;
+        g_w.in->mouse_down[b] = down;
+    }
     if (down) SetCapture(g_w.hwnd);
     else if (g_w.in && !g_w.in->mouse_down[0] && !g_w.in->mouse_down[1] && !g_w.in->mouse_down[2]) ReleaseCapture();
 }
@@ -264,6 +267,7 @@ void platform_shutdown(void)
 void platform_poll(Input *in)
 {
     memset(in->key_pressed, 0, sizeof in->key_pressed);
+    memset(in->mouse_pressed, 0, sizeof in->mouse_pressed);
     in->mouse_dx = in->mouse_dy = 0;
     in->wheel = 0;
     g_w.in = in;

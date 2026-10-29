@@ -19,6 +19,7 @@ typedef struct Input {
     bool key_down[KEY_COUNT];
     bool key_pressed[KEY_COUNT];   // нажата в этом кадре
     bool mouse_down[MOUSE_COUNT];
+    bool mouse_pressed[MOUSE_COUNT];  // нажата в этом кадре
     i32  mouse_x, mouse_y;
     i32  mouse_dx, mouse_dy;
     i32  wheel;                    // щелчки колеса за кадр
