@@ -26,7 +26,6 @@
 #define ARENA_CENTER v3(14.0f, 0.0f, 34.0f)
 #define ARENA_SHOW_AFTER_BOUT_S 12.0f
 #define CAM_FOV 0.95f  // по вертикали, рад
-#define PX_PER_M 40.0f // внутренних пикселей на метр мира у точки, куда смотрит камера
 #define DAY_LENGTH_S 120.0f  // полные сутки, с; пока быстро, чтобы смену было видно
 
 typedef struct RtsCamera {
@@ -471,8 +470,8 @@ int main(int argc, char **argv)
         fv.shadow_center = cam.target;
         fv.time = sim_time;
         fv.frame = frame;
-        // Пиксель постоянного размера в метрах: высота кадра в пикселях растёт с дистанцией камеры
-        rs.internal_h = (i32)(PX_PER_M * 2.0f * tanf(CAM_FOV * 0.5f) * cam.dist + 0.5f);
+        // Полное разрешение окна: пиксельность нарисована на поверхностях (см. scene.frag, TEXEL)
+        rs.internal_h = wh;
         render_frame(&fv, items, n, &rs, ww, wh);
         hud_draw(&hud, &in, &hw);
         ui_end();

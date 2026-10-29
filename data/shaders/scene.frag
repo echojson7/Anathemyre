@@ -4,7 +4,8 @@ in vec3 v_world;
 in vec3 v_nrm;
 in vec3 v_color;
 flat in uint v_mat;
-in float v_local_y;
+in vec3 v_local;
+flat in mat3 v_rot;
 
 layout(location = 17) uniform int u_skinned;
 layout(location = 18) uniform mat4 u_light_vp;
@@ -20,6 +21,20 @@ out vec4 o_color;
 
 const uint MAT_CONCRETE = 0u, MAT_RUST = 1u, MAT_SAND = 2u, MAT_CLOTH = 3u, MAT_LEATHER = 4u,
            MAT_GLYPH = 5u, MAT_EMISSIVE = 6u, MAT_SKIN = 7u, MAT_METAL = 8u;
+
+const float TEXEL = 1.0 / 16.0;  // «пиксель» на поверхностях, м
+
+// Сдвиг точки p к центру квадрата сетки t в плоскости грани с нормалью n.
+// Вдоль оси грани точка не прыгает, а возвращается на плоскость грани
+vec3 texel_snap(vec3 p, vec3 n, float t)
+{
+    vec3 a = abs(n);
+    vec3 d = (floor(p / t) + 0.5) * t - p;
+    if (a.x >= a.y && a.x >= a.z) d.x = -(n.y * d.y + n.z * d.z) / n.x;
+    else if (a.y >= a.z) d.y = -(n.x * d.x + n.z * d.z) / n.y;
+    else d.z = -(n.x * d.x + n.y * d.y) / n.z;
+    return d;
+}
 
 float sun_shadow(vec3 p, vec3 n)
 {
@@ -75,8 +90,15 @@ void main()
 {
     vec3 N = normalize(v_nrm);
     if (!gl_FrontFacing) N = -N;
-    vec3 P = v_world;
-    vec3 V = normalize(u_cam_pos - P);
+    // Пиксельность живёт на поверхностях: материал и свет считаются в центре квадрата TEXEL.
+    // Вдали квадрат не мельче пикселя экрана (как мипы), иначе узор рябит
+    vec3 Nl = normalize(transpose(v_rot) * N);
+    float mpp = max(length(dFdx(v_local)), length(dFdy(v_local)));
+    float tex = max(TEXEL, exp2(ceil(log2(max(mpp, 1e-6)))));
+    vec3 dl = texel_snap(v_local, Nl, tex);
+    vec3 P = v_local + dl;           // материал: прилипает к телу
+    vec3 W = v_world + v_rot * dl;   // свет и тени
+    vec3 V = normalize(u_cam_pos - W);
     vec3 L = u_sun_dir;
 
     vec3 albedo = v_color;
@@ -132,7 +154,7 @@ void main()
         albedo *= 0.8 + 0.25 * weave;
         albedo *= 0.75 + 0.4 * dirt;
         // Подол и низ в пыли
-        albedo = mix(albedo, vec3(0.33, 0.29, 0.22), smoothstep(1.0, 0.2, v_local_y) * 0.5);
+        albedo = mix(albedo, vec3(0.33, 0.29, 0.22), smoothstep(1.0, 0.2, P.y) * 0.5);
     } else if (v_mat == MAT_LEATHER) {
         albedo *= 0.75 + 0.4 * fbm3(P * 6.0);
         spec = 0.15;
@@ -148,8 +170,8 @@ void main()
     } else if (v_mat == MAT_GLYPH) {
         // Знаки на плите; цвет вершины — цвет свечения
         // На стене строки идут по высоте, на полу — по плоскости XZ
-        vec3 t = abs(N.y) > 0.9 ? vec3(1, 0, 0) : normalize(cross(vec3(0, 1, 0), N));
-        vec2 uv = abs(N.y) > 0.9 ? P.xz : vec2(dot(P, t), P.y);
+        vec3 t = abs(Nl.y) > 0.9 ? vec3(1, 0, 0) : normalize(cross(vec3(0, 1, 0), Nl));
+        vec2 uv = abs(Nl.y) > 0.9 ? P.xz : vec2(dot(P, t), P.y);
         float ink = glyph_ink(uv);
         float flicker = 0.75 + 0.25 * step(0.15, noise3(vec3(u_time * 7.0, uv.y * 0.5, 0.0)));
         float dim = 0.6 + 0.4 * noise3(vec3(uv * 0.7, u_time * 0.3));
@@ -162,8 +184,11 @@ void main()
         albedo = vec3(0.05);
     }
 
+    // Разброс яркости от квадрата к квадрату: поверхность читается как текстура низкого разрешения
+    albedo *= 0.95 + 0.10 * hash13(floor(P / tex) + float(v_mat) * 17.0);
+
     float ndl = max(dot(N, L), 0.0);
-    float sh = ndl > 0.0 ? sun_shadow(P, N) : 0.0;
+    float sh = ndl > 0.0 ? sun_shadow(W, N) : 0.0;
 
     // Небо и отражённый от песка свет
     vec3 ambient = mix(u_ground_amb, u_sky_amb, N.y * 0.5 + 0.5) * 0.9;
