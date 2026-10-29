@@ -30,6 +30,7 @@ typedef struct Options {
     RtsCamera   cam;
     u64         seed;
     bool        no_vsync;
+    i32         follow;      // камера следует за фигурой с этим номером, -1 нет
 } Options;
 
 static void camera_update(RtsCamera *c, const Input *in, f32 dt)
@@ -72,7 +73,7 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
+    puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--follow N] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
 }
 
 static bool parse_args(int argc, char **argv, Options *o)
@@ -82,6 +83,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         if (!strcmp(a, "--shot") && i + 1 < argc) o->shot_path = argv[++i];
         else if (!strcmp(a, "--frames") && i + 1 < argc) o->shot_frames = atoi(argv[++i]);
         else if (!strcmp(a, "--novsync")) o->no_vsync = true;
+        else if (!strcmp(a, "--follow") && i + 1 < argc) o->follow = atoi(argv[++i]);
         else if (!strcmp(a, "--res") && i + 1 < argc) o->internal_h = atoi(argv[++i]);
         else if (!strcmp(a, "--seed") && i + 1 < argc) o->seed = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(a, "--size") && i + 2 < argc) {
@@ -130,7 +132,7 @@ int main(int argc, char **argv)
     platform_preinit();
     time_init();
     Options opt = {
-        .shot_frames = 90, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337,
+        .shot_frames = 90, .follow = -1, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337,
         .cam = { .target = { 2, 0, 6 }, .yaw = -0.5f, .pitch = 0.5f, .dist = 18.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
@@ -214,7 +216,7 @@ int main(int argc, char **argv)
     f32 sim_time = 0;
     u32 frame = 0;
 
-    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, Q/E и ПКМ — поворот, колесо — дистанция, F1 — стиль, F2 — разрешение, F3 — vsync, F5 — шейдеры");
+    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, Q/E и ПКМ — поворот, колесо — дистанция, F — следовать за фигурой, F1 — стиль, F2 — разрешение, F3 — vsync, F5 — шейдеры");
 
     while (!in.quit) {
         platform_poll(&in);
@@ -225,6 +227,10 @@ int main(int argc, char **argv)
             rs.internal_h = res_steps[res_index];
         }
         if (in.key_pressed[KEY_F5]) render_reload_shaders();
+        if (in.key_pressed[KEY_F]) {
+            opt.follow = opt.follow < 0 ? 0 : (opt.follow + 1 < (i32)crowd.count ? opt.follow + 1 : -1);
+            if (opt.follow >= 0) cam.dist = MIN(cam.dist, 6.0f);
+        }
         if (in.key_pressed[KEY_F3]) {
             vsync = !vsync;
             platform_set_vsync(vsync);
@@ -239,6 +245,7 @@ int main(int argc, char **argv)
         f64 t_logic = time_now();
         camera_update(&cam, &in, dt);
         crowd_update(&crowd, &rng, dt);
+        if (opt.follow >= 0 && opt.follow < (i32)crowd.count) cam.target = v3(crowd.x[opt.follow], 0, crowd.z[opt.follow]);
 
         u32 n = 0;
         items[n++] = (DrawItem){ .mesh = &near_mesh };

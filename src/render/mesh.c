@@ -129,8 +129,17 @@ void mb_lathe(MeshBuilder *mb, V3 a, V3 b, const V2 *profile, u32 n, u32 segs, f
             tri(mb, p00, p10, p01);
             tri(mb, p01, p10, p11);
         }
+    mb_smooth_normals(mb, base, ibase);
+}
+
+void mb_smooth_normals(MeshBuilder *mb, u32 vfirst, u32 ifirst)
+{
+    for (u32 k = vfirst; k < mb->vcount; k++) {
+        Vertex *v = &mb->v[k];
+        v->nrm[0] = v->nrm[1] = v->nrm[2] = 0.0f;
+    }
     // Гладкие нормали внутри детали: сумма нормалей граней
-    for (u32 k = ibase; k < mb->icount; k += 3) {
+    for (u32 k = ifirst; k < mb->icount; k += 3) {
         Vertex *v0 = &mb->v[mb->idx[k]], *v1 = &mb->v[mb->idx[k + 1]], *v2 = &mb->v[mb->idx[k + 2]];
         V3 p0 = v3(v0->pos[0], v0->pos[1], v0->pos[2]);
         V3 p1 = v3(v1->pos[0], v1->pos[1], v1->pos[2]);
@@ -141,10 +150,10 @@ void mb_lathe(MeshBuilder *mb, V3 a, V3 b, const V2 *profile, u32 n, u32 segs, f
             vs[q]->nrm[0] += fn.x; vs[q]->nrm[1] += fn.y; vs[q]->nrm[2] += fn.z;
         }
     }
-    for (u32 k = base; k < mb->vcount; k++) {
+    for (u32 k = vfirst; k < mb->vcount; k++) {
         Vertex *v = &mb->v[k];
         V3 nn = v3_norm(v3(v->nrm[0], v->nrm[1], v->nrm[2]));
-        if (v3_len(nn) < 0.5f) nn = axis;
+        if (v3_len(nn) < 0.5f) nn = v3(0, 1, 0);
         v->nrm[0] = nn.x; v->nrm[1] = nn.y; v->nrm[2] = nn.z;
     }
 }

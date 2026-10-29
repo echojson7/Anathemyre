@@ -47,6 +47,8 @@ void mb_box(MeshBuilder *mb, M4 xf);
 // Тело вращения вдоль a->b; profile: x = смещение вдоль оси (м), y = радиус.
 // ex/ez растягивают сечение по боковой и передней оси
 void mb_lathe(MeshBuilder *mb, V3 a, V3 b, const V2 *profile, u32 n, u32 segs, f32 ex, f32 ez);
+// Пересчитать гладкие нормали для вершин начиная с vfirst по треугольникам начиная с ifirst
+void mb_smooth_normals(MeshBuilder *mb, u32 vfirst, u32 ifirst);
 // Капсула с разными радиусами на концах
 void mb_capsule(MeshBuilder *mb, V3 a, V3 b, f32 r0, f32 r1, u32 segs, f32 ex, f32 ez);
 // Цилиндр с плоскими торцами

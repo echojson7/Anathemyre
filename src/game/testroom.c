@@ -1,5 +1,7 @@
 #include "testroom.h"
 
+#include "character.h"
+
 // Цвета поверхностей (альбедо, линейные)
 #define C_CONCRETE v3(0.42f, 0.40f, 0.37f)
 #define C_CONCRETE_DARK v3(0.30f, 0.29f, 0.27f)
@@ -241,7 +243,7 @@ void crowd_init(Crowd *c, Rng *rng, u32 count)
         c->x[i] = rng_range(rng, -8.0f, 8.0f);
         c->z[i] = rng_range(rng, -12.0f, 14.0f);
         c->heading[i] = rng_range(rng, 0, 2 * PI_F);
-        c->phase[i] = rng_range(rng, 0, 2 * PI_F);
+        c->phase[i] = rng_f32(rng);
         c->walk[i] = 0;
         c->wait[i] = rng_range(rng, 0.0f, 3.0f);
         c->seed[i] = rng_range(rng, 0, 100.0f);
@@ -268,8 +270,7 @@ static f32 wrap_angle(f32 a)
 
 void crowd_update(Crowd *c, Rng *rng, f32 dt)
 {
-    const f32 speed = 1.35f;
-    const f32 stride = 1.5f; // метров на полный цикл шага
+    const f32 speed = 1.15f;
     for (u32 i = 0; i < c->count; i++) {
         bool moving = false;
         if (!c->stationary[i]) {
@@ -289,13 +290,14 @@ void crowd_update(Crowd *c, Rng *rng, f32 dt)
                     f32 v = speed * c->walk[i] * clampf(1.0f - fabsf(diff) / PI_F, 0.2f, 1.0f);
                     c->x[i] += sinf(c->heading[i]) * v * dt;
                     c->z[i] += cosf(c->heading[i]) * v * dt;
-                    c->phase[i] += v * dt * (2 * PI_F / stride);
+                    c->phase[i] += v * dt / CHAR_STRIDE;
                     moving = true;
                 }
             }
         }
         f32 goal = moving ? 1.0f : 0.0f;
         c->walk[i] += clampf(goal - c->walk[i], -dt * 3.0f, dt * 3.0f);
-        if (!moving && c->walk[i] > 0.0f) c->phase[i] += dt * 2.0f * c->walk[i];
+        if (!moving && c->walk[i] > 0.0f) c->phase[i] += dt * c->walk[i] * speed / CHAR_STRIDE;
+        c->phase[i] -= floorf(c->phase[i]);
     }
 }
