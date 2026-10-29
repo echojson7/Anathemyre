@@ -53,6 +53,14 @@ static void member_init(CharSheet *c, const MemberDef *m, Rng *rng)
     for (u32 k = 0; k < 6 && m->inv[k].kind; k++) inv_add(&c->inv, m->inv[k]);
 }
 
+void sheet_random(CharSheet *c, Rng *rng, const char *name, u32 tier, u8 weapon)
+{
+    MemberDef m = { .name = name, .tier = (u8)tier, .weapon = weapon, .weapon_q = tier ? Q_WORN : Q_JUNK,
+                    .armor = { A_RAGS, END_A, END_A, END_A }, .gear = { END_G, END_G, END_G, END_G } };
+    if (tier >= 2) m.armor[1] = A_QUILT;
+    member_init(c, &m, rng);
+}
+
 void squad_init(Squad *s, Rng *rng, V3 origin, f32 heading, GroundFn ground)
 {
     memset(s, 0, sizeof *s);
@@ -80,8 +88,10 @@ void squad_place(Squad *s, V3 origin, f32 heading, GroundFn ground)
         p.y = ground(p.x, p.z);
         Player *b = &s->body[i];
         u8 gait = b->gait;
+        i32 slot = b->slot;
         player_init(b, p, heading);
         b->gait = gait;
+        b->slot = slot;
     }
     s->order_marker = 0.0f;
 }
@@ -132,9 +142,10 @@ static f32 leg_factor(const FighterDesc *d, u32 part)
     return 0.5f + 0.5f * clampf(d->hp[part] / g_part_hp[part], 0.0f, 1.0f);
 }
 
-f32 squad_member_speed(const Squad *s, u32 i, Gait g)
+f32 squad_member_speed(const Squad *s, u32 i, Gait g) { return sheet_speed(&s->sheet[i], g); }
+
+f32 sheet_speed(const CharSheet *c, Gait g)
 {
-    const CharSheet *c = &s->sheet[i];
     // Хромает на худшую ногу
     f32 v = g_gait_speed[g] * fminf(leg_factor(&c->d, PART_LEG_L), leg_factor(&c->d, PART_LEG_R));
     // Атлетика решает на бегу, шагом все ходят одинаково

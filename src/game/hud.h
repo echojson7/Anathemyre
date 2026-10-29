@@ -7,9 +7,11 @@
 
 #include "../platform/platform.h"
 #include "arena_view.h"
+#include "field.h"
 #include "squad.h"
 
-typedef enum LookKind { LOOK_NONE, LOOK_SQUAD, LOOK_ARENA } LookKind;
+// LOOK_FIELD — чужой на поле (бродящий, моб): номер слота поля
+typedef enum LookKind { LOOK_NONE, LOOK_SQUAD, LOOK_ARENA, LOOK_FIELD } LookKind;
 
 // Ячейки атласа портретов
 #define HUD_PORTRAIT_FOCUS 8        // выбранный: в панели и в окне персонажа
@@ -50,10 +52,12 @@ typedef struct HudWorld {
     Squad              *squad;
     const ArenaSession *arena;
     const ArenaView    *aview;
+    const Field        *field;
     M4                  view_proj;
     f32                 time;       // реальное время, с
     f32                 tod;        // время суток 0..1
     u32                 day;
+    bool                alone;      // отряд в другой локации: чужих и арену не выбирать
 } HudWorld;
 
 void hud_init(Hud *h);
@@ -64,6 +68,8 @@ void hud_draw(const Hud *h, const Input *in, const HudWorld *w);
 // Показать персонажа в панели выбранного (для снимков и горячих клавиш)
 void hud_look(Hud *h, u8 kind, u32 index);
 bool hud_window_open(const Hud *h);
+// Кто под курсором в мире (свои, бойцы арены, чужие на поле); false — никого или курсор над интерфейсом
+bool hud_pick(const Hud *h, const Input *in, const HudWorld *w, u8 *kind, u32 *index);
 
 // Отладочное меню. Между ui_begin и hud_input: begin, виджеты, end.
 // end возвращает true, если мышь занята меню; тогда клики в мир и HUD не передавать.

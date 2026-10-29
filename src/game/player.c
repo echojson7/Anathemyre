@@ -36,7 +36,7 @@ static f32 follow(f32 x, f32 goal, f32 tau, f32 dt) { return x + (goal - x) * fm
 void player_init(Player *p, V3 pos, f32 heading)
 {
     *p = (Player){ .pos = pos, .heading = heading, .move_yaw = heading, .target = pos, .gait = GAIT_RUN,
-                   .vmax = g_gait_speed[GAIT_RUN] };
+                   .vmax = g_gait_speed[GAIT_RUN], .slot = -1 };
 }
 
 void player_order_move(Player *p, V3 target)
@@ -48,7 +48,7 @@ void player_order_move(Player *p, V3 target)
 
 void player_update(Player *p, f32 dt, GroundFn ground)
 {
-    if (dt <= 0.0f) return;
+    if (dt <= 0.0f || p->ctrl == CTRL_FIGHT) return;
     p->marker = fmaxf(0.0f, p->marker - dt);
     f32 dx = p->target.x - p->pos.x, dz = p->target.z - p->pos.z;
     f32 d = sqrtf(dx * dx + dz * dz);
