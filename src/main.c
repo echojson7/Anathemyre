@@ -147,12 +147,11 @@ static bool sphere_in_view(M4 vp, V3 c, f32 r)
 }
 
 // Внешность члена отряда: по номеру и сложению
-static M4 squad_look(const Squad *s, u32 i)
+static M4 squad_look(const Squad *s, u32 i, CharLook *lk)
 {
     const CharSheet *cs = &s->sheet[i];
-    CharLook lk;
-    look_make(&lk, s->variant[i], 1000u + i, cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
-    return look_matrix(&lk, s->variant[i]);
+    look_make(lk, s->variant[i], 1000u + i, cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
+    return look_matrix(lk, s->variant[i]);
 }
 
 // Тело на поле: поза ходьбы или боя (fight_anim), внешность look. Оружие в руке, в ножнах или на земле (drop_b)
@@ -500,8 +499,8 @@ int main(int argc, char **argv)
 
     // Тела людей и одежда; грубые уровни лежат отдельно: остальной код видит только полный уровень
     GpuMesh body_mesh[BODY_KINDS], body_lod[BODY_KINDS][CHAR_LODS - 1], weapon_mesh[W_COUNT];
-    GpuMesh *gear_mesh = ARENA_PUSH_ARRAY(&perm, GpuMesh, BODY_KINDS * GEAR_COUNT);
-    GpuMesh *gear_lod = ARENA_PUSH_ARRAY(&perm, GpuMesh, BODY_KINDS * GEAR_COUNT * (CHAR_LODS - 1));
+    GpuMesh *gear_mesh = ARENA_PUSH_ARRAY(&perm, GpuMesh, BODY_KINDS * GEAR_ROW);
+    GpuMesh *gear_lod = ARENA_PUSH_ARRAY(&perm, GpuMesh, BODY_KINDS * GEAR_ROW * (CHAR_LODS - 1));
     mark = perm.used;
     for (u32 k = 0; k < BODY_KINDS; k++) {
         char stem[96];
@@ -510,10 +509,12 @@ int main(int argc, char **argv)
             platform_shutdown();
             return 1;
         }
-        for (u32 g = 0; g < GEAR_COUNT; g++) {
-            // Вещь переключает LOD на той же дальности, что и тело: порог по отношению сфер
-            snprintf(stem, sizeof stem, "gear/%s_%s", g_body_file[k], g_gear_file[g]);
-            GpuMesh *gm = &gear_mesh[k * GEAR_COUNT + g], *gl = &gear_lod[(k * GEAR_COUNT + g) * (CHAR_LODS - 1)];
+        for (u32 g = 0; g < GEAR_ROW; g++) {
+            // Вещь переключает LOD на той же дальности, что и тело: порог по отношению сфер. За вещами — причёски
+            if (g >= GEAR_COUNT && !g_hair_file[k][g - GEAR_COUNT]) continue;
+            if (g < GEAR_COUNT) snprintf(stem, sizeof stem, "gear/%s_%s", g_body_file[k], g_gear_file[g]);
+            else snprintf(stem, sizeof stem, "hair/%s_%s", g_body_file[k], g_hair_file[k][g - GEAR_COUNT]);
+            GpuMesh *gm = &gear_mesh[k * GEAR_ROW + g], *gl = &gear_lod[(k * GEAR_ROW + g) * (CHAR_LODS - 1)];
             if (!load_lods(gm, gl, &mb, &perm, data_dir, stem, 0.0f)) {
                 render_shutdown();
                 platform_shutdown();
@@ -532,7 +533,8 @@ int main(int argc, char **argv)
 
     // Люди из MakeHuman (tools/humanconv): у каждого три LOD рядом, для сравнения
     enum { HUMAN_N = BODY_KINDS * CHAR_LODS };
-    GpuMesh human_mesh[HUMAN_N];
+    GpuMesh human_mesh[HUMAN_N], human_hair[HUMAN_N];  // причёска — первый вид тела, у худого без неё
+    bool human_has_hair[HUMAN_N] = { 0 };
     u32 human_count = 0;
     M4 *human_bones = ARENA_PUSH_ARRAY(&perm, M4, HUMAN_N * RENDER_MAX_BONES);
     // Левее в том же ряду: разная внешность (морфы и оттенки) на сетках с LOD
@@ -595,12 +597,12 @@ int main(int argc, char **argv)
     for (u32 i = 0; i < TOWN_MAX_FOLK; i++) folk_pose_age[i] = -1.0f;
     // Внешность жителей не меняется: считаем один раз
     M4 *folk_look = ARENA_PUSH_ARRAY(&perm, M4, TOWN_MAX_FOLK);
+    CharLook *folk_lk = ARENA_PUSH_ARRAY(&perm, CharLook, TOWN_MAX_FOLK);
     for (u32 i = 0; i < folk->count; i++) {
         u32 kind = folk->variant[i] % BODY_KINDS;
         f32 hs = 1.0f + 0.06f * sinf(folk->seed[i] * 7.31f), ws = 1.0f + 0.08f * sinf(folk->seed[i] * 3.17f + 1.0f);
-        CharLook lk;
-        look_make(&lk, kind, i * 6151u + 5003u, 72.0f * hs * hs * ws * ws, 1.8f * hs, 30.0f + 25.0f * sinf(folk->seed[i] * 2.1f));
-        folk_look[i] = look_matrix(&lk, kind);
+        look_make(&folk_lk[i], kind, i * 6151u + 5003u, 72.0f * hs * hs * ws * ws, 1.8f * hs, 30.0f + 25.0f * sinf(folk->seed[i] * 2.1f));
+        folk_look[i] = look_matrix(&folk_lk[i], kind);
     }
     // Свой отряд появляется у края зала, лицом к арене
     Squad *squad = ARENA_PUSH_ARRAY(&perm, Squad, 1);
@@ -688,6 +690,10 @@ int main(int argc, char **argv)
                 if (!mb_load(&mb, &perm, path)) continue;
                 gpu_mesh_upload(&human_mesh[human_count], &mb);
                 log_info("ЧЕЛОВЕК %u: %u вершин, %u треугольников", k, mb.vcount, mb.icount / 3);
+                perm.used = mark;
+                snprintf(path, sizeof path, "%s/meshes/hair/%s_%s%s.mesh", data_dir, g_body_file[k / CHAR_LODS], g_hair_file[k / CHAR_LODS][0], suf);
+                human_has_hair[human_count] = k / CHAR_LODS != BODY_THIN && mb_load(&mb, &perm, path);
+                if (human_has_hair[human_count]) gpu_mesh_upload(&human_hair[human_count], &mb);
                 perm.used = mark;
                 f32 x = 0.3f + 2.4f * (f32)(k / CHAR_LODS) + 0.7f * (f32)lod;
                 for (u32 b = 0; b < RENDER_MAX_BONES; b++)
@@ -912,8 +918,9 @@ int main(int argc, char **argv)
                       30.0f + 25.0f * sinf(crowd.seed[i] * 2.1f));
             u8 gear[GEAR_MAX_WORN];
             u32 ng = gear_random(i * 131u + 9u, gear);
+            ng += look_hair(&lk, gear + ng);
             n += field_body_draw(field, (u32)cp->slot, &p, &body_mesh[kind], armed ? &weapon_mesh[wid] : NULL, look_matrix(&lk, kind),
-                                 gear_mesh + kind * GEAR_COUNT, gear, ng,
+                                 gear_mesh + kind * GEAR_ROW, gear, ng,
                                  &bones[i * RENDER_MAX_BONES], drop_bones + (size_t)cp->slot * RENDER_MAX_BONES, items + n);
         }
         if (!g_in_valley) items[n++] = (DrawItem){ .mesh = &town_mesh };
@@ -933,7 +940,9 @@ int main(int argc, char **argv)
             u8 wid = folk->variant[i] % 2 ? W_ARMATURA : W_RESSORA;
             items[n++] = (DrawItem){ .mesh = &body_mesh[folk->variant[i] % BODY_KINDS], .bones = b };
             u8 gear[GEAR_MAX_WORN];
-            n += push_gear(items + n, gear_mesh + (folk->variant[i] % BODY_KINDS) * GEAR_COUNT, gear, gear_random(i * 977u + 31u, gear), b);
+            u32 ng = gear_random(i * 977u + 31u, gear);
+            ng += look_hair(&folk_lk[i], gear + ng);
+            n += push_gear(items + n, gear_mesh + (folk->variant[i] % BODY_KINDS) * GEAR_ROW, gear, ng, b);
             if (folk->armed[i]) items[n++] = (DrawItem){ .mesh = &weapon_mesh[wid], .bones = b };
             if (!stale) continue;
             folk_pose_age[i] = 0.0f;
@@ -963,8 +972,9 @@ int main(int argc, char **argv)
             u32 kind = mobs->variant[i] % BODY_KINDS;
             u8 gear[GEAR_MAX_WORN];
             u32 ng = gear_from_sheet(cs, gear);
+            ng += look_hair(&lk, gear + ng);
             n += field_body_draw(field, (u32)mp->slot, &p, &body_mesh[kind], &weapon_mesh[wid], look_matrix(&lk, kind),
-                                 gear_mesh + kind * GEAR_COUNT, gear, ng, &mob_bones[i * RENDER_MAX_BONES],
+                                 gear_mesh + kind * GEAR_ROW, gear, ng, &mob_bones[i * RENDER_MAX_BONES],
                                  drop_bones + (size_t)mp->slot * RENDER_MAX_BONES, items + n);
         }
         if (!g_in_valley) n += arena_view_draw(aview, arena, sim_time, body_mesh, gear_mesh, BODY_KINDS, weapon_mesh, arena_bones, items + n);
@@ -981,8 +991,11 @@ int main(int argc, char **argv)
             const GpuMesh *wm = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? &weapon_mesh[cs->equip[SLOT_WEAPON].id] : NULL;
             u32 kind = squad->variant[i] % BODY_KINDS;
             u8 gear[GEAR_MAX_WORN];
+            CharLook lk;
+            M4 lm = squad_look(squad, i, &lk);
             u32 ng = gear_from_sheet(cs, gear);
-            n += field_body_draw(field, (u32)pl->slot, &p, &body_mesh[kind], wm, squad_look(squad, i), gear_mesh + kind * GEAR_COUNT, gear, ng, b,
+            ng += look_hair(&lk, gear + ng);
+            n += field_body_draw(field, (u32)pl->slot, &p, &body_mesh[kind], wm, lm, gear_mesh + kind * GEAR_ROW, gear, ng, b,
                                  drop_bones + (size_t)pl->slot * RENDER_MAX_BONES, items + n);
             if (squad->selected[i]) {
                 M4 *rb = b + RENDER_MAX_BONES;
@@ -1005,15 +1018,20 @@ int main(int argc, char **argv)
             mk[0] = m4_translate(squad->order_pos);
             items[n++] = (DrawItem){ .mesh = &marker_mesh, .bones = mk, .no_shadow = true };
         }
-        for (u32 k = 0; humans_on && k < human_count; k++)
+        for (u32 k = 0; humans_on && k < human_count; k++) {
             items[n++] = (DrawItem){ .mesh = &human_mesh[k], .bones = human_bones + k * RENDER_MAX_BONES };
+            if (human_has_hair[k]) items[n++] = (DrawItem){ .mesh = &human_hair[k], .bones = human_bones + k * RENDER_MAX_BONES };
+        }
         for (u32 j = 0; humans_on && j < LOOKS_N; j++) {
             // Каждый в одной вещи по порядку GEAR_*, последний — во всём сразу
             static const u8 kit[] = { GEAR_QUILT, GEAR_PLATE, GEAR_BUCKET, GEAR_GREAVES, GEAR_BOOTS, GEAR_MITTS, GEAR_PACK, GEAR_BELT };
             u8 one = (u8)j;
             const M4 *lb = looks_bones + j * RENDER_MAX_BONES;
-            const GpuMesh *row = gear_mesh + (j % BODY_KINDS) * GEAR_COUNT;
+            const GpuMesh *row = gear_mesh + (j % BODY_KINDS) * GEAR_ROW;
             items[n++] = (DrawItem){ .mesh = &body_mesh[j % BODY_KINDS], .bones = lb };
+            // И причёски по кругу, кроме худого: он бритый
+            u8 cut = (u8)(GEAR_COUNT + (j / BODY_KINDS) % (j % BODY_KINDS == BODY_FEMALE ? 4u : 3u));
+            if (j % BODY_KINDS != BODY_THIN) n += push_gear(items + n, row, &cut, 1, lb);
             n += j < GEAR_COUNT ? push_gear(items + n, row, &one, 1, lb) : push_gear(items + n, row, kit, ARRAY_COUNT(kit), lb);
         }
         V3 look_pos;
@@ -1062,10 +1080,13 @@ int main(int argc, char **argv)
                 const FighterDesc *d = &arena->roster[k].d;
                 f32 seed = (f32)k * 13.7f + 3.0f;
                 u8 gear[GEAR_MAX_WORN];
+                CharLook lk;
+                M4 lm = arena_view_look(arena, k, &lk);
                 u32 ng = gear_from_armor(d->armor, gear);
+                ng += look_hair(&lk, gear + ng);
                 portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, &body_mesh[k % BODY_KINDS], &weapon_mesh[d->weapon],
-                         d->weapon, seed, d->height / 1.8f, 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), arena_view_look(arena, k),
-                         gear_mesh + (k % BODY_KINDS) * GEAR_COUNT, gear, ng, pb);
+                         d->weapon, seed, d->height / 1.8f, 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), lm,
+                         gear_mesh + (k % BODY_KINDS) * GEAR_ROW, gear, ng, pb);
                 continue;
             }
             if (focus && hud.look_kind == LOOK_FIELD && k < field->w.count) {
@@ -1096,18 +1117,22 @@ int main(int argc, char **argv)
                         width = 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f);
                         look_make(&lk, variant, 2000u + c, cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
                     }
+                ng += look_hair(&lk, gear + ng);
                 portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, &body_mesh[variant], wm, cs->equip[SLOT_WEAPON].id,
-                         seed, height, width, look_matrix(&lk, variant), gear_mesh + variant * GEAR_COUNT, gear, ng, pb);
+                         seed, height, width, look_matrix(&lk, variant), gear_mesh + variant * GEAR_ROW, gear, ng, pb);
                 continue;
             }
             if (focus && (hud.look_kind != LOOK_SQUAD || k >= squad->count)) continue;
             const CharSheet *cs = &squad->sheet[k];
             const GpuMesh *wm = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? &weapon_mesh[cs->equip[SLOT_WEAPON].id] : NULL;
             u8 gear[GEAR_MAX_WORN];
+            CharLook lk;
+            M4 lm = squad_look(squad, k, &lk);
             u32 ng = gear_from_sheet(cs, gear), kind = squad->variant[k] % BODY_KINDS;
+            ng += look_hair(&lk, gear + ng);
             portrait(&fv, focus ? HUD_PORTRAIT_FOCUS : i, focus ? HUD_PORTRAIT_FOCUS_PX : HUD_PORTRAIT_CARD_PX,
                      &body_mesh[kind], wm, cs->equip[SLOT_WEAPON].id, 7.0f + (f32)k * 5.3f, cs->d.height / 1.8f, 0.0f,
-                     squad_look(squad, k), gear_mesh + kind * GEAR_COUNT, gear, ng, pb);
+                     lm, gear_mesh + kind * GEAR_ROW, gear, ng, pb);
         }
         ui_set_image(render_portrait_texture());
         ui_set_time(real_time);

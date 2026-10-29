@@ -19,6 +19,7 @@ enum { LOOK_FAT, LOOK_LEAN, LOOK_STRONG, LOOK_WEAK, LOOK_OLD, LOOK_FACE_A, LOOK_
 typedef struct CharLook {
     f32 morph[LOOK_MORPHS];
     V3  skin, hair;
+    u8  cut;    // причёска: 0 — нет (щетина), иначе вид 1..HAIR_MAX у этого тела
 } CharLook;
 
 // Одежда и броня: сетки поверх тела (data/meshes/gear, tools/humanconv GEAR), на том же наборе костей
@@ -27,8 +28,15 @@ typedef enum GearId {
     GEAR_WRAP, GEAR_BOOTS, GEAR_MITTS, GEAR_PACK, GEAR_BELT,
     GEAR_COUNT
 } GearId;
-#define GEAR_MAX_WORN 9  // по вещи на слот
+#define GEAR_MAX_WORN 10  // по вещи на слот и причёска
 extern const char *const g_gear_file[GEAR_COUNT];
+
+// Причёски (data/meshes/hair): рисуются как вещи, в ряду сеток тела после вещей. NULL — вида нет
+#define HAIR_MAX 4
+#define GEAR_ROW (GEAR_COUNT + HAIR_MAX)
+extern const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX];
+// Причёска в список вещей (номер в ряду): возвращает 0 или 1
+u32 look_hair(const CharLook *l, u8 *out);
 
 // Видимые вещи: из брони по слотам (A_*, ARMOR_NONE — пусто); возвращает число
 u32 gear_from_armor(const u8 *armor, u8 *out);
