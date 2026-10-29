@@ -145,9 +145,9 @@ void main()
         gloss = 40.0;
     } else if (v_mat == MAT_GLYPH) {
         // Знаки на плите; цвет вершины — цвет свечения
-        vec3 t = normalize(cross(vec3(0, 1, 0), N));
-        if (abs(N.y) > 0.9) t = vec3(1, 0, 0);
-        vec2 uv = vec2(dot(P, t), P.y);
+        // На стене строки идут по высоте, на полу — по плоскости XZ
+        vec3 t = abs(N.y) > 0.9 ? vec3(1, 0, 0) : normalize(cross(vec3(0, 1, 0), N));
+        vec2 uv = abs(N.y) > 0.9 ? P.xz : vec2(dot(P, t), P.y);
         float ink = glyph_ink(uv);
         float flicker = 0.75 + 0.25 * step(0.15, noise3(vec3(u_time * 7.0, uv.y * 0.5, 0.0)));
         float dim = 0.6 + 0.4 * noise3(vec3(uv * 0.7, u_time * 0.3));

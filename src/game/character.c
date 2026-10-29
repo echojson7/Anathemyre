@@ -135,7 +135,7 @@ static void leg(MeshBuilder *mb, const Palette *pal, bool left)
         box_at(mb, side_x(v3(HIP_X, 0.1f + (f32)i * 0.04f, 0.035f + (f32)i * 0.01f), left), v3(0.125f, 0.014f, 0.06f), -0.3f, 0, 0);
 }
 
-void character_build(MeshBuilder *mb, u32 variant)
+void character_build(MeshBuilder *mb, u32 variant, bool armed)
 {
     const Palette *pal = &g_palettes[variant % ARRAY_COUNT(g_palettes)];
     u32 seed = variant * 977u + 13u;
@@ -252,6 +252,7 @@ void character_build(MeshBuilder *mb, u32 variant)
     }
 
     // Оружие в правой руке
+    if (!armed) return;
     if (variant % 2 == 0) {
         // Длинный клинок из обрезка листа
         mb_set(mb, pal->leather, MAT_LEATHER, BONE_HAND_R);
@@ -275,6 +276,116 @@ void character_build(MeshBuilder *mb, u32 variant)
         mb_set(mb, pal->leather, MAT_LEATHER, BONE_HAND_R);
         mb_cylinder(mb, v3(-0.25f, 0.93f, 0.035f), v3(-0.252f, 0.76f, 0.055f), 0.03f, 10);
     }
+}
+
+// ---------------------------------------------------------------- оружие арены
+
+// Рукоять в кулаке правой руки в позе покоя; оружие висит вниз и чуть вперёд
+#define GRIP v3(-0.25f, 0.86f, 0.045f)
+
+typedef struct WeaponFrame {
+    V3 s, a, f;  // поперёк (плашмя), вдоль к острию, вперёд (к лезвию)
+} WeaponFrame;
+
+static WeaponFrame weapon_frame(void)
+{
+    WeaponFrame w;
+    w.a = v3_norm(v3(0.0f, -1.0f, 0.12f));
+    w.s = v3(1.0f, 0.0f, 0.0f);
+    w.f = v3_cross(w.s, w.a);
+    w.f = v3_mul(w.f, -1.0f);
+    return w;
+}
+
+// Брусок вдоль оси оружия от d0 до d1 (м от кулака); ширина к лезвию, толщина поперёк, сдвиг к лезвию
+static void wbox(MeshBuilder *mb, const WeaponFrame *wf, f32 d0, f32 d1, f32 width, f32 thick, f32 off, f32 tilt)
+{
+    V3 c = v3_add(GRIP, v3_add(v3_mul(wf->a, 0.5f * (d0 + d1)), v3_mul(wf->f, off)));
+    // Наклон бруска в плоскости лезвия
+    V3 a = v3_norm(v3_add(wf->a, v3_mul(wf->f, tilt)));
+    V3 f = v3_norm(v3_cross(a, wf->s));
+    f = v3_dot(f, wf->f) < 0.0f ? v3_mul(f, -1.0f) : f;
+    M4 m = m4_identity();
+    V3 sx = v3_mul(wf->s, thick), sy = v3_mul(a, d1 - d0), sz = v3_mul(f, width);
+    m.m[0] = sx.x; m.m[1] = sx.y; m.m[2] = sx.z;
+    m.m[4] = sy.x; m.m[5] = sy.y; m.m[6] = sy.z;
+    m.m[8] = sz.x; m.m[9] = sz.y; m.m[10] = sz.z;
+    m.m[12] = c.x; m.m[13] = c.y; m.m[14] = c.z;
+    mb_box(mb, m);
+}
+
+static void wcyl(MeshBuilder *mb, const WeaponFrame *wf, f32 d0, f32 d1, f32 r, f32 off)
+{
+    V3 o = v3_add(GRIP, v3_mul(wf->f, off));
+    mb_cylinder(mb, v3_add(o, v3_mul(wf->a, d0)), v3_add(o, v3_mul(wf->a, d1)), r, 10);
+}
+
+void weapon_build(MeshBuilder *mb, u8 weapon)
+{
+    const WeaponFrame wf = weapon_frame();
+    const V3 wrap = v3(0.30f, 0.26f, 0.20f), steel = v3(0.34f, 0.33f, 0.31f), dark = v3(0.13f, 0.13f, 0.14f);
+    const V3 rust = v3(0.42f, 0.24f, 0.13f), wood = v3(0.24f, 0.17f, 0.11f);
+    switch (weapon) {
+    case W_RESSORA:
+        // Лист рессоры: длинная пологая дуга, рукоять в тряпье
+        mb_set(mb, wrap, MAT_CLOTH, BONE_HAND_R);
+        wcyl(mb, &wf, -0.12f, 0.10f, 0.02f, 0.0f);
+        mb_set(mb, dark, MAT_METAL, BONE_HAND_R);
+        wbox(mb, &wf, 0.10f, 0.13f, 0.12f, 0.03f, 0.01f, 0.0f);
+        mb_set(mb, steel, MAT_METAL, BONE_HAND_R);
+        wbox(mb, &wf, 0.13f, 0.50f, 0.065f, 0.012f, 0.012f, 0.03f);
+        wbox(mb, &wf, 0.48f, 0.86f, 0.06f, 0.011f, 0.035f, 0.10f);
+        wbox(mb, &wf, 0.84f, 0.98f, 0.04f, 0.010f, 0.07f, 0.25f);
+        break;
+    case W_SEKACH:
+        // Тесак из обрезка листа: широкое тяжёлое лезвие, обух с зазубринами
+        mb_set(mb, wood, MAT_LEATHER, BONE_HAND_R);
+        wcyl(mb, &wf, -0.13f, 0.10f, 0.022f, 0.0f);
+        mb_set(mb, rust, MAT_RUST, BONE_HAND_R);
+        wbox(mb, &wf, 0.10f, 0.95f, 0.14f, 0.014f, 0.045f, 0.0f);
+        wbox(mb, &wf, 0.93f, 1.05f, 0.10f, 0.013f, 0.03f, 0.5f);
+        mb_set(mb, dark, MAT_METAL, BONE_HAND_R);
+        for (int i = 0; i < 4; i++) wbox(mb, &wf, 0.25f + 0.15f * (f32)i, 0.31f + 0.15f * (f32)i, 0.03f, 0.02f, -0.03f, 0.0f);
+        break;
+    case W_ARMATURA:
+        // Пук арматуры, на конце ком бетона
+        mb_set(mb, wrap, MAT_CLOTH, BONE_HAND_R);
+        wcyl(mb, &wf, -0.12f, 0.12f, 0.024f, 0.0f);
+        mb_set(mb, rust, MAT_RUST, BONE_HAND_R);
+        wcyl(mb, &wf, 0.0f, 0.90f, 0.014f, 0.012f);
+        wcyl(mb, &wf, 0.0f, 0.85f, 0.013f, -0.012f);
+        mb_set(mb, v3(0.38f, 0.36f, 0.33f), MAT_CONCRETE, BONE_HAND_R);
+        wbox(mb, &wf, 0.66f, 0.92f, 0.14f, 0.12f, 0.0f, 0.15f);
+        break;
+    case W_BAGOR:
+        // Багор: длинное древко, крюк и пика на конце; хват у нижней трети
+        mb_set(mb, wood, MAT_LEATHER, BONE_HAND_R);
+        wcyl(mb, &wf, -0.55f, 1.95f, 0.02f, 0.0f);
+        mb_set(mb, wrap, MAT_CLOTH, BONE_HAND_R);
+        wcyl(mb, &wf, -0.10f, 0.12f, 0.026f, 0.0f);
+        wcyl(mb, &wf, 0.55f, 0.75f, 0.026f, 0.0f);
+        mb_set(mb, rust, MAT_RUST, BONE_HAND_R);
+        wcyl(mb, &wf, 1.90f, 2.20f, 0.012f, 0.0f);
+        wbox(mb, &wf, 1.90f, 2.06f, 0.11f, 0.014f, 0.06f, -0.6f);
+        break;
+    case W_BALKA:
+    default:
+        // Обрезок двутавра: полки и стенка, рукоять обмотана
+        mb_set(mb, wrap, MAT_CLOTH, BONE_HAND_R);
+        wcyl(mb, &wf, -0.18f, 0.16f, 0.028f, 0.0f);
+        mb_set(mb, v3(0.30f, 0.20f, 0.13f), MAT_RUST, BONE_HAND_R);
+        wbox(mb, &wf, 0.15f, 1.40f, 0.16f, 0.012f, 0.0f, 0.0f);
+        wbox(mb, &wf, 0.15f, 1.40f, 0.014f, 0.11f, 0.08f, 0.0f);
+        wbox(mb, &wf, 0.15f, 1.40f, 0.014f, 0.11f, -0.08f, 0.0f);
+        break;
+    }
+}
+
+void weapon_ground_pose(V3 pos, f32 yaw, M4 *out)
+{
+    // Ось оружия ложится горизонтально, рукоять в pos
+    M4 m = m4_mul(m4_translate(pos), m4_mul(m4_rot_y(yaw), m4_mul(m4_rot_x(PI_F * 0.5f - 0.12f), m4_translate(v3_mul(GRIP, -1.0f)))));
+    for (int i = 0; i < BONE_COUNT; i++) out[i] = m;
 }
 
 // Двухзвенный IK ноги в плоскости шага: возвращает углы бедра (наклон и крен) и колена
@@ -318,58 +429,184 @@ static void foot_track(f32 q, f32 *z, f32 *lift, f32 *pitch)
     }
 }
 
-void character_pose(const CharPose *p, M4 *out)
+// ---------------------------------------------------------------- позы боя
+
+// Углы руки: плечо (наклон вперёд, разворот, отведение), локоть, кисть
+typedef struct ArmAngles {
+    f32 ux, uy, uz, fx, hx, hz;
+} ArmAngles;
+
+// Ключевая поза верха тела: правая и левая рука, наклон и скрутка корпуса
+typedef struct UpperKey {
+    ArmAngles r, l;
+    f32 lean, twist;
+} UpperKey;
+
+static ArmAngles arm_lerp(ArmAngles a, ArmAngles b, f32 t)
 {
+    return (ArmAngles){ lerpf(a.ux, b.ux, t), lerpf(a.uy, b.uy, t), lerpf(a.uz, b.uz, t),
+                        lerpf(a.fx, b.fx, t), lerpf(a.hx, b.hx, t), lerpf(a.hz, b.hz, t) };
+}
+
+static UpperKey key_lerp(UpperKey a, UpperKey b, f32 t)
+{
+    return (UpperKey){ arm_lerp(a.r, b.r, t), arm_lerp(a.l, b.l, t), lerpf(a.lean, b.lean, t), lerpf(a.twist, b.twist, t) };
+}
+
+// Отрицательный ux выносит руку вперёд и вверх; для правой руки отрицательный uy уводит её вправо
+static const UpperKey K_GUARD = { { -0.55f, 0.15f, -0.12f, -1.15f, -0.40f, 0.0f }, { -0.70f, -0.30f, 0.15f, -1.30f, 0.0f, 0.0f }, 0.12f, 0.15f };
+static const UpperKey K_BLOCK = { { -1.00f, 0.35f, -0.10f, -1.40f, -0.20f, 1.2f }, { -1.10f, -0.40f, 0.10f, -1.50f, 0.0f, 0.0f }, 0.05f, 0.10f };
+static const UpperKey K_WINDUP[ATK_COUNT] = {
+    [ATK_OVERHEAD] = { { -2.70f, 0.00f, -0.25f, -1.30f, -0.30f, 0.0f }, { -0.90f, -0.20f, 0.25f, -1.20f, 0.0f, 0.0f }, -0.10f, 0.10f },
+    [ATK_SWING]    = { { -1.40f, -1.50f, -0.10f, -0.20f, 0.15f, 0.0f }, { -0.60f, -0.20f, 0.30f, -1.10f, 0.0f, 0.0f }, 0.05f, -0.60f },
+    [ATK_THRUST]   = { { 0.25f, 0.00f, -0.15f, -1.90f, 0.20f, 0.0f }, { -0.90f, -0.30f, 0.20f, -1.20f, 0.0f, 0.0f }, 0.00f, -0.30f },
+};
+static const UpperKey K_STRIKE[ATK_COUNT] = {
+    [ATK_OVERHEAD] = { { -0.75f, 0.25f, -0.10f, -0.15f, -0.20f, 0.0f }, { -0.40f, 0.00f, 0.30f, -0.80f, 0.0f, 0.0f }, 0.30f, 0.10f },
+    [ATK_SWING]    = { { -1.40f, 0.90f, -0.10f, -0.20f, 0.15f, 0.0f }, { -0.30f, 0.00f, 0.50f, -0.80f, 0.0f, 0.0f }, 0.10f, 0.60f },
+    [ATK_THRUST]   = { { -1.45f, 0.10f, -0.05f, -0.05f, -0.10f, 0.0f }, { -0.30f, 0.00f, 0.40f, -0.60f, 0.0f, 0.0f }, 0.25f, 0.35f },
+};
+
+static M4 arm_upper(ArmAngles a) { return m4_mul(m4_rot_y(a.uy), m4_mul(m4_rot_z(a.uz), m4_rot_x(a.ux))); }
+
+static f32 ease_out(f32 t)
+{
+    t = clampf(t, 0.0f, 1.0f);
+    return 1.0f - (1.0f - t) * (1.0f - t);
+}
+
+// Верх тела по действию; rest — руки при ходьбе
+static UpperKey upper_from_action(const CharAction *a, UpperKey rest)
+{
+    UpperKey base = key_lerp(rest, K_GUARD, clampf(a->guard, 0.0f, 1.0f));
+    UpperKey k = base;
+    u8 at = a->attack < ATK_COUNT ? a->attack : ATK_SWING;
+    if (a->swing > 0.0f) {
+        if (a->swing < 1.0f) k = key_lerp(base, K_WINDUP[at], smooth01(a->swing));
+        else if (a->swing < 2.0f) k = key_lerp(K_WINDUP[at], K_STRIKE[at], ease_out(a->swing - 1.0f));
+        else k = key_lerp(K_STRIKE[at], base, smooth01(a->swing - 2.0f));
+    }
+    k = key_lerp(k, K_BLOCK, clampf(a->block, 0.0f, 1.0f));
+    if (a->two_hand) {
+        // Левая рука тянется к древку рядом с правой
+        ArmAngles l = { k.r.ux * 0.9f, k.r.uy - 0.55f, 0.05f, k.r.fx * 0.8f, 0.0f, 0.0f };
+        k.l = arm_lerp(k.l, l, clampf(a->guard, 0.0f, 1.0f));
+    }
+    // Ошеломлён: корпус назад, руки врозь
+    f32 st = clampf(a->stagger, 0.0f, 1.0f);
+    k.lean -= 0.35f * st;
+    k.r.uz -= 0.6f * st;
+    k.l.uz += 0.6f * st;
+    k.lean -= 0.30f * clampf(a->dodge, 0.0f, 1.0f);
+    // Без сознания и мёртвые: руки раскинуты
+    f32 limp = clampf(a->limp, 0.0f, 1.0f);
+    ArmAngles lr = { -0.2f, 0.0f, -0.9f, -0.2f, 0.0f, 0.0f }, ll = { -0.1f, 0.0f, 0.7f, -0.3f, 0.0f, 0.0f };
+    k.r = arm_lerp(k.r, lr, limp);
+    k.l = arm_lerp(k.l, ll, limp);
+    return k;
+}
+
+void character_pose(const CharPose *p, const CharAction *act, M4 *out)
+{
+    static const CharAction none = { .down_dir = 1.0f };
+    const CharAction *a = act ? act : &none;
     f32 w = clampf(p->walk, 0.0f, 1.0f);
     f32 ph = p->phase - floorf(p->phase);
     f32 tau = 2.0f * PI_F;
     f32 breathe = sinf(p->time * 1.6f + p->seed) * 0.5f + 0.5f;
+    f32 guard = clampf(a->guard, 0.0f, 1.0f);
+    f32 kneel = clampf(a->kneel, 0.0f, 1.0f);
+    f32 down = clampf(a->down, 0.0f, 1.0f);
+    f32 crawl = clampf(a->crawl, 0.0f, 1.0f);
 
-    // Таз: проседает между шагами, качается к опорной ноге
+    // Таз: проседает между шагами, качается к опорной ноге; в стойке ниже, на коленях у земли
     f32 bob = -0.05f + 0.022f * cosf(2.0f * tau * (ph - 0.3f));
     f32 sway = 0.024f * cosf(tau * (ph - 0.3f));
     f32 idle_shift = 0.018f * sinf(p->time * 0.35f + p->seed);
-    f32 dy = w * bob + (1.0f - w) * (-0.012f - 0.004f * breathe);
+    f32 dy = w * bob + (1.0f - w) * (-0.012f - 0.004f * breathe) - 0.06f * guard;
     f32 dx = w * sway + (1.0f - w) * idle_shift;
+    f32 dz = -0.2f * clampf(a->dodge, 0.0f, 1.0f);
+    // Выпад на ударе
+    if (a->swing > 1.0f && a->swing < 3.0f) {
+        f32 s = a->swing < 2.0f ? ease_out(a->swing - 1.0f) : 1.0f - smooth01(a->swing - 2.0f);
+        dz += (a->attack == ATK_SWING ? 0.05f : 0.14f) * s;
+        dy -= 0.04f * s;
+    }
+    dy = lerpf(dy, -0.44f, kneel);
     f32 pelvis_yaw = w * 0.07f * sinf(tau * ph);
+
+    // Верх тела: ходьба, поверх неё стойка, удар, блок
+    f32 swing = 0.32f * cosf(tau * ph) * w;
+    UpperKey rest = {
+        { -swing * 0.6f, 0.0f, -0.08f - 0.02f * breathe, -0.38f, 0.0f, 0.0f },
+        { swing, 0.0f, 0.08f + 0.02f * breathe, -0.22f - 0.35f * fmaxf(0.0f, -swing / 0.32f) * w, 0.0f, 0.0f },
+        0.0f, 0.0f,
+    };
+    UpperKey k = upper_from_action(a, rest);
+    // На коленях: руки опущены, голова вниз
+    k = key_lerp(k, (UpperKey){ { 0.05f, 0, -0.1f, -0.3f, 0, 0 }, { 0.05f, 0, 0.1f, -0.3f, 0, 0 }, 0.25f, 0.0f }, kneel);
+    if (crawl > 0.0f) {
+        // Ползком: руки по очереди тянутся вперёд по земле
+        f32 c = sinf(tau * ph);
+        ArmAngles rr = { -2.6f + 0.5f * c, 0.0f, -0.3f, -0.4f - 0.4f * fmaxf(0.0f, c), 0, 0 };
+        ArmAngles rl = { -2.6f - 0.5f * c, 0.0f, 0.3f, -0.4f - 0.4f * fmaxf(0.0f, -c), 0, 0 };
+        k.r = arm_lerp(k.r, rr, crawl);
+        k.l = arm_lerp(k.l, rl, crawl);
+    }
 
     M4 local[BONE_COUNT];
     for (int i = 0; i < BONE_COUNT; i++) local[i] = m4_identity();
     local[BONE_PELVIS] = m4_rot_y(pelvis_yaw);
-    local[BONE_SPINE] = m4_mul(m4_rot_x(0.08f * w + 0.02f * breathe), m4_rot_y(-pelvis_yaw * 1.8f));
-    f32 look = sinf(p->time * 0.31f + p->seed * 3.0f) * 0.55f * (1.0f - w);
-    local[BONE_HEAD] = m4_mul(m4_rot_y(look + pelvis_yaw * 0.8f), m4_rot_x(-0.06f * w + 0.1f * (1.0f - w)));
+    local[BONE_SPINE] = m4_mul(m4_rot_x(0.08f * w + 0.02f * breathe + k.lean), m4_rot_y(-pelvis_yaw * 1.8f + k.twist));
+    f32 look = sinf(p->time * 0.31f + p->seed * 3.0f) * 0.55f * (1.0f - w) * (1.0f - guard) * (1.0f - kneel);
+    f32 head_x = -0.06f * w + 0.1f * (1.0f - w) - 0.4f * clampf(a->stagger, 0.0f, 1.0f) + 0.35f * kneel;
+    // Голова держит противника: скрутку корпуса гасит
+    local[BONE_HEAD] = m4_mul(m4_rot_y(look + pelvis_yaw * 0.8f - k.twist * 0.7f), m4_rot_x(head_x - k.lean * 0.6f));
 
-    // Руки идут в противофазе к ногам
-    f32 swing = 0.32f * cosf(tau * ph) * w;
-    local[BONE_UPPER_ARM_L] = m4_mul(m4_rot_z(0.08f + 0.02f * breathe), m4_rot_x(swing));
-    local[BONE_FOREARM_L] = m4_rot_x(-0.22f - 0.35f * fmaxf(0.0f, -swing / 0.32f) * w);
-    local[BONE_UPPER_ARM_R] = m4_mul(m4_rot_z(-0.08f - 0.02f * breathe), m4_rot_x(-swing * 0.6f));
-    local[BONE_FOREARM_R] = m4_rot_x(-0.38f);
+    local[BONE_UPPER_ARM_R] = arm_upper(k.r);
+    local[BONE_FOREARM_R] = m4_rot_x(k.r.fx);
+    local[BONE_HAND_R] = m4_mul(m4_rot_x(k.r.hx), m4_rot_z(k.r.hz));
+    local[BONE_UPPER_ARM_L] = arm_upper(k.l);
+    local[BONE_FOREARM_L] = m4_rot_x(k.l.fx);
+    local[BONE_HAND_L] = m4_mul(m4_rot_x(k.l.hx), m4_rot_z(k.l.hz));
 
-    // Ноги: цель стопы в пространстве персонажа, IK от тазобедренного сустава
+    // Ноги: цель стопы в пространстве персонажа, IK от тазобедренного сустава.
+    // Шаг поворачивается по направлению движения: вбок и назад ноги переступают правильно
+    f32 md_s = sinf(p->move_dir), md_c = cosf(p->move_dir);
     for (int side = 0; side < 2; side++) {
         bool left = side == 0;
         f32 q = ph + (left ? 0.0f : 0.5f);
         q -= floorf(q);
         f32 z, lift, pitch;
         foot_track(q, &z, &lift, &pitch);
-        f32 idle_z = left ? 0.06f : -0.05f;
-        f32 fx = (left ? 1.0f : -1.0f) * (HIP_X + 0.015f);
-        V3 target = v3(fx, ANKLE_Y + lift * w, lerpf(idle_z, z, w));
-        V3 hip = v3((left ? HIP_X : -HIP_X) + dx, HIP_Y + dy, 0.0f);
+        // В стойке левая нога впереди, правая сзади, ступни шире
+        f32 idle_z = lerpf(left ? 0.06f : -0.05f, left ? 0.20f : -0.18f, guard);
+        f32 fx = (left ? 1.0f : -1.0f) * (HIP_X + 0.015f + 0.05f * guard);
+        f32 step = z * w;
+        V3 target = v3(fx + md_s * step, ANKLE_Y + lift * w, idle_z * (1.0f - w) + md_c * step);
+        V3 hip = v3((left ? HIP_X : -HIP_X) + dx, HIP_Y + dy, dz);
         f32 tp, tr, kn;
         leg_ik(hip, target, &tp, &tr, &kn);
+        f32 foot = -(tp + kn) + pitch * w;
+        // На коленях: бедро отвесно, голень назад по земле
+        tp = lerpf(tp, -0.1f, kneel);
+        tr = lerpf(tr, 0.0f, kneel);
+        kn = lerpf(kn, PI_F * 0.5f + 0.1f, kneel);
+        foot = lerpf(foot, -0.5f, kneel);
         u8 thigh = left ? BONE_THIGH_L : BONE_THIGH_R;
         local[thigh] = m4_mul(m4_rot_z(tr), m4_rot_x(tp));
         local[thigh + 1] = m4_rot_x(kn);
         // Стопа параллельна земле плюс перекат с пятки на носок
-        local[thigh + 2] = m4_rot_x(-(tp + kn) + pitch * w);
+        local[thigh + 2] = m4_rot_x(foot);
     }
 
+    // Падение: поворот вокруг стоп, к концу таз приходит на место бойца
+    f32 dir = a->down_dir < 0.0f ? -1.0f : 1.0f;
+    f32 fall = smooth01(down);
     f32 sh = p->height > 0.0f ? p->height : 1.0f;
     f32 sw = p->width > 0.0f ? p->width : 1.0f;
-    M4 root = m4_mul(m4_translate(p->pos), m4_mul(m4_rot_y(p->heading), m4_mul(m4_scale(v3(sw, sh, sw)), m4_translate(v3(dx, dy, 0)))));
+    M4 lie = m4_mul(m4_translate(v3(0.0f, 0.13f * fall, 0.95f * sh * fall * dir)), m4_rot_x(-dir * PI_F * 0.5f * fall));
+    M4 root = m4_mul(m4_translate(p->pos), m4_mul(m4_rot_y(p->heading), m4_mul(lie, m4_mul(m4_scale(v3(sw, sh, sw)), m4_translate(v3(dx, dy, dz))))));
     M4 world[BONE_COUNT];
     for (int i = 0; i < BONE_COUNT; i++) {
         const BoneDef *b = &g_body_bones[i];
@@ -377,5 +614,19 @@ void character_pose(const CharPose *p, M4 *out)
         M4 parent = b->parent < 0 ? root : world[b->parent];
         world[i] = m4_mul(parent, m4_mul(m4_translate(rel), local[i]));
         out[i] = m4_mul(world[i], m4_translate(v3_mul(b->joint, -1.0f)));
+    }
+
+    // Отсечённая конечность: вершины стягиваются в точку сустава
+    static const u8 limb_bones[PART_COUNT][3] = {
+        [PART_ARM_L] = { BONE_UPPER_ARM_L, BONE_FOREARM_L, BONE_HAND_L },
+        [PART_ARM_R] = { BONE_UPPER_ARM_R, BONE_FOREARM_R, BONE_HAND_R },
+        [PART_LEG_L] = { BONE_THIGH_L, BONE_SHIN_L, BONE_FOOT_L },
+        [PART_LEG_R] = { BONE_THIGH_R, BONE_SHIN_R, BONE_FOOT_R },
+    };
+    for (u32 part = PART_ARM_L; part < PART_COUNT; part++) {
+        if (!(a->severed & (1u << part))) continue;
+        u8 b0 = limb_bones[part][0];
+        M4 stub = m4_mul(world[b0], m4_mul(m4_scale(v3(0.001f, 0.001f, 0.001f)), m4_translate(v3_mul(g_body_bones[b0].joint, -1.0f))));
+        for (int j = 0; j < 3; j++) out[limb_bones[part][j]] = stub;
     }
 }

@@ -9,6 +9,7 @@
 #include "core/math3d.h"
 #include "core/rng.h"
 #include "game/arena.h"
+#include "game/arena_view.h"
 #include "game/battle.h"
 #include "game/character.h"
 #include "game/testroom.h"
@@ -17,6 +18,9 @@
 
 #define CHAR_VARIANTS 4
 #define CROWD_SIZE 9
+// Арена у зала, перед его открытым краем
+#define ARENA_CENTER v3(14.0f, 0.0f, 34.0f)
+#define ARENA_SHOW_AFTER_BOUT_S 12.0f
 
 typedef struct RtsCamera {
     V3  target;
@@ -149,7 +153,7 @@ int main(int argc, char **argv)
     time_init();
     Options opt = {
         .shot_frames = 90, .follow = -1, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337,
-        .cam = { .target = { 2, 0, 6 }, .yaw = -0.5f, .pitch = 0.5f, .dist = 18.0f },
+        .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
     if (opt.arena_bench) return arena_bench(opt.arena_bench, opt.seed, opt.arena_log);
@@ -194,6 +198,7 @@ int main(int argc, char **argv)
     GpuMesh near_mesh, far_mesh;
     mb_init(&mb, &perm, 400000, 1200000);
     testroom_build_near(&mb, &rng);
+    arena_view_build(&mb, ARENA_CENTER);
     gpu_mesh_upload(&near_mesh, &mb);
     u32 tris = mb.icount / 3;
     perm.used = mark;
@@ -203,19 +208,39 @@ int main(int argc, char **argv)
     log_info("МИР: зал %u треугольников, рельеф и мегаструктуры %u", tris, mb.icount / 3);
     perm.used = mark;
 
-    GpuMesh char_mesh[CHAR_VARIANTS];
+    // Фигуры зала с оружием тестовой комнаты; бойцы и зрители арены без него
+    GpuMesh char_mesh[CHAR_VARIANTS], body_mesh[CHAR_VARIANTS], weapon_mesh[W_COUNT];
     for (u32 v = 0; v < CHAR_VARIANTS; v++) {
         mb_init(&mb, &perm, 40000, 120000);
-        character_build(&mb, v);
+        character_build(&mb, v, true);
         gpu_mesh_upload(&char_mesh[v], &mb);
         if (v == 0) log_info("ФИГУРА: %u вершин, %u треугольников", mb.vcount, mb.icount / 3);
         perm.used = mark;
+        mb_init(&mb, &perm, 40000, 120000);
+        character_build(&mb, v, false);
+        gpu_mesh_upload(&body_mesh[v], &mb);
+        perm.used = mark;
     }
+    for (u32 k = 0; k < W_COUNT; k++) {
+        mb_init(&mb, &perm, 4000, 12000);
+        weapon_build(&mb, (u8)k);
+        gpu_mesh_upload(&weapon_mesh[k], &mb);
+        perm.used = mark;
+    }
+
+    // Арена: те же бои, что в --arena-bench с этим seed, но в реальном времени
+    ArenaSession *arena = ARENA_PUSH_ARRAY(&perm, ArenaSession, 1);
+    arena_session_init(arena, &perm, opt.seed);
+    arena->log_bouts = 0xFFFFFFFFu;
+    arena->after_bout_s = ARENA_SHOW_AFTER_BOUT_S;
+    ArenaView *aview = ARENA_PUSH_ARRAY(&perm, ArenaView, 1);
+    arena_view_init(aview, ARENA_CENTER, 0.125f);
+    M4 *arena_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)AV_BONE_SETS * RENDER_MAX_BONES);
 
     Crowd crowd;
     crowd_init(&crowd, &rng, CROWD_SIZE);
     M4 *bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)TR_MAX_CHARS * RENDER_MAX_BONES);
-    DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS + 2);
+    DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS + 2 + AV_DRAW_ITEMS);
     u8 *shot_buf = NULL;
     if (opt.shot_path) shot_buf = arena_push(&perm, (size_t)opt.width * (size_t)opt.height * 3, 1);
     for (u32 i = 0; i < TR_MAX_CHARS * RENDER_MAX_BONES; i++) bones[i] = m4_identity();
@@ -264,6 +289,7 @@ int main(int argc, char **argv)
         f64 t_logic = time_now();
         camera_update(&cam, &in, dt);
         crowd_update(&crowd, &rng, dt);
+        arena_view_update(aview, arena, dt);
         if (opt.follow >= 0 && opt.follow < (i32)crowd.count) cam.target = v3(crowd.x[opt.follow], 0, crowd.z[opt.follow]);
 
         u32 n = 0;
@@ -278,9 +304,10 @@ int main(int argc, char **argv)
                 .width = 1.0f + 0.08f * sinf(crowd.seed[i] * 3.17f + 1.0f),
             };
             M4 *b = &bones[i * RENDER_MAX_BONES];
-            character_pose(&p, b);
+            character_pose(&p, NULL, b);
             items[n++] = (DrawItem){ .mesh = &char_mesh[crowd.variant[i]], .bones = b };
         }
+        n += arena_view_draw(aview, arena, sim_time, body_mesh, CHAR_VARIANTS, weapon_mesh, arena_bones, items + n);
 
         f64 t_submit = time_now();
         cpu_logic += t_submit - t_logic;
