@@ -47,6 +47,7 @@ typedef struct RenderSettings {
     i32  internal_h;    // высота внутреннего разрешения
     bool post;          // фильтр кадра вкл/выкл
     bool pixel;         // пиксельность (квадраты на поверхностях и блоки вблизи) вкл/выкл
+    bool vrs;           // шейдинг блоками там, где фильтр сливает пиксели (если есть у видеокарты)
 } RenderSettings;
 
 // Время проходов на GPU, мс, среднее с прошлого render_take_stats
@@ -58,6 +59,7 @@ typedef struct RenderStats {
     // Среднее за кадр: вызовы отрисовки и треугольники в проходах теней и сцены, видимые элементы
     f64 draws[2], tris[2], visible[2];
     u32 items;          // элементов в последнем кадре
+    bool vrs;           // последний кадр шейдился блоками вблизи
 } RenderStats;
 
 bool render_init(Arena *scratch, const char *data_dir);

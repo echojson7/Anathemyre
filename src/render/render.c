@@ -19,7 +19,7 @@ enum {
     U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26, U_TEXEL = 27,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
-    U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44,
+    U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44, U_V_TILE = 45,
 };
 
 // Буферы хранения (layout(binding = N) в scene.vert)
@@ -59,10 +59,13 @@ typedef struct Target {
 static struct {
     Arena *scratch;
     char   data_dir[512];
-    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale;
+    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_vrs;
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
     Target scene, rays, atmos, ldr;
+    Target rate;      // карта частоты шейдинга (R8UI), клетка vrs_tile пикселей
+    bool   vrs;       // есть GL_NV_shading_rate_image
+    i32    vrs_tile[2];
     Target portrait;  // атлас портретов: ячейки RENDER_PORTRAIT_PX в ряд, HDR
     u32    timer[TIMER_FRAMES][TIMER_MARKS];
     bool   timer_pending[TIMER_FRAMES];
@@ -73,6 +76,7 @@ static struct {
     u32    stream;
     u32    used_poses, used_insts;   // занято в буферах текущего кадра (кадр, затем портреты)
     f64    stat_draws[2], stat_tris[2], stat_visible[2];
+    bool   stat_vrs;
     u32    stat_frames, stat_items;
     bool   warned_items, warned_poses;
 } R;
@@ -166,20 +170,23 @@ bool render_reload_shaders(void)
     const char *full_vs[] = { "fullscreen.vert" };
     const char *rays_fs[] = { "common.glsl", "rays.frag" };
     const char *atmos_fs[] = { "common.glsl", "atmos.frag" };
-    const char *style_fs[] = { "common.glsl", "style.frag" };
+    const char *style_fs[] = { "common.glsl", "pixel.glsl", "style.frag" };
+    const char *vrs_fs[] = { "pixel.glsl", "vrs.frag" };
     const char *upscale_fs[] = { "upscale.frag" };
 
-    u32 scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, scene_fs, 2));
+    const char *vrs_def = R.vrs ? "#extension GL_NV_shading_rate_image : require\n#define VRS\n" : NULL;
+    u32 scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, vrs_def, scene_fs, 2));
     u32 shadow = link(compile(GL_VERTEX_SHADER, "#define SHADOW_PASS\n", scene_vs, 1),
                       compile(GL_FRAGMENT_SHADER, NULL, shadow_fs, 1));
     u32 rays = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, rays_fs, 2));
     u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 2));
-    u32 style = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, style_fs, 2));
+    u32 style = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, style_fs, 3));
+    u32 vrs = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_fs, 2));
     u32 upscale = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, upscale_fs, 1));
     R.scratch->used = mark;
 
-    u32 progs[] = { scene, shadow, rays, atmos, style, upscale };
-    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style, &R.prog_upscale };
+    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, vrs };
+    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style, &R.prog_upscale, &R.prog_vrs };
     bool ok = true;
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) {
@@ -252,6 +259,21 @@ bool render_init(Arena *scratch, const char *data_dir)
 #else
     (void)gl_debug_cb;
 #endif
+    // Частота шейдинга по блокам: вблизи фильтр всё равно сливает пиксели в блоки 2x2 и 4x4
+    R.vrs = gl_has_extension("GL_NV_shading_rate_image") && glBindShadingRateImageNV &&
+            glShadingRateImagePaletteNV && glShadingRateImageBarrierNV;
+    if (R.vrs) {
+        glGetIntegerv(GL_SHADING_RATE_IMAGE_TEXEL_WIDTH_NV, &R.vrs_tile[0]);
+        glGetIntegerv(GL_SHADING_RATE_IMAGE_TEXEL_HEIGHT_NV, &R.vrs_tile[1]);
+        // Клетка карты должна вмещать целые ячейки 4x4
+        R.vrs = R.vrs_tile[0] >= 4 && R.vrs_tile[1] >= 4 && R.vrs_tile[0] % 4 == 0 && R.vrs_tile[1] % 4 == 0;
+    }
+    if (R.vrs) {
+        const GLenum rates[3] = { GL_SHADING_RATE_1_INVOCATION_PER_PIXEL_NV, GL_SHADING_RATE_1_INVOCATION_PER_2X2_PIXELS_NV,
+                                  GL_SHADING_RATE_1_INVOCATION_PER_4X4_PIXELS_NV };
+        glShadingRateImagePaletteNV(0, 0, 3, rates);
+    }
+    log_info("РЕНДЕР: частота шейдинга по блокам %s", R.vrs ? "есть" : "нет (каждый пиксель)");
     if (!render_reload_shaders()) return false;
 
     glCreateVertexArrays(1, &R.empty_vao);
@@ -282,6 +304,7 @@ void render_shutdown(void)
     target_free(&R.rays);
     target_free(&R.atmos);
     target_free(&R.ldr);
+    target_free(&R.rate);
     target_free(&R.portrait);
     if (R.shadow_fbo) glDeleteFramebuffers(1, &R.shadow_fbo);
     if (R.shadow_tex) glDeleteTextures(1, &R.shadow_tex);
@@ -292,7 +315,7 @@ void render_shutdown(void)
     }
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
-    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style, R.prog_upscale };
+    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style, R.prog_upscale, R.prog_vrs };
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
         if (progs[i]) glDeleteProgram(progs[i]);
     memset(&R, 0, sizeof R);
@@ -402,6 +425,7 @@ void render_take_stats(RenderStats *out)
         out->visible[p] = R.stat_visible[p] * k;
     }
     out->items = R.stat_items;
+    out->vrs = R.stat_vrs;
     memset(R.stat_draws, 0, sizeof R.stat_draws);
     memset(R.stat_tris, 0, sizeof R.stat_tris);
     memset(R.stat_visible, 0, sizeof R.stat_visible);
@@ -586,6 +610,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         target_make(&R.ldr, iw, ih, GL_RGBA8, false);
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTextureParameteri(R.ldr.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        if (R.vrs)
+            target_make(&R.rate, (iw + R.vrs_tile[0] - 1) / R.vrs_tile[0], (ih + R.vrs_tile[1] - 1) / R.vrs_tile[1], GL_R8UI, false);
         log_info("РЕНДЕР: внутреннее разрешение %dx%d -> окно %dx%d", iw, ih, win_w, win_h);
     }
 
@@ -651,6 +677,27 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);
+    f32 px_m = rs->pixel ? fv->proj.m[5] * 0.5f * (f32)ih : 0.0f;  // пикселей кадра на метр на дальности 1 м
+    bool vrs = R.vrs && rs->vrs && rs->pixel;
+    R.stat_vrs = vrs;
+    if (vrs) {
+        // По готовой глубине: где фильтр сольёт пиксели в блоки, материалы и атмосфера считаются раз на блок
+        glBindFramebuffer(GL_FRAMEBUFFER, R.rate.fbo);
+        glViewport(0, 0, R.rate.w, R.rate.h);
+        glDisable(GL_DEPTH_TEST);
+        glUseProgram(R.prog_vrs);
+        glUniform4f(U_S_PIX, px_m * PIXEL_M, px_m * PIXEL_FAR, fv->proj.m[10], fv->proj.m[14]);
+        glUniform2i(U_V_TILE, R.vrs_tile[0], R.vrs_tile[1]);
+        glBindTextureUnit(1, R.scene.depth);
+        glBindVertexArray(R.empty_vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glShadingRateImageBarrierNV(GL_TRUE);
+        glBindFramebuffer(GL_FRAMEBUFFER, R.scene.fbo);
+        glViewport(0, 0, iw, ih);
+        glEnable(GL_DEPTH_TEST);
+        glBindShadingRateImageNV(R.rate.color);
+        glEnable(GL_SHADING_RATE_IMAGE_NV);
+    }
     glUseProgram(R.prog_scene);
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, vp.m);
     glUniformMatrix4fv(U_LIGHT_VP, 1, GL_FALSE, light_vp.m);
@@ -700,6 +747,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindTextureUnit(1, R.scene.depth);
     glBindTextureUnit(3, R.rays.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+    if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
     if (timing) mark(3);
 
     // 4. Фильтр: виньетка, зерно, сканлайны, аберрация
@@ -707,7 +755,6 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUseProgram(R.prog_style);
     glUniform1i(U_S_POST, rs->post ? 1 : 0);
     glUniform1i(U_S_FRAME, (GLint)fv->frame);
-    f32 px_m = rs->pixel ? fv->proj.m[5] * 0.5f * (f32)ih : 0.0f;  // пикселей кадра на метр на дальности 1 м
     glUniform4f(U_S_PIX, px_m * PIXEL_M, px_m * PIXEL_FAR, fv->proj.m[10], fv->proj.m[14]);
     glBindTextureUnit(0, R.atmos.color);
     glBindTextureUnit(1, R.scene.depth);

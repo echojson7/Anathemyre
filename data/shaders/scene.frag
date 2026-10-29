@@ -93,6 +93,10 @@ void main()
     // одинаково на всех поверхностях. Где квадрат мельче пикселя кадра, пикселем служит пиксель кадра
     vec3 Nl = normalize(transpose(v_rot) * N);
     float mpp = max(length(dFdx(v_local)), length(dFdy(v_local)));
+#ifdef VRS
+    // При шейдинге блоком производные берутся через блок: приводим к пикселю кадра
+    mpp /= float(gl_FragmentSizeNV.x);
+#endif
     // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
     float base = u_skinned != 0 ? TEXEL * 0.5 : TEXEL;
     bool snap = mpp < base * u_texel_on;

@@ -148,8 +148,9 @@ static void bench_report(Bench *b, f64 seconds, i32 ww, i32 wh)
     else
         log_stat("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | GPU: драйвер не отдаёт метки времени",
                  b->cpu_logic * k, b->cpu_submit * k, b->cpu_swap * k);
-    log_stat("ЗАМЕР: сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk",
-             st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0);
+    log_stat("ЗАМЕР: сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk | шейдинг блоками: %s",
+             st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0,
+             st.vrs ? "да" : "нет");
 }
 
 static V3 camera_eye(const RtsCamera *c)
@@ -441,7 +442,7 @@ int main(int argc, char **argv)
     for (u32 i = 0; i < TR_MAX_CHARS * RENDER_MAX_BONES; i++) bones[i] = m4_identity();
 
     RtsCamera cam = opt.cam;
-    RenderSettings rs = { .post = true, .pixel = !opt.no_pixel };
+    RenderSettings rs = { .post = true, .pixel = !opt.no_pixel, .vrs = true };
 
     Input in;
     memset(&in, 0, sizeof in);
@@ -546,6 +547,7 @@ int main(int argc, char **argv)
             char val[32];
             hud_debug_check(&hud, "ФИЛЬТР КАДРА", &rs.post);
             hud_debug_check(&hud, "ПИКСЕЛЬНОСТЬ", &rs.pixel);
+            hud_debug_check(&hud, "ШЕЙДИНГ БЛОКАМИ", &rs.vrs);
             if (hud_debug_check(&hud, "VSYNC", &vsync)) {
                 platform_set_vsync(vsync);
                 log_info("VSYNC: %s", vsync ? "вкл" : "выкл");

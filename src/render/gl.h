@@ -95,6 +95,16 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_QUERY_RESULT 0x8866
 #define GL_QUERY_RESULT_AVAILABLE 0x8867
 #define GL_TIMESTAMP 0x8E28
+#define GL_R8UI 0x8232
+#define GL_EXTENSIONS 0x1F03
+#define GL_NUM_EXTENSIONS 0x821D
+// GL_NV_shading_rate_image
+#define GL_SHADING_RATE_IMAGE_NV 0x9563
+#define GL_SHADING_RATE_1_INVOCATION_PER_PIXEL_NV 0x9565
+#define GL_SHADING_RATE_1_INVOCATION_PER_2X2_PIXELS_NV 0x9568
+#define GL_SHADING_RATE_1_INVOCATION_PER_4X4_PIXELS_NV 0x956B
+#define GL_SHADING_RATE_IMAGE_TEXEL_WIDTH_NV 0x955C
+#define GL_SHADING_RATE_IMAGE_TEXEL_HEIGHT_NV 0x955D
 
 // X-макрос: тип возврата, имя, аргументы
 #define GL_FUNCS(X) \
@@ -108,6 +118,8 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, Scissor, (GLint x, GLint y, GLsizei w, GLsizei h)) \
     X(void, CullFace, (GLenum mode)) \
     X(void, DepthFunc, (GLenum func)) \
+    X(void, GetIntegerv, (GLenum pname, GLint *data)) \
+    X(const GLubyte *, GetStringi, (GLenum name, GLuint index)) \
     X(void, DepthMask, (GLboolean flag)) \
     X(void, ColorMask, (GLboolean r, GLboolean g, GLboolean b, GLboolean a)) \
     X(void, PolygonOffset, (GLfloat factor, GLfloat units)) \
@@ -162,6 +174,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(GLint, GetUniformLocation, (GLuint program, const GLchar *name)) \
     X(void, Uniform1i, (GLint loc, GLint v)) \
     X(void, Uniform1f, (GLint loc, GLfloat v)) \
+    X(void, Uniform2i, (GLint loc, GLint a, GLint b)) \
     X(void, Uniform2f, (GLint loc, GLfloat a, GLfloat b)) \
     X(void, Uniform3f, (GLint loc, GLfloat a, GLfloat b, GLfloat c)) \
     X(void, Uniform4f, (GLint loc, GLfloat a, GLfloat b, GLfloat c, GLfloat d)) \
@@ -173,11 +186,21 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, GetQueryObjectuiv, (GLuint id, GLenum pname, GLuint *params)) \
     X(void, GetQueryObjectui64v, (GLuint id, GLenum pname, GLuint64 *params))
 
+// Необязательные функции расширений: могут отсутствовать (NULL)
+#define GL_FUNCS_OPT(X) \
+    X(void, BindShadingRateImageNV, (GLuint texture)) \
+    X(void, ShadingRateImagePaletteNV, (GLuint viewport, GLuint first, GLsizei count, const GLenum *rates)) \
+    X(void, ShadingRateImageBarrierNV, (GLboolean synchronize))
+
 #define GL_DECLARE(ret, name, args) typedef ret (GLAPIENTRY *PFN_gl##name) args; extern PFN_gl##name gl##name;
 GL_FUNCS(GL_DECLARE)
+GL_FUNCS_OPT(GL_DECLARE)
 #undef GL_DECLARE
 
-// Загружает все функции; false, если чего-то нет
+// Загружает все функции; false, если нет обязательной
 bool gl_load(void);
+
+// Есть ли расширение у драйвера
+bool gl_has_extension(const char *name);
 
 #endif
