@@ -195,8 +195,8 @@ void main()
     float ndl = max(dot(N, L), 0.0);
     float sh = ndl > 0.0 ? sun_shadow(W, N) : 0.0;
 
-    // Небо и отражённый от песка свет
-    vec3 ambient = mix(u_ground_amb, u_sky_amb, N.y * 0.5 + 0.5) * 0.9;
+    // Небо и отражённый от песка свет (0.6 — тени темнее, решение пользователя 2026-10-29)
+    vec3 ambient = mix(u_ground_amb, u_sky_amb, N.y * 0.5 + 0.5) * 0.6;
     vec3 Lflat = normalize(vec3(-L.x, 0.0, -L.z));
     float bounce = max(dot(N, -Lflat), 0.0) * 0.08 + max(-N.y, 0.0) * 0.05;
     ambient += u_ground_amb * 1.5 * bounce;
