@@ -103,6 +103,7 @@ void player_update(Player *p, f32 dt, GroundFn ground)
     p->run += clampf(char_run_from_speed(p->speed) - p->run, -dt * 2.5f, dt * 2.5f);
     p->phase += (p->speed + step_turn) * dt / char_stride(p->speed);
     p->phase -= floorf(p->phase);
+    p->idle = p->speed < 0.05f && fabsf(p->turn_rate) < 0.2f ? p->idle + dt : 0.0f;
 }
 
 // ---------------------------------------------------------------- проверка разворотов

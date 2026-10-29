@@ -801,7 +801,7 @@ int main(int argc, char **argv)
             CharPose p = {
                 .pos = cp->pos, .heading = cp->heading, .phase = cp->phase, .walk = cp->walk, .run = cp->run,
                 .speed = cp->speed, .time = sim_time, .seed = crowd.seed[i],
-                .lean_fwd = cp->lean_fwd, .lean_side = cp->lean_side, .look = cp->look,
+                .lean_fwd = cp->lean_fwd, .lean_side = cp->lean_side, .look = cp->look, .idle = cp->idle,
                 // Разброс сложения внутри класса H: рост ±6%, ширина ±8%
                 .height = 1.0f + 0.06f * sinf(crowd.seed[i] * 7.31f),
                 .width = 1.0f + 0.08f * sinf(crowd.seed[i] * 3.17f + 1.0f),
@@ -837,7 +837,7 @@ int main(int argc, char **argv)
             CharPose p = {
                 .pos = fp->pos, .heading = fp->heading, .phase = fp->phase, .walk = fp->walk, .run = fp->run,
                 .speed = fp->speed, .time = sim_time, .seed = folk->seed[i],
-                .lean_fwd = fp->lean_fwd, .lean_side = fp->lean_side, .look = fp->look,
+                .lean_fwd = fp->lean_fwd, .lean_side = fp->lean_side, .look = fp->look, .idle = fp->idle,
                 .height = 1.0f + 0.06f * sinf(folk->seed[i] * 7.31f),
                 .width = 1.0f + 0.08f * sinf(folk->seed[i] * 3.17f + 1.0f),
                 .weapon = folk->armed[i] ? (u8)(wid + 1) : 0,
@@ -853,7 +853,7 @@ int main(int argc, char **argv)
                 .pos = mp->pos, .heading = mp->heading, .phase = mp->phase, .walk = mp->walk, .run = mp->run,
                 .speed = mp->speed, .time = sim_time, .seed = mobs->seed[i], .height = cs->d.height / 1.8f,
                 .width = 1.0f + 0.08f * sinf(mobs->seed[i] * 3.17f + 1.0f),
-                .lean_fwd = mp->lean_fwd, .lean_side = mp->lean_side, .look = mp->look, .weapon = (u8)(wid + 1),
+                .lean_fwd = mp->lean_fwd, .lean_side = mp->lean_side, .look = mp->look, .idle = mp->idle, .weapon = (u8)(wid + 1),
             };
             CharLook lk;
             look_make(&lk, mobs->variant[i] % BODY_KINDS, 2000u + i, cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
@@ -869,7 +869,7 @@ int main(int argc, char **argv)
             CharPose p = {
                 .pos = pl->pos, .heading = pl->heading, .phase = pl->phase, .walk = pl->walk, .run = pl->run,
                 .speed = pl->speed, .time = sim_time, .seed = 7.0f + (f32)i * 5.3f, .height = cs->d.height / 1.8f,
-                .lean_fwd = pl->lean_fwd, .lean_side = pl->lean_side, .look = pl->look,
+                .lean_fwd = pl->lean_fwd, .lean_side = pl->lean_side, .look = pl->look, .idle = pl->idle,
                 .weapon = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? (u8)(cs->equip[SLOT_WEAPON].id + 1) : 0,
             };
             const GpuMesh *wm = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? &weapon_mesh[cs->equip[SLOT_WEAPON].id] : NULL;

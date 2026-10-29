@@ -238,7 +238,7 @@ u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const G
     for (u32 k = 0; k < AV_SPECTATORS; k++) {
         CharPose p = {
             .pos = v3(v->center.x + v->sx[k], 0.12f, v->center.z + v->sz[k]), .heading = v->sh[k],
-            .time = time, .seed = v->sseed[k],
+            .time = time, .seed = v->sseed[k], .idle = time,
             .height = 1.0f + 0.06f * sinf(v->sseed[k] * 7.31f), .width = 1.0f + 0.08f * sinf(v->sseed[k] * 3.17f + 1.0f),
         };
         M4 *b = &bones[(set++) * RENDER_MAX_BONES];

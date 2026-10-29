@@ -150,6 +150,8 @@ typedef struct Pose {
     V3  foot[2];          // цели лодыжек для IK (оси персонажа)
     f32 fpitch[2];        // наклон стопы к земле при IK: > 0 носок вниз
     f32 ik;               // 1 — ноги по целям, 0 — по углам r
+    f32 plant[2];         // нога несёт вес: таз опускается, чтобы она доставала до цели
+    f32 kout;             // колени врозь, рад
 } Pose;
 
 static void pose_lerp(Pose *a, const Pose *b, f32 t)
@@ -214,7 +216,7 @@ static V3 stand_foot(u32 side)
 
 static void pose_stand(Pose *p)
 {
-    *p = (Pose){ .ik = 1.0f };
+    *p = (Pose){ .ik = 1.0f, .plant = { 1.0f, 1.0f } };
     p->foot[L] = stand_foot(L);
     p->foot[R] = stand_foot(R);
     set_arm(p, L, (ArmK){ 0.02f, 0.0f, 0.08f, -0.22f, 0.0f, 0.0f });
@@ -233,31 +235,32 @@ typedef struct Gait {
 
 static void foot_track(const Gait *g, f32 q, f32 run, f32 *z, f32 *lift, f32 *pitch)
 {
+    f32 heel_up = lerpf(0.16f, 0.14f, run), toe_off = lerpf(1.1f, 1.2f, run);
     if (q < g->duty) {
         f32 t = q / g->duty;
         *z = lerpf(g->land, g->off, t);
         // Шаг: пятка, плоская стопа, подъём пятки и толчок носком. Бег: на середину стопы
         f32 heel = ramp(t, lerpf(0.55f, 0.45f, run), 1.0f);
-        *lift = lerpf(0.075f, 0.05f, run) * heel;
+        *lift = heel_up * heel;
         f32 strike = lerpf(-0.28f, -0.05f, run) * (1.0f - ramp(t, 0.0f, lerpf(0.18f, 0.12f, run)));
-        *pitch = strike + lerpf(0.55f, 0.75f, run) * heel;
+        *pitch = strike + toe_off * heel;
         return;
     }
     f32 u = (q - g->duty) / (1.0f - g->duty);
-    // Кубическая кривая Безье в (z, высота): толчок -> захлёст -> колено вперёд -> постановка
-    f32 z0 = g->off, y0 = lerpf(0.075f, 0.05f, run);
-    f32 z1 = g->off - 0.12f * run, y1 = g->kick;
-    f32 z2 = g->land + g->reach, y2 = g->knee;
-    f32 z3 = g->land, y3 = 0.0f;
-    f32 s = lerpf(smooth01(u), u * u * (3.0f - 2.0f * u) * 0.5f + u * 0.5f, run);
-    f32 a = 1.0f - s;
-    f32 b0 = a * a * a, b1 = 3.0f * a * a * s, b2 = 3.0f * a * s * s, b3 = s * s * s;
-    *z = b0 * z0 + b1 * z1 + b2 * z2 + b3 * z3;
-    *lift = b0 * y0 + b1 * y1 + b2 * y2 + b3 * y3;
-    // Стопа: после толчка носок вниз, к середине переноса — на себя, перед касанием ровно
-    f32 push = lerpf(0.55f, 1.1f, run) * (1.0f - ramp(u, 0.0f, lerpf(0.45f, 0.55f, run)));
-    f32 land = lerpf(-0.30f, -0.08f, run) * ramp(u, 0.45f, 0.95f);
-    *pitch = push + land - 0.15f * fsin(PI_F * u) * (1.0f - run);
+    // Вперёд — кривая Эрмита: на отрыве и перед касанием стопа идёт назад почти со скоростью земли,
+    // без рывка при смене опоры
+    f32 m = -0.2f * (g->land - g->off);
+    f32 u2 = u * u, u3 = u2 * u;
+    *z = (2.0f * u3 - 3.0f * u2 + 1.0f) * g->off + (u3 - 2.0f * u2 + u) * m + (-2.0f * u3 + 3.0f * u2) * g->land +
+         (u3 - u2) * m;
+    // Вверх — кривая Безье: пятка уходит вверх сразу после отрыва (колено сгибается), затем
+    // колено выносится вперёд и голень выпрямляется к постановке
+    f32 a = 1.0f - u;
+    *lift = a * a * a * heel_up + 3.0f * a * a * u * g->kick + 3.0f * a * u2 * g->knee;
+    // Стопа: после толчка носок вниз, к середине переноса — на себя, перед касанием на пятку
+    f32 push = toe_off * (1.0f - smooth01(u / lerpf(0.4f, 0.5f, run)));
+    f32 land = lerpf(-0.28f, -0.05f, run) * smooth01((u - 0.5f) / 0.45f);
+    *pitch = push + land - 0.12f * fsin(PI_F * u) * (1.0f - run);
 }
 
 typedef struct Loco {
@@ -273,10 +276,10 @@ static void locomotion(const CharPose *p, Pose *o, Loco *lo)
     // Бег по механике включается уже на трусце: пружинит, а не перекатывается
     f32 bounce = ramp(run, 0.05f, 0.4f);
     Gait g;
-    g.duty = run < 0.5f ? lerpf(0.62f, 0.40f, run * 2.0f) : lerpf(0.40f, 0.31f, (run - 0.5f) * 2.0f);
+    g.duty = run < 0.5f ? lerpf(0.62f, 0.40f, run * 2.0f) : lerpf(0.40f, 0.29f, (run - 0.5f) * 2.0f);
     f32 L_ = char_stride(p->speed > 0.0f ? p->speed : lerpf(1.2f, 4.8f, run));
     f32 travel = g.duty * L_;
-    f32 land_frac = lerpf(0.52f, 0.36f, bounce);
+    f32 land_frac = lerpf(0.40f, 0.38f, bounce);
     g.land = land_frac * travel;
     g.off = g.land - travel;
     g.kick = lerpf(0.13f, lerpf(0.30f, 0.55f, ramp(run, 0.5f, 1.0f)), bounce);
@@ -285,8 +288,8 @@ static void locomotion(const CharPose *p, Pose *o, Loco *lo)
 
     // Таз: на шаге выше над опорной ногой, на беге ниже всего в опоре и выше в полёте
     f32 q2 = 2.0f * ph - floorf(2.0f * ph);
-    f32 bob_amp = lerpf(0.022f, -0.042f, bounce);
-    f32 bob = bob_amp * fcos(tau * (q2 - g.duty)) + lerpf(-0.025f, -0.075f, bounce);
+    f32 bob_amp = lerpf(0.017f, -0.035f, bounce);
+    f32 bob = bob_amp * fcos(tau * (q2 - g.duty)) + lerpf(-0.045f, -0.060f, bounce);
     f32 sway = lerpf(0.026f, 0.010f, bounce) * fcos(tau * (ph - 0.5f * g.duty));
     f32 pyaw = -lerpf(0.08f, 0.13f, bounce) * fcos(tau * ph);
     f32 proll = lerpf(0.06f, 0.035f, bounce) * fcos(tau * (ph - 0.5f * g.duty));
@@ -294,22 +297,34 @@ static void locomotion(const CharPose *p, Pose *o, Loco *lo)
     o->off = v3_add(o->off, v3_mul(v3(sway, bob, 0.0f), w));
     o->r[BONE_PELVIS] = v3_add(o->r[BONE_PELVIS], v3_mul(v3(ptilt, pyaw, proll), w));
 
-    // Корпус: наклон вперёд, плечи крутятся навстречу тазу, грудь гасит крен таза
-    f32 sh_yaw = lerpf(0.07f, 0.16f, bounce) * fcos(tau * ph);
-    o->r[BONE_SPINE] = v3_add(o->r[BONE_SPINE], v3_mul(v3(lerpf(0.0f, 0.04f, bounce), -pyaw * 0.6f + sh_yaw * 0.5f, -proll * 0.6f), w));
-    o->r[BONE_CHEST] = v3_add(o->r[BONE_CHEST], v3_mul(v3(lerpf(0.02f, 0.03f, bounce), -pyaw * 0.4f + sh_yaw * 0.5f, -proll * 0.4f), w));
+    // Корпус: наклон вперёд, плечи крутятся навстречу тазу, грудь гасит крен таза и чуть
+    // клонится к опорной ноге. Наклон дышит дважды за цикл: на шаге клюёт вперёд после касания
+    // пятки, на беге глубже всего в середине опоры
+    f32 sh_yaw = lerpf(0.12f, 0.22f, bounce) * fcos(tau * ph);
+    f32 nod = lerpf(0.018f, 0.035f, bounce) * fcos(tau * (q2 - lerpf(0.08f, g.duty, bounce)));
+    f32 side_lean = lerpf(0.025f, 0.01f, bounce) * fcos(tau * (ph - 0.5f * g.duty));
+    o->r[BONE_SPINE] = v3_add(o->r[BONE_SPINE], v3_mul(v3(lerpf(0.0f, 0.04f, bounce) + nod * 0.6f, -pyaw * 0.6f + sh_yaw * 0.5f,
+                                                          -proll * 0.6f - side_lean * 0.5f), w));
+    o->r[BONE_CHEST] = v3_add(o->r[BONE_CHEST], v3_mul(v3(lerpf(0.02f, 0.03f, bounce) + nod * 0.4f, -pyaw * 0.4f + sh_yaw * 0.5f,
+                                                          -proll * 0.4f - side_lean * 0.5f), w));
     lo->chest_yaw = sh_yaw * w;
     // Голова держит горизонт
-    o->r[BONE_HEAD].x -= (ptilt + 0.05f * bounce) * w;
+    o->r[BONE_HEAD].x -= (ptilt + 0.05f * bounce + nod) * w;
+    o->r[BONE_HEAD].z += (proll * 0.3f + side_lean) * w;
 
-    // Руки против ног; на бегу локти под прямым углом, кисти идут к груди и чуть внутрь
+    // Руки против ног, мах от плеча, назад дальше, чем вперёд. Шагом локоть почти прям и сгибается,
+    // когда рука идёт вперёд; на бегу локоть согнут, сзади раскрывается, спереди кисть идёт к груди
     f32 arm_ph = tau * (ph - 0.04f);
-    f32 S = lerpf(0.30f, lerpf(0.45f, 0.62f, ramp(run, 0.5f, 1.0f)), bounce);
-    f32 elbow = lerpf(-0.25f, lerpf(-1.35f, -1.55f, ramp(run, 0.5f, 1.0f)), bounce);
+    f32 runk = ramp(run, 0.5f, 1.0f);
+    f32 S = lerpf(0.30f, lerpf(0.48f, 0.55f, runk), bounce);
+    f32 back = lerpf(-0.04f, 0.15f, bounce);
+    f32 el_back = lerpf(-0.22f, lerpf(-1.10f, -1.20f, runk), bounce);
+    f32 el_fwd = lerpf(-0.60f, lerpf(-1.55f, -1.75f, runk), bounce);
     for (u32 side = 0; side < 2; side++) {
         f32 c = side == L ? fcos(arm_ph) : -fcos(arm_ph);  // > 0 — рука идёт назад
-        f32 fwd = fmaxf(0.0f, -c);
-        ArmK k = { -0.06f + S * c, 0.25f * bounce * fwd, lerpf(0.08f, 0.16f, bounce), elbow - lerpf(0.30f, 0.25f, bounce) * fwd,
+        f32 fwd = 0.5f - 0.5f * c;
+        fwd *= fwd;
+        ArmK k = { back + S * c, lerpf(0.04f, 0.14f, bounce) * fwd, lerpf(0.08f, 0.10f, bounce), lerpf(el_back, el_fwd, fwd),
                    0.1f * bounce, 0.0f };
         ArmK cur = get_arm(o, side);
         set_arm(o, side, arm_lerp(cur, k, w));
@@ -329,181 +344,213 @@ static void locomotion(const CharPose *p, Pose *o, Loco *lo)
         walkp.x -= (side == L ? 1.0f : -1.0f) * 0.03f * bounce;
         o->foot[side] = v3_lerp(base, walkp, w);
         o->fpitch[side] = lerpf(o->fpitch[side], pitch, w);
+        // Вес на ноге: с касания до подъёма пятки; к отрыву и до касания спадает плавно
+        f32 pl = q < g.duty ? 1.0f - smooth01((q / g.duty - 0.6f) / 0.4f) : smooth01(((q - g.duty) / (1.0f - g.duty) - 0.6f) / 0.4f);
+        o->plant[side] = lerpf(o->plant[side], pl, w);
     }
 }
 
-// ---------------------------------------------------------------- позы ожидания
+// ---------------------------------------------------------------- покой
 
-// Свои позы, под мир: стоит, переносит вес; на корточках; поправляет респиратор; пьёт из фляги;
-// отряхивает пыль; смотрит вдаль из-под ладони; греет руки под мышками; оглядывается через плечо;
-// растирает старую рану на плече; достаёт оружие и осматривает лезвие
-enum {
-    IDLE_REST, IDLE_SQUAT, IDLE_MASK, IDLE_FLASK, IDLE_DUST, IDLE_SHADE, IDLE_COLD, IDLE_GLANCE, IDLE_RUB, IDLE_BLADE,
-    IDLE_COUNT
-};
+// Покой в два слоя. Движения стоя идут всегда: дыхание, вес с ноги на ногу, взгляд по сторонам и
+// короткие житейские движения раз в несколько секунд. Позы — редко и надолго, только если стоит
+// давно: на корточках, сидит на земле, упёрся руками в колени, застыл и смотрит вверх
+enum { MOVE_NONE, MOVE_NECK, MOVE_STRAP, MOVE_BROW, MOVE_HILT, MOVE_HANDS, MOVE_COUNT };
+enum { POSE_NONE, POSE_SQUAT, POSE_SIT, POSE_BREATH, POSE_STARE, POSE_COUNT };
 
-#define IDLE_SLOT 9.0f   // с на одну позу
-#define IDLE_FADE 1.3f   // переход между позами
-
-static u32 idle_pick(u32 seed, u32 slot, bool armed)
-{
-    // Половина времени просто стоит: позы — редкие события
-    f32 h = hashf(seed * 7919u + slot * 104729u);
-    if (h < 0.45f || slot == 0) return IDLE_REST;
-    u32 k = 1 + (u32)(hashf(seed * 31u + slot * 977u) * (IDLE_COUNT - 1));
-    if (k >= IDLE_COUNT) k = IDLE_COUNT - 1;
-    if (k == IDLE_BLADE && !armed) k = IDLE_REST;
-    // Подряд одно и то же не повторяет
-    if (slot > 0 && k == idle_pick(seed, slot - 1, armed) && k != IDLE_REST) k = IDLE_REST;
-    return k;
-}
+#define MOVE_SLOT 5.5f    // с на одно движение
+#define POSE_SLOT 34.0f   // с на одну позу
+#define POSE_FADE 2.2f    // вход в позу и выход
+#define POSE_AFTER 4.0f   // поза не раньше, чем постоял столько
 
 // Голова и корпус к точке: yaw — поворот, pitch > 0 — вниз
 static void look_at(Pose *o, f32 yaw, f32 pitch)
 {
-    o->r[BONE_CHEST].y += yaw * 0.3f;
+    o->r[BONE_CHEST].y += yaw * 0.25f;
     o->r[BONE_NECK].y += yaw * 0.3f;
-    o->r[BONE_HEAD].y += yaw * 0.4f;
+    o->r[BONE_HEAD].y += yaw * 0.45f;
     o->r[BONE_NECK].x += pitch * 0.4f;
     o->r[BONE_HEAD].x += pitch * 0.6f;
 }
 
-// Перенос веса на одну ногу: таз уходит к опорной, другая расслаблена в колене
+// Перенос веса на одну ногу (side > 0 — на левую): таз уходит к опорной, другая расслаблена в колене
 static void weight_shift(Pose *o, f32 side, f32 amt)
 {
-    o->off.x += 0.035f * side * amt;
-    o->off.y -= 0.012f * amt;
-    o->r[BONE_PELVIS].z += 0.06f * side * amt;
-    o->r[BONE_SPINE].z -= 0.04f * side * amt;
-    o->r[BONE_CHEST].z -= 0.03f * side * amt;
-    u32 free = side > 0.0f ? R : L;
-    o->foot[free].z += 0.06f * amt;
-    o->foot[free].x += (free == L ? 0.03f : -0.03f) * amt;
-    o->fpitch[free] += 0.08f * amt;
+    f32 sa = side * amt, aa = fabsf(sa);
+    o->off.x += 0.035f * sa;
+    o->off.y -= 0.010f * aa;
+    o->r[BONE_PELVIS].z += 0.06f * sa;
+    o->r[BONE_SPINE].z -= 0.035f * sa;
+    o->r[BONE_CHEST].z -= 0.03f * sa;
+    o->r[BONE_HEAD].z += 0.02f * sa;
+    // Свободная нога чуть вперёд и наружу, колено мягкое
+    for (u32 s = 0; s < 2; s++) {
+        f32 f = s == L ? clampf(-sa, 0.0f, 1.0f) : clampf(sa, 0.0f, 1.0f);
+        o->foot[s].z += 0.05f * f;
+        o->foot[s].x += (s == L ? 0.02f : -0.02f) * f;
+        o->foot[s].y += 0.012f * f;
+        o->fpitch[s] += 0.10f * f;
+        o->plant[s] *= 1.0f - 0.8f * f;
+    }
 }
 
-// Поза ожидания k в момент t (с от начала позы); wield — оружие в руке по ходу позы
-static void idle_pose(Pose *o, u32 k, f32 t, f32 seed, f32 *wield)
+// Плавная ступенька между значениями соседних отрезков: держит и быстро переходит
+static f32 held(u32 sd, f32 t, f32 seg, f32 tr, u32 salt)
 {
-    f32 side = hashf((u32)(seed * 100.0f) + (u32)k * 13u) < 0.5f ? 1.0f : -1.0f;
-    f32 in = smooth01(t / 1.0f);
-    f32 s1 = fsin(t * 0.7f + seed), s2 = fsin(t * 0.43f + seed * 2.0f);
+    f32 x = t / seg;
+    u32 i = (u32)x;
+    f32 a = hashf(sd * 7919u + i * 104729u + salt) * 2.0f - 1.0f;
+    f32 b = hashf(sd * 7919u + (i + 1) * 104729u + salt) * 2.0f - 1.0f;
+    return lerpf(a, b, smooth01((x - (f32)i - (1.0f - tr / seg)) / (tr / seg)));
+}
+
+// Движения стоя: всегда, поверх стойки
+static void idle_moves(Pose *o, f32 t, u32 sd, f32 seed, bool armed)
+{
+    // Вес то на одной ноге, то ровно, то на другой; держит по 6–9 с
+    f32 ws = held(sd, t, 6.0f + 3.0f * hashf(sd), 1.4f, 11u);
+    weight_shift(o, ws > 0.0f ? 1.0f : -1.0f, smooth01(fabsf(ws) * 1.6f - 0.2f));
+    // Взгляд: держит точку, переводит за полсекунды; изредка далеко в сторону
+    f32 gy = held(sd, t, 2.6f + 1.2f * hashf(sd + 5u), 0.45f, 23u);
+    f32 far = held(sd, t, 9.0f, 0.6f, 29u) > 0.55f ? 1.0f : 0.45f;
+    look_at(o, 0.55f * gy * far, 0.04f + 0.06f * held(sd, t, 3.7f, 0.6f, 31u));
+    // Руки висят не мёртво: чуть отходят от бедра и сгибаются
+    for (u32 s = 0; s < 2; s++)
+        add_arm(o, s, (ArmK){ 0.03f * fsin(t * 0.31f + seed + (f32)s), 0.0f, 0.02f, -0.10f - 0.06f * fsin(t * 0.23f + (f32)s * 2.0f), 0.08f, 0.0f }, 1.0f);
+
+    // Житейские движения
+    u32 slot = (u32)(t / MOVE_SLOT);
+    f32 lt = t - (f32)slot * MOVE_SLOT;
+    f32 hk = hashf(sd * 31u + slot * 977u);
+    u32 k = hk < 0.45f ? MOVE_NONE : 1u + (u32)((hk - 0.45f) / 0.55f * (MOVE_COUNT - 1));
+    if (k >= MOVE_COUNT) k = MOVE_COUNT - 1;
+    if (k == MOVE_HILT && !armed) k = MOVE_HANDS;
+    f32 dur = k == MOVE_HILT ? 5.0f : 3.2f;
+    f32 g = smooth01(lt / 0.6f) * (1.0f - smooth01((lt - dur + 0.6f) / 0.6f));
+    if (g <= 0.0f) return;
     switch (k) {
-    case IDLE_REST:
-        weight_shift(o, side, 0.8f);
-        look_at(o, 0.35f * s2, 0.05f);
-        add_arm(o, side > 0 ? R : L, (ArmK){ -0.05f, 0, 0, -0.1f, 0, 0 }, 1.0f);
+    case MOVE_NECK: {
+        // Разминает шею: голова к одному плечу, к другому; плечи вверх-назад
+        f32 n = fsin(lt * 2.2f);
+        o->r[BONE_NECK].z += 0.22f * n * g;
+        o->r[BONE_HEAD].z += 0.12f * n * g;
+        f32 sh = smooth01((lt - 1.8f) / 0.5f) * (1.0f - smooth01((lt - 2.5f) / 0.5f));
+        o->r[BONE_CLAVICLE_L].z += 0.12f * sh * g;
+        o->r[BONE_CLAVICLE_R].z -= 0.12f * sh * g;
+        o->r[BONE_CLAVICLE_L].y -= 0.08f * sh * g;
+        o->r[BONE_CLAVICLE_R].y += 0.08f * sh * g;
         break;
-    case IDLE_SQUAT: {
-        // Садится на корточки: пятки на земле, предплечья на коленях
-        f32 d = smooth01(t / 1.2f) * (1.0f - smooth01((t - IDLE_SLOT + 1.2f) / 1.2f));
-        o->off.y -= 0.50f * d;
-        o->off.z -= 0.10f * d;
-        o->r[BONE_PELVIS].x += 0.45f * d;
-        o->r[BONE_SPINE].x += 0.25f * d;
-        o->r[BONE_CHEST].x += 0.10f * d;
-        o->r[BONE_HEAD].x -= 0.55f * d;
-        o->foot[L].x += 0.05f * d;
-        o->foot[R].x -= 0.05f * d;
-        o->foot[L].z += 0.06f * d;
-        o->foot[R].z += 0.02f * d;
+    }
+    case MOVE_STRAP: {
+        // Поправляет лямку: большой палец под лямку на груди, дёргает вниз два раза
+        f32 tug = fmaxf(0.0f, fsin(lt * 6.0f)) * smooth01((lt - 0.9f) / 0.3f);
+        set_arm(o, R, arm_lerp(get_arm(o, R), (ArmK){ -0.55f, 0.55f, 0.05f, -2.05f + 0.25f * tug, 0.2f, 0.0f }, g));
+        o->r[BONE_CLAVICLE_R].z -= 0.06f * tug * g;
+        look_at(o, 0.0f, 0.10f * g);
+        break;
+    }
+    case MOVE_BROW: {
+        // Вытирает лоб тыльной стороной запястья: жара и пыль
+        f32 wipe = fsin(smooth01((lt - 0.7f) / 1.2f) * PI_F);
+        set_arm(o, L, arm_lerp(get_arm(o, L), (ArmK){ -1.55f - 0.15f * wipe, 0.85f - 0.35f * wipe, 0.0f, -2.20f, 0.3f, 0.0f }, g));
+        look_at(o, -0.15f * wipe * g, -0.10f * g);
+        break;
+    }
+    case MOVE_HILT:
+        // Кладёт ладонь на рукоять оружия у левого бедра
+        set_arm(o, R, arm_lerp(get_arm(o, R), (ArmK){ -0.28f, 0.62f, 0.0f, -1.05f, -0.2f, 0.0f }, g));
+        break;
+    case MOVE_HANDS: {
+        // Растирает ладони перед собой: холод или пыль на руках
+        f32 rub = fsin(lt * 8.0f) * smooth01((lt - 0.6f) / 0.3f);
         for (u32 s = 0; s < 2; s++) {
-            ArmK a = { -0.95f, 0.15f, 0.12f, -0.75f, 0.2f, 0.0f };
-            set_arm(o, s, arm_lerp(get_arm(o, s), a, d));
+            f32 r = s == L ? rub : -rub;
+            set_arm(o, s, arm_lerp(get_arm(o, s), (ArmK){ -0.30f + 0.05f * r, 0.62f, 0.0f, -1.45f + 0.08f * r, 0.0f, 0.0f }, g));
         }
-        look_at(o, 0.3f * s2 * d, 0.0f);
-        break;
-    }
-    case IDLE_MASK: {
-        // Поправляет респиратор: ладонь к лицу, голова чуть вниз
-        f32 g = ramp(t, 0.8f, 1.8f) * (1.0f - ramp(t, 4.0f, 5.0f));
-        f32 jig = 0.06f * fsin(t * 9.0f) * g;
-        weight_shift(o, side, 0.6f);
-        set_arm(o, R, arm_lerp(get_arm(o, R), (ArmK){ -1.30f + jig, 0.60f, 0.10f, -2.20f, 0.3f, 0.2f }, g));
-        look_at(o, 0.0f, 0.15f * g);
-        break;
-    }
-    case IDLE_FLASK: {
-        // Снимает флягу с пояса, отпивает, голова запрокинута
-        f32 g = ramp(t, 0.6f, 1.6f) * (1.0f - ramp(t, 5.0f, 6.0f));
-        f32 drink = ramp(t, 1.8f, 2.6f) * (1.0f - ramp(t, 4.0f, 4.8f));
-        set_arm(o, R, arm_lerp(get_arm(o, R), (ArmK){ -1.15f - 0.35f * drink, 0.55f, 0.05f, -2.0f + 0.3f * drink, 0.2f, 0.0f }, g));
-        look_at(o, 0.0f, -0.45f * drink);
-        o->r[BONE_SPINE].x -= 0.08f * drink;
-        weight_shift(o, -side, 0.5f);
-        break;
-    }
-    case IDLE_DUST: {
-        // Отряхивает пыль с накидки: ладонь хлопает по плечу и груди
-        f32 g = ramp(t, 0.4f, 1.0f) * (1.0f - ramp(t, 4.2f, 5.0f));
-        f32 pat = fsin(t * 7.5f);
-        set_arm(o, R, arm_lerp(get_arm(o, R), (ArmK){ -0.9f + 0.15f * pat, 1.05f, 0.0f, -1.9f + 0.2f * pat, 0.3f, 0.0f }, g));
-        u32 other = L;
-        f32 g2 = ramp(t, 2.6f, 3.0f) * (1.0f - ramp(t, 4.2f, 5.0f));
-        set_arm(o, other, arm_lerp(get_arm(o, other), (ArmK){ -0.5f + 0.15f * pat, 0.6f, 0.0f, -1.3f, 0.2f, 0.0f }, g2));
-        look_at(o, 0.25f * g, 0.35f * g);
-        o->r[BONE_SPINE].x += 0.06f * g;
-        break;
-    }
-    case IDLE_SHADE: {
-        // Смотрит вдаль из-под ладони: солнце низкое, ветер, пыль
-        f32 g = ramp(t, 0.6f, 1.6f) * (1.0f - ramp(t, 6.5f, 7.6f));
-        set_arm(o, L, arm_lerp(get_arm(o, L), (ArmK){ -2.05f, 0.75f, 0.0f, -1.95f, 0.5f, 0.0f }, g));
-        look_at(o, (0.45f + 0.15f * s1) * side * g, -0.12f * g);
-        weight_shift(o, side, 0.9f);
-        o->r[BONE_SPINE].x -= 0.04f * g;
-        break;
-    }
-    case IDLE_COLD: {
-        // Холодно: руки под мышками, плечи подняты, переминается с ноги на ногу
-        f32 g = ramp(t, 0.5f, 1.4f) * (1.0f - ramp(t, 7.0f, 8.0f));
-        for (u32 s = 0; s < 2; s++)
-            set_arm(o, s, arm_lerp(get_arm(o, s), (ArmK){ -0.45f, 1.2f, 0.0f, -2.05f, 0.1f, 0.0f }, g));
-        o->r[BONE_CLAVICLE_L].z += 0.10f * g;
-        o->r[BONE_CLAVICLE_R].z -= 0.10f * g;
-        f32 step = fsin(t * 3.1f);
-        weight_shift(o, step > 0.0f ? 1.0f : -1.0f, 0.5f * g * fabsf(step));
-        o->r[BONE_SPINE].x += 0.08f * g;
-        o->r[BONE_HEAD].x += 0.18f * g;
-        break;
-    }
-    case IDLE_GLANCE: {
-        // Оглядывается через плечо, потом через другое
-        f32 a = ramp(t, 0.8f, 1.6f) * (1.0f - ramp(t, 3.0f, 3.8f));
-        f32 b = ramp(t, 4.4f, 5.2f) * (1.0f - ramp(t, 6.6f, 7.4f));
-        f32 yaw = (1.15f * a - 1.0f * b) * side;
-        o->r[BONE_SPINE].y += yaw * 0.25f;
-        look_at(o, yaw, -0.05f * (a + b));
-        o->r[BONE_PELVIS].y += yaw * 0.12f;
-        weight_shift(o, side, 0.4f);
-        break;
-    }
-    case IDLE_RUB: {
-        // Растирает старую рану на левом плече, крутит плечом
-        f32 g = ramp(t, 0.6f, 1.4f) * (1.0f - ramp(t, 5.4f, 6.2f));
-        f32 rub = fsin(t * 5.0f);
-        set_arm(o, R, arm_lerp(get_arm(o, R), (ArmK){ -1.25f + 0.08f * rub, 1.25f, 0.0f, -1.75f + 0.1f * rub, 0.2f, 0.0f }, g));
-        o->r[BONE_CLAVICLE_L].z += (0.08f + 0.06f * fsin(t * 2.2f)) * g;
-        o->r[BONE_CLAVICLE_L].y -= 0.08f * fsin(t * 2.2f + 1.0f) * g;
-        look_at(o, 0.55f * g, 0.25f * g);
-        o->r[BONE_NECK].z -= 0.12f * g;
-        break;
-    }
-    case IDLE_BLADE: {
-        // Достаёт оружие, держит перед собой, рассматривает лезвие, убирает
-        f32 out = ramp(t, 0.5f, 1.5f) * (1.0f - ramp(t, 6.0f, 7.0f));
-        *wield = out;
-        f32 look = ramp(t, 1.6f, 2.2f) * (1.0f - ramp(t, 5.4f, 6.0f));
-        f32 turn = 0.4f * fsin(t * 0.9f) * look;
-        set_arm(o, R, arm_lerp(get_arm(o, R), (ArmK){ -1.05f, 0.45f, 0.05f, -1.10f, 0.9f + turn, -0.2f }, look));
-        look_at(o, -0.25f * look, 0.35f * look);
-        weight_shift(o, side, 0.6f);
+        look_at(o, 0.0f, 0.25f * g);
         break;
     }
     default:
         break;
     }
-    (void)in;
+}
+
+// Поза k, t — с от начала позы
+static void idle_pose(Pose *o, u32 k, f32 t, f32 seed)
+{
+    f32 br = fsin(t * 1.4f + seed);
+    switch (k) {
+    case POSE_SQUAT:
+        // Глубоко на корточках: пятки на земле, таз у пяток, колени врозь и вперёд, корпус наклонён,
+        // локти на коленях, кисти свисают между колен
+        o->off = v3(0.0f, -0.64f, -0.12f);
+        o->r[BONE_PELVIS] = v3(0.22f, 0.0f, 0.0f);
+        o->r[BONE_SPINE] = v3(0.30f + 0.015f * br, 0.0f, 0.0f);
+        o->r[BONE_CHEST] = v3(0.12f, 0.0f, 0.0f);
+        o->r[BONE_NECK] = v3(-0.20f, 0.0f, 0.0f);
+        o->r[BONE_HEAD] = v3(-0.30f, 0.0f, 0.0f);
+        o->foot[L] = v3(0.17f, joint(BONE_FOOT_L).y, 0.06f);
+        o->foot[R] = v3(-0.17f, joint(BONE_FOOT_R).y, 0.02f);
+        o->fpitch[L] = o->fpitch[R] = 0.0f;
+        o->kout = 0.30f;
+        for (u32 s = 0; s < 2; s++) set_arm(o, s, (ArmK){ -0.85f, 0.30f, 0.25f, -0.95f, 0.80f, 0.0f });
+        o->r[BONE_CLAVICLE_L].z += 0.02f * br;
+        o->r[BONE_CLAVICLE_R].z -= 0.02f * br;
+        break;
+    case POSE_SIT:
+        // Сидит на земле, колени подтянуты, руки обхватили колени
+        o->off = v3(0.0f, -0.82f, -0.10f);
+        o->r[BONE_PELVIS] = v3(-0.30f, 0.0f, 0.0f);
+        o->r[BONE_SPINE] = v3(0.38f + 0.015f * br, 0.0f, 0.0f);
+        o->r[BONE_CHEST] = v3(0.22f, 0.0f, 0.0f);
+        o->r[BONE_NECK] = v3(-0.05f, 0.0f, 0.0f);
+        o->r[BONE_HEAD] = v3(-0.12f, 0.0f, 0.0f);
+        o->foot[L] = v3(0.13f, joint(BONE_FOOT_L).y, 0.40f);
+        o->foot[R] = v3(-0.13f, joint(BONE_FOOT_R).y, 0.36f);
+        o->fpitch[L] = o->fpitch[R] = 0.25f;
+        o->kout = 0.05f;
+        set_arm(o, L, (ArmK){ -1.05f, 0.45f, 0.10f, -0.70f, 0.2f, 0.0f });
+        set_arm(o, R, (ArmK){ -1.10f, 0.50f, 0.10f, -0.60f, 0.2f, 0.0f });
+        break;
+    case POSE_BREATH: {
+        // Упёрся руками в колени, тяжело дышит, смотрит вперёд из-под бровей
+        f32 hb = fsin(t * 3.4f + seed);
+        o->off.y -= 0.07f;
+        o->off.z -= 0.06f;
+        o->foot[L].x += 0.06f;
+        o->foot[R].x -= 0.06f;
+        o->r[BONE_PELVIS].x += 0.30f;
+        o->r[BONE_SPINE].x += 0.30f + 0.03f * hb;
+        o->r[BONE_CHEST].x += 0.20f + 0.03f * hb;
+        o->r[BONE_NECK].x -= 0.25f;
+        o->r[BONE_HEAD].x -= 0.35f;
+        o->kout = 0.12f;
+        for (u32 s = 0; s < 2; s++) set_arm(o, s, (ArmK){ -0.75f, 0.12f, 0.12f, -0.25f, 0.45f, 0.0f });
+        o->r[BONE_CLAVICLE_L].z += 0.05f * hb;
+        o->r[BONE_CLAVICLE_R].z -= 0.05f * hb;
+        break;
+    }
+    case POSE_STARE: {
+        // Застыл, смотрит вверх, на громаду вдали; вес на одной ноге, почти не дышит заметно
+        f32 side = hashf((u32)(seed * 100.0f)) < 0.5f ? 1.0f : -1.0f;
+        weight_shift(o, side, 1.0f);
+        look_at(o, 0.25f * side, -0.32f);
+        o->r[BONE_SPINE].x -= 0.04f;
+        for (u32 s = 0; s < 2; s++) set_arm(o, s, (ArmK){ 0.04f, 0.0f, 0.06f, -0.08f, 0.0f, 0.0f });
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+static u32 pose_pick(u32 sd, u32 slot)
+{
+    // Поза — редкое событие: примерно в одном отрезке из шести
+    f32 h = hashf(sd * 4801u + slot * 7349u);
+    if (h > 0.17f || slot == 0) return POSE_NONE;
+    u32 k = 1u + (u32)(hashf(sd * 53u + slot * 389u) * (POSE_COUNT - 1));
+    return k < POSE_COUNT ? k : POSE_COUNT - 1;
 }
 
 // ---------------------------------------------------------------- бой
@@ -965,9 +1012,9 @@ static Xf sheath_frame(u8 w, u8 *bone)
     V3 s = g_body_sockets[SOCKET_BACK].pos;
     if (c == CARRY_BACK_HIGH)
         // Рукоять над правым плечом, клинок наискосок к левому бедру — сквозь рюкзак
-        return frame_axes(v3(0.42f, -1.0f, -0.04f), v3(0.0f, 0.0f, -1.0f), v3(s.x - 0.17f, s.y + 0.30f, s.z - 0.10f));
+        return frame_axes(v3(0.42f, -1.0f, -0.04f), v3(0.0f, 0.0f, -1.0f), v3(s.x - 0.17f, s.y + 0.30f, s.z + 0.01f));
     // Древко наискосок вверх за левое плечо, хват у правой лопатки
-    return frame_axes(v3(0.40f, 1.0f, -0.10f), v3(0.0f, 0.0f, -1.0f), v3(s.x - 0.16f, s.y - 0.12f, s.z - 0.12f));
+    return frame_axes(v3(0.40f, 1.0f, -0.02f), v3(0.0f, 0.0f, -1.0f), v3(s.x - 0.16f, s.y - 0.12f, s.z + 0.03f));
 }
 
 // ---------------------------------------------------------------- IK руки
@@ -1030,29 +1077,28 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     o.r[BONE_CLAVICLE_R].z -= 0.02f * breathe;
     o.r[BONE_SPINE].x += 0.03f;
 
-    // Позы ожидания: только стоя, вне боя и без клипа
+    // Покой: только стоя, вне боя и без клипа
     f32 idle_w = (1.0f - walk) * (1.0f - guard) * (a->clip == CLIP_NONE ? 1.0f : 0.0f) * (p->calm ? 0.0f : 1.0f);
     if (idle_w > 0.01f) {
         f32 t = p->time + p->seed * 37.0f;
-        u32 slot = (u32)(t / IDLE_SLOT);
-        f32 lt = t - (f32)slot * IDLE_SLOT;
         u32 sd = (u32)(p->seed * 1000.0f);
-        Pose cur = o, nxt = o;
-        f32 w0 = 0.0f, w1 = 0.0f;
-        idle_pose(&cur, idle_pick(sd, slot, armed), lt, p->seed, &w0);
-        f32 fade = smooth01((lt - (IDLE_SLOT - IDLE_FADE)) / IDLE_FADE);
-        if (fade > 0.0f) {
-            idle_pose(&nxt, idle_pick(sd, slot + 1, armed), lt - IDLE_SLOT, p->seed, &w1);
-            pose_lerp(&cur, &nxt, fade);
+        Pose cur = o;
+        idle_moves(&cur, t, sd, p->seed, armed);
+        // Поза отрезка: входит не раньше, чем постоял POSE_AFTER, и выходит до конца отрезка
+        u32 slot = (u32)(t / POSE_SLOT);
+        f32 lt = fminf(t - (f32)slot * POSE_SLOT, p->idle - POSE_AFTER);
+        u32 k = pose_pick(sd, slot);
+        if (k != POSE_NONE && lt > 0.0f) {
+            Pose ps = o;
+            idle_pose(&ps, k, lt, p->seed);
+            f32 tail = POSE_SLOT - (t - (f32)slot * POSE_SLOT);
+            pose_lerp(&cur, &ps, smooth01(lt / POSE_FADE) * smooth01(tail / POSE_FADE));
         }
-        // Стоя с оружием в руке позы рук не годятся
+        // С оружием в руке руки не трогает
         Pose keep = o;
         pose_lerp(&o, &cur, idle_w);
-        if (wield > 0.5f) {
+        if (wield > 0.5f)
             for (u32 b = BONE_CLAVICLE_L; b <= BONE_HAND_R; b++) o.r[b] = keep.r[b];
-        } else {
-            wield = fmaxf(wield, lerpf(w0, w1, fade) * idle_w * (armed ? 1.0f : 0.0f));
-        }
     }
 
     // Оружие в руке вне стойки: опущено, остриё вперёд-вниз; двуручное — наперевес у бедра
@@ -1132,6 +1178,22 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         pose_lerp(&o, &c, clip_w);
     }
 
+    // Таз опускается, если опорной ноге не хватает длины до цели: длинный шаг, глубокий присед
+    if (o.ik > 0.0f) {
+        Xf pel = xf_euler(o.r[BONE_PELVIS], v3_add(joint(BONE_PELVIS), o.off));
+        f32 drop = 0.0f;
+        for (u32 s = 0; s < 2; s++) {
+            if (o.plant[s] <= 0.0f) continue;
+            u8 th = s == L ? BONE_THIGH_L : BONE_THIGH_R;
+            V3 hip = xf_point(&pel, v3_sub(joint(th), joint(BONE_PELVIS)));
+            f32 lg = 0.993f * (v3_len(v3_sub(joint(th + 1), joint(th))) + v3_len(v3_sub(joint(th + 2), joint(th + 1))));
+            f32 dx = o.foot[s].x - hip.x, dz = o.foot[s].z - hip.z;
+            f32 top = o.foot[s].y + sqrtf(fmaxf(lg * lg - dx * dx - dz * dz, 0.0f));
+            drop = fminf(drop, (top - hip.y) * o.plant[s] * o.ik);
+        }
+        o.off.y += drop;
+    }
+
     // Кинематика в пространстве модели: таз, корпус, руки углами; ноги — IK к целям
     Xf wld[BONE_COUNT];
     wld[BONE_ROOT] = XF_ID;
@@ -1148,7 +1210,7 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
             V3 tl = xf_tdir(P, v3_sub(o.foot[s], P->t));
             V3 d = v3_sub(tl, v3_sub(hip, joint(BONE_PELVIS)));
             // Колено смотрит вперёд по земле и чуть наружу: разворот таза гасит
-            f32 ty = -o.r[BONE_PELVIS].y + 0.10f * m;
+            f32 ty = -o.r[BONE_PELVIS].y + (0.10f + o.kout) * m;
             f32 sy, cy;
             fsincos(-ty, &sy, &cy);
             d = v3(cy * d.x + sy * d.z, d.y, -sy * d.x + cy * d.z);
@@ -1232,7 +1294,16 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         if (in_hand && weapon_two_hand(wpn)) {
             f32 w2 = smooth01((wield - 0.75f) / 0.25f) * (1.0f - clip_w) * (1.0f - 0.6f * clampf(a->stagger, 0.0f, 1.0f));
             if (w2 > 0.0f) {
-                V3 at = v3_add(weapon.t, v3_mul(weapon.y, weapon_left_grip(wpn)));
+                // Хват скользит по древку к месту, куда левая рука достаёт
+                f32 lu = v3_len(v3_sub(joint(BONE_FOREARM_L), joint(BONE_UPPER_ARM_L)));
+                f32 lf = v3_len(v3_sub(joint(BONE_HAND_L), joint(BONE_FOREARM_L)));
+                f32 r = 0.96f * (lu + lf) + 0.06f;
+                V3 os = v3_sub(weapon.t, wld[BONE_UPPER_ARM_L].t);
+                f32 bb = v3_dot(weapon.y, os), cc = v3_dot(os, os) - r * r, disc = bb * bb - cc;
+                f32 gs = weapon_left_grip(wpn);
+                if (disc < 0.0f) gs = -bb;
+                else gs = clampf(gs, -bb - sqrtf(disc), -bb + sqrtf(disc));
+                V3 at = v3_add(weapon.t, v3_mul(weapon.y, clampf(gs, -0.35f, 1.2f)));
                 Xf flip = { v3(-1, 0, 0), v3(0, 1, 0), v3(0, 0, -1), v3(0, 0, 0) };
                 Xf wr = xf_mul(&weapon, &flip);
                 wr.t = v3(0, 0, 0);
