@@ -60,10 +60,21 @@ typedef struct Options {
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
 } Options;
 
+// Что сейчас нарисовано в ячейке атласа портретов: портрет неподвижен, перерисовка только при смене
+typedef struct PortraitKey {
+    const GpuMesh *body, *weapon;
+    f32 seed, height, width;
+    i32 size;
+} PortraitKey;
+static PortraitKey g_portrait_key[RENDER_PORTRAIT_SLOTS];
+
 // Портрет: неподвижная фигура в покое, камера по кости головы спереди, чуть сверху
 static void portrait(const FrameView *base, u32 slot, i32 size, const GpuMesh *body, const GpuMesh *weapon,
                      f32 seed, f32 height, f32 width, M4 *bones)
 {
+    PortraitKey key = { body, weapon, seed, height, width, size };
+    if (slot >= RENDER_PORTRAIT_SLOTS || !memcmp(&g_portrait_key[slot], &key, sizeof key)) return;
+    g_portrait_key[slot] = key;
     CharPose p = { .seed = seed, .height = height, .width = width };
     character_pose(&p, NULL, bones);
     DrawItem items[2] = { { .mesh = body, .bones = bones }, { .mesh = weapon, .bones = bones } };
@@ -130,6 +141,17 @@ static int cmp_f32(const void *a, const void *b)
     return (x > y) - (x < y);
 }
 
+// Время проходов GPU одной строкой; драйвер может не отдавать метки времени (например, D3D12 в WSL)
+static void gpu_line(char *out, size_t size, const RenderStats *st)
+{
+    if (st->samples && st->gpu_total_ms > 0.0)
+        snprintf(out, size, "GPU %.3f: тени %.3f, глубина %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f, интерфейс %.3f",
+                 st->gpu_total_ms, st->gpu_ms[PASS_SHADOW], st->gpu_ms[PASS_DEPTH], st->gpu_ms[PASS_SCENE],
+                 st->gpu_ms[PASS_ATMOS], st->gpu_ms[PASS_STYLE], st->gpu_ms[PASS_BLIT], st->gpu_ms[PASS_UI]);
+    else
+        snprintf(out, size, "GPU: драйвер не отдаёт метки времени");
+}
+
 static void bench_report(Bench *b, f64 seconds, i32 ww, i32 wh)
 {
     RenderStats st;
@@ -142,13 +164,9 @@ static void bench_report(Bench *b, f64 seconds, i32 ww, i32 wh)
     f64 k = 1000.0 / b->cpu_frames;
     log_stat("ЗАМЕР: окно %dx%d, %u кадров за %.1f с | кадр: среднее %.3f мс (%.0f к/с), медиана %.3f, худший 1%% %.3f",
              ww, wh, n, seconds, sum / n, n / seconds, b->frame_ms[n / 2], b->frame_ms[MIN(n - 1, n * 99 / 100)]);
-    if (st.samples && st.gpu_total_ms > 0.0)
-        log_stat("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | GPU %.3f: тени %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f",
-                 b->cpu_logic * k, b->cpu_submit * k, b->cpu_swap * k, st.gpu_total_ms, st.gpu_ms[PASS_SHADOW],
-                 st.gpu_ms[PASS_SCENE], st.gpu_ms[PASS_ATMOS], st.gpu_ms[PASS_STYLE], st.gpu_ms[PASS_BLIT]);
-    else
-        log_stat("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | GPU: драйвер не отдаёт метки времени",
-                 b->cpu_logic * k, b->cpu_submit * k, b->cpu_swap * k);
+    char gpu[256];
+    gpu_line(gpu, sizeof gpu, &st);
+    log_stat("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | %s", b->cpu_logic * k, b->cpu_submit * k, b->cpu_swap * k, gpu);
     log_stat("ЗАМЕР: сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk | шейдинг блоками: %s",
              st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0,
              st.vrs ? "да" : "нет");
@@ -581,7 +599,10 @@ int main(int argc, char **argv)
             snprintf(val, sizeof val, "%.2f МС  %.0f К/С", (f64)shown_ms, (f64)shown_fps);
             hud_debug_text(&hud, "КАДР", val);
             hud_debug_check(&hud, "СЧЁТЧИК КАДРОВ", &hud.dbg.fps_on);
-            if (hud_debug_button(&hud, "ПЕРЕЗАГРУЗИТЬ ШЕЙДЕРЫ")) render_reload_shaders();
+            if (hud_debug_button(&hud, "ПЕРЕЗАГРУЗИТЬ ШЕЙДЕРЫ")) {
+                render_reload_shaders();
+                memset(g_portrait_key, 0, sizeof g_portrait_key);
+            }
             if (hud_debug_button(&hud, "ЗАМЕР КАДРА")) bench_request = true;
             hud_debug_check(&hud, "ЖУРНАЛ", &hud.dbg.journal);
         }
@@ -706,6 +727,7 @@ int main(int argc, char **argv)
         ui_set_time(real_time);
         hud_draw(&hud, &hin, &hw);
         ui_end();
+        render_frame_end();
         f64 t_swap = time_now();
         cpu_submit += t_swap - t_submit;
 
@@ -761,14 +783,8 @@ int main(int argc, char **argv)
             RenderStats st;
             render_take_stats(&st);
             f64 k = 1000.0 / stat_frames;
-            char gpu[192];
-            // Драйвер может не отдавать метки времени (например, D3D12 в WSL)
-            if (st.samples && st.gpu_total_ms > 0.0)
-                snprintf(gpu, sizeof gpu, "GPU %.3f: тени %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f",
-                         st.gpu_total_ms, st.gpu_ms[PASS_SHADOW], st.gpu_ms[PASS_SCENE], st.gpu_ms[PASS_ATMOS],
-                         st.gpu_ms[PASS_STYLE], st.gpu_ms[PASS_BLIT]);
-            else
-                snprintf(gpu, sizeof gpu, "GPU: драйвер не отдаёт метки времени");
+            char gpu[256];
+            gpu_line(gpu, sizeof gpu, &st);
             log_stat("КАДР: %.2f мс, %.0f к/с | CPU: логика %.3f, отправка %.3f, swap %.3f | %s",
                      (now - stat_t) * k, stat_frames / (now - stat_t),
                      cpu_logic * k, cpu_submit * k, cpu_swap * k, gpu);
