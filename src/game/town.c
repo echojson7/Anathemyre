@@ -1066,7 +1066,7 @@ void town_folk_init(TownFolk *f, const Town *t, Rng *r, u32 walkers, u32 variant
             if (!want) continue;
             u32 i = f->count++;
             player_init(&f->body[i], sp->pos, sp->heading);
-            f->kind[i] = sp->kind == SPOT_WORKER ? FOLK_KNEEL : FOLK_STAND;
+            f->kind[i] = FOLK_STAND;
             f->armed[i] = sp->kind == SPOT_GUARD;
         }
     }
@@ -1086,8 +1086,7 @@ void town_folk_update(TownFolk *f, Rng *r, f32 dt, GroundFn ground)
         if (f->kind[i] != FOLK_WALK) {
             // Стоящие следят головой за ближайшим прохожим
             f32 best = 36.0f, goal = 0.0f;
-            if (f->kind[i] == FOLK_STAND)
-                for (u32 j = 0; j < f->count; j++) {
+            for (u32 j = 0; j < f->count; j++) {
                     if (f->kind[j] != FOLK_WALK) continue;
                     f32 dx = f->body[j].pos.x - p->pos.x, dz = f->body[j].pos.z - p->pos.z, d2 = dx * dx + dz * dz;
                     if (d2 < best && fabsf(f->body[j].pos.y - p->pos.y) < 2.0f) {

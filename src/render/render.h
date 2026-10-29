@@ -13,7 +13,7 @@
 #define RENDER_PORTRAIT_SLOTS 10
 
 typedef struct GpuMesh {
-    u32 vao, vbo, ibo;
+    u32 vao, vbo, ibo, skin_vbo;  // skin_vbo — веса до 4 костей, 0 у жёстких сеток
     u32 index_count;
     V4  bound;                          // сфера всей сетки: центр xyz, радиус w
     V4  bone_bound[RENDER_MAX_BONES];   // сфера вершин каждой кости в позе привязки

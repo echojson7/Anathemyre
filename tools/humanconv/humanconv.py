@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Люди из MakeHuman (CC0) -> .mesh игры. Офлайн, в игре не нужен.
-# Морфы пола и сложения, руки вниз и ноги прямо (поза привязки игры), рост 1.80 м,
+# Морфы пола и сложения, руки вниз и ноги прямо (поза привязки игры), пальцы в хвате, рост 1.80 м,
 # раскраска по граням (кожа, бельё, губы, брови), волосы над кожей головы, глаза.
-# Три LOD по LOD_TRIS, упрощение своё, лицо дороже остального.
+# Три LOD по LOD_TRIS, упрощение своё, лицо дороже остального. Веса до 4 костей на вершину.
 # Нужен только numpy.
 #   python3 -I tools/humanconv/humanconv.py <папка MakeHuman> <targets.npz> <data/meshes>
 # Папка MakeHuman: base.obj, default.mhskel, default_weights.mhw (makehuman/data из system assets)
@@ -88,6 +88,11 @@ def morph(base, Z, p):
     return v
 
 
+JOINT_SRC = (('PELVIS', 'spine05'), ('SPINE', 'spine04'), ('CHEST', 'spine02'), ('NECK', 'neck01'), ('HEAD', 'head'),
+             ('CLAVICLE_L', 'clavicle.L'), ('UPPER_ARM_L', 'upperarm01.L'), ('FOREARM_L', 'lowerarm01.L'), ('HAND_L', 'wrist.L'),
+             ('THIGH_L', 'upperleg01.L'), ('SHIN_L', 'lowerleg01.L'), ('FOOT_L', 'foot.L'))
+
+
 def our_bone(n):
     r = n.endswith('.R')
     b = n.split('.')[0]
@@ -127,6 +132,45 @@ def half(R):
     return np.eye(3) + np.sin(h) * K + (1 - np.cos(h)) * K @ K
 
 
+def rot_axis(k, a):
+    k = k / np.linalg.norm(k)
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + np.sin(a) * K + (1 - np.cos(a)) * K @ K
+
+
+# Свободный хват: сгиб фаланг, градусы (большой палец, затем указательный..мизинец)
+CURL = ((10, 20, 20), (40, 50, 30), (45, 55, 30), (50, 55, 30), (55, 55, 30))
+
+
+def fingers(J, sd, R_fa, sg):
+    # Пальцы сгибаются к ладони; ладонь после позы смотрит к бедру (к середине тела).
+    # Возвращает имя кости MH -> (R, t) в исходной позе, до поворота кисти
+    j = lambda n, e='head': J['%s.%s____%s' % (n, sd, e)]
+    lat = j('finger5-1') - j('finger2-1')
+    out = {}
+    for f, ang in enumerate(CURL, 1):
+        d = j('finger%d-3' % f, 'tail') - j('finger%d-1' % f)
+        d = d / np.linalg.norm(d)
+        nrm = np.cross(d, lat)
+        nrm /= np.linalg.norm(nrm)
+        if (R_fa @ nrm)[0] * sg > 0:
+            nrm = -nrm
+        if f == 1:
+            # Большой палец сгибается поперёк ладони, к указательному
+            nrm = j('finger2-1') - j('finger1-2')
+            nrm = nrm - d * (nrm @ d)
+            nrm /= np.linalg.norm(nrm)
+        k = np.cross(d, nrm)
+        R, t = np.eye(3), np.zeros(3)
+        for s, a in enumerate(ang, 1):
+            # Поворот вокруг сустава в уже согнутой цепочке: x -> R x + t
+            Rs = rot_axis(k, np.radians(a))
+            h = R @ j('finger%d-%d' % (f, s)) + t
+            R, t = Rs @ R, Rs @ (t - h) + h
+            out['finger%d-%d' % (f, s)] = (R, t)
+    return out
+
+
 def repose(v, J, W, names):
     # Руки по направлению костей игры (body.c), ноги прямые, стопы и кисти жёстко
     xf = {}  # имя кости MH -> (R, точка до, точка после)
@@ -143,6 +187,8 @@ def repose(v, J, W, names):
         K1 = H0 + R_th @ (K0 - H0)
         R_sh = rot_to(R_th @ (A0 - K0), R_th @ (K0 - H0)) @ R_th
         A1 = K1 + R_sh @ (A0 - K0)
+        hand = (R_fa, W1 - R_fa @ W0)
+        curl = fingers(J, sd, R_fa, sg)
         for n in names:
             if not n.endswith('.' + sd):
                 continue
@@ -150,6 +196,9 @@ def repose(v, J, W, names):
             if b.startswith('shoulder'): xf[n] = (half(R_ua), S0, S0)
             elif b.startswith('upperarm'): xf[n] = (R_ua, S0, S0)
             elif b.startswith('lowerarm'): xf[n] = (R_fa, E0, E1)
+            elif b in curl:
+                R, t = curl[b]
+                xf[n] = (hand[0] @ R, np.zeros(3), hand[0] @ t + hand[1])
             elif b.startswith(('wrist', 'finger', 'metacarpal')): xf[n] = (R_fa, W0, W1)
             elif b.startswith('upperleg'): xf[n] = (R_th, H0, H0)
             elif b.startswith('lowerleg'): xf[n] = (R_sh, K0, K1)
@@ -263,6 +312,7 @@ def build(p, base, faces, Z, skel, W):
     nv = len(v)
     bone = acc.argmax(1)
     bone[acc.max(1) < 1e-6] = HEAD
+    sk = skin_weights(acc, bone)
     get = lambda *ns: sum((wt[n] for n in ns if n in wt), np.zeros(nv))
 
     skin = np.array(p['skin']); hcol = np.array(p['hcol']); under = np.array(p['under'])
@@ -419,7 +469,7 @@ def build(p, base, faces, Z, skel, W):
     (T0, P0), = decimate(vl, T0, P0, [LOD_TRIS[0]], wv)
     n0 = normals(vl, T0)
     n0[np.unique(eyes)] = n[np.unique(eyes)]
-    parts = [split(vl, n0, T0, P0, pal, bone)]
+    parts = [split(vl, n0, T0, P0, pal, sk)]
     if p['hair'] != 'bald':
         f = T0[hair_t[T0].all(1)]
         ix = np.unique(f)
@@ -430,11 +480,11 @@ def build(p, base, faces, Z, skel, W):
         hv = vl[ix] + n0[ix] * off[:, None]
         hb = np.where(hv[:, 1] < J['neck03____head'][1], NECK, HEAD)
         hc = hcol * rng.uniform(0.85, 1.15, (len(ix), 1))
-        parts.append(((hv, n0[ix], hc, np.full(len(ix), MAT_CLOTH), hb), remap[f]))
+        parts.append(((hv, n0[ix], hc, np.full(len(ix), MAT_CLOTH), rigid(hb)), remap[f]))
         if p['hair'] == 'long':
             # Собранные в хвост: узел на затылке и сужающийся жгут
             pv, pn, pt = ponytail(7, 8)
-            parts.append(((pv, pn, np.tile(hcol, (len(pv), 1)), np.full(len(pv), MAT_CLOTH), np.full(len(pv), HEAD)), pt))
+            parts.append(((pv, pn, np.tile(hcol, (len(pv), 1)), np.full(len(pv), MAT_CLOTH), rigid(np.full(len(pv), HEAD))), pt))
     lods.append(merge(parts))
 
     # Дальние LOD: своё упрощение с учётом швов окраски (decimate). Окраска проще:
@@ -460,10 +510,10 @@ def build(p, base, faces, Z, skel, W):
     eye_l = decimate(vl, tri(eyes), np.concatenate([fe, fe]), list(eye_n), wv)
     for (rings, segs), (tb, pb), (te, pe) in zip(rs, body_l, eye_l):
         t, fp = np.concatenate([tb, te]), np.concatenate([pb, pe])
-        parts = [split(vl, normals(vl, t), t, fp, fpal, bone)]
+        parts = [split(vl, normals(vl, t), t, fp, fpal, sk)]
         if p['hair'] == 'long':
             pv, pn, pt = ponytail(rings, segs)
-            parts.append(((pv, pn, np.tile(hcol, (len(pv), 1)), np.full(len(pv), MAT_CLOTH), np.full(len(pv), HEAD)), pt))
+            parts.append(((pv, pn, np.tile(hcol, (len(pv), 1)), np.full(len(pv), MAT_CLOTH), rigid(np.full(len(pv), HEAD))), pt))
         lods.append(merge(parts))
     return lods, J
 
@@ -581,6 +631,23 @@ def decimate(v, T, fp, targets, wv):
     return out
 
 
+def skin_weights(acc, bone):
+    # До 4 костей на вершину: самые тяжёлые, сумма 1. Строка: 4 номера, 4 веса
+    top = np.argsort(-acc, 1)[:, :4]
+    w = np.take_along_axis(acc, top, 1)
+    w[w < 0.02] = 0
+    s = w.sum(1)
+    w[s < 1e-6] = (1, 0, 0, 0)
+    top[s < 1e-6, 0] = bone[s < 1e-6]
+    w /= w.sum(1, keepdims=True)
+    top[w == 0] = top[:, :1].repeat(4, 1)[w == 0]
+    return np.concatenate([top, w], 1)
+
+
+def rigid(bone):
+    return np.concatenate([np.asarray(bone)[:, None].repeat(4, 1), np.tile((1.0, 0, 0, 0), (len(bone), 1))], 1)
+
+
 def split(v, n, t, fp, pal, bone):
     # Вершины делятся по окраске граней: край белья и губ чёткий, без размытия по треугольнику
     K = len(pal)
@@ -601,16 +668,21 @@ def merge(parts):
     return V[live], N[live], C[live], M[live], B[live], remap[T]
 
 
-def write_mesh(path, V, N, C, M, B, T):
+def write_mesh(path, V, N, C, M, S, T):
+    # AMSH 2: после индексов поток скиннинга, на вершину u8 кости[4] и u8 веса[4] (сумма 255)
+    w = np.floor(S[:, 4:] * 255).astype(int)
+    w[:, 0] += 255 - w.sum(1)
+    sk = np.concatenate([S[:, :4].astype(int), w], 1).astype('u1')
     dt = np.dtype([('pos', '<f4', 3), ('nrm', '<f4', 3), ('col', 'u1', 4), ('mat', 'u1'), ('bone', 'u1'), ('pad', 'u1', 2)])
     a = np.zeros(len(V), dt)
     a['pos'] = V; a['nrm'] = N
     a['col'][:, :3] = np.clip(np.round(C * 255), 0, 255); a['col'][:, 3] = 255
-    a['mat'] = M; a['bone'] = B
+    a['mat'] = M; a['bone'] = sk[:, 0]
     with open(path, 'wb') as f:
-        f.write(b'AMSH' + struct.pack('<III', 1, len(V), T.size))
+        f.write(b'AMSH' + struct.pack('<III', 2, len(V), T.size))
         f.write(a.tobytes())
         f.write(T.astype('<u4').tobytes())
+        f.write(sk.tobytes())
 
 
 def main():
@@ -625,11 +697,9 @@ def main():
             name = p['name'] + ('_lod%d' % l if l else '')
             write_mesh('%s/%s.mesh' % (out, name), V, N, C, M, B, T)
             print('%-15s %5d вершин %6d треугольников' % (name, len(V), len(T)))
-        j = lambda n: J[n + '____head']
-        print('  плечо %s  локоть %s  запястье %s' % tuple(np.round(j(b + '.L'), 3) for b in ('upperarm01', 'lowerarm01', 'wrist')))
-        print('  бедро %s  колено %s  лодыжка %s' % tuple(np.round(j(b + '.L'), 3) for b in ('upperleg01', 'lowerleg01', 'foot')))
-        print('  шея %.3f  голова %.3f  ключица %s' % (j('neck01')[1], j('head')[1], np.round(j('clavicle.L'), 3)))
-
+        # Суставы для src/sim/body.c (g_body_bones): голова первой кости MH, что ведёт кость игры
+        for b, n in JOINT_SRC:
+            print('  %-11s {%7.3ff, %6.3ff, %6.3ff}' % ((b,) + tuple(J[n + '____head'])))
 
 if __name__ == '__main__':
     main()

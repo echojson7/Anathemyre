@@ -11,6 +11,7 @@ bool mb_init(MeshBuilder *mb, Arena *arena, u32 vcap, u32 icap)
 {
     mb->v = ARENA_PUSH_ARRAY(arena, Vertex, vcap);
     mb->idx = ARENA_PUSH_ARRAY(arena, u32, icap);
+    mb->skin = NULL;
     mb->vcount = mb->icount = 0;
     mb->vcap = vcap;
     mb->icap = icap;
@@ -30,9 +31,13 @@ bool mb_load(MeshBuilder *mb, Arena *arena, const char *path)
     }
     char magic[4];
     u32 head[3];
-    bool ok = fread(magic, 4, 1, f) == 1 && fread(head, sizeof head, 1, f) == 1 && !memcmp(magic, "AMSH", 4) && head[0] == 1 &&
-              mb_init(mb, arena, head[1], head[2]) &&
+    bool ok = fread(magic, 4, 1, f) == 1 && fread(head, sizeof head, 1, f) == 1 && !memcmp(magic, "AMSH", 4) &&
+              (head[0] == 1 || head[0] == 2) && mb_init(mb, arena, head[1], head[2]) &&
               fread(mb->v, sizeof(Vertex), head[1], f) == head[1] && fread(mb->idx, sizeof(u32), head[2], f) == head[2];
+    if (ok && head[0] == 2) {
+        mb->skin = ARENA_PUSH_ARRAY(arena, VertexSkin, head[1]);
+        ok = mb->skin && fread(mb->skin, sizeof(VertexSkin), head[1], f) == head[1];
+    }
     fclose(f);
     if (!ok) {
         log_error("СЕТКА: файл %s повреждён", path);

@@ -25,7 +25,7 @@ typedef struct Town {
     u32      stalls, houses;
 } Town;
 
-typedef enum FolkKind { FOLK_STAND, FOLK_WALK, FOLK_KNEEL } FolkKind;
+typedef enum FolkKind { FOLK_STAND, FOLK_WALK } FolkKind;
 
 // Жители: торговцы и зеваки стоят на местах, прохожие ходят по узлам улиц
 typedef struct TownFolk {
