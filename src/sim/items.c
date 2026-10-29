@@ -17,12 +17,12 @@ const WeaponDef g_weapons[W_COUNT] = {
 
 //                                  голова грудь живот рукаЛ рукаП ногаЛ ногаП
 const ArmorDef g_armors[A_COUNT] = {
-    [A_RAGS]    = { "ТРЯПЬЁ", SLOT_TORSO_UNDER, { 0, 0.8f, 0.8f, 0.8f, 0.8f, 0, 0 }, 0.10f, 0.05f, 0.05f, 1, 0.00f },
-    [A_JACKET]  = { "КОЖАНАЯ КУРТКА", SLOT_TORSO_ARMOR, { 0, 0.85f, 0.85f, 0.85f, 0.85f, 0, 0 }, 0.25f, 0.15f, 0.20f, 4, 0.05f },
-    [A_QUILT]   = { "СТЁГАНКА", SLOT_TORSO_UNDER, { 0, 0.9f, 0.9f, 0, 0, 0, 0 }, 0.15f, 0.25f, 0.10f, 3, 0.03f },
-    [A_PLATE]   = { "НАГРУДНИК", SLOT_TORSO_ARMOR, { 0, 0.75f, 0.4f, 0, 0, 0, 0 }, 0.55f, 0.20f, 0.35f, 9, 0.15f },
-    [A_BUCKET]  = { "ШЛЕМ-ВЕДРО", SLOT_HEAD, { 0.9f, 0, 0, 0, 0, 0, 0 }, 0.60f, 0.25f, 0.50f, 3, 0.05f },
-    [A_GREAVES] = { "ПОНОЖИ", SLOT_LEGS, { 0, 0, 0, 0, 0, 0.7f, 0.7f }, 0.30f, 0.20f, 0.25f, 4, 0.08f },
+    [A_RAGS]    = { "РОБА", SLOT_TORSO_UNDER, { 0, 0.8f, 0.8f, 0.8f, 0.8f, 0, 0 }, 0.10f, 0.05f, 0.05f, 1, 0.00f },
+    [A_JACKET]  = { "РЕЗИНОВАЯ КУРТКА", SLOT_TORSO_ARMOR, { 0, 0.85f, 0.85f, 0.85f, 0.85f, 0, 0 }, 0.25f, 0.15f, 0.20f, 4, 0.05f },
+    [A_QUILT]   = { "КОМБИНЕЗОН", SLOT_TORSO_UNDER, { 0, 0.9f, 0.9f, 0, 0, 0, 0 }, 0.15f, 0.25f, 0.10f, 3, 0.03f },
+    [A_PLATE]   = { "ОБШИВКА", SLOT_TORSO_ARMOR, { 0, 0.75f, 0.4f, 0, 0, 0, 0 }, 0.55f, 0.20f, 0.35f, 9, 0.15f },
+    [A_BUCKET]  = { "КОЖУХ", SLOT_HEAD, { 0.9f, 0, 0, 0, 0, 0, 0 }, 0.60f, 0.25f, 0.50f, 3, 0.05f },
+    [A_GREAVES] = { "ТРУБНЫЕ ПОНОЖИ", SLOT_LEGS, { 0, 0, 0, 0, 0, 0.7f, 0.7f }, 0.30f, 0.20f, 0.25f, 4, 0.08f },
 };
 
 const AttackDef g_attacks[ATK_COUNT] = {

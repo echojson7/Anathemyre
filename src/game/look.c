@@ -13,10 +13,12 @@ const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX] = {
     [BODY_THIN] = { "crop", "shag", "tied" },
 };
 
-u32 look_hair(const CharLook *l, u8 *out)
+u32 look_hair(const CharLook *l, u8 *gear, u32 n)
 {
     if (!l->cut) return 0;
-    out[0] = (u8)(GEAR_COUNT + l->cut - 1);
+    for (u32 i = 0; i < n; i++)
+        if (gear[i] == GEAR_BUCKET) return 0;
+    gear[n] = (u8)(GEAR_COUNT + l->cut - 1);
     return 1;
 }
 

@@ -358,26 +358,7 @@ def build(p, base, faces, Z, skel, W):
     x, y, z = v[:, 0], v[:, 1], v[:, 2]
     ax = np.abs(x)
 
-    # Белья нет: пах (и грудь у женщин) закрывает размытие в кадре (atmos.frag). Метка — эллипсоиды
-    # вокруг этих мест, в альфе цвета вершин кожи: 1 — открыто, 0 — размыть; край мягкий
-    hip = J['upperleg01.L____head'][1]
-    trunk = np.isin(bone, [PELVIS, SPINE, TH_L, TH_R])
     isbody = np.zeros(nv, bool); isbody[used] = True
-    mid = trunk & isbody & (ax < 0.012) & (y > 0.6) & (y < hip)
-    crotch = y[mid].min()
-    cy = crotch + (0.055 if p['gender'] > 0.5 else 0.045)
-    front = trunk & isbody & (ax < 0.015) & (np.abs(y - cy) < 0.01)
-    spots = [(np.array([0.0, cy, z[front].max() - 0.03]), np.array([0.075, 0.085, 0.085]))]
-    if p['gender'] < 0.5:
-        for sd in ('L', 'R'):
-            nj = J['breast.%s____tail' % sd]
-            near = isbody & (np.abs(x - nj[0]) < 0.012) & (np.abs(y - nj[1]) < 0.012)
-            spots.append((v[np.where(near)[0][z[near].argmax()]] - np.array([0.0, 0.01, 0.02]), np.array([0.075, 0.075, 0.07])))
-
-    def censor(q):
-        # Сколько размывать в точке q (0..1)
-        d = np.min([np.linalg.norm((q - c) / r, axis=1) for c, r in spots], axis=0)
-        return np.clip((1.0 - d) / 0.3, 0.0, 1.0)
 
     if p['gender'] > 0.5:
         # Соски: ореол вокруг самой выступающей точки груди
@@ -539,11 +520,10 @@ def build(p, base, faces, Z, skel, W):
         md = mdelta(t, nt)
         src.append((tb, nt, md))
         lods.append(merge([split(vl, nt, t, fp, fpal, sk, md)]))
-    gear, hair = garments(dict(vl=vl, sk=sk, bone=bone, J=J, src=src, ear_d=ear_d, hd=hd, top_y=top_y, line=line,
-                               hcol=hcol, female=p['gender'] < 0.5))
-    # Метка размытия — четвёртый столбец цвета, только на коже
-    for m in lods:
-        m[2] = np.concatenate([m[2], 1.0 - np.where(m[3] == MAT_SKIN, censor(m[0]), 0.0)[:, None]], 1)
+    gear, hair, under = garments(dict(vl=vl, sk=sk, bone=bone, J=J, src=src, ear_d=ear_d, hd=hd, top_y=top_y, line=line,
+                                      hcol=hcol, female=p['gender'] < 0.5))
+    # Бельё — часть сетки тела: лишнего вызова отрисовки нет
+    lods = [merge([(tuple(m[:-1]), m[-1]), (tuple(u[:-1]), u[-1])]) for m, u in zip(lods, under)]
     return lods, J, gear, hair
 
 
@@ -598,9 +578,9 @@ def orient(pv, pt):
     return pt
 
 
-def lathe(c, prof, segs, ex=1.0, ez=1.0):
-    # Тело вращения вокруг вертикали через c; prof — (сдвиг по y, радиус) снизу вверх
-    pv = [c + np.array([np.sin(2 * np.pi * j / segs) * r * ex, dy, np.cos(2 * np.pi * j / segs) * r * ez])
+def lathe(c, prof, segs, ex=1.0, ez=1.0, ph=0.0):
+    # Тело вращения вокруг вертикали через c; prof — (сдвиг по y, радиус) снизу вверх; ph — поворот граней
+    pv = [c + np.array([np.sin(2 * np.pi * j / segs + ph) * r * ex, dy, np.cos(2 * np.pi * j / segs + ph) * r * ez])
           for dy, r in prof for j in range(segs)]
     pt = []
     for i in range(len(prof) - 1):
@@ -630,7 +610,7 @@ def box(c, size, yaw):
 def garments(ctx):
     # Вещи по телу: оболочка над гранями кожи нужной области (веса и морфы — как у кожи под ней),
     # по краю — кромка до кожи. Область — поле на вершинах: грани режутся по его нулю, край ровный.
-    # Жёсткие вещи (шлем, котомка, подсумки) — на одной кости.
+    # Жёсткие вещи (кожух, ранец, подсумки) — на одной кости.
     # LOD вещи берёт грани тела того же LOD: силуэт совпадает
     vl, sk, bone, J, src = ctx['vl'], ctx['sk'], ctx['bone'], ctx['J'], ctx['src']
     nvl = len(vl)
@@ -702,7 +682,7 @@ def garments(ctx):
             ww = w.reshape((-1,) + (1,) * (q.ndim - 1))
             A[key] = np.concatenate([q, np.where(ww < 0.5, q[ea], q[eb]) if key == 'sk' else q[ea] + (q[eb] - q[ea]) * ww])
 
-    def shell(l, s, off, base, layers=(), rim=0.6, relax=0, tint=TINT_NONE):
+    def shell(l, s, off, base, layers=(), rim=0.6, relax=0, tint=TINT_NONE, flat=None):
         # Оболочка LOD l по полю s. base — (цвет, материал); layers — окраска полями
         # (поле, цвет, материал, до какого LOD резать): грани режутся и по ним, край краски ровный.
         # relax — пар шагов сглаживания: ткань не повторяет мелочей тела
@@ -726,6 +706,8 @@ def garments(ctx):
             lap = np.stack([nsum(p[:, c], uk, nv) for c in range(3)], 1) / np.maximum(dg, 1)[:, None] - p
             p = np.where(free, p + 0.5 * lap, p)
             p += nb * np.maximum(0.0, 0.7 * ob - ((p - vb) * nb).sum(1))[:, None]
+        if flat:
+            p = flat(p, nb)
         A['p'] = p
         A['nb'] = nb
         for i, (g, *_) in enumerate(layers):
@@ -772,85 +754,498 @@ def garments(ctx):
             c = np.arange(np.floor(u.min() / step), np.ceil(u.max() / step) + 1) * step + step / 2
             return np.concatenate([c - wd / 2, c + wd / 2])
         return (fu, edges, lambda q: wd / 2 - np.abs(np.mod(q, step) - step / 2))
-    # Тряпьё: льняная рубаха с короткими рукавами, рваный подол, пятна
-    hem = hip + 0.05 + 0.03 * np.sin(ang * 3 + 1) * np.sin(ang * 5 + 2) - 0.025 * np.abs(np.sin(ang * 11))
-    s = field(soft(trunk | arm), lin(Y - hem), only(arm, lin(Y - elbow - 0.10)))
-    lay = [(np.sin(X * 31) * np.sin(Y * 27 + Z * 19) - 0.6, (0.38, 0.35, 0.29), MAT_CLOTH, 1)]
-    out['rags'] = [[shell(l, s, 0.007, ((0.50, 0.47, 0.40), MAT_CLOTH), lay, relax=3)] for l in range(3)]
-    # Стёганка: охра, до бёдер, рукава до локтя, простёжка поперёк
-    s = field(soft(trunk | arm | thigh), lin(Y - hip + 0.05), only(arm, lin(Y - elbow - 0.02)))
-    lay = [(stripe(lambda P: P[:, 1], 0.05, 0.010), (0.22, 0.18, 0.11), MAT_CLOTH, 0)]
-    out['quilt'] = [[shell(l, s, 0.018, ((0.43, 0.35, 0.21), MAT_CLOTH), lay, relax=4)] for l in range(3)]
-    # Куртка: тёмная кожа, длинные рукава, ворот; планка спереди, манжеты и низ темнее
-    s = field(soft(trunk | arm | thigh | np.isin(bone, [NECK])), lin(Y - hip + 0.02),
-              only(fa | hand, lin(Y - wrist - 0.025)), only(np.isin(bone, [NECK, HEAD]), lin(neck + 0.035 - Y)))
-    lay = [(wrist + 0.06 - Y, (0.15, 0.09, 0.06), MAT_LEATHER, 1),
-           (np.minimum(0.007 - AX, Z), (0.11, 0.07, 0.04), MAT_LEATHER, 0)]
-    out['jacket'] = [[shell(l, s, 0.014, ((0.24, 0.15, 0.09), MAT_LEATHER), lay, relax=3)] for l in range(3)]
-    # Нагрудник и наспинник: железо спереди и сзади, бока открыты, край темнее
+
+    used = np.unique(src[0][0])
+    md0 = src[0][2]
+
+    def stuck(pv, pt, col, mat, at):
+        # Мелкая деталь поверх вещи: скиннинг и морфы — от ближней к точке at вершины тела
+        k = len(pv)
+        q = used[np.argmin(np.linalg.norm(vl[used] - at, axis=1))]
+        d = md0[q].copy()
+        d[:, 3:] = 0
+        c = np.tile(col, (k, 1)) if np.ndim(col) == 1 else col
+        return ((pv, normals(pv, pt), c, np.full(k, mat), np.full(k, TINT_NONE), np.tile(sk[q], (k, 1)), np.tile(d, (k, 1, 1))), pt)
+
+    def surf(mesh, at, d):
+        # Точка на лицевой стороне вещи mesh возле at, если смотреть по d, и нормаль там
+        V, N = mesh[0][0], mesh[0][1]
+        ok = N @ d > 0.5
+        V2, N2 = V[ok], N[ok]
+        lat = V2 - at
+        lat -= np.outer(lat @ d, d)
+        k = np.argsort(np.linalg.norm(lat, axis=1))[:6]
+        n = N2[k].mean(0)
+        return V2[k[np.argmax(V2[k] @ d)]], n / np.linalg.norm(n)
+
+    def flip_to(pv, pt, out):
+        # Грани наружу по направлению out(центр грани)
+        fn = np.cross(pv[pt[:, 1]] - pv[pt[:, 0]], pv[pt[:, 2]] - pv[pt[:, 0]])
+        pt = pt.copy()
+        fl = (fn * out(pv[pt].mean(1))).sum(1) < 0
+        pt[fl] = pt[fl][:, ::-1]
+        return pt
+
+    def glyph(rng, c, n, h, cols=1):
+        # Знаки неизвестного языка по трафарету: штрихи по сетке 5x7, как glyph_ink в scene.frag
+        up = np.array([0.0, 1.0, 0.0]) - n * n[1]
+        up /= np.linalg.norm(up)
+        rt = np.cross(up, n)
+        u = h / 7
+        pv, pt = [], []
+        for g in range(cols):
+            ox = (g - (cols - 1) / 2) * 6.5
+            st = [(i * 2, y0, i * 2, min(y0 + 3 + 3 * rng.integers(0, 2), 6)) for i in range(3) if rng.random() > 0.35
+                  for y0 in [3 * rng.integers(0, 2)]]
+            st += [(x0, i * 3, min(x0 + 2 + 2 * rng.integers(0, 2), 4), i * 3) for i in range(3) if rng.random() > 0.45
+                   for x0 in [2 * rng.integers(0, 2)]]
+            if len(st) < 3:
+                st += [(0, 0, 0, 6), (0, 6, 4, 6), (4, 3, 4, 6)]
+            for x0, y0, x1, y1 in st:
+                q = len(pv)
+                for a, b in ((x0, y0), (x1 + 1, y0), (x1 + 1, y1 + 1), (x0, y1 + 1)):
+                    pv.append(c + rt * (ox + a - 2.5) * u + up * (b - 3.5) * u + n * 0.0015)
+                pt += [[q, q + 1, q + 2], [q, q + 2, q + 3]]
+        pv, pt = np.array(pv), np.array(pt)
+        return pv, flip_to(pv, pt, lambda m: n)
+
+    def cyl(a, b, r, segs, caps=True):
+        # Цилиндр a->b радиуса r с крышками
+        k = 2
+        pv, pt = tube(np.stack([a, b]), np.tile(np.cross(b - a, [0.3, 1.0, 0.1]), (k, 1)), np.full(k, 2 * r), np.full(k, 2 * r), segs)
+        if caps:
+            m = len(pv)
+            pv = np.concatenate([pv, [a, b]])
+            cap = [[m, i, (i + 1) % segs] for i in range(segs)] + [[m + 1, segs + (i + 1) % segs, segs + i] for i in range(segs)]
+            pt = np.concatenate([pt, cap])
+            ax = (b - a) / np.linalg.norm(b - a)
+            mid = (a + b) / 2
+            # Стенка — наружу от оси, крышки — вдоль оси
+            def out(cc):
+                d = cc - mid
+                t = d @ ax
+                rad = d - np.outer(t, ax)
+                return np.where((np.abs(np.abs(t) - np.linalg.norm(b - a) / 2) < 1e-6)[:, None], np.outer(t, ax), rad)
+            pt = flip_to(pv, pt, out)
+        return pv, pt
+
+    def pipe(a, b, f, r, half, rings, segs, th):
+        # Половинка трубы a->b: дуга ±half вокруг направления f, стенка толщиной th
+        L = np.linalg.norm(b - a)
+        ax = (b - a) / L
+        f = f - ax * (f @ ax)
+        f /= np.linalg.norm(f)
+        sd = np.cross(ax, f)
+        ang = np.linspace(-half, half, segs + 1)
+        W = segs + 1
+        ring = lambda rr: np.array([a + ax * L * t + (f * np.cos(g) + sd * np.sin(g)) * rr for t in np.linspace(0, 1, rings) for g in ang])
+        pv = np.concatenate([ring(r), ring(r - th)])
+        n2 = rings * W
+        pt = []
+        for i in range(rings - 1):
+            for j in range(segs):
+                q = i * W + j
+                for o in (0, n2):
+                    pt += [[q + o, q + 1 + o, q + 1 + W + o], [q + o, q + 1 + W + o, q + W + o]]
+        for i in (0, rings - 1):
+            for j in range(segs):
+                q = i * W + j
+                pt += [[q, q + 1, q + 1 + n2], [q, q + 1 + n2, q + n2]]
+        for j in (0, segs):
+            for i in range(rings - 1):
+                q = i * W + j
+                pt += [[q, q + W, q + W + n2], [q, q + W + n2, q + n2]]
+        pt = np.array(pt)
+        rm = r - th / 2
+
+        def out(cc):
+            # От серединной поверхности стенки наружу
+            d = cc - a
+            t = np.clip(d @ ax, 0.002, L - 0.002)
+            rad = d - np.outer(d @ ax, ax)
+            g = np.clip(np.arctan2(rad @ sd, rad @ f), -half + 0.01, half - 0.01)
+            m = a + np.outer(t, ax) + (np.outer(np.cos(g), f) + np.outer(np.sin(g), sd)) * rm
+            return cc - m
+        return pv, flip_to(pv, pt, out)
+
+    def slab(p, nb):
+        # Лист металла: спереди и сзади поверхность выпрямлена до прямой по высоте через самые выпуклые точки
+        for sg in (1, -1):
+            fr = nb[:, 2] * sg > 0.35
+            if fr.sum() < 8:
+                continue
+            y, z = p[fr, 1], p[fr, 2] * sg
+            ym = np.median(y)
+            lo, hi = y < ym, y >= ym
+            y1, z1 = y[lo][np.argmax(z[lo])], z[lo].max()
+            y2, z2 = y[hi][np.argmax(z[hi])], z[hi].max()
+            zz = z1 + (y - y1) * (z2 - z1) / max(y2 - y1, 1e-3)
+            p[fr, 2] = np.maximum(z, zz) * sg
+        return p
+
+    inside = lambda sel, d: np.where(sel, d, -1.0)  # слой краски только в области sel
+    PAINT = (0.60, 0.65, 0.53)       # бледная краска знаков
+    RUBBER = (0.075, 0.072, 0.065)   # чёрная резина
+    sL = np.sign(j('upperarm01.L')[0])
+    side_l = np.sign(X) == sL
+
+    # Роба: выцветший серо-зелёный брезент, рукава закатаны выше локтя, накладной карман и ворот темнее
+    s = field(soft(trunk | arm), lin(Y - hip - 0.02 - 0.006 * np.sin(ang * 7)), only(arm, lin(Y - elbow - 0.06)))
+    lay = [(np.sin(X * 31) * np.sin(Y * 27 + Z * 19) - 0.65, (0.46, 0.47, 0.40), MAT_CLOTH, 1),
+           (inside(arm, Y - elbow - 0.035), (0.30, 0.31, 0.26), MAT_CLOTH, 1),
+           (inside(trunk & (Z > 0), np.minimum(0.045 - np.abs(sL * X - 0.09), 0.04 - np.abs(Y - chest - 0.05))), (0.33, 0.34, 0.28), MAT_CLOTH, 0),
+           (inside(trunk, Y - clav + 0.015), (0.29, 0.30, 0.25), MAT_CLOTH, 1)]
+    out['rags'] = [[shell(l, s, 0.007, ((0.38, 0.39, 0.32), MAT_CLOTH), lay, relax=3)] for l in range(3)]
+
+    # Комбинезон: выцветший серо-синий от ворота до щиколоток, молния, резиновые накладки на коленях и локтях; трафарет на спине и груди
+    s = field(soft(trunk | arm | thigh | shin | np.isin(bone, [NECK])), lin(Y - ankle - 0.07),
+              only(fa | hand, lin(Y - wrist - 0.03)), only(np.isin(bone, [NECK, HEAD]), lin(neck + 0.01 - Y)))
+    lay = [(inside(trunk & (Z > 0), 0.006 - AX), (0.15, 0.17, 0.19), MAT_CLOTH, 1),
+           (inside(thigh | shin, np.minimum(0.05 - np.abs(Y - knee - 0.01), (nrm0[:, 2] - 0.3) * 0.2)), RUBBER, MAT_LEATHER, 1),
+           (inside(arm, np.minimum(0.04 - np.abs(Y - elbow), (-nrm0[:, 2] - 0.25) * 0.2)), RUBBER, MAT_LEATHER, 1),
+           (inside(trunk, 0.015 - np.abs(Y - hip - 0.13)), (0.18, 0.20, 0.22), MAT_CLOTH, 1)]
+    out['quilt'] = []
+    for l in range(3):
+        sh = shell(l, s, np.where(thigh | shin, 0.014, 0.012), ((0.17, 0.19, 0.21), MAT_CLOTH), lay, relax=6)
+        parts = [sh]
+        if l < 2:
+            rng = np.random.default_rng(11)
+            c, n = surf(sh, np.array([0.0, chest + 0.02, 0.0]), np.array([0, 0, -1.0]))
+            pv, pt = glyph(rng, c, n, 0.075, cols=2)
+            parts.append(stuck(pv, pt, PAINT, MAT_CLOTH, c))
+            c, n = surf(sh, np.array([-sL * 0.085, chest + 0.075, 0.0]), np.array([0, 0, 1.0]))
+            pv, pt = glyph(rng, c, n, 0.03, cols=3)
+            parts.append(stuck(pv, pt, PAINT, MAT_CLOTH, c))
+        out['quilt'].append(parts)
+
+    # Прорезиненная куртка: чёрная, высокий ворот, кокетка на плечах, застёжки скобами
+    s = field(soft(trunk | arm | thigh | np.isin(bone, [NECK])), lin(Y - hip),
+              only(fa | hand, lin(Y - wrist - 0.025)), only(np.isin(bone, [NECK, HEAD]), lin(neck + 0.06 - Y)))
+    lay = [(inside(trunk | arm, Y - clav + 0.035), (0.11, 0.105, 0.095), MAT_LEATHER, 1),
+           (inside(fa | hand, wrist + 0.06 - Y), (0.05, 0.05, 0.045), MAT_LEATHER, 1),
+           (inside(trunk & (Z > 0), 0.008 - AX), (0.05, 0.05, 0.045), MAT_LEATHER, 0)]
+    out['jacket'] = []
+    for l in range(3):
+        sh = shell(l, s, 0.014, (RUBBER, MAT_LEATHER), lay, relax=3)
+        parts = [sh]
+        for y in (np.linspace(waist + 0.04, clav - 0.06, 4) if l == 0 else ()):
+            c, n = surf(sh, np.array([0.0, y, 0.0]), np.array([0, 0, 1.0]))
+            pv, pt = box(c + n * 0.003, (0.028, 0.012, 0.008), 0.0)
+            parts.append(stuck(pv, pt, (0.33, 0.32, 0.29), MAT_METAL, c))
+        out['jacket'].append(parts)
+
+    # Обшивка: грудь и спина — выпрямленные листы с панели машины, заклёпки, знаки; наплечник с одной стороны в полосах
     s = field(soft(trunk), lin(Y - waist - 0.05), lin(clav + 0.01 - Y), (0.75 - np.abs(nrm0[:, 0])) * 4)
-    lay = [(0.45 - s, (0.17, 0.13, 0.10), MAT_RUST, 1)]
-    out['plate'] = [[shell(l, s, 0.035, ((0.30, 0.24, 0.19), MAT_RUST), lay, 0.5, relax=10)] for l in range(3)]
-    # Поножи: железо по голени спереди, два ремня
-    s = field(soft(shin), lin(Y - ankle - 0.07), lin(knee + 0.04 - Y), (nrm0[:, 2] + 0.15) * 4)
-    lay = [(0.012 - np.minimum(np.abs(Y - knee + 0.09), np.abs(Y - ankle - 0.14)), (0.17, 0.11, 0.07), MAT_LEATHER, 1)]
-    out['greaves'] = [[shell(l, s, 0.015, ((0.30, 0.24, 0.19), MAT_RUST), lay, relax=4)] for l in range(3)]
-    # Повязка: нижняя часть лица и шея, уши открыты
-    s = field(soft(hd | np.isin(bone, [NECK])), only(hd, lin(eye - 0.028 - Y)), (ctx['ear_d'][:nvl] - 1.3) * 2, lin(Y - clav - 0.02))
-    lay = [(stripe(lambda P: P[:, 1] + 0.2 * P[:, 0], 0.04, 0.008), (0.40, 0.37, 0.32), MAT_CLOTH, 0)]
-    out['wrap'] = [[shell(l, s, 0.006, ((0.52, 0.49, 0.43), MAT_CLOTH), lay, relax=4)] for l in range(3)]
-    # Обмотки: кожаная обувь без пальцев, выше щиколотки — полосы ткани по голени до середины
-    s = field(soft(foot | shin), lin(0.29 - Y))
-    lay = [(stripe(lambda P: P[:, 1] + 0.4 * P[:, 0], 0.03, 0.017), (0.36, 0.32, 0.26), MAT_CLOTH, 0), (ankle + 0.02 - Y, (0.10, 0.075, 0.055), MAT_LEATHER, 0)]
-    out['boots'] = [[shell(l, s, np.where(foot, 0.009, 0.006), ((0.10, 0.075, 0.055), MAT_LEATHER), lay, relax=6)] for l in range(3)]
-    # Рукавицы
-    s = field(soft(hand | fa), lin(wrist + 0.035 - Y))
-    out['mitts'] = [[shell(l, s, 0.004, ((0.20, 0.13, 0.08), MAT_LEATHER), relax=2)] for l in range(3)]
-    # Пояс с пряжкой и подсумки
+    wear = np.sin(X * 23 + 1) * np.sin(Y * 19 + Z * 13) + 0.5 * np.sin(X * 41 - Y * 37) - 0.95
+    lay = [(wear, (0.30, 0.17, 0.09), MAT_RUST, 1), (0.45 - s, (0.13, 0.12, 0.10), MAT_RUST, 1)]
+    sp = field(soft(side_l & (trunk | np.isin(bone, [UA_L, UA_R, CLAV_L, CLAV_R]))), lin(Y - clav + 0.10), lin(sL * X - 0.10))
+    lp = [(stripe(lambda P: P[:, 1] + P[:, 2] * 0.8 - sL * P[:, 0] * 0.4, 0.045, 0.016), (0.47, 0.41, 0.22), MAT_RUST, 1),
+          (0.45 - sp, (0.15, 0.15, 0.13), MAT_RUST, 1)]
+    out['plate'] = []
+    for l in range(3):
+        sh = shell(l, s, 0.035, ((0.19, 0.21, 0.18), MAT_RUST), lay, 0.5, relax=10, flat=slab)
+        parts = [sh, shell(l, sp, 0.05, ((0.19, 0.21, 0.18), MAT_RUST), lp, 0.5, relax=8)]
+        if l < 2:
+            rng = np.random.default_rng(7)
+            c, n = surf(sh, np.array([-sL * 0.06, chest + 0.03, 0.0]), np.array([0, 0, 1.0]))
+            pv, pt = glyph(rng, c, n, 0.07, cols=2)
+            parts.append(stuck(pv, pt, PAINT, MAT_RUST, c))
+            c, n = surf(sh, np.array([0.0, chest, 0.0]), np.array([0, 0, -1.0]))
+            pv, pt = glyph(rng, c, n, 0.11)
+            parts.append(stuck(pv, pt, PAINT, MAT_RUST, c))
+        if l == 0:
+            for sgz in (1.0, -1.0):
+                for x, y in ((0.12, waist + 0.08), (-0.12, waist + 0.08), (0.10, clav - 0.03), (-0.10, clav - 0.03)):
+                    c, n = surf(sh, np.array([x, y, 0.0]), np.array([0, 0, sgz]))
+                    pv, pt = box(c + n * 0.002, (0.011, 0.011, 0.006), 0.0)
+                    parts.append(stuck(pv, pt, (0.20, 0.19, 0.17), MAT_METAL, c))
+        out['plate'].append(parts)
+
+    # Трубные поножи: половинки труб спереди голени с фланцами по краям, примотаны кабелем в двух местах
+    out['greaves'] = [[] for _ in range(3)]
+    for sd_ in ('L', 'R'):
+        K, A = j('lowerleg01.' + sd_), j('foot.' + sd_)
+        a, b = K + (A - K) * 0.12, A + (K - A) * 0.18
+        L = np.linalg.norm(b - a)
+        ax = (b - a) / L
+        bn = SH_L if sd_ == 'L' else SH_R
+        leg = (bone == bn) & np.isin(np.arange(nvl), used)
+        f = np.array([0, 0, 1.0]) - ax * ax[2]
+        f /= np.linalg.norm(f)
+        sd = np.cross(ax, f)
+        d = vl[leg] - a
+        t = d @ ax
+        rad = d - np.outer(t, ax)
+        mid = (t > 0.15 * L) & (t < 0.85 * L)
+        ga_all = np.arctan2(rad @ sd, rad @ f)
+        rn_all = np.linalg.norm(rad, axis=1)
+        # Ось трубы сдвинута вперёд: дуга обнимает голень спереди, а не стоит колоколом
+        sh_ = 0.025
+        c0 = a + f * sh_
+        fr = mid & (np.abs(ga_all) < 1.2)
+        r = np.percentile(np.linalg.norm(rad[fr] - f * sh_, axis=1), 97) + 0.02
+        half = 1.35
+        for l in range(3):
+            pv, pt = pipe(c0, c0 + (b - a), f, r, half, 2, (10, 6, 4)[l], 0.004)
+            out['greaves'][l].append(rigid_part(pv, pt, (0.20, 0.13, 0.08), MAT_RUST, bn, leg))
+            if l < 2:
+                for u0 in (0.0, 0.93):
+                    pv, pt = pipe(c0 + (b - a) * u0, c0 + (b - a) * (u0 + 0.07), f, r + 0.005, half + 0.04, 2, (10, 6)[l], 0.009)
+                    out['greaves'][l].append(rigid_part(pv, pt, (0.13, 0.11, 0.09), MAT_METAL, bn, leg))
+            for u in (0.3, 0.7):
+                # Кабель по кругу: спереди по трубе, сзади по икре
+                g = np.sort(np.concatenate([np.linspace(-np.pi, np.pi, (13, 7, 5)[l]), [-half, half]]))
+                o = a + (b - a) * u
+                near = mid & (np.abs(t - u * L) < 0.04)
+                ga, rn = ga_all[near], rn_all[near]
+                skin = np.array([np.median(rn[np.abs(np.angle(np.exp(1j * (ga - q)))) < 0.3]) + 0.019 for q in g])
+                # Радиус трубы в направлении g от оси ноги (ось трубы сдвинута на sh_ вперёд)
+                cg = np.cos(g)
+                pr = sh_ * cg + np.sqrt(np.maximum((r + 0.004) ** 2 - (sh_ * np.sin(g)) ** 2, 0))
+                # По трубе до её краёв, дальше натянут к икре
+                rr = np.where(np.abs(g) <= half + 1e-6, np.maximum(pr, skin), skin)
+                path = o + (np.outer(cg, f) + np.outer(np.sin(g), sd)) * rr[:, None]
+                pv, pt = tube(path, path - o, np.full(len(g), 0.008), np.full(len(g), 0.007), 4 if l < 2 else 3)
+                out['greaves'][l].append(rigid_part(pv, pt, RUBBER, MAT_LEATHER, bn, leg))
+
+    # Респиратор: резиновая полумаска от переносицы до подбородка, фильтр-банка впереди, ремень вокруг головы
+    face = hd & (Z > np.median(Z[hd])) & (ctx['ear_d'][:nvl] > 1.6)
+    s = field(soft(face), lin(eye - 0.022 - Y))
+    sb = field(soft(hd & (ctx['ear_d'][:nvl] > 1.2)), lin(0.006 - np.abs(Y - eye + 0.035)))
+    out['wrap'] = []
+    for l in range(3):
+        sh = shell(l, s, 0.009, (RUBBER, MAT_LEATHER), relax=4)
+        c, n = surf(sh, np.array([0.0, eye - 0.068, 0.0]), np.array([0, -0.3, 1.0]) / np.hypot(0.3, 1.0))
+        pv, pt = cyl(c - n * 0.004, c + n * 0.03, 0.024, (12, 8, 6)[l])
+        col = np.tile((0.24, 0.25, 0.19), (len(pv), 1))
+        out['wrap'].append([sh, shell(l, sb, 0.004, (RUBBER, MAT_LEATHER), relax=1), rigid_part(pv, pt, col, MAT_METAL, HEAD, hd)])
+
+    # Рабочие ботинки: голенище — оболочка выше щиколотки, стопа — колодка по срезам ступни (пальцы не
+    # проступают), резиновая подошва, окованный носок поверх, светлее отворот сверху
+    s = field(soft(foot | shin), lin(ankle + 0.12 - Y), lin(Y - ankle + 0.035))
+    lay = [(Y - ankle - 0.10, (0.17, 0.13, 0.09), MAT_LEATHER, 1)]
+    BOOT, SOLE = (0.11, 0.085, 0.06), (0.05, 0.045, 0.04)
+
+    def last(q, n, segs, grow, t0=0.0):
+        # Колодка по n срезам ступни q от пятки к носку (с доли t0): скруглённый прямоугольник в срезе,
+        # ширина и высота по коже с запасом grow, сглажены, чтобы пальцы слились в носок
+        P = vl[q]
+        c2 = P[:, [0, 2]].mean(0)
+        dz = np.linalg.svd(P[:, [0, 2]] - c2)[2][0]
+        dz = dz if dz[1] > 0 else -dz
+        fw = np.array([dz[0], 0, dz[1]])
+        sd = np.array([dz[1], 0, -dz[0]])
+        u, v = P @ fw, P @ sd
+        u0, u1 = u.min(), u.max()
+        bot = P[:, 1].min() - 0.008
+        ts = np.linspace(0, 1, n)
+        sec = []
+        for tt in ts:
+            m = np.abs(u - (u0 + (u1 - u0) * tt)) < (u1 - u0) / n * 1.2
+            m = m if m.sum() > 2 else np.abs(u - (u0 + (u1 - u0) * tt)) < (u1 - u0) / n * 2.5
+            sec.append((v[m].min(), v[m].max(), P[m, 1].max()))
+        sec = np.array(sec)
+        for k in (0, 2):
+            sec[:, k] = np.convolve(np.pad(sec[:, k], 1, mode='edge'), [0.25, 0.5, 0.25], 'valid')
+        sec[:, 1] = np.convolve(np.pad(sec[:, 1], 1, mode='edge'), [0.25, 0.5, 0.25], 'valid')
+        g = 2 * np.pi * np.arange(segs) / segs
+        cx, cy = np.cos(g), np.sin(g)
+        sx, sy = np.sign(cx) * np.abs(cx) ** 0.55, np.sign(cy) * np.abs(cy) ** 0.55
+        pv = []
+        for i, tt in enumerate(ts):
+            if tt < t0 - 1e-6:
+                continue
+            lo, hi, top = sec[i]
+            # Пятка и носок скруглены: срез у концов меньше
+            e = 1.0 - 0.35 * max(0.0, 1.0 - min(tt, 1.0 - tt) * n / 1.5) ** 2
+            hw, hh = (hi - lo) / 2 + grow, (top - bot) / 2 + grow * 0.5
+            cv, cyc = (hi + lo) / 2, (top + bot) / 2
+            if tt > 0.75:
+                hh *= 1.0 - 0.6 * (tt - 0.75)
+                cyc = bot + hh
+            uu = u0 - grow + (u1 - u0 + 2 * grow) * tt
+            for a_, b_ in zip(sx, sy):
+                y = cyc + b_ * hh * e
+                pv.append(fw * uu + sd * (cv + a_ * hw * e) + np.array([0, max(y, bot), 0]))
+        pv = np.array(pv)
+        k = len(pv) // segs
+        pt = [[i * segs + j, i * segs + (j + 1) % segs, (i + 1) * segs + (j + 1) % segs] for i in range(k - 1) for j in range(segs)]
+        pt += [[i * segs + j, (i + 1) * segs + (j + 1) % segs, (i + 1) * segs + j] for i in range(k - 1) for j in range(segs)]
+        ends = [0, (k - 1) * segs]
+        cs = [pv[e_:e_ + segs].mean(0) for e_ in ends]
+        m0 = len(pv)
+        pv = np.concatenate([pv, cs])
+        pt += [[m0, j, (j + 1) % segs] for j in range(segs)] + [[m0 + 1, ends[1] + j, ends[1] + (j + 1) % segs] for j in range(segs)]
+        pt = np.array(pt)
+        pt = orient(pv, pt)
+        low = pv[:, 1] < bot + 0.022
+        return pv, pt, low
+    out['boots'] = [[] for _ in range(3)]
+    for l in range(3):
+        out['boots'][l].append(shell(l, s, 0.019, (BOOT, MAT_LEATHER), lay, relax=6))
+        for bn in (FT_L, FT_R):
+            q = used[bone[used] == bn]
+            n_, sg_ = (12, 8, 5)[l], (12, 8, 6)[l]
+            pv, pt, low = last(q, n_, sg_, 0.011)
+            col = np.where(low[:, None], np.array(SOLE), np.array((0.085, 0.065, 0.045)))
+            out['boots'][l].append(rigid_part(pv, pt, col, MAT_LEATHER, bn, bone == bn))
+            if l < 2:
+                pv, pt, _ = last(q, n_, sg_, 0.0145, t0=0.72)
+                out['boots'][l].append(rigid_part(pv, pt, (0.26, 0.25, 0.22), MAT_METAL, bn, bone == bn))
+
+    # Резиновые краги: перчатки с широким раструбом до середины предплечья
+    s = field(soft(hand | fa), lin(wrist + 0.11 - Y))
+    off = np.where(hand, 0.004, 0.006 + 0.09 * np.clip(Y - wrist - 0.02, 0, None))
+    lay = [(Y - wrist - 0.095, (0.17, 0.16, 0.13), MAT_LEATHER, 1)]
+    out['mitts'] = [[shell(l, s, off, ((0.10, 0.10, 0.085), MAT_LEATHER), lay, relax=2)] for l in range(3)]
+
+    # Пояс: стропа с пряжкой, подсумки и шланг петлёй у бедра сзади
     belt_y = hip + 0.075
     s = field(soft(np.isin(bone, [PELVIS, SPINE])), lin(0.022 - np.abs(Y - belt_y)))
     lay = [(np.minimum(0.025 - AX, Z), (0.30, 0.30, 0.28), MAT_METAL, 1)]
     band = np.isin(bone, [PELVIS, SPINE]) & (np.abs(Y - belt_y) < 0.01)
+
+    def rad_at(a):
+        # Радиус пояса в направлении a — по ближайшей вершине ленты
+        k = np.where(band)[0][np.argmin(np.abs(np.angle(np.exp(1j * (ang[band] - a)))))]
+        return np.hypot(X[k], Z[k])
     out['belt'] = []
     for l in range(3):
-        parts = [shell(l, s, 0.03, ((0.16, 0.10, 0.06), MAT_LEATHER), lay, relax=1)]
+        parts = [shell(l, s, 0.03, ((0.22, 0.22, 0.16), MAT_CLOTH), lay, relax=1)]
         for a in (-1.1, 1.1, 2.6):
-            # Радиус пояса в этом направлении — по ближайшей вершине ленты
-            k = np.where(band)[0][np.argmin(np.abs(np.angle(np.exp(1j * (ang[band] - a)))))]
-            r = np.hypot(X[k], Z[k]) + 0.052
+            r = rad_at(a) + 0.052
             pv, pt = box(np.array([np.sin(a) * r, belt_y - 0.03, np.cos(a) * r]), (0.075, 0.09, 0.045), a)
-            parts.append(rigid_part(pv, pt, (0.12, 0.08, 0.05), MAT_LEATHER, PELVIS, band))
+            parts.append(rigid_part(pv, pt, (0.20, 0.20, 0.15), MAT_CLOTH, PELVIS, band))
+        n_ = (12, 7, 4)[l]
+        tt = np.linspace(0, 1, n_)
+        aa = 2.6 - 0.75 * tt
+        rr = np.array([rad_at(q) for q in aa]) + 0.045
+        path = np.stack([np.sin(aa) * rr, belt_y - 0.075 - 0.13 * np.sin(np.pi * tt), np.cos(aa) * rr], 1)
+        pv, pt = tube(path, np.stack([np.sin(aa), 0 * aa, np.cos(aa)], 1), np.full(n_, 0.022), np.full(n_, 0.022), (6, 5, 3)[l])
+        rib = np.repeat(np.arange(n_), len(pv) // n_) % 2
+        col = np.where(rib[:, None] == 0, np.array(RUBBER), np.array((0.11, 0.105, 0.095)))
+        parts.append(rigid_part(pv, pt, col, MAT_LEATHER, PELVIS, band))
         out['belt'].append(parts)
-    # Шлем-ведро: ржавый цилиндр до подбородка, щель для глаз
+
+    # Кожух: гранёный купол корпуса прибора до подбородка, смотровая щель, обод с болтами, рыло респиратора с двумя фильтрами
     up = hd & (Y > eye - 0.06)
-    rx, rz = AX[up].max() + 0.014, (Z[up].max() - Z[up].min()) / 2 + 0.014
+    rx, rz = AX[up].max() + 0.018, (Z[up].max() - Z[up].min()) / 2 + 0.018
     chin = Y[hd & (Z > (Z[up].max() + Z[up].min()) / 2)].min()
     hc = np.array([0.0, chin - 0.01, (Z[up].max() + Z[up].min()) / 2])
-    top = ctx['top_y'] + 0.02 - hc[1]
-    lo, hi = eye - 0.013 - hc[1], eye + 0.011 - hc[1]
+    top = ctx['top_y'] + 0.022 - hc[1]
+    lo, hi = eye - 0.012 - hc[1], eye + 0.008 - hc[1]
     out['bucket'] = []
     for l in range(3):
-        sg = GEAR_SEGS[l]
-        # Кольца щели повторены: цвет щели не размазывается по стенке
-        prof = [(0.0, 1.03), (0.02, 1.0), (lo, 0.99), (lo, 0.99), (hi, 0.99), (hi, 0.99), (top, 0.95), (top + 0.004, 0.6), (top + 0.006, 0.0)]
-        pv, pt = lathe(hc, prof, sg, rx, rz)
-        col = np.tile((0.30, 0.24, 0.19), (len(pv), 1))
-        front = np.cos(2 * np.pi * np.arange(sg) / sg) > 0.45
-        col[3 * sg:5 * sg][np.tile(front, 2)] = (0.03, 0.03, 0.03)
-        out['bucket'].append([rigid_part(pv, pt, col, MAT_RUST, HEAD, hd)])
-    # Котомка: мешок на спине и лямки через плечи
+        sg = 8
+        prof = [(0.0, 1.06), (0.012, 1.04), (lo, 1.0), (lo, 1.0), (hi, 1.0), (hi, 1.0), (hi + 0.012, 1.0), (hi + 0.012, 1.0),
+                (hi + 0.022, 1.0), (hi + 0.022, 1.0), (top - 0.085, 0.94), (top - 0.045, 0.80), (top - 0.015, 0.52), (top, 0.0)]
+        pv, pt = lathe(hc, prof, sg, rx * 1.08, rz * 1.08, ph=np.pi / 8)
+        col = np.tile((0.25, 0.27, 0.23), (len(pv), 1))
+        front = np.cos(2 * np.pi * np.arange(sg) / sg + np.pi / 8) > 0.3
+        col[3 * sg:5 * sg][np.tile(front, 2)] = (0.02, 0.02, 0.02)
+        col[7 * sg:9 * sg] = (0.14, 0.13, 0.11)
+        parts = [rigid_part(pv, pt, col, MAT_RUST, HEAD, hd)]
+        zf = hc[2] + rz * 1.08 * np.cos(np.pi / 8)
+        mo = np.array([0.0, eye - 0.07, zf + 0.016])
+        pv, pt = box(mo, (0.07, 0.055, 0.04), 0.0)
+        parts.append(rigid_part(pv, pt, RUBBER, MAT_LEATHER, HEAD, hd))
+        for sx in (-1, 1):
+            a = mo + np.array([sx * 0.03, -0.01, 0.0])
+            pv, pt = cyl(a, a + np.array([sx * 0.03, -0.022, 0.022]), 0.02, (10, 7, 5)[l])
+            parts.append(rigid_part(pv, pt, (0.24, 0.25, 0.19), MAT_METAL, HEAD, hd))
+        if l == 0:
+            for k in range(8):
+                g = 2 * np.pi * k / 8
+                c = hc + np.array([np.sin(g) * rx * 1.085, hi + 0.017, np.cos(g) * rz * 1.085])
+                pv, pt = box(c, (0.01, 0.01, 0.01), g)
+                parts.append(rigid_part(pv, pt, (0.20, 0.19, 0.17), MAT_METAL, HEAD, hd))
+        if l < 2:
+            c = hc + np.array([sL * rx * 1.08 * np.cos(np.pi / 8), (hi + 0.022 + top - 0.085) / 2, 0.0])
+            pv, pt = glyph(np.random.default_rng(3), c, np.array([sL, 0, 0.0]), 0.05)
+            parts.append(rigid_part(pv, pt, PAINT, MAT_RUST, HEAD, hd))
+        out['bucket'].append(parts)
+
+    # Ранец: рама из трубок на спине, ящик и поверх поперёк древний баллон со знаком
     back = trunk & (np.abs(Y - 1.27) < 0.03) & (AX < 0.05) & (Z < 0)
     bz = Z[back].min()
     s = field(soft(trunk), lin(0.02 - np.abs(AX - 0.105)), lin(Y - chest))
     out['pack'] = []
     for l in range(3):
-        sg = GEAR_SEGS[l]
-        prof = [(0.19 * np.cos(t), np.sin(t)) for t in np.linspace(np.pi, 0, max(4, sg // 2 + 1))]
-        pv, pt = lathe(np.array([0.0, 1.25, bz - 0.14]), prof, sg, 0.16, 0.10)
-        col = np.tile((0.38, 0.33, 0.24), (len(pv), 1))
-        col[pv[:, 1] > 1.25 + 0.15] = (0.26, 0.22, 0.16)
-        out['pack'].append([shell(l, s, 0.045, ((0.17, 0.11, 0.07), MAT_LEATHER), relax=1), rigid_part(pv, pt, col, MAT_CLOTH, CHEST, back)])
-    return {g: [merge(parts) for parts in out[g]] for g in GEAR}, hairdos(ctx, shell, soft, lin, field, stripe)
+        sg = (10, 7, 5)[l]
+        parts = [shell(l, s, 0.03, (RUBBER, MAT_LEATHER), relax=1)]
+        z0 = bz - 0.035
+        for x in (-0.11, 0.11):
+            pv, pt = cyl(np.array([x, 1.04, z0]), np.array([x, 1.50, z0]), 0.011, max(4, sg // 2))
+            parts.append(rigid_part(pv, pt, (0.22, 0.21, 0.19), MAT_METAL, CHEST, back))
+        for y in (1.08, 1.46):
+            pv, pt = cyl(np.array([-0.12, y, z0]), np.array([0.12, y, z0]), 0.009, max(4, sg // 2))
+            parts.append(rigid_part(pv, pt, (0.22, 0.21, 0.19), MAT_METAL, CHEST, back))
+        pv, pt = box(np.array([0.0, 1.23, z0 - 0.08]), (0.27, 0.26, 0.13), 0.0)
+        parts.append(rigid_part(pv, pt, (0.15, 0.15, 0.10), MAT_LEATHER, CHEST, back))
+        a, b = np.array([-0.17, 1.43, z0 - 0.085]), np.array([0.17, 1.43, z0 - 0.085])
+        pv, pt = cyl(a, b, 0.062, sg)
+        parts.append(rigid_part(pv, pt, (0.30, 0.33, 0.28), MAT_METAL, CHEST, back))
+        for x in (-0.11, 0.11):
+            pv, pt = cyl(np.array([x - 0.012, 1.43, z0 - 0.085]), np.array([x + 0.012, 1.43, z0 - 0.085]), 0.066, sg)
+            parts.append(rigid_part(pv, pt, (0.12, 0.12, 0.11), MAT_METAL, CHEST, back))
+        if l < 2:
+            pv, pt = glyph(np.random.default_rng(5), np.array([0.0, 1.43, z0 - 0.085 - 0.062]), np.array([0, 0, -1.0]), 0.05, cols=2)
+            parts.append(rigid_part(pv, pt, PAINT, MAT_METAL, CHEST, back))
+        out['pack'].append(parts)
+    # Бельё из небелёного холста: трусы с широкой тёмной резинкой; у мужчин короткие штанины и шов спереди,
+    # у женщин вырез по бедру и лиф на лямках, перекрещенных на спине (не полоса без лямок)
+    mid = np.isin(bone, [PELVIS, SPINE, TH_L, TH_R]) & np.isin(np.arange(nvl), used) & (AX < 0.012) & (Y > 0.6) & (Y < hip)
+    crotch = Y[mid].min()
+    LINEN, BAND = (0.33, 0.31, 0.26), (0.17, 0.16, 0.13)
+    hips = np.isin(bone, [PELVIS, SPINE, TH_L, TH_R])
+    if ctx['female']:
+        top, leg = hip + 0.075, crotch + 0.012 + 0.75 * np.maximum(0.0, AX - 0.025)
+    else:
+        top, leg = hip + 0.065, crotch - 0.045 + 0.08 * np.maximum(0.0, AX - 0.06)
+    sb = field(soft(hips), lin(top - Y), lin(Y - leg))
+    lb = [(Y - top + 0.017, BAND, MAT_CLOTH, 1), (inside(Y < leg + 0.012, leg + 0.007 - Y), BAND, MAT_CLOTH, 1)]
+    if not ctx['female']:
+        lb.append((inside((Z > 0) & (Y < top - 0.017), np.minimum(0.003 - AX, Y - crotch - 0.02)), BAND, MAT_CLOTH, 1))
+    cand = used[np.isin(bone[used], [SPINE, CHEST, CLAV_L, CLAV_R])]
+    n0 = src[0][1]
+
+    def strap(sg, x0, y0, yb, k):
+        # Лямка лифа лентой по коже: спереди вверх от чашки, через плечо, на спине наискось к другому боку
+        top = cand[(np.abs(X[cand] - sg * (x0 + 0.01)) < 0.012)]
+        top = top[np.argmax(Y[top])]
+        def snap(x, y, front):
+            c = cand[(Z[cand] > Z[top]) == front]
+            return c[np.argmin((X[c] - x) ** 2 + (Y[c] - y) ** 2)]
+        q = [snap(sg * x0, y, True) for y in np.linspace(y0, Y[top] - 0.03, k // 3)] + [top]
+        q += [snap(sg * (x0 + 0.01) - sg * (x0 + 0.07) * t, Y[top] - 0.03 + (yb - Y[top] + 0.03) * t, False) for t in np.linspace(0, 1, k - k // 3)]
+        q = np.array(q)
+        path = vl[q] + n0[q] * 0.004
+        for _ in range(2):
+            path[1:-1] = 0.25 * path[:-2] + 0.5 * path[1:-1] + 0.25 * path[2:]
+        pv, pt = tube(path, n0[q], np.full(len(q), 0.016), np.full(len(q), 0.004), 4)
+        ring = np.arange(len(pv)) // 4
+        d = md0[q[ring]].copy()
+        d[:, :, 3:] = 0
+        k_ = len(pv)
+        return ((pv, normals(pv, pt), np.tile(LINEN, (k_, 1)), np.full(k_, MAT_CLOTH), np.full(k_, TINT_NONE), sk[q[ring]], d), pt)
+
+    under = []
+    for l in range(3):
+        parts = [shell(l, sb, 0.003, (LINEN, MAT_CLOTH), lb, 0.8)]
+        if ctx['female']:
+            nip = J['breast.L____tail']
+            lo = nip[1] - 0.075
+            torso = np.isin(bone, [SPINE, CHEST, CLAV_L, CLAV_R])
+            # Чашки спереди до соска + 2.5 см, сзади лента 4.5 см; между чашками край ниже
+            k = np.clip((Z - nip[2] + 0.13) / 0.06, 0, 1)
+            hi = lo + 0.045 + (nip[1] + 0.025 - lo - 0.045) * k - 0.04 * np.clip(1 - AX / 0.03, 0, 1) * (Z > 0)
+            sbra = field(soft(torso), lin(Y - lo), lin(hi - Y))
+            lw = [(inside(Y < lo + 0.012, lo + 0.012 - Y), BAND, MAT_CLOTH, 1)]
+            parts.append(shell(l, sbra, 0.003, (LINEN, MAT_CLOTH), lw, 0.8))
+            for sg in (1.0, -1.0):
+                parts.append(strap(sg, abs(nip[0]), nip[1] + 0.015, lo + 0.03, (24, 12, 6)[l]))
+        under.append(merge(parts))
+    return ({g: [merge(parts) for parts in out[g]] for g in GEAR}, hairdos(ctx, shell, soft, lin, field, stripe), under)
 
 
 def hairdos(ctx, shell, soft, lin, field, stripe):

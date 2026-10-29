@@ -22,7 +22,7 @@ void main()
         vec3 c = pow(clamp(p.rgb, 0.0, 1.0), vec3(1.0 / 2.2));
         c *= 1.0 - 0.18 * mod(floor(gl_FragCoord.y), 2.0);
         c += n * 0.06;
-        o_color = vec4(c * v_color.rgb, min(p.a, 1.0) * v_color.a);
+        o_color = vec4(c * v_color.rgb, p.a * v_color.a);
     } else if (v_uv.x < -0.5) {
         vec3 c = v_color.rgb * (1.0 - 0.14 * mod(floor(gl_FragCoord.y), 2.0)) + n * 0.03;
         o_color = vec4(c, v_color.a);

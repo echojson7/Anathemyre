@@ -35,8 +35,8 @@ extern const char *const g_gear_file[GEAR_COUNT];
 #define HAIR_MAX 4
 #define GEAR_ROW (GEAR_COUNT + HAIR_MAX)
 extern const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX];
-// Причёска в список вещей (номер в ряду): возвращает 0 или 1
-u32 look_hair(const CharLook *l, u8 *out);
+// Причёска в список вещей gear[0..n) (номер в ряду): возвращает 0 или 1. Под кожухом причёски нет
+u32 look_hair(const CharLook *l, u8 *gear, u32 n);
 
 // Видимые вещи: из брони по слотам (A_*, ARMOR_NONE — пусто); возвращает число
 u32 gear_from_armor(const u8 *armor, u8 *out);

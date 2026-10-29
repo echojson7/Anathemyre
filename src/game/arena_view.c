@@ -245,7 +245,7 @@ u32 arena_view_draw(const ArenaView *v, const ArenaSession *s, f32 time, const G
             items[n++] = (DrawItem){ .mesh = &body[ri % variants], .bones = b };
             u8 worn[GEAR_MAX_WORN];
             u32 nw = gear_from_armor(s->roster[ri].d.armor, worn);
-            nw += look_hair(&lk, worn + nw);
+            nw += look_hair(&lk, worn, nw);
             for (u32 g = 0; g < nw; g++) items[n++] = (DrawItem){ .mesh = &gear[(ri % variants) * GEAR_ROW + worn[g]], .bones = b };
             if (dropped) {
                 M4 *wb = &bones[(set++) * RENDER_MAX_BONES];
