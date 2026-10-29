@@ -57,11 +57,14 @@ typedef struct Options {
     bool        humans;      // мокап: люди из гладких форм рядом с отрядом
 } Options;
 
-// Портрет по кости головы: камера спереди, чуть сверху
-static void portrait(const FrameView *base, u32 slot, i32 size, const DrawItem *items, u32 count)
+// Портрет: неподвижная фигура в покое, камера по кости головы спереди, чуть сверху
+static void portrait(const FrameView *base, u32 slot, i32 size, const GpuMesh *body, const GpuMesh *weapon,
+                     f32 seed, f32 height, f32 width, M4 *bones)
 {
-    if (!count) return;
-    M4 hb = items[0].bones[BONE_HEAD];
+    CharPose p = { .seed = seed, .height = height, .width = width };
+    character_pose(&p, NULL, bones);
+    DrawItem items[2] = { { .mesh = body, .bones = bones }, { .mesh = weapon, .bones = bones } };
+    M4 hb = bones[BONE_HEAD];
     V3 head = m4_point(hb, v3(0, 1.62f, 0));
     V3 fwd = v3_norm(m4_dir(hb, v3(0, 0, 1)));
     V3 up = v3_norm(m4_dir(hb, v3(0, 1, 0)));
@@ -69,7 +72,7 @@ static void portrait(const FrameView *base, u32 slot, i32 size, const DrawItem *
     fv.cam_pos = v3_add(v3_add(head, v3_mul(fwd, 1.05f)), v3_mul(up, 0.1f));
     fv.view = m4_look_at(fv.cam_pos, v3_sub(head, v3_mul(up, 0.06f)), up);
     fv.proj = m4_perspective(0.55f, 1.0f, 0.05f, 20.0f);
-    render_portrait(slot, size, &fv, m4_mul(fv.proj, fv.view), items, count);
+    render_portrait(slot, size, &fv, m4_mul(fv.proj, fv.view), items, weapon ? 2 : 1);
 }
 
 // Ближе 4 м камера подходит только в мокапе людей (крупные планы)
@@ -179,8 +182,12 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--move-bench")) {
             o->move_bench = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
-        } else if (!strcmp(a, "--humans")) o->humans = true, g_cam_min_dist = 0.8f;
-        else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
+        } else if (!strcmp(a, "--humans")) {
+            // Камера сразу на ряду людей
+            o->humans = true;
+            g_cam_min_dist = 0.8f;
+            o->cam = (RtsCamera){ .target = { 2.55f, 0, 22 }, .yaw = 0.0f, .pitch = 0.2f, .dist = 5.0f };
+        } else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--battle-bench") && i + 2 < argc) {
@@ -387,6 +394,7 @@ int main(int argc, char **argv)
     squad_init(squad, &rng, v3(9.0f, 0.0f, 22.0f), atan2f(ARENA_CENTER.x - 9.0f, ARENA_CENTER.z - 22.0f), ground_height);
     // На каждого: тело, кольцо, метка цели; плюс кольцо осматриваемого чужого
     M4 *squad_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)(SQUAD_MAX * 3 + 1) * RENDER_MAX_BONES);
+    M4 *portrait_bones = ARENA_PUSH_ARRAY(&perm, M4, 2 * RENDER_MAX_BONES);
     M4 *bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)TR_MAX_CHARS * RENDER_MAX_BONES);
     DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS + 2 + AV_DRAW_ITEMS + SQUAD_MAX * 4 + 1);
     Hud hud;
@@ -504,11 +512,8 @@ int main(int argc, char **argv)
             character_pose(&p, NULL, b);
             items[n++] = (DrawItem){ .mesh = &char_mesh[crowd.variant[i]], .bones = b };
         }
-        u32 arena_first = n;
         n += arena_view_draw(aview, arena, sim_time, body_mesh, CHAR_VARIANTS, weapon_mesh, arena_bones, items + n);
-        u32 squad_first[SQUAD_MAX], squad_end[SQUAD_MAX];
         for (u32 i = 0; i < squad->count; i++) {
-            squad_first[i] = n;
             const Player *pl = &squad->body[i];
             const CharSheet *cs = &squad->sheet[i];
             M4 *b = squad_bones + (size_t)i * 3 * RENDER_MAX_BONES;
@@ -521,7 +526,6 @@ int main(int argc, char **argv)
             items[n++] = (DrawItem){ .mesh = &body_mesh[squad->variant[i] % CHAR_VARIANTS], .bones = b };
             if (cs->equip[SLOT_WEAPON].kind == IK_WEAPON)
                 items[n++] = (DrawItem){ .mesh = &weapon_mesh[cs->equip[SLOT_WEAPON].id], .bones = b };
-            squad_end[i] = n;
             if (squad->selected[i]) {
                 M4 *rb = b + RENDER_MAX_BONES;
                 rb[0] = m4_translate(pl->pos);
@@ -562,19 +566,26 @@ int main(int argc, char **argv)
         fv.shadow_center = cam.target;
         fv.time = sim_time;
         fv.frame = frame;
-        // Половина окна, апскейл ровно ×2: лёгкий экранный пиксель без мыла вдали; основная пиксельность на поверхностях (scene.frag, TEXEL)
-        rs.internal_h = wh / 2;
+        // Полное разрешение окна: даль чёткая; пиксельность на поверхностях (scene.frag, TEXEL) и в спрайтах людей (render.c)
+        rs.internal_h = wh;
         render_frame(&fv, items, n, &rs, ww, wh);
-        // Портреты: миниатюры отряда и крупно выбранный, тем же светом и тенью
-        for (u32 i = 0; i < squad->count; i++)
-            portrait(&fv, i, HUD_PORTRAIT_CARD_PX, items + squad_first[i], squad_end[i] - squad_first[i]);
-        if (hud.look_kind == LOOK_SQUAD && hud.look < squad->count) {
-            u32 i = hud.look;
-            portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, items + squad_first[i], squad_end[i] - squad_first[i]);
-        } else if (hud.look_kind == LOOK_ARENA) {
-            i32 b = hud_arena_fighter(aview, arena, hud.look);
-            // Брошенное оружие лежит на полу: в портрет только тело
-            if (b >= 0) portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, items + arena_first + 2 * (u32)b, aview->dropped[b] ? 1 : 2);
+        // Портреты: миниатюры отряда и крупно выбранный
+        for (u32 i = 0; i <= squad->count; i++) {
+            bool focus = i == squad->count;
+            u32 k = focus ? hud.look : i;
+            M4 *pb = portrait_bones + (size_t)(focus ? 1 : 0) * RENDER_MAX_BONES;
+            if (focus && hud.look_kind == LOOK_ARENA) {
+                const FighterDesc *d = &arena->roster[k].d;
+                f32 seed = (f32)k * 13.7f + 3.0f;
+                portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, &body_mesh[k % CHAR_VARIANTS], &weapon_mesh[d->weapon],
+                         seed, d->height / 1.8f, 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), pb);
+                continue;
+            }
+            if (focus && (hud.look_kind != LOOK_SQUAD || k >= squad->count)) continue;
+            const CharSheet *cs = &squad->sheet[k];
+            const GpuMesh *wm = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? &weapon_mesh[cs->equip[SLOT_WEAPON].id] : NULL;
+            portrait(&fv, focus ? HUD_PORTRAIT_FOCUS : i, focus ? HUD_PORTRAIT_FOCUS_PX : HUD_PORTRAIT_CARD_PX,
+                     &body_mesh[squad->variant[k] % CHAR_VARIANTS], wm, 7.0f + (f32)k * 5.3f, cs->d.height / 1.8f, 0.0f, pb);
         }
         ui_set_image(render_portrait_texture());
         ui_set_time(real_time);

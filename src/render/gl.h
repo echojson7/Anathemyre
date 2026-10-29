@@ -50,6 +50,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_RED 0x1903
 #define GL_SCISSOR_TEST 0x0C11
 #define GL_SRC_ALPHA 0x0302
+#define GL_ONE 1
 #define GL_ONE_MINUS_SRC_ALPHA 0x0303
 #define GL_R8 0x8229
 #define GL_VENDOR 0x1F00
@@ -72,6 +73,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_TEXTURE_COMPARE_FUNC 0x884D
 #define GL_COMPARE_REF_TO_TEXTURE 0x884E
 #define GL_RGBA16F 0x881A
+#define GL_RG16F 0x822F
 #define GL_ARRAY_BUFFER 0x8892
 #define GL_ELEMENT_ARRAY_BUFFER 0x8893
 #define GL_FRAGMENT_SHADER 0x8B30
@@ -102,6 +104,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, Enable, (GLenum cap)) \
     X(void, Disable, (GLenum cap)) \
     X(void, BlendFunc, (GLenum sfactor, GLenum dfactor)) \
+    X(void, BlendFuncSeparate, (GLenum src_rgb, GLenum dst_rgb, GLenum src_a, GLenum dst_a)) \
     X(void, Scissor, (GLint x, GLint y, GLsizei w, GLsizei h)) \
     X(void, CullFace, (GLenum mode)) \
     X(void, DepthFunc, (GLenum func)) \

@@ -15,6 +15,7 @@ layout(location = 22) uniform vec3 u_sun_color;
 layout(location = 23) uniform float u_time;
 layout(location = 24) uniform vec3 u_sky_amb;
 layout(location = 25) uniform vec3 u_ground_amb;
+layout(location = 26) uniform int u_unlit;   // портреты интерфейса: чистый цвет без света и тени
 layout(binding = 0) uniform sampler2DShadow u_shadow;
 
 out vec4 o_color;
@@ -50,39 +51,36 @@ float sun_shadow(vec3 p, vec3 n)
     return sum / 9.0;
 }
 
-// Знаки на неизвестном языке: штрихи в ячейке по хешу
+// Знаки на неизвестном языке пиксельным шрифтом: ячейка 6x8 квадратов TEXEL (знак 5x7 и зазор),
+// штрих шириной в квадрат, поэтому знак читается при любой дальности
 float glyph_ink(vec2 uv)
 {
-    vec2 cell_size = vec2(0.55, 0.8);
-    vec2 cell = floor(uv / cell_size);
-    vec2 f = fract(uv / cell_size);
-    f = (f - 0.12) / 0.76;
-    if (any(lessThan(f, vec2(0.0))) || any(greaterThan(f, vec2(1.0)))) return 0.0;
+    vec2 g = floor(uv / TEXEL);
+    vec2 cell = floor(g / vec2(6.0, 8.0));
+    vec2 f = g - cell * vec2(6.0, 8.0);
+    if (f.x > 4.0 || f.y > 6.0) return 0.0;
     if (hash12(cell + 7.1) < 0.18) return 0.0; // пробел
     float ink = 0.0;
-    float w = 0.09;
+    // Вертикальные штрихи в столбцах 0, 2, 4
     for (int i = 0; i < 3; i++) {
-        float x = 0.1 + 0.4 * float(i);
         float h = hash12(cell * 1.31 + float(i) * 3.7);
         if (h > 0.4) {
-            float y0 = floor(hash12(cell + float(i) * 11.3) * 3.0) / 4.0;
-            float y1 = y0 + 0.25 + floor(h * 3.0) / 4.0;
-            ink = max(ink, step(abs(f.x - x), w) * step(y0, f.y) * step(f.y, y1));
+            float y0 = floor(hash12(cell + float(i) * 11.3) * 2.0) * 3.0;
+            float y1 = min(y0 + 3.0 + floor(h * 2.0) * 3.0, 6.0);
+            ink = max(ink, float(f.x == float(i * 2) && f.y >= y0 && f.y <= y1));
         }
     }
-    for (int i = 0; i < 4; i++) {
-        float y = 0.08 + 0.28 * float(i);
+    // Горизонтальные в строках 0, 3, 6
+    for (int i = 0; i < 3; i++) {
         float h = hash12(cell * 2.17 + float(i) * 5.3);
         if (h > 0.5) {
-            float x0 = floor(hash12(cell + float(i) * 17.9) * 2.0) * 0.4;
-            float x1 = x0 + 0.4 + floor(h * 2.0) * 0.4;
-            ink = max(ink, step(abs(f.y - y), w * 0.8) * step(x0 - w, f.x) * step(f.x, x1 + w));
+            float x0 = floor(hash12(cell + float(i) * 17.9) * 2.0) * 2.0;
+            float x1 = min(x0 + 2.0 + floor(h * 2.0) * 2.0, 4.0);
+            ink = max(ink, float(f.y == float(i * 3) && f.x >= x0 && f.x <= x1));
         }
     }
-    if (hash12(cell + 91.0) > 0.8) {
-        float r = length(f - vec2(0.5, 0.5));
-        ink = max(ink, step(abs(r - 0.3), w * 0.7));
-    }
+    // Иногда точка-метка в середине
+    if (hash12(cell + 91.0) > 0.8) ink = max(ink, float(f.x == 2.0 && (f.y == 4.0 || f.y == 2.0)));
     return ink;
 }
 
@@ -91,13 +89,12 @@ void main()
     vec3 N = normalize(v_nrm);
     if (!gl_FrontFacing) N = -N;
     // Пиксельность живёт на поверхностях: материал и свет считаются в центре квадрата TEXEL.
-    // Вдали квадрат не мельче пикселя экрана (как мипы), иначе узор рябит
+    // Где квадрат мельче пикселя экрана, пиксель экрана и есть пиксель. Люди пикселизуются
+    // целиком спрайтом (render.c), поэтому квадратов на них нет
     vec3 Nl = normalize(transpose(v_rot) * N);
     float mpp = max(length(dFdx(v_local)), length(dFdy(v_local)));
-    // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
-    float base = u_skinned != 0 ? TEXEL * 0.5 : TEXEL;
-    float tex = max(base, exp2(ceil(log2(max(mpp, 1e-6)))));
-    vec3 dl = texel_snap(v_local, Nl, tex);
+    bool snap = u_skinned == 0 && mpp < TEXEL;
+    vec3 dl = snap ? texel_snap(v_local, Nl, TEXEL) : vec3(0.0);
     vec3 P = v_local + dl;           // материал: прилипает к телу
     vec3 W = v_world + v_rot * dl;   // свет и тени
     vec3 V = normalize(u_cam_pos - W);
@@ -187,7 +184,7 @@ void main()
     }
 
     // Разброс яркости от квадрата к квадрату: поверхность читается как текстура низкого разрешения
-    albedo *= 0.95 + 0.10 * hash13(floor(P / tex) + float(v_mat) * 17.0);
+    if (snap) albedo *= 0.95 + 0.10 * hash13(floor(P / TEXEL) + float(v_mat) * 17.0);
 
     float ndl = max(dot(N, L), 0.0);
     float sh = ndl > 0.0 ? sun_shadow(W, N) : 0.0;
@@ -207,5 +204,6 @@ void main()
         float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
         col += (u_sky_amb + u_ground_amb) * rim * 0.35;
     }
+    if (u_unlit != 0) col = albedo + emissive;
     o_color = vec4(col, 1.0);
 }

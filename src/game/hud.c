@@ -38,6 +38,7 @@
 #define CHAR_WIN_W 286
 #define CHAR_WIN_H 338
 #define WIN_TOP    48
+#define WIN_HEAD_H 16   // шапка окна: за неё тянут
 #define SLOT_W     121
 #define SLOT_H     20
 #define CELL       20
@@ -134,9 +135,13 @@ typedef struct LookData {
     const Player *body; // свои: режим шага
 } LookData;
 
+// Два слоя: нижняя полоса (отряд, выбранный) и верхний — окна, часы, кнопки, подписи в мире
 typedef struct Layout {
-    f32 w, h, mx, my;
-    f32 bottom;       // верх нижней полосы
+    f32 w, h, mx, my;     // верхний слой
+    f32 bmx, bmy;         // мышь в нижнем слое
+    f32 bottom;           // верх нижней полосы, нижний слой
+    f32 bottom_top;       // он же в координатах верхнего слоя
+    f32 btn_y;
     f32 sel_x;        // панель выбранного
     f32 cards_x;
     f32 btn_x;
@@ -147,27 +152,44 @@ typedef struct Layout {
     f32 cwx, cwy;     // окно персонажа
 } Layout;
 
-static Layout layout(const Input *in)
+// Окно не уходит за край
+static void win_place(f32 *x, f32 *y, f32 w, f32 h, f32 sw, f32 sh)
+{
+    *x = floorf(clampf(*x, 0.0f, fmaxf(0.0f, sw - w)));
+    *y = floorf(clampf(*y, 0.0f, fmaxf(0.0f, sh - h)));
+}
+
+// Оставляет текущим верхний слой: в нём же считается проекция мира для выбора
+static Layout layout(const Hud *h, const Input *in)
 {
     Layout L;
-    i32 s = ui_scale();
+    ui_layer(UI_BOTTOM);
+    f32 sb = ui_scale();
+    L.bmx = floorf((f32)in->mouse_x / sb);
+    L.bmy = floorf((f32)in->mouse_y / sb);
+    L.bottom = ui_height() - BOTTOM_H - 8;
+    ui_layer(UI_TOP);
+    f32 s = ui_scale();
+    L.bottom_top = floorf(L.bottom * sb / s);
     L.w = ui_width();
     L.h = ui_height();
-    L.mx = (f32)(in->mouse_x / s);
-    L.my = (f32)(in->mouse_y / s);
-    L.bottom = L.h - BOTTOM_H - 8;
+    L.mx = floorf((f32)in->mouse_x / s);
+    L.my = floorf((f32)in->mouse_y / s);
     L.sel_x = 8;
     L.cards_x = L.sel_x + SEL_W + 8;
     L.btn_x = L.w - BTN_W - 8;
+    L.btn_y = L.h - 2 * BTN_H - 4 - 8;
     L.clock_x = L.w - CLOCK_W - 8;
-    L.iwx = L.w - INV_WIN_W - 8;
-    L.iwy = WIN_TOP;
+    L.iwx = h->inv_x < 0 ? L.w - INV_WIN_W - 8 : h->inv_x;
+    L.iwy = h->inv_y < 0 ? WIN_TOP : h->inv_y;
+    win_place(&L.iwx, &L.iwy, INV_WIN_W, INV_WIN_H, L.w, L.h);
     L.sx = L.iwx + 8;
     L.sy = L.iwy + 20;
     L.ix = L.sx;
     L.iy = L.sy + 5 * (SLOT_H + 3) + 14;
-    L.cwx = 8;
-    L.cwy = WIN_TOP;
+    L.cwx = h->char_x < 0 ? 8 : h->char_x;
+    L.cwy = h->char_y < 0 ? WIN_TOP : h->char_y;
+    win_place(&L.cwx, &L.cwy, CHAR_WIN_W, CHAR_WIN_H, L.w, L.h);
     return L;
 }
 
@@ -211,7 +233,7 @@ static void gait_btn_rect(const Layout *L, u32 g, f32 *x, f32 *y, f32 *w)
     *w = wid[g];
 }
 static void formation_btn_rect(const Layout *L, f32 *x, f32 *y) { *x = L->sel_x + 92; *y = L->bottom + 86; }
-static f32 win_btn_y(const Layout *L, u32 k) { return L->bottom + (f32)k * (BTN_H + 4); }
+static f32 win_btn_y(const Layout *L, u32 k) { return L->btn_y + (f32)k * (BTN_H + 4); }
 static f32 speed_btn_x(const Layout *L, u32 k) { return L->clock_x + 62 + (f32)k * 21; }
 
 // Экранная точка в логических координатах; false — за камерой
@@ -354,6 +376,7 @@ void hud_init(Hud *h)
     h->last_click_card = -1;
     h->focus = -1;
     h->speed = h->speed_before = 1;
+    h->inv_x = h->inv_y = h->char_x = h->char_y = -1.0f;
 }
 
 void hud_look(Hud *h, u8 kind, u32 index)
@@ -423,7 +446,7 @@ static bool close_hot(const Layout *L, f32 x, f32 y, f32 w) { return inside(L->m
 bool hud_input(Hud *h, const Input *in, HudWorld *w)
 {
     Squad *sq = w->squad;
-    Layout L = layout(in);
+    Layout L = layout(h, in);
     bool lmb = in->mouse_pressed[MOUSE_LEFT], rmb = in->mouse_pressed[MOUSE_RIGHT];
     bool lmb_up = h->lmb_was && !in->mouse_down[MOUSE_LEFT];
     bool shift = in->key_down[KEY_SHIFT];
@@ -455,10 +478,25 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
         }
     }
 
-    // Окна
+    // Окна: тянут за шапку
+    if (h->win_drag) {
+        if (in->mouse_down[MOUSE_LEFT]) {
+            f32 *x = h->win_drag == 1 ? &h->inv_x : &h->char_x, *y = h->win_drag == 1 ? &h->inv_y : &h->char_y;
+            *x = L.mx - h->grab_x;
+            *y = L.my - h->grab_y;
+            win_place(x, y, h->win_drag == 1 ? INV_WIN_W : CHAR_WIN_W, h->win_drag == 1 ? INV_WIN_H : CHAR_WIN_H, L.w, L.h);
+        } else {
+            h->win_drag = 0;
+        }
+        return true;
+    }
     if (h->win_inv && inside(L.mx, L.my, L.iwx, L.iwy, INV_WIN_W, INV_WIN_H)) {
         over = true;
-        if (lmb && close_hot(&L, L.iwx, L.iwy, INV_WIN_W)) {
+        if (lmb && !h->held.kind && !close_hot(&L, L.iwx, L.iwy, INV_WIN_W) && L.my < L.iwy + WIN_HEAD_H) {
+            h->win_drag = 1;
+            h->grab_x = L.mx - L.iwx;
+            h->grab_y = L.my - L.iwy;
+        } else if (lmb && close_hot(&L, L.iwx, L.iwy, INV_WIN_W)) {
             if (drop_held(h, sq)) h->win_inv = false;
         } else if (h->look_kind == LOOK_SQUAD && h->look < sq->count) {
             inventory_input(h, &L, &sq->sheet[h->look], lmb, rmb);
@@ -467,7 +505,13 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
     }
     if (h->win_char && inside(L.mx, L.my, L.cwx, L.cwy, CHAR_WIN_W, CHAR_WIN_H)) {
         over = true;
-        if (lmb && close_hot(&L, L.cwx, L.cwy, CHAR_WIN_W)) h->win_char = false;
+        if (lmb && close_hot(&L, L.cwx, L.cwy, CHAR_WIN_W)) {
+            h->win_char = false;
+        } else if (lmb && L.my < L.cwy + WIN_HEAD_H) {
+            h->win_drag = 2;
+            h->grab_x = L.mx - L.cwx;
+            h->grab_y = L.my - L.cwy;
+        }
         lmb = rmb = false;
     }
 
@@ -484,23 +528,23 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
     }
 
     // Панель выбранного: режим шага и строй
-    if (has_look && inside(L.mx, L.my, L.sel_x, L.bottom, SEL_W, BOTTOM_H)) {
+    if (has_look && inside(L.bmx, L.bmy, L.sel_x, L.bottom, SEL_W, BOTTOM_H)) {
         over = true;
         if (lmb && h->look_kind == LOOK_SQUAD) {
             for (u32 g = 0; g < GAIT_COUNT; g++) {
                 f32 x, y, bw;
                 gait_btn_rect(&L, g, &x, &y, &bw);
-                if (inside(L.mx, L.my, x, y, bw, 13)) squad_set_gait(sq, (Gait)g);
+                if (inside(L.bmx, L.bmy, x, y, bw, 13)) squad_set_gait(sq, (Gait)g);
             }
             f32 fx, fy;
             formation_btn_rect(&L, &fx, &fy);
-            if (inside(L.mx, L.my, fx, fy, 70, 13)) sq->formation = !sq->formation;
+            if (inside(L.bmx, L.bmy, fx, fy, 70, 13)) sq->formation = !sq->formation;
         }
         lmb = false;
     }
 
     // Кнопки окон
-    if (inside(L.mx, L.my, L.btn_x, L.bottom, BTN_W, 2 * BTN_H + 4)) {
+    if (inside(L.mx, L.my, L.btn_x, L.btn_y, BTN_W, 2 * BTN_H + 4)) {
         over = true;
         if (lmb && has_look) {
             if (inside(L.mx, L.my, L.btn_x, win_btn_y(&L, 0), BTN_W, BTN_H) && drop_held(h, sq)) h->win_inv = !h->win_inv;
@@ -511,7 +555,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
 
     // Отряд: клик — выбрать, с Shift — добавить, двойной — камера к нему
     for (u32 i = 0; i < sq->count; i++) {
-        if (!inside(L.mx, L.my, card_x(&L, i), L.bottom, CARD_W, BOTTOM_H)) continue;
+        if (!inside(L.bmx, L.bmy, card_x(&L, i), L.bottom, CARD_W, BOTTOM_H)) continue;
         over = true;
         if (!lmb) break;
         if (h->last_click_card == (i32)i && w->time - h->last_click_t < DOUBLE_CLICK_S) h->focus = (i32)i;
@@ -858,11 +902,11 @@ static void draw_selected(const Hud *h, const Layout *L, const HudWorld *w)
         for (u32 g = 0; g < GAIT_COUNT; g++) {
             f32 bx, by, bw;
             gait_btn_rect(L, g, &bx, &by, &bw);
-            button(bx, by, bw, 13, g_gait_key[g], g_gait_btn[g], d.body->gait == g, inside(L->mx, L->my, bx, by, bw, 13));
+            button(bx, by, bw, 13, g_gait_key[g], g_gait_btn[g], d.body->gait == g, inside(L->bmx, L->bmy, bx, by, bw, 13));
         }
         f32 fx, fy;
         formation_btn_rect(L, &fx, &fy);
-        button(fx, fy, 70, 13, "G", "СТРОЙ", w->squad->formation, inside(L->mx, L->my, fx, fy, 70, 13));
+        button(fx, fy, 70, 13, "G", "СТРОЙ", w->squad->formation, inside(L->bmx, L->bmy, fx, fy, 70, 13));
     } else {
         ui_text(tx, y + 74, C_FAINT, "ЧУЖОЙ. ПРИКАЗАМ");
         ui_text(tx, y + 84, C_FAINT, "НЕ ПОДЧИНЯЕТСЯ.");
@@ -882,7 +926,7 @@ static void draw_card(const Hud *h, const HudWorld *w, const Layout *L, u32 i)
     const CharSheet *c = &sq->sheet[i];
     const Player *pl = &sq->body[i];
     f32 x = card_x(L, i), y = L->bottom;
-    bool hot = inside(L->mx, L->my, x, y, CARD_W, BOTTOM_H);
+    bool hot = inside(L->bmx, L->bmy, x, y, CARD_W, BOTTOM_H);
     bool look = h->look_kind == LOOK_SQUAD && h->look == i;
     panel(x, y, CARD_W, BOTTOM_H, NULL, NULL);
     char n[4];
@@ -1072,14 +1116,14 @@ static void draw_character(const Hud *h, const Layout *L, const HudWorld *w)
 
 void hud_draw(const Hud *h, const Input *in, const HudWorld *w)
 {
-    Layout L = layout(in);
+    Layout L = layout(h, in);
     const Squad *sq = w->squad;
 
     // Имя над тем, кто под курсором
     u8 kind;
     u32 idx;
     V3 head;
-    if (!h->drag_live && L.my < L.bottom && pick_at(w, L.mx, L.my, &kind, &idx, &head)) {
+    if (!h->drag_live && L.my < L.bottom_top && pick_at(w, L.mx, L.my, &kind, &idx, &head)) {
         f32 sx, sy;
         LookData d;
         if (project(w->view_proj, v3_add(head, v3(0, 0.3f, 0)), &sx, &sy) && look_data(kind, idx, w, &d)) {
@@ -1100,9 +1144,11 @@ void hud_draw(const Hud *h, const Input *in, const HudWorld *w)
     }
 
     draw_clock(h, &L, w);
+    draw_buttons(h, &L);
+    ui_layer(UI_BOTTOM);
     if (h->look_kind != LOOK_NONE) draw_selected(h, &L, w);
     for (u32 i = 0; i < sq->count; i++) draw_card(h, w, &L, i);
-    draw_buttons(h, &L);
+    ui_layer(UI_TOP);
     if (h->win_char) draw_character(h, &L, w);
     if (h->win_inv) draw_inventory(h, &L, w);
 
