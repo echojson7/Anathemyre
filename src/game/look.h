@@ -18,7 +18,7 @@ extern const char *const g_body_file[BODY_KIND_COUNT];
 extern const V3 g_body_joints[BODY_KIND_COUNT][BONE_COUNT];
 
 // Морфы, порядок как MORPHS в tools/humanconv. Лицо — только местные морфы: нос, разрез глаз, челюсть, губы
-enum { LOOK_FAT, LOOK_LEAN, LOOK_STRONG, LOOK_WEAK, LOOK_OLD, LOOK_NOSE, LOOK_EYES, LOOK_JAW, LOOK_LIPS, LOOK_MORPHS };
+enum { LOOK_FAT, LOOK_LEAN, LOOK_STRONG, LOOK_OLD, LOOK_NOSE, LOOK_EYES, LOOK_JAW, LOOK_LIPS, LOOK_MORPHS };
 
 typedef struct CharLook {
     f32 morph[LOOK_MORPHS];

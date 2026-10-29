@@ -363,6 +363,11 @@ int main(int argc, char **argv)
         if (set.stand_moved) {
             set.stand_moved = false;
             stand_show(stand, set.stand, set.stand_row, &mb, &perm, world_ground, &cam);
+            // --stand N --cam ...: снимок стенда своей камерой (крупно голову и т. п.)
+            if (opt.cam_set && opt.stand > 0) {
+                cam = opt.cam;
+                opt.stand = 0;
+            }
         }
         // Переход между локациями: отряд переносится, камера за ним
         if (set.travel) {
