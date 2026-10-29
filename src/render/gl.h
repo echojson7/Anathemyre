@@ -108,6 +108,8 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, Scissor, (GLint x, GLint y, GLsizei w, GLsizei h)) \
     X(void, CullFace, (GLenum mode)) \
     X(void, DepthFunc, (GLenum func)) \
+    X(void, DepthMask, (GLboolean flag)) \
+    X(void, ColorMask, (GLboolean r, GLboolean g, GLboolean b, GLboolean a)) \
     X(void, PolygonOffset, (GLfloat factor, GLfloat units)) \
     X(const GLubyte *, GetString, (GLenum name)) \
     X(GLenum, GetError, (void)) \

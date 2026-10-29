@@ -18,6 +18,8 @@ out vec3 v_color;
 flat out uint v_mat;
 out vec3 v_local;      // координаты тела (у статики — мира): к ним привязаны квадраты материала
 flat out mat3 v_rot;   // поворот из координат тела в мир
+// Проход глубины и сцена должны дать одну и ту же глубину до бита
+invariant gl_Position;
 
 void main()
 {

@@ -515,7 +515,7 @@ static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
         tris += (f64)(m->index_count / 3) * (f64)(j - i);
         i = j;
     }
-    if (pass >= 2) return;  // портреты в счётчики кадра не идут
+    if (pass >= 2) return;  // портреты и проход глубины в счётчики кадра не идут
     R.stat_draws[pass] += draws;
     R.stat_tris[pass] += tris;
     R.stat_visible[pass] += n;
@@ -643,6 +643,14 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glViewport(0, 0, iw, ih);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    // Сначала только глубина: тяжёлый шейдер материалов затем считает каждый пиксель один раз
+    glUseProgram(R.prog_shadow);
+    glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, vp.m);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    draw_insts(g_inst[1], n_scene, base_scene, 2);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
     glUseProgram(R.prog_scene);
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, vp.m);
     glUniformMatrix4fv(U_LIGHT_VP, 1, GL_FALSE, light_vp.m);
@@ -655,6 +663,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform1f(U_TEXEL, rs->pixel ? 1.0f : 0.0f);
     glBindTextureUnit(0, R.shadow_tex);
     draw_insts(g_inst[1], n_scene, base_scene, 1);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
     if (timing) mark(2);
 
     // 3. Атмосфера. Сначала объёмный свет в половинном разрешении, затем небо, туман и AO
