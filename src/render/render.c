@@ -861,7 +861,7 @@ void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, cons
 {
     if (slot >= RENDER_PORTRAIT_SLOTS || !R.prog_scene) return;
     size = CLAMP(size, 8, RENDER_PORTRAIT_PX);
-    // Шейдер сцены без света и тени: чистый цвет материалов
+    // Шейдер сцены со своим неподвижным светом, без солнца и теней мира
     i32 x = (i32)slot * RENDER_PORTRAIT_PX;
     glBindFramebuffer(GL_FRAMEBUFFER, R.portrait.fbo);
     glViewport(x, 0, size, size);
