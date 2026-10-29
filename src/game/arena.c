@@ -46,6 +46,7 @@ void arena_random_fighter(FighterDesc *d, Rng *r, u32 tier)
     if (tier == 2 && rng_f32(r) < 0.2f) d->weapon_q = Q_ANCIENT;
     for (u32 s = 0; s < SLOT_COUNT; s++) d->armor[s] = ARMOR_NONE;
     d->armor[SLOT_TORSO_UNDER] = A_RAGS;
+    d->armor[SLOT_PANTS] = A_PANTS;
     if (tier >= 1) {
         d->armor[SLOT_TORSO_UNDER] = rng_f32(r) < 0.5f ? A_QUILT : A_RAGS;
         d->armor[SLOT_TORSO_ARMOR] = A_JACKET;

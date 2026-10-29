@@ -396,6 +396,7 @@ void mobs_init(Mobs *m, Rng *rng)
             sheet_equip(c, item_slot(it), it, &old);
         }
         sheet_equip(c, SLOT_BACK, item_make(IK_GOODS, G_PACK, Q_WORN, 1), &old);
+        sheet_equip(c, SLOT_PANTS, item_make(IK_ARMOR, A_PANTS, Q_WORN, 1), &old);
         // Разнесены по кругу, у каждого своя точка старта
         u32 at = (i * 7u + 1u) % MOB_ROUTE;
         V2 a = g_route[at], b = g_route[(at + 1) % MOB_ROUTE];

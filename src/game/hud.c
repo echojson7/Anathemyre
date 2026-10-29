@@ -35,7 +35,7 @@
 #define BTN_W      100
 #define BTN_H      16
 #define INV_WIN_W  262
-#define INV_WIN_H  282
+#define INV_WIN_H  305
 #define CHAR_WIN_W 286
 #define CHAR_WIN_H 338
 #define WIN_TOP    48
@@ -48,11 +48,12 @@
 #define DOUBLE_CLICK_S 0.35f
 #define SELECT_RING_R 0.48f  // радиус кольца выбора под ногами, как в main.c
 
-// Порядок слотов в окне инвентаря: две колонки по пять
+// Порядок слотов в окне инвентаря: две колонки по шесть
 static const u8 g_slot_order[SLOT_COUNT + 1] = {
-    SLOT_HEAD, SLOT_FACE, SLOT_TORSO_UNDER, SLOT_TORSO_ARMOR, SLOT_HANDS,
-    SLOT_LEGS, SLOT_BELT, SLOT_FEET, SLOT_BACK, SLOT_WEAPON,
+    SLOT_HEAD, SLOT_FACE, SLOT_TORSO_UNDER, SLOT_TORSO_ARMOR, SLOT_HANDS, SLOT_BELT,
+    SLOT_PANTS, SLOT_LEGS, SLOT_FEET, SLOT_BACK, SLOT_WEAPON,
 };
+#define SLOT_ROWS ((SLOT_COUNT + 2) / 2)
 
 // Схема тела пластинами, руки вдоль тела. Клетки 21x30: x, y, w, h. Лицом к зрителю: правая рука слева
 static const u8 g_tpose[PART_COUNT][4] = {
@@ -132,7 +133,7 @@ static Layout layout(const Hud *h, const Input *in)
     L.sx = L.iwx + 8;
     L.sy = L.iwy + 20;
     L.ix = L.sx;
-    L.iy = L.sy + 5 * (SLOT_H + 3) + 14;
+    L.iy = L.sy + SLOT_ROWS * (SLOT_H + 3) + 14;
     return L;
 }
 

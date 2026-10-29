@@ -28,7 +28,7 @@ enum {
 };
 
 #define SLOT_NONE 255
-#define SLOT_WEAPON SLOT_COUNT  // оружие в руках: отдельно от 9 слотов
+#define SLOT_WEAPON SLOT_COUNT  // оружие в руках: отдельно от слотов одежды
 
 #define INV_W 9
 #define INV_H 6

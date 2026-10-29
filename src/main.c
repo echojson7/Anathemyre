@@ -195,7 +195,7 @@ static M4 squad_look(const Squad *s, u32 i, u8 *gear, u32 *ng)
     const CharSheet *cs = &s->sheet[i];
     CharLook lk;
     look_make(&lk, s->variant[i], 1000u + i, cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
-    *ng += look_hair(&lk, gear + *ng);
+    *ng += look_hair(&lk, gear, *ng);
     return look_matrix(&lk, s->variant[i]);
 }
 
@@ -329,7 +329,7 @@ static void crowd_looks(const Crowd *c, SlotLook *sl)
                   1.8f * o->height, 30.0f + 25.0f * sinf(o->seed * 2.1f));
         o->look = look_matrix(&lk, o->variant);
         o->ngear = (u8)gear_random(c->gear_seed[i], o->gear);
-        o->ngear += (u8)look_hair(&lk, o->gear + o->ngear);
+        o->ngear += (u8)look_hair(&lk, o->gear, o->ngear);
     }
 }
 
@@ -702,7 +702,7 @@ int main(int argc, char **argv)
     u32 human_count = 0;
     M4 *human_bones = ARENA_PUSH_ARRAY(&perm, M4, HUMAN_N * RENDER_MAX_BONES);
     // Левее в том же ряду: разная внешность (морфы и оттенки) на сетках с LOD
-    enum { LOOKS_N = 12 };
+    enum { LOOKS_N = GEAR_COUNT + 1 };
     M4 *looks_bones = ARENA_PUSH_ARRAY(&perm, M4, LOOKS_N * RENDER_MAX_BONES);
     for (u32 j = 0; j < LOOKS_N; j++) {
         f32 x = -1.0f - 0.75f * (f32)j;
@@ -803,7 +803,7 @@ int main(int argc, char **argv)
         look_make(&lk, o->variant, 2000u + i, cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
         o->look = look_matrix(&lk, o->variant);
         o->ngear = (u8)gear_from_sheet(cs, o->gear);
-        o->ngear += (u8)look_hair(&lk, o->gear + o->ngear);
+        o->ngear += (u8)look_hair(&lk, o->gear, o->ngear);
     }
     for (u32 i = 0; i < folk->count; i++) {
         SlotLook *o = &slot_look[folk->body[i].slot];
@@ -813,7 +813,7 @@ int main(int argc, char **argv)
         o->width = 1.0f + 0.08f * sinf(o->seed * 3.17f + 1.0f);
         o->look = folk_look[i];
         o->ngear = (u8)gear_random(i * 977u + 31u, o->gear);
-        o->ngear += (u8)look_hair(&folk_lk[i], o->gear + o->ngear);
+        o->ngear += (u8)look_hair(&folk_lk[i], o->gear, o->ngear);
     }
     PointLight *lights = ARENA_PUSH_ARRAY(&perm, PointLight, TORCH_LIGHTS_MAX);
     // Звук: слушатель у камеры, шаги, бой поля и арены. Без звука снимки кадров и --mute
@@ -1210,7 +1210,7 @@ int main(int argc, char **argv)
             look_make(&lk, kind, 2000u + i, cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
             u8 gear[GEAR_MAX_WORN];
             u32 ng = gear_from_sheet(cs, gear);
-            ng += look_hair(&lk, gear + ng);
+            ng += look_hair(&lk, gear, ng);
             M4 *mb_bones = &mob_bones[i * RENDER_MAX_BONES];
             if (!pose) {
                 items[n++] = (DrawItem){ .mesh = &body_mesh[kind], .bones = mb_bones };
@@ -1283,9 +1283,9 @@ int main(int argc, char **argv)
             const M4 *lb = looks_bones + j * RENDER_MAX_BONES;
             const GpuMesh *row = gear_mesh + (j % BODY_KINDS) * GEAR_ROW;
             items[n++] = (DrawItem){ .mesh = &body_mesh[j % BODY_KINDS], .bones = lb };
-            // И причёски по кругу, кроме худого: он бритый
+            // И причёски по кругу, кроме худого (он бритый) и тех, кто в кожухе
             u8 cut = (u8)(GEAR_COUNT + (j / BODY_KINDS) % (j % BODY_KINDS == BODY_FEMALE ? 4u : 3u));
-            if (j % BODY_KINDS != BODY_THIN) n += push_gear(items + n, row, &cut, 1, lb);
+            if (j % BODY_KINDS != BODY_THIN && j != GEAR_BUCKET && j < GEAR_COUNT) n += push_gear(items + n, row, &cut, 1, lb);
             n += j < GEAR_COUNT ? push_gear(items + n, row, &one, 1, lb) : push_gear(items + n, row, kit, ARRAY_COUNT(kit), lb);
         }
         V3 look_pos;
@@ -1341,7 +1341,7 @@ int main(int argc, char **argv)
                 u32 ng = gear_from_armor(d->armor, gear);
                 CharLook lk;
                 M4 lm = arena_view_look(arena, k, &lk);
-                ng += look_hair(&lk, gear + ng);
+                ng += look_hair(&lk, gear, ng);
                 portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, &body_mesh[k % BODY_KINDS], &weapon_mesh[d->weapon],
                          d->weapon, seed, d->height / 1.8f, 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), lm,
                          gear_mesh + (k % BODY_KINDS) * GEAR_ROW, gear, ng, pb);
