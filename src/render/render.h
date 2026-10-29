@@ -51,6 +51,8 @@ void render_shutdown(void);
 bool render_reload_shaders(void);
 bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb);
 void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const RenderSettings *rs, i32 win_w, i32 win_h);
+// Программа из двух файлов data/shaders (для слоёв поверх сцены: интерфейс)
+u32  render_program(const char *vs_file, const char *fs_file);
 // RGB, снизу вверх, размер окна
 void render_read_pixels(u8 *rgb, i32 w, i32 h);
 

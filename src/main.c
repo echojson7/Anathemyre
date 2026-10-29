@@ -12,10 +12,12 @@
 #include "game/arena_view.h"
 #include "game/battle.h"
 #include "game/character.h"
-#include "game/player.h"
+#include "game/hud.h"
+#include "game/squad.h"
 #include "game/testroom.h"
 #include "platform/platform.h"
 #include "render/render.h"
+#include "render/ui.h"
 #include "world/sky.h"
 
 #define CHAR_VARIANTS 4
@@ -41,6 +43,7 @@ typedef struct Options {
     bool        no_vsync;
     bool        follow;      // камера следует за своим персонажем
     f32         tod;         // время суток на старте: 0 полночь, 0.5 полдень
+    bool        inspect;     // выбрать отряд и открыть осмотр (для снимков)
     u32         arena_bench; // прогнать N боёв арены без окна
     u32         arena_log;   // сколько первых боёв печатать подробно
     u32         battle[2];   // полевой бой: бойцов в каждом отряде
@@ -130,7 +133,7 @@ static bool pick_ground(M4 view_proj, V3 eye, f32 nx, f32 ny, V3 *out)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--follow] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
+    puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
 }
@@ -144,6 +147,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--novsync")) o->no_vsync = true;
         else if (!strcmp(a, "--follow")) o->follow = true;
         else if (!strcmp(a, "--tod") && i + 1 < argc) o->tod = strtof(argv[++i], NULL);
+        else if (!strcmp(a, "--inspect")) o->inspect = true;
         else if (!strcmp(a, "--res") && i + 1 < argc) o->internal_h = atoi(argv[++i]);
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
@@ -230,7 +234,7 @@ int main(int argc, char **argv)
                        )) {
         return 1;
     }
-    if (!render_init(&scratch, data_dir)) {
+    if (!render_init(&scratch, data_dir) || !ui_init()) {
         platform_shutdown();
         return 1;
     }
@@ -284,6 +288,20 @@ int main(int argc, char **argv)
     gpu_mesh_upload(&marker_mesh, &mb);
     perm.used = mark;
 
+    // Кольца под ногами: свой выбранный — бледно-зелёное, осматриваемый чужой — охра
+    GpuMesh ring_mesh[2];
+    for (u32 k = 0; k < 2; k++) {
+        mb_init(&mb, &perm, 600, 1800);
+        mb_set(&mb, k ? v3(0.5f, 0.3f, 0.08f) : v3(0.1f, 0.42f, 0.16f), MAT_EMISSIVE, 0);
+        for (u32 j = 0; j < 20; j++) {
+            f32 a = (f32)j * (2.0f * PI_F / 20.0f);
+            mb_box(&mb, m4_mul(m4_translate(v3(sinf(a) * 0.48f, 0.03f, cosf(a) * 0.48f)),
+                               m4_mul(m4_rot_y(a), m4_scale(v3(0.09f, 0.015f, 0.025f)))));
+        }
+        gpu_mesh_upload(&ring_mesh[k], &mb);
+        perm.used = mark;
+    }
+
     // Арена: те же бои, что в --arena-bench с этим seed, но в реальном времени
     ArenaSession *arena = ARENA_PUSH_ARRAY(&perm, ArenaSession, 1);
     arena_session_init(arena, &perm, opt.seed);
@@ -295,12 +313,19 @@ int main(int argc, char **argv)
 
     Crowd crowd;
     crowd_init(&crowd, &rng, CROWD_SIZE);
-    // Свой персонаж появляется у края зала, лицом к арене
-    Player player;
-    player_init(&player, v3(9.0f, ground_height(9.0f, 22.0f), 22.0f), atan2f(ARENA_CENTER.x - 9.0f, ARENA_CENTER.z - 22.0f));
-    M4 *player_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)2 * RENDER_MAX_BONES);
+    // Свой отряд появляется у края зала, лицом к арене
+    Squad *squad = ARENA_PUSH_ARRAY(&perm, Squad, 1);
+    squad_init(squad, &rng, v3(9.0f, 0.0f, 22.0f), atan2f(ARENA_CENTER.x - 9.0f, ARENA_CENTER.z - 22.0f), ground_height);
+    // На каждого: тело, кольцо, метка цели; плюс кольцо осматриваемого чужого
+    M4 *squad_bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)(SQUAD_MAX * 3 + 1) * RENDER_MAX_BONES);
     M4 *bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)TR_MAX_CHARS * RENDER_MAX_BONES);
-    DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS + 2 + AV_DRAW_ITEMS + 3);
+    DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS + 2 + AV_DRAW_ITEMS + SQUAD_MAX * 4 + 1);
+    Hud hud;
+    hud_init(&hud);
+    if (opt.inspect) {
+        for (u32 i = 0; i < squad->count; i++) squad->selected[i] = true;
+        hud_open_inspect(&hud, LOOK_SQUAD, 0);
+    }
     u8 *shot_buf = NULL;
     if (opt.shot_path) shot_buf = arena_push(&perm, (size_t)opt.width * (size_t)opt.height * 3, 1);
     for (u32 i = 0; i < TR_MAX_CHARS * RENDER_MAX_BONES; i++) bones[i] = m4_identity();
@@ -322,11 +347,12 @@ int main(int argc, char **argv)
     bool day_run = true;
     u32 frame = 0;
 
-    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ПКМ — идти, средняя кнопка и Q/E — поворот, F — следовать за персонажем, F1 — фильтр вкл/выкл, F2 — разрешение, F3 — vsync, F4 — остановить сутки, F5 — шейдеры");
+    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — осмотр, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F2 — разрешение, F3 — vsync, F4 — остановить сутки, F5 — шейдеры");
 
     while (!in.quit) {
         platform_poll(&in);
-        if (in.key_pressed[KEY_ESCAPE]) break;
+        // Esc сначала закрывает окно осмотра
+        if (in.key_pressed[KEY_ESCAPE] && !hud.inspect) break;
         if (in.key_pressed[KEY_F1]) rs.post = !rs.post;
         if (in.key_pressed[KEY_F2]) {
             res_index = (res_index + 1) % ARRAY_COUNT(res_steps);
@@ -356,7 +382,8 @@ int main(int argc, char **argv)
         camera_update(&cam, &in, dt);
         crowd_update(&crowd, &rng, dt);
         arena_view_update(aview, arena, dt);
-        if (opt.follow) cam.target = v3(player.pos.x, 0, player.pos.z);
+        i32 lead = MAX(0, squad_primary(squad));
+        if (opt.follow) cam.target = v3(squad->body[lead].pos.x, 0, squad->body[lead].pos.z);
 
         i32 ww, wh;
         platform_window_size(&ww, &wh);
@@ -369,14 +396,19 @@ int main(int argc, char **argv)
         fv.view = m4_look_at(fv.cam_pos, v3_add(cam.target, v3(0, 1.0f, 0)), v3(0, 1, 0));
         fv.proj = m4_perspective(0.95f, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
 
-        // ПКМ по земле: идти туда
-        if (in.mouse_pressed[MOUSE_RIGHT] && ww > 0 && wh > 0) {
+        ui_begin(ww, wh);
+        HudWorld hw = { .squad = squad, .arena = arena, .aview = aview, .view_proj = m4_mul(fv.proj, fv.view), .time = sim_time };
+        bool ui_busy = hud_input(&hud, &in, &hw);
+        if (hud.focus >= 0) cam.target = v3(squad->body[hud.focus].pos.x, 0, squad->body[hud.focus].pos.z);
+
+        // ПКМ по земле: выбранные идут туда
+        if (in.mouse_pressed[MOUSE_RIGHT] && !ui_busy && ww > 0 && wh > 0) {
             f32 nx = 2.0f * ((f32)in.mouse_x + 0.5f) / (f32)ww - 1.0f;
             f32 ny = 1.0f - 2.0f * ((f32)in.mouse_y + 0.5f) / (f32)wh;
             V3 hit;
-            if (pick_ground(m4_mul(fv.proj, fv.view), fv.cam_pos, nx, ny, &hit)) player_order_move(&player, hit);
+            if (pick_ground(hw.view_proj, fv.cam_pos, nx, ny, &hit)) squad_order_move(squad, hit);
         }
-        player_update(&player, dt, ground_height);
+        squad_update(squad, dt, ground_height);
 
         u32 n = 0;
         items[n++] = (DrawItem){ .mesh = &near_mesh };
@@ -394,19 +426,34 @@ int main(int argc, char **argv)
             items[n++] = (DrawItem){ .mesh = &char_mesh[crowd.variant[i]], .bones = b };
         }
         n += arena_view_draw(aview, arena, sim_time, body_mesh, CHAR_VARIANTS, weapon_mesh, arena_bones, items + n);
-        {
+        for (u32 i = 0; i < squad->count; i++) {
+            const Player *pl = &squad->body[i];
+            const CharSheet *cs = &squad->sheet[i];
+            M4 *b = squad_bones + (size_t)i * 3 * RENDER_MAX_BONES;
             CharPose p = {
-                .pos = player.pos, .heading = player.heading, .phase = player.phase, .walk = player.walk,
-                .time = sim_time, .seed = 7.0f,
+                .pos = pl->pos, .heading = pl->heading, .phase = pl->phase, .walk = pl->walk,
+                .time = sim_time, .seed = 7.0f + (f32)i * 5.3f, .height = cs->d.height / 1.8f,
             };
-            character_pose(&p, NULL, player_bones);
-            items[n++] = (DrawItem){ .mesh = &body_mesh[0], .bones = player_bones };
-            items[n++] = (DrawItem){ .mesh = &weapon_mesh[W_RESSORA], .bones = player_bones };
-            if (player.marker > 0.0f && player.moving) {
-                M4 *mk = player_bones + RENDER_MAX_BONES;
-                mk[0] = m4_translate(player.target);
+            character_pose(&p, NULL, b);
+            items[n++] = (DrawItem){ .mesh = &body_mesh[squad->variant[i] % CHAR_VARIANTS], .bones = b };
+            if (cs->equip[SLOT_WEAPON].kind == IK_WEAPON)
+                items[n++] = (DrawItem){ .mesh = &weapon_mesh[cs->equip[SLOT_WEAPON].id], .bones = b };
+            if (squad->selected[i]) {
+                M4 *rb = b + RENDER_MAX_BONES;
+                rb[0] = m4_translate(pl->pos);
+                items[n++] = (DrawItem){ .mesh = &ring_mesh[0], .bones = rb, .no_shadow = true };
+            }
+            if (pl->marker > 0.0f && pl->moving) {
+                M4 *mk = b + 2 * RENDER_MAX_BONES;
+                mk[0] = m4_translate(pl->target);
                 items[n++] = (DrawItem){ .mesh = &marker_mesh, .bones = mk, .no_shadow = true };
             }
+        }
+        V3 look_pos;
+        if (hud.inspect && hud.look_kind == LOOK_ARENA && hud_arena_pos(aview, arena, hud.look, &look_pos)) {
+            M4 *rb = squad_bones + (size_t)SQUAD_MAX * 3 * RENDER_MAX_BONES;
+            rb[0] = m4_translate(look_pos);
+            items[n++] = (DrawItem){ .mesh = &ring_mesh[1], .bones = rb, .no_shadow = true };
         }
 
         f64 t_submit = time_now();
@@ -424,6 +471,8 @@ int main(int argc, char **argv)
         fv.time = sim_time;
         fv.frame = frame;
         render_frame(&fv, items, n, &rs, ww, wh);
+        hud_draw(&hud, &in, &hw);
+        ui_end();
         f64 t_swap = time_now();
         cpu_submit += t_swap - t_submit;
 
@@ -459,6 +508,7 @@ int main(int argc, char **argv)
         }
     }
 
+    ui_shutdown();
     render_shutdown();
     platform_shutdown();
     arena_free(&scratch);

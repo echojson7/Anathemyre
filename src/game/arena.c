@@ -125,6 +125,11 @@ const char *arena_name(const ArenaSession *s, u32 fighter)
     return fighter < s->n ? g_names[s->roster[s->idx[fighter]].name] : "?";
 }
 
+const char *arena_roster_name(const ArenaSession *s, u32 roster)
+{
+    return roster < ARENA_ROSTER ? g_names[s->roster[roster].name] : "?";
+}
+
 static void print_event(const ArenaSession *s, const CombatEvent *e)
 {
     char tb[16];

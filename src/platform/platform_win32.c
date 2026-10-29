@@ -71,6 +71,7 @@ static Key map_key(WPARAM vk)
     case 'E': return KEY_E;
     case 'R': return KEY_R;
     case 'F': return KEY_F;
+    case 'I': return KEY_I;
     case VK_UP: return KEY_UP;
     case VK_DOWN: return KEY_DOWN;
     case VK_LEFT: return KEY_LEFT;
