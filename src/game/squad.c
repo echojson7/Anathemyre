@@ -62,6 +62,7 @@ void squad_init(Squad *s, Rng *rng, V3 origin, f32 heading, GroundFn ground)
         f32 x = origin.x + (f32)(i % 2) * 1.2f - 0.6f, z = origin.z - (f32)(i / 2) * 1.3f;
         player_init(&s->body[i], v3(x, ground(x, z), z), heading);
     }
+    s->formation = true;
     // Старая рана: левая рука в бинтах, крови меньше
     CharSheet *hurt = &s->sheet[2];
     hurt->d.hp[PART_ARM_L] = 22.0f;
@@ -86,6 +87,8 @@ void squad_order_move(Squad *s, V3 target)
     f32 len = sqrtf(fwd.x * fwd.x + fwd.z * fwd.z);
     fwd = len > 0.01f ? v3_mul(fwd, 1.0f / len) : v3(0, 0, 1);
     V3 right = v3(fwd.z, 0, -fwd.x);
+    u16 group = ++s->next_group;
+    if (!group) group = ++s->next_group;
     u32 k = 0;
     for (u32 i = 0; i < s->count; i++) {
         if (!s->selected[i]) continue;
@@ -93,14 +96,54 @@ void squad_order_move(Squad *s, V3 target)
         f32 col = (f32)(k % 3) - 0.5f * (f32)(in_row - 1);
         V3 p = v3_add(target, v3_add(v3_mul(right, col * FORMATION_STEP), v3_mul(fwd, -(f32)row * FORMATION_STEP)));
         player_order_move(&s->body[i], p);
+        s->body[i].group = group;
         // Метку цели показывает только первый
         if (k) s->body[i].marker = 0.0f;
         k++;
     }
 }
 
+void squad_set_gait(Squad *s, Gait g)
+{
+    for (u32 i = 0; i < s->count; i++)
+        if (s->selected[i]) s->body[i].gait = (u8)g;
+}
+
+static f32 leg_factor(const FighterDesc *d, u32 part)
+{
+    if (d->severed & (1u << part)) return 0.2f;
+    if (d->fracture & (1u << part)) return 0.4f;
+    return 0.5f + 0.5f * clampf(d->hp[part] / g_part_hp[part], 0.0f, 1.0f);
+}
+
+f32 squad_member_speed(const Squad *s, u32 i, Gait g)
+{
+    const CharSheet *c = &s->sheet[i];
+    // Хромает на худшую ногу
+    f32 v = g_gait_speed[g] * fminf(leg_factor(&c->d, PART_LEG_L), leg_factor(&c->d, PART_LEG_R));
+    // Атлетика решает на бегу, шагом все ходят одинаково
+    if (g != GAIT_WALK) v *= 0.85f + 0.003f * c->d.skill[SK_ATHLETICS];
+    // Ноша: до предела немного тормозит, сверх предела — сильно
+    f32 over = sheet_load(c) / fmaxf(1.0f, sheet_carry_max(c));
+    v *= 1.0f - 0.15f * clampf(over, 0.0f, 1.0f);
+    if (over > 1.0f) v *= fmaxf(0.3f, 2.0f - over);
+    return fmaxf(0.3f, v);
+}
+
 void squad_update(Squad *s, f32 dt, GroundFn ground)
 {
+    for (u32 i = 0; i < s->count; i++) s->body[i].vmax = squad_member_speed(s, i, (Gait)s->body[i].gait);
+    // Строй: все идущие по одному приказу держат темп самого медленного из них
+    if (s->formation) {
+        f32 pace[SQUAD_MAX];
+        for (u32 i = 0; i < s->count; i++) {
+            pace[i] = s->body[i].vmax;
+            if (!s->body[i].moving) continue;
+            for (u32 j = 0; j < s->count; j++)
+                if (s->body[j].moving && s->body[j].group == s->body[i].group) pace[i] = fminf(pace[i], s->body[j].vmax);
+        }
+        for (u32 i = 0; i < s->count; i++) s->body[i].vmax = pace[i];
+    }
     for (u32 i = 0; i < s->count; i++) player_update(&s->body[i], dt, ground);
 }
 

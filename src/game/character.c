@@ -410,23 +410,32 @@ static f32 smooth01(f32 t)
 }
 
 // Траектория стопы за цикл: опора (стопа стоит на земле) и перенос (дуга вперёд)
-static void foot_track(f32 q, f32 *z, f32 *lift, f32 *pitch)
+static void foot_track(f32 q, f32 run, f32 stance, f32 stride, f32 *z, f32 *lift, f32 *pitch)
 {
-    const f32 stance = 0.6f;
-    const f32 half = stance * CHAR_STRIDE * 0.5f;
+    const f32 half = stance * stride * 0.5f;
+    f32 wl, wp, rl, rp;
     if (q < stance) {
         f32 t = q / stance;
         *z = half - 2.0f * half * t;
         f32 heel = smooth01((t - 0.7f) / 0.3f);
-        *lift = 0.06f * heel;
-        // Удар пяткой (носок вверх) -> плоская стопа -> подъём пятки (носок вниз)
-        *pitch = -0.25f * (1.0f - smooth01(t / 0.15f)) + 0.45f * heel;
+        // Шаг: удар пяткой (носок вверх) -> плоская стопа -> подъём пятки (носок вниз)
+        wl = 0.06f * heel;
+        wp = -0.25f * (1.0f - smooth01(t / 0.15f)) + 0.45f * heel;
+        // Бег: ставит стопу плоско, сразу толкается носком
+        rl = 0.05f * smooth01((t - 0.5f) / 0.5f);
+        rp = 0.55f * smooth01((t - 0.3f) / 0.7f);
     } else {
         f32 t = (q - stance) / (1.0f - stance);
         *z = -half + 2.0f * half * smooth01(t);
-        *lift = 0.06f * (1.0f - t) + 0.10f * sinf(PI_F * t);
-        *pitch = 0.45f * (1.0f - smooth01(t * 1.6f)) - 0.25f * smooth01((t - 0.6f) / 0.4f);
+        wl = 0.06f * (1.0f - t) + 0.10f * sinf(PI_F * t);
+        wp = 0.45f * (1.0f - smooth01(t * 1.6f)) - 0.25f * smooth01((t - 0.6f) / 0.4f);
+        // Бег: пятка захлёстывает назад и вверх, затем колено выносит голень вперёд
+        *z -= run * 0.22f * sinf(PI_F * clampf(t / 0.6f, 0.0f, 1.0f));
+        rl = 0.05f * (1.0f - t) + 0.40f * sinf(PI_F * powf(t, 0.7f));
+        rp = 0.7f * (1.0f - smooth01(t * 1.4f)) - 0.1f * smooth01((t - 0.7f) / 0.3f);
     }
+    *lift = lerpf(wl, rl, run);
+    *pitch = lerpf(wp, rp, run);
 }
 
 // ---------------------------------------------------------------- позы боя
@@ -511,7 +520,11 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     static const CharAction none = { .down_dir = 1.0f };
     const CharAction *a = act ? act : &none;
     f32 w = clampf(p->walk, 0.0f, 1.0f);
+    f32 run = clampf(p->run, 0.0f, 1.0f);
     f32 ph = p->phase - floorf(p->phase);
+    // Доля опоры за цикл: шаг 0.6, бег 0.27 (между опорами полёт)
+    f32 stance = lerpf(0.6f, 0.27f, run);
+    f32 mid = stance * 0.5f;
     f32 tau = 2.0f * PI_F;
     f32 breathe = sinf(p->time * 1.6f + p->seed) * 0.5f + 0.5f;
     f32 guard = clampf(a->guard, 0.0f, 1.0f);
@@ -519,9 +532,10 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     f32 down = clampf(a->down, 0.0f, 1.0f);
     f32 crawl = clampf(a->crawl, 0.0f, 1.0f);
 
-    // Таз: проседает между шагами, качается к опорной ноге; в стойке ниже, на коленях у земли
-    f32 bob = -0.05f + 0.022f * cosf(2.0f * tau * (ph - 0.3f));
-    f32 sway = 0.024f * cosf(tau * (ph - 0.3f));
+    // Таз: на шаге выше всего над опорной ногой, на беге ниже всего (пружинит);
+    // качается к опорной ноге; в стойке ниже, на коленях у земли
+    f32 bob = lerpf(-0.05f, -0.10f, run) + lerpf(0.022f, -0.045f, run) * cosf(2.0f * tau * (ph - mid));
+    f32 sway = 0.024f * (1.0f - 0.6f * run) * cosf(tau * (ph - mid));
     f32 idle_shift = 0.018f * sinf(p->time * 0.35f + p->seed);
     f32 dy = w * bob + (1.0f - w) * (-0.012f - 0.004f * breathe) - 0.06f * guard;
     f32 dx = w * sway + (1.0f - w) * idle_shift;
@@ -536,10 +550,12 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     f32 pelvis_yaw = w * 0.07f * sinf(tau * ph);
 
     // Верх тела: ходьба, поверх неё стойка, удар, блок
-    f32 swing = 0.32f * cosf(tau * ph) * w;
+    // На бегу руки согнуты в локтях и машут шире; правая с оружием сгибается меньше
+    f32 swing = 0.32f * (1.0f + 0.9f * run) * cosf(tau * ph) * w;
+    f32 elbow = 1.25f * run * w;
     UpperKey rest = {
-        { -swing * 0.6f, 0.0f, -0.08f - 0.02f * breathe, -0.38f, 0.0f, 0.0f },
-        { swing, 0.0f, 0.08f + 0.02f * breathe, -0.22f - 0.35f * fmaxf(0.0f, -swing / 0.32f) * w, 0.0f, 0.0f },
+        { -swing * 0.6f, 0.0f, -0.08f - 0.02f * breathe, -0.38f - 0.5f * elbow, 0.0f, 0.0f },
+        { swing, 0.0f, 0.08f + 0.02f * breathe, -0.22f - 0.35f * fmaxf(0.0f, -cosf(tau * ph)) * w - elbow, 0.0f, 0.0f },
         0.0f, 0.0f,
     };
     UpperKey k = upper_from_action(a, rest);
@@ -557,7 +573,7 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     M4 local[BONE_COUNT];
     for (int i = 0; i < BONE_COUNT; i++) local[i] = m4_identity();
     local[BONE_PELVIS] = m4_rot_y(pelvis_yaw);
-    local[BONE_SPINE] = m4_mul(m4_rot_x(0.08f * w + 0.02f * breathe + k.lean), m4_rot_y(-pelvis_yaw * 1.8f + k.twist));
+    local[BONE_SPINE] = m4_mul(m4_rot_x((0.08f + 0.14f * run) * w + 0.02f * breathe + k.lean), m4_rot_y(-pelvis_yaw * 1.8f + k.twist));
     f32 look = sinf(p->time * 0.31f + p->seed * 3.0f) * 0.55f * (1.0f - w) * (1.0f - guard) * (1.0f - kneel);
     f32 head_x = -0.06f * w + 0.1f * (1.0f - w) - 0.4f * clampf(a->stagger, 0.0f, 1.0f) + 0.35f * kneel;
     // Голова держит противника: скрутку корпуса гасит
@@ -578,7 +594,7 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         f32 q = ph + (left ? 0.0f : 0.5f);
         q -= floorf(q);
         f32 z, lift, pitch;
-        foot_track(q, &z, &lift, &pitch);
+        foot_track(q, run, stance, char_stride(run), &z, &lift, &pitch);
         // В стойке левая нога впереди, правая сзади, ступни шире
         f32 idle_z = lerpf(left ? 0.06f : -0.05f, left ? 0.20f : -0.18f, guard);
         f32 fx = (left ? 1.0f : -1.0f) * (HIP_X + 0.015f + 0.05f * guard);
