@@ -25,6 +25,7 @@
 // Арена у зала, перед его открытым краем
 #define ARENA_CENTER v3(14.0f, 0.0f, 34.0f)
 #define ARENA_SHOW_AFTER_BOUT_S 12.0f
+#define CAM_FOV 0.95f  // по вертикали, рад
 #define DAY_LENGTH_S 120.0f  // полные сутки, с; пока быстро, чтобы смену было видно
 
 typedef struct RtsCamera {
@@ -36,7 +37,7 @@ typedef struct Options {
     const char *shot_path;   // снять кадр в PPM и выйти
     i32         shot_frames;
     i32         width, height;
-    i32         internal_h;
+    f32         px_per_m;    // внутренних пикселей на метр мира у точки, куда смотрит камера
     bool        cam_set;
     RtsCamera   cam;
     u64         seed;
@@ -134,7 +135,7 @@ static bool pick_ground(M4 view_proj, V3 eye, f32 nx, f32 ny, V3 *out)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--fps N] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
+    puts("anathemyre [--size W H] [--px N] [--seed N] [--novsync] [--fps N] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
 }
@@ -150,7 +151,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--follow")) o->follow = true;
         else if (!strcmp(a, "--tod") && i + 1 < argc) o->tod = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--inspect")) o->inspect = true;
-        else if (!strcmp(a, "--res") && i + 1 < argc) o->internal_h = atoi(argv[++i]);
+        else if (!strcmp(a, "--px") && i + 1 < argc) o->px_per_m = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--battle-bench") && i + 2 < argc) {
@@ -205,7 +206,7 @@ int main(int argc, char **argv)
     platform_preinit();
     time_init();
     Options opt = {
-        .tod = 0.31f, .shot_frames = 90, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337, .fps_cap = 240,
+        .tod = 0.31f, .shot_frames = 90, .width = 1280, .height = 720, .px_per_m = 20.0f, .seed = 1337, .fps_cap = 240,
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
@@ -333,9 +334,11 @@ int main(int argc, char **argv)
     for (u32 i = 0; i < TR_MAX_CHARS * RENDER_MAX_BONES; i++) bones[i] = m4_identity();
 
     RtsCamera cam = opt.cam;
-    RenderSettings rs = { .internal_h = opt.internal_h, .post = true };
-    static const i32 res_steps[] = { 270, 360, 540, 720 };
-    u32 res_index = 1;
+    RenderSettings rs = { .post = true };
+    // Размер пикселя в мире: крупнее → мельче
+    static const f32 px_steps[] = { 14.0f, 20.0f, 28.0f, 40.0f };
+    u32 px_index = 1;
+    f32 px_per_m = opt.px_per_m;
 
     Input in;
     memset(&in, 0, sizeof in);
@@ -352,7 +355,7 @@ int main(int argc, char **argv)
     bool day_run = true;
     u32 frame = 0;
 
-    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — осмотр, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F2 — разрешение, F3 — vsync / предел кадров / без предела, F4 — остановить сутки, F5 — шейдеры");
+    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — осмотр, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F2 — размер пикселя, F3 — vsync / предел кадров / без предела, F4 — остановить сутки, F5 — шейдеры");
 
     while (!in.quit) {
         platform_poll(&in);
@@ -360,8 +363,9 @@ int main(int argc, char **argv)
         if (in.key_pressed[KEY_ESCAPE] && !hud.inspect) break;
         if (in.key_pressed[KEY_F1]) rs.post = !rs.post;
         if (in.key_pressed[KEY_F2]) {
-            res_index = (res_index + 1) % ARRAY_COUNT(res_steps);
-            rs.internal_h = res_steps[res_index];
+            px_index = (px_index + 1) % ARRAY_COUNT(px_steps);
+            px_per_m = px_steps[px_index];
+            log_info("ПИКСЕЛЬ: %.0f на метр", (f64)px_per_m);
         }
         if (in.key_pressed[KEY_F5]) render_reload_shaders();
         if (in.key_pressed[KEY_F4]) {
@@ -401,7 +405,7 @@ int main(int argc, char **argv)
         FrameView fv;
         fv.cam_pos = camera_eye(&cam);
         fv.view = m4_look_at(fv.cam_pos, v3_add(cam.target, v3(0, 1.0f, 0)), v3(0, 1, 0));
-        fv.proj = m4_perspective(0.95f, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
+        fv.proj = m4_perspective(CAM_FOV, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
 
         ui_begin(ww, wh);
         HudWorld hw = { .squad = squad, .arena = arena, .aview = aview, .view_proj = m4_mul(fv.proj, fv.view), .time = sim_time };
@@ -477,6 +481,8 @@ int main(int argc, char **argv)
         fv.shadow_center = cam.target;
         fv.time = sim_time;
         fv.frame = frame;
+        // Пиксель постоянного размера в метрах: высота кадра в пикселях растёт с дистанцией камеры
+        rs.internal_h = (i32)(px_per_m * 2.0f * tanf(CAM_FOV * 0.5f) * cam.dist + 0.5f);
         render_frame(&fv, items, n, &rs, ww, wh);
         hud_draw(&hud, &in, &hw);
         ui_end();
