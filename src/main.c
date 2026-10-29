@@ -55,6 +55,7 @@ typedef struct Options {
     bool        move_bench;  // проверка разворотов без окна
     const char *move_trace;
     bool        no_pixel;    // кадр без пиксельности (сравнение моделей)
+    bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
 } Options;
@@ -148,8 +149,9 @@ static void bench_report(Bench *b, f64 seconds, i32 ww, i32 wh)
     else
         log_stat("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | GPU: драйвер не отдаёт метки времени",
                  b->cpu_logic * k, b->cpu_submit * k, b->cpu_swap * k);
-    log_stat("ЗАМЕР: сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk",
-             st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0);
+    log_stat("ЗАМЕР: сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk | шейдинг блоками: %s",
+             st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0,
+             st.vrs ? "да" : "нет");
 }
 
 static V3 camera_eye(const RtsCamera *c)
@@ -237,6 +239,7 @@ static bool parse_args(int argc, char **argv, Options *o)
             if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
         } else if (!strcmp(a, "--humans")) o->humans = true;
         else if (!strcmp(a, "--no-pixel")) o->no_pixel = true;
+        else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
@@ -441,7 +444,7 @@ int main(int argc, char **argv)
     for (u32 i = 0; i < TR_MAX_CHARS * RENDER_MAX_BONES; i++) bones[i] = m4_identity();
 
     RtsCamera cam = opt.cam;
-    RenderSettings rs = { .post = true, .pixel = !opt.no_pixel };
+    RenderSettings rs = { .post = true, .pixel = !opt.no_pixel, .vrs = !opt.no_vrs };
 
     Input in;
     memset(&in, 0, sizeof in);
@@ -546,6 +549,7 @@ int main(int argc, char **argv)
             char val[32];
             hud_debug_check(&hud, "ФИЛЬТР КАДРА", &rs.post);
             hud_debug_check(&hud, "ПИКСЕЛЬНОСТЬ", &rs.pixel);
+            hud_debug_check(&hud, "ШЕЙДИНГ БЛОКАМИ", &rs.vrs);
             if (hud_debug_check(&hud, "VSYNC", &vsync)) {
                 platform_set_vsync(vsync);
                 log_info("VSYNC: %s", vsync ? "вкл" : "выкл");
