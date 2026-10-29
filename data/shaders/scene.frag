@@ -92,8 +92,10 @@ void main()
     // одинаково на всех поверхностях. Где квадрат мельче пикселя кадра, пикселем служит пиксель кадра
     vec3 Nl = normalize(transpose(v_rot) * N);
     float mpp = max(length(dFdx(v_local)), length(dFdy(v_local)));
-    bool snap = mpp < TEXEL;
-    vec3 dl = snap ? texel_snap(v_local, Nl, TEXEL) : vec3(0.0);
+    // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
+    float base = u_skinned != 0 ? TEXEL * 0.5 : TEXEL;
+    bool snap = mpp < base;
+    vec3 dl = snap ? texel_snap(v_local, Nl, base) : vec3(0.0);
     vec3 P = v_local + dl;           // материал: прилипает к телу
     vec3 W = v_world + v_rot * dl;   // свет и тени
     vec3 V = normalize(u_cam_pos - W);
@@ -183,7 +185,7 @@ void main()
     }
 
     // Разброс яркости от квадрата к квадрату: поверхность читается как текстура низкого разрешения
-    if (snap) albedo *= 0.95 + 0.10 * hash13(floor(P / TEXEL) + float(v_mat) * 17.0);
+    if (snap) albedo *= 0.95 + 0.10 * hash13(floor(P / base) + float(v_mat) * 17.0);
 
     float ndl = max(dot(N, L), 0.0);
     float sh = ndl > 0.0 ? sun_shadow(W, N) : 0.0;
