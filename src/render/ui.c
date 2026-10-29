@@ -126,14 +126,27 @@ static const GlyphArt g_font[] = {
     { 0xE003, "##.##|#...#|.#.#.|..#..|.#.#.|#...#|##.##", 0 },
 };
 
+// Мелкие цифры 3x5 для чисел на схемах и полосках
+static const GlyphArt g_small[] = {
+    { '0', "###|#.#|#.#|#.#|###", 0 }, { '1', ".#.|##.|.#.|.#.|###", 0 }, { '2', "##.|..#|.#.|#..|###", 0 },
+    { '3', "##.|..#|.#.|..#|##.", 0 }, { '4', "#.#|#.#|###|..#|..#", 0 }, { '5', "###|#..|##.|..#|##.", 0 },
+    { '6', ".##|#..|###|#.#|###", 0 }, { '7', "###|..#|.#.|.#.|.#.", 0 }, { '8', "###|#.#|###|#.#|###", 0 },
+    { '9', "###|#.#|###|..#|##.", 0 }, { '/', "..#|..#|.#.|#..|#..", 0 }, { '-', "...|...|###|...|...", 0 },
+    { '.', "...|...|...|...|.#.", 0 }, { '%', "#.#|..#|.#.|#..|#.#", 0 }, { '+', "...|.#.|###|.#.|...", 0 },
+    { ':', "...|.#.|...|.#.|...", 0 },
+};
+
 #define FONT_COUNT ARRAY_COUNT(g_font)
-_Static_assert(FONT_COUNT < (ATLAS / CELL) * (ATLAS / CELL), "шрифт не влезает в атлас");
+#define SMALL_COUNT ARRAY_COUNT(g_small)
+_Static_assert(FONT_COUNT + SMALL_COUNT < (ATLAS / CELL) * (ATLAS / CELL), "шрифт не влезает в атлас");
 
 static struct {
     u32 prog, vao, vbo, tex;
     u8  lut_ascii[128];   // номер буквы + 1, 0 — нет
     u8  lut_cyr[0x60];    // U+0400..U+045F
     i32 scale, win_w, win_h;
+    u32 image;            // текстура для ui_image
+    f32 time;
     u32 count;            // вершин в кадре
     UiVertex v[UI_MAX_QUADS * 6];
 } U;
@@ -166,6 +179,12 @@ bool ui_init(void)
         for (u32 y = 0; y < UI_GLYPH_H; y++)
             for (u32 x = 0; x < UI_GLYPH_W; x++)
                 if (art[y * 6 + x] == '#') pix[(cy + y) * ATLAS + cx + x] = 255;
+    }
+    for (u32 i = 0; i < SMALL_COUNT; i++) {
+        u32 k = FONT_COUNT + i, cx = (k % (ATLAS / CELL)) * CELL, cy = (k / (ATLAS / CELL)) * CELL;
+        for (u32 y = 0; y < UI_SMALL_H; y++)
+            for (u32 x = 0; x < UI_SMALL_W; x++)
+                if (g_small[i].art[y * 4 + x] == '#') pix[(cy + y) * ATLAS + cx + x] = 255;
     }
     pix[ATLAS * ATLAS - 1] = 255;  // сплошная заливка
 
@@ -205,7 +224,7 @@ void ui_begin(i32 win_w, i32 win_h)
 {
     U.win_w = win_w;
     U.win_h = win_h;
-    U.scale = MAX(1, win_h / 360);
+    U.scale = MAX(1, win_h / 1080);
     U.count = 0;
 }
 
@@ -213,7 +232,7 @@ i32 ui_scale(void) { return U.scale; }
 f32 ui_width(void) { return (f32)(U.win_w / U.scale); }
 f32 ui_height(void) { return (f32)(U.win_h / U.scale); }
 
-static void quad(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 c)
+static void quad2(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 c, u32 c2)
 {
     if (U.count + 6 > ARRAY_COUNT(U.v) || w <= 0.0f || h <= 0.0f) return;
     f32 s = (f32)U.scale;
@@ -221,11 +240,16 @@ static void quad(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32
     UiVertex *v = &U.v[U.count];
     v[0] = (UiVertex){ x, y, u0, v0, c };
     v[1] = (UiVertex){ x + w, y, u1, v0, c };
-    v[2] = (UiVertex){ x + w, y + h, u1, v1, c };
+    v[2] = (UiVertex){ x + w, y + h, u1, v1, c2 };
     v[3] = v[0];
     v[4] = v[2];
-    v[5] = (UiVertex){ x, y + h, u0, v1, c };
+    v[5] = (UiVertex){ x, y + h, u0, v1, c2 };
     U.count += 6;
+}
+
+static void quad(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 c)
+{
+    quad2(x, y, w, h, u0, v0, u1, v1, c, c);
 }
 
 void ui_rect(f32 x, f32 y, f32 w, f32 h, u32 color)
@@ -233,6 +257,27 @@ void ui_rect(f32 x, f32 y, f32 w, f32 h, u32 color)
     const f32 t = (ATLAS - 0.5f) / ATLAS;
     quad(x, y, w, h, t, t, t, t, color);
 }
+
+void ui_rect_grad(f32 x, f32 y, f32 w, f32 h, u32 top, u32 bottom)
+{
+    const f32 t = (ATLAS - 0.5f) / ATLAS;
+    quad2(x, y, w, h, t, t, t, t, top, bottom);
+}
+
+// u < -0.5 — заливка панели: шейдер добавляет сканлайны и шум
+void ui_panel_fill(f32 x, f32 y, f32 w, f32 h, u32 top, u32 bottom)
+{
+    quad2(x, y, w, h, -1, -1, -1, -1, top, bottom);
+}
+
+// u >= 2 — картинка из ui_set_image (портреты, HDR)
+void ui_image(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 tint)
+{
+    quad(x, y, w, h, u0 + 2.0f, v0, u1 + 2.0f, v1, tint);
+}
+
+void ui_set_image(u32 tex) { U.image = tex; }
+void ui_set_time(f32 t) { U.time = t; }
 
 void ui_frame(f32 x, f32 y, f32 w, f32 h, u32 color)
 {
@@ -271,6 +316,28 @@ f32 ui_text(f32 x, f32 y, u32 color, const char *s)
     return x;
 }
 
+f32 ui_num(f32 x, f32 y, u32 color, const char *s)
+{
+    const f32 inv = 1.0f / ATLAS;
+    for (; *s; s++) {
+        for (u32 i = 0; i < SMALL_COUNT; i++) {
+            if (g_small[i].cp != (u32)(u8)*s) continue;
+            u32 k = FONT_COUNT + i;
+            f32 u0 = (f32)((k % (ATLAS / CELL)) * CELL) * inv, v0 = (f32)((k / (ATLAS / CELL)) * CELL) * inv;
+            quad(x, y, UI_SMALL_W, UI_SMALL_H, u0, v0, u0 + UI_SMALL_W * inv, v0 + UI_SMALL_H * inv, color);
+            break;
+        }
+        x += UI_SMALL_W + 1;
+    }
+    return x;
+}
+
+f32 ui_num_width(const char *s)
+{
+    f32 n = (f32)strlen(s);
+    return n > 0 ? n * (UI_SMALL_W + 1) - 1 : 0;
+}
+
 f32 ui_text_width(const char *s)
 {
     f32 w = 0;
@@ -293,7 +360,9 @@ void ui_end(void)
     glNamedBufferSubData(U.vbo, 0, (GLsizeiptr)(U.count * sizeof(UiVertex)), U.v);
     glUseProgram(U.prog);
     glUniform2f(0, (f32)U.win_w, (f32)U.win_h);
+    glUniform1f(1, U.time);
     glBindTextureUnit(0, U.tex);
+    if (U.image) glBindTextureUnit(1, U.image);
     glBindVertexArray(U.vao);
     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)U.count);
     glDisable(GL_BLEND);
