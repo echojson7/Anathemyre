@@ -79,6 +79,10 @@ static int x_error_handler(Display *d, XErrorEvent *e)
     return 0;
 }
 
+void platform_preinit(void)
+{
+}
+
 bool platform_init(const char *title, i32 width, i32 height, bool gl_debug)
 {
     g_x.libgl = dlopen("libGL.so.1", RTLD_NOW | RTLD_LOCAL);

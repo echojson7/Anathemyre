@@ -27,6 +27,8 @@ typedef struct Input {
 
 typedef void (*PlatformProc)(void);
 
+// До всего остального: настройка консоли и т.п.
+void         platform_preinit(void);
 bool         platform_init(const char *title, i32 width, i32 height, bool gl_debug);
 void         platform_shutdown(void);
 void         platform_poll(Input *in);

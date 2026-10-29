@@ -127,6 +127,7 @@ static bool find_data_dir(char *out, size_t size)
 
 int main(int argc, char **argv)
 {
+    platform_preinit();
     time_init();
     Options opt = {
         .shot_frames = 90, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337,

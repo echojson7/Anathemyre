@@ -35,3 +35,34 @@ jobs:
         with:
           name: screenshot
           path: build/shot.png
+
+  windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
+
+      - name: Кросс-сборка exe без предупреждений
+        run: |
+          make -j"$(nproc)" WERROR=1 TARGET_OS=windows
+          make debug -j"$(nproc)" WERROR=1 TARGET_OS=windows
+
+      - name: Только системные DLL
+        run: |
+          x86_64-w64-mingw32-objdump -p build/anathemyre.exe | grep "DLL Name" | tee build/dlls.txt
+          ! grep -viE "KERNEL32|USER32|GDI32|msvcrt" build/dlls.txt
+
+      - name: Пакет
+        run: |
+          mkdir -p pkg/anathemyre/build
+          cp build/anathemyre.exe pkg/anathemyre/build/
+          cp -r data pkg/anathemyre/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anathemyre-windows
+          path: pkg
