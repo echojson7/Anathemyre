@@ -6,7 +6,6 @@
 
 #include "arena_view.h"
 #include "field.h"
-#include "town.h"
 
 // Звуки одного боя: поля или арены
 typedef struct SfxFight {
@@ -27,16 +26,14 @@ typedef struct WorldSound {
     V3   arena_center;
     u32  arena_bout;
     SfxFight field, arena;
-    f32  folk_phase[TOWN_MAX_FOLK];
 } WorldSound;
 
 // Подключить наблюдателей к журналам поля и арены
 void sfx_init(WorldSound *s, Field *field, ArenaSession *arena, V3 arena_center, GroundFn ground);
 // Раз в кадр до остальных: слушатель от камеры (eye, точка взгляда, поворот) и фон места
 void sfx_listener(WorldSound *s, V3 eye, V3 target, f32 yaw, bool valley);
-// Шаги, оружие в руках: все тела поля, жители, бойцы арены
+// Шаги, оружие в руках: все тела поля (отряд, бродящие, мобы, зрители, жители Скудели), бойцы арены
 void sfx_field(WorldSound *s, const Field *f);
-void sfx_walkers(WorldSound *s, const Player *body, u32 n);
 void sfx_arena(WorldSound *s, const ArenaView *v, const ArenaSession *a);
 
 #endif

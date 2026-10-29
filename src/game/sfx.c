@@ -235,12 +235,6 @@ void sfx_field(WorldSound *s, const Field *f)
     }
 }
 
-void sfx_walkers(WorldSound *s, const Player *body, u32 n)
-{
-    for (u32 i = 0; i < n && i < TOWN_MAX_FOLK; i++)
-        step(s, false, &s->folk_phase[i], body[i].phase, body[i].walk, body[i].speed, body[i].pos);
-}
-
 void sfx_arena(WorldSound *s, const ArenaView *v, const ArenaSession *a)
 {
     SfxFight *f = &s->arena;

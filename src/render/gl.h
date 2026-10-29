@@ -41,6 +41,11 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_BLEND 0x0BE2
 #define GL_PACK_ALIGNMENT 0x0D05
 #define GL_TEXTURE_2D 0x0DE1
+#define GL_TEXTURE_3D 0x806F
+#define GL_TEXTURE_WRAP_R 0x8072
+#define GL_REPEAT 0x2901
+#define GL_R16 0x822A
+#define GL_UNSIGNED_SHORT 0x1403
 #define GL_UNSIGNED_BYTE 0x1401
 #define GL_UNSIGNED_INT 0x1405
 #define GL_FLOAT 0x1406
@@ -88,6 +93,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_FRAMEBUFFER 0x8D40
 #define GL_DYNAMIC_STORAGE_BIT 0x0100
 #define GL_SHADER_STORAGE_BUFFER 0x90D2
+#define GL_UNIFORM_BUFFER 0x8A11
 #define GL_DEBUG_SEVERITY_HIGH 0x9146
 #define GL_DEBUG_SEVERITY_MEDIUM 0x9147
 #define GL_DEBUG_SEVERITY_NOTIFICATION 0x826B
@@ -148,6 +154,8 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, CreateTextures, (GLenum target, GLsizei n, GLuint *textures)) \
     X(void, DeleteTextures, (GLsizei n, const GLuint *textures)) \
     X(void, TextureStorage2D, (GLuint texture, GLsizei levels, GLenum internalformat, GLsizei w, GLsizei h)) \
+    X(void, TextureStorage3D, (GLuint texture, GLsizei levels, GLenum internalformat, GLsizei w, GLsizei h, GLsizei d)) \
+    X(void, TextureSubImage3D, (GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h, GLsizei d, GLenum fmt, GLenum type, const void *pixels)) \
     X(void, TextureSubImage2D, (GLuint texture, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum fmt, GLenum type, const void *pixels)) \
     X(void, TextureParameteri, (GLuint texture, GLenum pname, GLint param)) \
     X(void, TextureParameterfv, (GLuint texture, GLenum pname, const GLfloat *param)) \
