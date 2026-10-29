@@ -15,7 +15,7 @@ enum {
     U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37,
-    U_S_TIME = 40, U_S_POST = 41, U_S_FRAME = 42,
+    U_S_POST = 41, U_S_FRAME = 42,
 };
 
 // Метки времени GPU: кольцо из нескольких кадров, чтобы чтение не ждало GPU
@@ -412,7 +412,6 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     // 4. Стилизация: тонмаппинг, грейд, аберрация, зерно, дизеринг
     glBindFramebuffer(GL_FRAMEBUFFER, R.ldr.fbo);
     glUseProgram(R.prog_style);
-    glUniform1f(U_S_TIME, fv->time);
     glUniform1i(U_S_POST, rs->post ? 1 : 0);
     glUniform1i(U_S_FRAME, (GLint)fv->frame);
     glBindTextureUnit(0, R.atmos.color);
