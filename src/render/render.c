@@ -10,8 +10,10 @@
 
 #define SHADOW_SIZE 2048
 #define SHADOW_EXTENT 45.0f   // полуразмер области теней, м
-#define PIXEL_M   (1.0f / 80.0f)  // пиксель мира у камеры, м: мельче не рисуется (style.frag)
-#define PIXEL_FAR (1.0f / 26.0f)  // пиксель мира вдали, м: крупнее не растёт, дальше пиксель кадра
+// Размер пикселя по глубине (pixel.glsl): k = PIXEL_K * s^PIXEL_P, s — пикселей кадра на метр в точке.
+// При 1080p: 4 м — 6, 10 м — 3, 25 м — 2, дальше 1
+#define PIXEL_K 0.095f
+#define PIXEL_P 0.756f
 
 // Расположения uniform задаются явно в GLSL (layout(location = N))
 enum {
@@ -684,7 +686,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);
-    f32 px_m = rs->pixel ? fv->proj.m[5] * 0.5f * (f32)ih : 0.0f;  // пикселей кадра на метр на дальности 1 м
+    // Размер пикселя на дальности 1 м; s^P = (px_m / d)^P = PIXEL_K * px_m^P * (1/d)^P
+    f32 px_k = rs->pixel ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
     bool vrs = R.vrs && rs->vrs && rs->pixel;
     R.stat_vrs = vrs;
     if (vrs) {
@@ -693,7 +696,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         glViewport(0, 0, R.rate.w, R.rate.h);
         glDisable(GL_DEPTH_TEST);
         glUseProgram(R.prog_vrs);
-        glUniform4f(U_S_PIX, px_m * PIXEL_M, px_m * PIXEL_FAR, fv->proj.m[10], fv->proj.m[14]);
+        glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
         glUniform2i(U_V_TILE, R.vrs_tile[0], R.vrs_tile[1]);
         glBindTextureUnit(1, R.scene.depth);
         glBindVertexArray(R.empty_vao);
@@ -762,7 +765,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUseProgram(R.prog_style);
     glUniform1i(U_S_POST, rs->post ? 1 : 0);
     glUniform1i(U_S_FRAME, (GLint)fv->frame);
-    glUniform4f(U_S_PIX, px_m * PIXEL_M, px_m * PIXEL_FAR, fv->proj.m[10], fv->proj.m[14]);
+    glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
     glBindTextureUnit(0, R.atmos.color);
     glBindTextureUnit(1, R.scene.depth);
     glDrawArrays(GL_TRIANGLES, 0, 3);
