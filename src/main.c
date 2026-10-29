@@ -23,7 +23,7 @@
 // Арена у зала, перед его открытым краем
 #define ARENA_CENTER v3(14.0f, 0.0f, 34.0f)
 #define ARENA_SHOW_AFTER_BOUT_S 12.0f
-static const char *const FILTER_NAMES[RENDER_FILTERS] = { "без фильтра", "первый", "естественный", "охра", "закат", "плёнка" };
+static const char *const FILTER_NAMES[RENDER_FILTERS] = { "без фильтра", "первый", "мягкий", "естественный", "охра", "закат", "плёнка" };
 
 #define DAY_LENGTH_S 120.0f  // полные сутки, с; пока быстро, чтобы смену было видно
 
@@ -203,7 +203,7 @@ int main(int argc, char **argv)
     platform_preinit();
     time_init();
     Options opt = {
-        .tod = 0.31f, .filter = 1, .shot_frames = 90, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337,
+        .tod = 0.31f, .filter = 2, .shot_frames = 90, .width = 1280, .height = 720, .internal_h = 360, .seed = 1337,
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;

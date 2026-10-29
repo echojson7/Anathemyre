@@ -34,10 +34,10 @@ typedef struct FrameView {
 
 typedef struct RenderSettings {
     i32  internal_h;    // высота внутреннего разрешения
-    u32  filter;        // фильтр кадра: 0 — без фильтра, 1 — первый, дальше пресеты
+    u32  filter;        // фильтр кадра: 0 — без фильтра, дальше пресеты
 } RenderSettings;
 
-#define RENDER_FILTERS 6
+#define RENDER_FILTERS 7
 
 // Время проходов на GPU, мс, среднее с прошлого render_take_stats
 enum { PASS_SHADOW, PASS_SCENE, PASS_ATMOS, PASS_STYLE, PASS_BLIT, PASS_COUNT };

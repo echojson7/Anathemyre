@@ -3,7 +3,7 @@
 in vec2 v_uv;
 
 layout(location = 40) uniform float u_time;
-layout(location = 41) uniform int u_filter;   // 0 — без фильтра, 1 — первый, дальше LOOKS[u_filter - 2]
+layout(location = 41) uniform int u_filter;   // 0 — без фильтра, 1–2 — CRT[], дальше LOOKS[u_filter - 3]
 layout(location = 42) uniform int u_frame;
 layout(binding = 0) uniform sampler2D u_src;
 layout(binding = 1) uniform sampler2D u_lum;  // уменьшенный кадр, мипы — размытие
@@ -57,43 +57,59 @@ float bayer4(vec2 p)
     return (float(m[i.y * 4 + i.x]) + 0.5) / 16.0;
 }
 
-// Самый первый фильтр игры: аберрация, грязный грейд, виньетка, зерно, сканлайны, дизеринг, помехи
-vec3 first_filter(vec2 uv)
+// Фильтр «старой машины»: грейд, виньетка, зерно, сканлайны, помехи, аберрация, палитра с дизерингом
+struct Crt {
+    float grade;     // 0 — цвет как без фильтра, 1 — грязный грейд целиком
+    float vignette;
+    float grain;
+    float scan;      // насколько темнее каждая вторая строка
+    float glitch;    // доля строк со сбоем за тик
+    float aberr;     // разъезд каналов к краям
+    float levels;    // ступеней на канал
+};
+
+const Crt CRT[2] = Crt[2](
+    Crt(1.0, 0.75, 0.10, 0.05, 0.004, 0.0025, 24.0),  // первый: как в начале работы
+    Crt(0.0, 0.35, 0.05, 0.02, 0.0006, 0.0010, 64.0)  // мягкий: цвет без фильтра, эффекты слабо
+);
+
+vec3 crt_filter(vec2 uv, Crt p)
 {
     vec2 res = vec2(textureSize(u_src, 0));
     // Редкие помехи: сдвиг строк
     float row = floor(uv.y * res.y / 3.0);
     float tick = floor(u_time * 14.0);
-    float glitch = step(0.996, hash12(vec2(row, tick)));
+    float glitch = step(1.0 - p.glitch, hash12(vec2(row, tick)));
     uv.x += glitch * (hash12(vec2(tick, row + 3.0)) - 0.5) * 0.04;
 
     // Хроматическая аберрация к краям
-    vec2 off = (uv - 0.5) * 0.0025;
+    vec2 off = (uv - 0.5) * p.aberr;
     vec3 c;
     c.r = texture(u_src, uv + off).r;
     c.g = texture(u_src, uv).g;
     c.b = texture(u_src, uv - off).b;
 
+    vec3 plain = aces(c * 1.2);
     c = aces(c * 1.05);
-
     // Грейд: приглушить, тени в холодный серый, света в болезненно-жёлтый
     float l = dot(c, vec3(0.299, 0.587, 0.114));
     c = mix(vec3(l), c, 0.72);
     c *= mix(vec3(0.88, 0.93, 0.95), vec3(1.06, 1.0, 0.80), smoothstep(0.05, 0.7, l));
     c = mix(c, c * c * (3.0 - 2.0 * c), 0.6);
     c = max(c - 0.015, 0.0) * 1.03;
+    c = mix(plain, c, p.grade);
+    l = dot(c, vec3(0.299, 0.587, 0.114));
 
     vec2 q = uv - 0.5;
-    c *= 1.0 - 0.75 * pow(length(q * vec2(1.1, 1.3)), 2.4);
+    c *= 1.0 - p.vignette * pow(length(q * vec2(1.1, 1.3)), 2.4);
     c = pow(max(c, 0.0), vec3(1.0 / 2.2));
 
     float n = hash12(gl_FragCoord.xy + vec2(float(u_frame % 97) * 13.1, float(u_frame % 89) * 7.7)) - 0.5;
-    c += n * 0.10 * (1.0 - 0.5 * l);
+    c += n * p.grain * (1.0 - 0.5 * l);
 
     // Сканлайны и ограниченная палитра с упорядоченным дизерингом
-    c *= 1.0 - 0.05 * mod(gl_FragCoord.y, 2.0);
-    float levels = 24.0;
-    return floor(c * levels + bayer4(gl_FragCoord.xy)) / levels;
+    c *= 1.0 - p.scan * mod(gl_FragCoord.y, 2.0);
+    return floor(c * p.levels + bayer4(gl_FragCoord.xy)) / p.levels;
 }
 
 void main()
@@ -106,11 +122,11 @@ void main()
         o_color = vec4(pow(c, vec3(1.0 / 2.2)), 1.0);
         return;
     }
-    if (u_filter == 1) {
-        o_color = vec4(clamp(first_filter(uv), 0.0, 1.0), 1.0);
+    if (u_filter <= 2) {
+        o_color = vec4(clamp(crt_filter(uv, CRT[u_filter - 1]), 0.0, 1.0), 1.0);
         return;
     }
-    Look k = LOOKS[u_filter - 2];
+    Look k = LOOKS[u_filter - 3];
 
     // Автоэкспозиция: глаз привыкает к темноте, но не до конца — ночь остаётся ночью
     float ev = texelFetch(u_ev, ivec2(0), 0).r;
