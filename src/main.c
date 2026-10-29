@@ -52,6 +52,8 @@ typedef struct Options {
     u32         battle[2];   // полевой бой: бойцов в каждом отряде
     bool        battle_verify;
     u32         threads;     // 0 — по числу ядер
+    bool        move_bench;  // проверка разворотов без окна
+    const char *move_trace;
     bool        humans;      // мокап: люди из гладких форм рядом с отрядом
 } Options;
 
@@ -159,6 +161,7 @@ static bool pick_ground(M4 view_proj, V3 eye, f32 nx, f32 ny, V3 *out)
 static void usage(void)
 {
     puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
+    puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
 }
@@ -173,7 +176,10 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--follow")) o->follow = true;
         else if (!strcmp(a, "--tod") && i + 1 < argc) o->tod = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--inspect")) o->inspect = true;
-        else if (!strcmp(a, "--humans")) o->humans = true, g_cam_min_dist = 0.8f;
+        else if (!strcmp(a, "--move-bench")) {
+            o->move_bench = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
+        } else if (!strcmp(a, "--humans")) o->humans = true, g_cam_min_dist = 0.8f;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
@@ -233,6 +239,7 @@ int main(int argc, char **argv)
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
+    if (opt.move_bench) return player_bench(opt.move_trace);
     if (opt.arena_bench) return arena_bench(opt.arena_bench, opt.seed, opt.arena_log);
     if (opt.battle[0] || opt.battle[1])
         return battle_bench(opt.battle[0], opt.battle[1], opt.seed, opt.threads, opt.battle_verify);

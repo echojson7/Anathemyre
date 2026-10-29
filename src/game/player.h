@@ -37,5 +37,7 @@ typedef struct Player {
 void player_init(Player *p, V3 pos, f32 heading);
 void player_order_move(Player *p, V3 target);
 void player_update(Player *p, f32 dt, GroundFn ground);
+// Проверка разворотов без окна: шаг, трусца, бег; 90°, 135°, 180°; trace_path — CSV траекторий или NULL
+int  player_bench(const char *trace_path);
 
 #endif
