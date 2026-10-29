@@ -16,11 +16,19 @@ typedef enum Sfx {
     // Бой
     SFX_SWISH,        // замах лёгким оружием: свист воздуха
     SFX_SWISH_HEAVY,  // замах тяжёлым: низкий гул
-    SFX_CLASH,        // блок: клинок о клинок
-    SFX_CLASH_HEAVY,  // блок тяжёлым или о тяжёлое: лязг железа
+    // Голос оружия: как оно отвечает на удар по нему (блок — два голоса: чем бьют и чем закрылись)
+    SFX_WPN_RESSORA,  // пружинная сталь: короткий высокий звон, глохнет в руке
+    SFX_WPN_SEKACH,   // толстый ржавый лист: глухой лязг с дребезгом
+    SFX_WPN_ARMATURA, // пук прутьев с комом бетона: прутья бренчат, бетон стучит
+    SFX_WPN_BAGOR,    // древко багра: деревянный стук
+    SFX_WPN_HOOK,     // крюк и пика багра: мелкое железо
+    SFX_WPN_BALKA,    // двутавр: низкий тяжёлый лязг
+    SFX_SCRAPE,       // лезвие скользнуло по лезвию
     SFX_HIT_CUT,      // попадание режущим
     SFX_HIT_BLUNT,    // попадание дробящим
     SFX_HIT_PIERCE,   // укол
+    SFX_HIT_CHOP,     // тесак врубился: тяжелее режущего
+    SFX_HIT_CRUSH,    // балка: удар всей массой
     SFX_HIT_ARMOR,    // удар пришёлся в железную броню
     SFX_CRACK,        // перелом
     SFX_BODYFALL,     // тело упало
@@ -32,6 +40,8 @@ typedef enum Sfx {
     SFX_UI_TICK, SFX_UI_ORDER,
     // Дальние звуки мира: стон металла, удар, обрывок радио
     SFX_FAR_GROAN, SFX_FAR_BANG, SFX_FAR_RADIO,
+    // Ветер треплет обломки: лист железа дребезжит, металл скрипит
+    SFX_WIND_RATTLE, SFX_WIND_CREAK,
     SFX_COUNT
 } Sfx;
 
@@ -42,6 +52,7 @@ typedef struct AudioScene {
     f32  room;    // доля эха
     f32  far;     // как часто и громко звучит даль
     bool river;   // рядом вода: river_pos — ближайшая точка русла
+    bool green;   // долина: музыка мягче, ветру нечего трепать (ни листов железа, ни скрипа)
     V3   river_pos;
 } AudioScene;
 
@@ -57,6 +68,8 @@ void audio_play_ui(u8 sfx, f32 gain);
 // Раз в кадр: слушатель (позиция, вектор вправо — для панорамы) и фон под ним
 void audio_listener(V3 pos, V3 right, const AudioScene *scene);
 void audio_volume(f32 master, bool on);
+// Фоновая музыка: громкость относительно общей
+void audio_music(f32 level, bool on);
 // Дальше звуков с этим номером уже не слышно: не ставить в очередь (дешевле)
 f32  audio_max_dist(u8 sfx);
 // Вызывает платформа из своего потока; out — frames кадров стерео

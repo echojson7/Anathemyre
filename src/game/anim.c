@@ -207,11 +207,11 @@ static ArmK get_arm(const Pose *p, u32 side)
     return (ArmK){ p->r[b].x, -m * p->r[b].y, m * p->r[b].z, p->r[b + 1].x, p->r[b + 2].x, m * p->r[b + 2].z };
 }
 
-// Стоя: ступни под тазом, чуть врозь; левая на полшага впереди
+// Стоя: ступни под тазобедренными, лодыжки на 21 см врозь; левая чуть впереди
 static V3 stand_foot(u32 side)
 {
     V3 a = joint(side == L ? BONE_FOOT_L : BONE_FOOT_R);
-    return v3(a.x + (side == L ? 0.015f : -0.015f), a.y, side == L ? 0.03f : -0.02f);
+    return v3(side == L ? 0.105f : -0.105f, a.y, side == L ? 0.03f : -0.02f);
 }
 
 static void pose_stand(Pose *p)
@@ -233,34 +233,57 @@ typedef struct Gait {
     f32 kick, knee, reach;     // высота захлёста пятки, выноса колена, вынос голени вперёд
 } Gait;
 
+// Сдвиг лодыжки от плоской стопы, когда стопа наклонена на a (> 0 носок вниз) и катится по земле:
+// носком вниз — через подушечку (12 см вперёд), носком вверх — через пятку (6 см назад); подошва на 7.4 см
+// ниже сустава. По сеткам людей: подушечка 0.115–0.128, пятка 0.057–0.063
+static void foot_roll(f32 a, f32 *dz, f32 *dy)
+{
+    f32 rz = a >= 0.0f ? 0.12f : -0.06f, ry = -0.074f;
+    f32 s, c;
+    fsincos(a, &s, &c);
+    *dz = rz * (1.0f - c) - ry * s;
+    *dy = rz * s + ry * (1.0f - c);
+}
+
 static void foot_track(const Gait *g, f32 q, f32 run, f32 *z, f32 *lift, f32 *pitch)
 {
-    f32 heel_up = lerpf(0.16f, 0.14f, run), toe_off = lerpf(1.1f, 1.2f, run);
+    f32 toe_off = lerpf(1.1f, 1.2f, run), strike0 = lerpf(-0.28f, -0.05f, run);
     if (q < g->duty) {
         f32 t = q / g->duty;
-        *z = lerpf(g->land, g->off, t);
-        // Шаг: пятка, плоская стопа, подъём пятки и толчок носком. Бег: на середину стопы
+        // Шаг: пятка, плоская стопа, подъём пятки и толчок носком. Бег: на середину стопы.
+        // Точка опоры стоит на земле: стопа перекатывается через пятку, потом через носок
         f32 heel = ramp(t, lerpf(0.55f, 0.45f, run), 1.0f);
-        *lift = heel_up * heel;
-        f32 strike = lerpf(-0.28f, -0.05f, run) * (1.0f - ramp(t, 0.0f, lerpf(0.18f, 0.12f, run)));
+        f32 strike = strike0 * (1.0f - ramp(t, 0.0f, lerpf(0.18f, 0.12f, run)));
         *pitch = strike + toe_off * heel;
+        f32 dz, dy;
+        foot_roll(*pitch, &dz, &dy);
+        *z = lerpf(g->land, g->off, t) + dz;
+        *lift = dy;
         return;
     }
+    // Перенос начинается, где опора кончилась, и приходит туда, где она начнётся
+    f32 off, heel_up, land, land_up;
+    foot_roll(toe_off, &off, &heel_up);
+    foot_roll(strike0, &land, &land_up);
+    off += g->off;
+    land += g->land;
     f32 u = (q - g->duty) / (1.0f - g->duty);
-    // Вперёд — кривая Эрмита: на отрыве и перед касанием стопа идёт назад почти со скоростью земли,
-    // без рывка при смене опоры
-    f32 m = -0.2f * (g->land - g->off);
+    // Вперёд — кривая Эрмита: носок отрывается, ещё уходя назад вместе с землёй, а перед касанием
+    // стопа уже тянется назад навстречу земле — без рывка при смене опоры
+    f32 gu = (g->land - g->off) * (1.0f - g->duty) / g->duty;  // скорость земли в долях переноса
+    // На бегу нога после толчка сразу складывается: назад почти не уходит
+    f32 m0 = -lerpf(0.3f, 0.12f, smooth01(run * 2.0f)) * gu, m1 = -0.25f * gu;
     f32 u2 = u * u, u3 = u2 * u;
-    *z = (2.0f * u3 - 3.0f * u2 + 1.0f) * g->off + (u3 - 2.0f * u2 + u) * m + (-2.0f * u3 + 3.0f * u2) * g->land +
-         (u3 - u2) * m;
+    *z = (2.0f * u3 - 3.0f * u2 + 1.0f) * off + (u3 - 2.0f * u2 + u) * m0 + (-2.0f * u3 + 3.0f * u2) * land +
+         (u3 - u2) * m1;
     // Вверх — кривая Безье: пятка уходит вверх сразу после отрыва (колено сгибается), затем
     // колено выносится вперёд и голень выпрямляется к постановке
     f32 a = 1.0f - u;
-    *lift = a * a * a * heel_up + 3.0f * a * a * u * g->kick + 3.0f * a * u2 * g->knee;
+    *lift = a * a * a * heel_up + 3.0f * a * a * u * g->kick + 3.0f * a * u2 * g->knee + u3 * land_up;
     // Стопа: после толчка носок вниз, к середине переноса — на себя, перед касанием на пятку
-    f32 push = toe_off * (1.0f - smooth01(u / lerpf(0.4f, 0.5f, run)));
-    f32 land = lerpf(-0.28f, -0.05f, run) * smooth01((u - 0.5f) / 0.45f);
-    *pitch = push + land - 0.12f * fsin(PI_F * u) * (1.0f - run);
+    f32 push = toe_off * (1.0f - smooth01(u / lerpf(0.3f, 0.5f, run)));
+    f32 heel_dn = strike0 * smooth01((u - 0.5f) / 0.45f);
+    *pitch = push + heel_dn - 0.12f * fsin(PI_F * u) * (1.0f - run);
 }
 
 typedef struct Loco {
@@ -275,49 +298,60 @@ static void locomotion(const CharPose *p, Pose *o, Loco *lo)
     const f32 tau = 2.0f * PI_F;
     // Бег по механике включается уже на трусце: пружинит, а не перекатывается
     f32 bounce = ramp(run, 0.05f, 0.4f);
+    f32 v = p->speed > 0.0f ? p->speed : lerpf(1.2f, 4.8f, run);
+    // Размах шага: медленно — всё мельче, к быстрому шагу — шире
+    f32 sf = clampf(0.4f + 0.375f * v, 0.4f, 1.2f);
+    // Модель растянута по ширине в sw раз (и вдоль тоже): шаг в модели короче, чтобы стопа не ехала
+    f32 sw = p->width > 0.0f ? p->width : 1.0f;
     Gait g;
-    g.duty = run < 0.5f ? lerpf(0.62f, 0.40f, run * 2.0f) : lerpf(0.40f, 0.29f, (run - 0.5f) * 2.0f);
-    f32 L_ = char_stride(p->speed > 0.0f ? p->speed : lerpf(1.2f, 4.8f, run));
+    // Доля опоры: медленный шаг 0.63, быстрый 0.59, трусца 0.40, бег 0.29
+    f32 duty_walk = clampf(0.66f - 0.045f * v, 0.59f, 0.64f);
+    g.duty = run < 0.5f ? lerpf(duty_walk, 0.40f, run * 2.0f) : lerpf(0.40f, 0.29f, (run - 0.5f) * 2.0f);
+    f32 L_ = char_stride(v) / sw;
     f32 travel = g.duty * L_;
-    f32 land_frac = lerpf(0.40f, 0.38f, bounce);
+    f32 land_frac = lerpf(0.35f, 0.27f, bounce);
     g.land = land_frac * travel;
     g.off = g.land - travel;
-    g.kick = lerpf(0.13f, lerpf(0.30f, 0.55f, ramp(run, 0.5f, 1.0f)), bounce);
+    g.kick = lerpf(0.20f, lerpf(0.30f, 0.55f, ramp(run, 0.5f, 1.0f)), bounce);
     g.knee = lerpf(0.10f, lerpf(0.26f, 0.38f, ramp(run, 0.5f, 1.0f)), bounce);
     g.reach = lerpf(0.06f, 0.22f, bounce);
 
+    f32 runk = ramp(run, 0.5f, 1.0f);
     // Таз: на шаге выше над опорной ногой, на беге ниже всего в опоре и выше в полёте
     f32 q2 = 2.0f * ph - floorf(2.0f * ph);
-    f32 bob_amp = lerpf(0.017f, -0.035f, bounce);
-    f32 bob = bob_amp * fcos(tau * (q2 - g.duty)) + lerpf(-0.045f, -0.060f, bounce);
+    f32 bob_amp = lerpf(0.020f * sf, lerpf(-0.042f, -0.036f, runk), bounce);
+    f32 bob = bob_amp * fcos(tau * (q2 - g.duty)) + lerpf(-0.030f - 0.010f * v, -0.060f, bounce);
     f32 sway = lerpf(0.026f, 0.010f, bounce) * fcos(tau * (ph - 0.5f * g.duty));
-    f32 pyaw = -lerpf(0.08f, 0.13f, bounce) * fcos(tau * ph);
+    f32 pyaw = -lerpf(0.08f * sf, 0.12f, bounce) * fcos(tau * ph);
     f32 proll = lerpf(0.06f, 0.035f, bounce) * fcos(tau * (ph - 0.5f * g.duty));
-    f32 ptilt = lerpf(0.05f, 0.14f, bounce);
+    // Наклон всего корпуса растёт со скоростью: шагом едва заметен, на бегу ~10°.
+    // Таз берёт большую часть, позвоночник и грудь — остальное
+    f32 lean = 0.008f + 0.026f * v;
+    f32 ptilt = lean * 0.6f;
     o->off = v3_add(o->off, v3_mul(v3(sway, bob, 0.0f), w));
     o->r[BONE_PELVIS] = v3_add(o->r[BONE_PELVIS], v3_mul(v3(ptilt, pyaw, proll), w));
 
     // Корпус: наклон вперёд, плечи крутятся навстречу тазу, грудь гасит крен таза и чуть
     // клонится к опорной ноге. Наклон дышит дважды за цикл: на шаге клюёт вперёд после касания
     // пятки, на беге глубже всего в середине опоры
-    f32 sh_yaw = lerpf(0.12f, 0.22f, bounce) * fcos(tau * ph);
+    f32 sh_yaw = lerpf(0.12f * sf, 0.20f, bounce) * fcos(tau * ph);
     f32 nod = lerpf(0.018f, 0.035f, bounce) * fcos(tau * (q2 - lerpf(0.08f, g.duty, bounce)));
     f32 side_lean = lerpf(0.025f, 0.01f, bounce) * fcos(tau * (ph - 0.5f * g.duty));
-    o->r[BONE_SPINE] = v3_add(o->r[BONE_SPINE], v3_mul(v3(lerpf(0.0f, 0.04f, bounce) + nod * 0.6f, -pyaw * 0.6f + sh_yaw * 0.5f,
+    o->r[BONE_SPINE] = v3_add(o->r[BONE_SPINE], v3_mul(v3(lean * 0.25f + nod * 0.6f, -pyaw * 0.6f + sh_yaw * 0.5f,
                                                           -proll * 0.6f - side_lean * 0.5f), w));
-    o->r[BONE_CHEST] = v3_add(o->r[BONE_CHEST], v3_mul(v3(lerpf(0.02f, 0.03f, bounce) + nod * 0.4f, -pyaw * 0.4f + sh_yaw * 0.5f,
+    o->r[BONE_CHEST] = v3_add(o->r[BONE_CHEST], v3_mul(v3(lean * 0.15f + nod * 0.4f, -pyaw * 0.4f + sh_yaw * 0.5f,
                                                           -proll * 0.4f - side_lean * 0.5f), w));
     lo->chest_yaw = sh_yaw * w;
     // Голова держит горизонт
-    o->r[BONE_HEAD].x -= (ptilt + 0.05f * bounce + nod) * w;
+    o->r[BONE_HEAD].x -= (lean * 0.85f + nod) * w;
     o->r[BONE_HEAD].z += (proll * 0.3f + side_lean) * w;
 
     // Руки против ног, мах от плеча, назад дальше, чем вперёд. Шагом локоть почти прям и сгибается,
     // когда рука идёт вперёд; на бегу локоть согнут, сзади раскрывается, спереди кисть идёт к груди
     f32 arm_ph = tau * (ph - 0.04f);
-    f32 runk = ramp(run, 0.5f, 1.0f);
-    f32 S = lerpf(0.30f, lerpf(0.48f, 0.55f, runk), bounce);
-    f32 back = lerpf(-0.04f, 0.15f, bounce);
+    // Мах руки растёт со скоростью шага: на медленном шаге руки почти висят
+    f32 S = lerpf(fminf(0.10f + 0.13f * v, 0.36f), lerpf(0.46f, 0.54f, runk), bounce);
+    f32 back = lerpf(0.0f, 0.08f, bounce);
     f32 el_back = lerpf(-0.22f, lerpf(-1.10f, -1.20f, runk), bounce);
     f32 el_fwd = lerpf(-0.60f, lerpf(-1.55f, -1.75f, runk), bounce);
     for (u32 side = 0; side < 2; side++) {
@@ -339,9 +373,11 @@ static void locomotion(const CharPose *p, Pose *o, Loco *lo)
         foot_track(&g, q, run, &z, &lift, &pitch);
         V3 base = o->foot[side];
         V3 aj = joint(side == L ? BONE_FOOT_L : BONE_FOOT_R);
-        V3 walkp = v3(aj.x + md_s * z, aj.y + lift, md_c * z);
-        // На бегу стопы ставятся ближе к средней линии
-        walkp.x -= (side == L ? 1.0f : -1.0f) * 0.03f * bounce;
+        // Ширина шага: шагом лодыжки на 13 см врозь, на бегу ставятся почти на одну линию (6 см).
+        // В переносе стопа чуть огибает опорную ногу снаружи
+        f32 sx = (side == L ? 1.0f : -1.0f) * lerpf(0.065f, 0.03f, bounce);
+        if (q >= g.duty) sx *= 1.0f + 0.5f * fsin(PI_F * (q - g.duty) / (1.0f - g.duty));
+        V3 walkp = v3(sx + md_s * z, aj.y + lift, md_c * z);
         o->foot[side] = v3_lerp(base, walkp, w);
         o->fpitch[side] = lerpf(o->fpitch[side], pitch, w);
         // Вес на ноге: с касания до подъёма пятки; к отрыву и до касания спадает плавно
@@ -1442,6 +1478,10 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     if (a->severed & (1u << PART_ARM_L)) torch = (Xf){ v3(0, 0, 0), v3(0, 0, 0), v3(0, 0, 0), torch.t };
     Xf tw_world = xf_mul(&root, &torch);
     out[CHAR_BONE_TORCH] = xf_m4(&tw_world);
+    // Огонь тянется вверх: у пламени только поворот тела, без наклона руки
+    Xf flame = { v3(hc, 0, -hs), v3(0, 1, 0), v3(hs, 0, hc), xf_point(&tw_world, v3(0, TORCH_FLAME_BASE, 0)) };
+    if (a->severed & (1u << PART_ARM_L)) flame = (Xf){ v3(0, 0, 0), v3(0, 0, 0), v3(0, 0, 0), flame.t };
+    out[CHAR_BONE_FLAME] = xf_m4(&flame);
 
     // Отсечённая конечность: вершины стягиваются в точку сустава
     static const u8 limb_bones[PART_COUNT][3] = {
