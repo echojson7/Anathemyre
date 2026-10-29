@@ -15,7 +15,7 @@ enum {
     U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39,
-    U_S_POST = 41, U_S_FRAME = 42,
+    U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43,
     U_BONES = 50,  // занимает 50..50+RENDER_MAX_BONES-1
 };
 
@@ -31,7 +31,7 @@ typedef struct Target {
 static struct {
     Arena *scratch;
     char   data_dir[512];
-    u32    prog_scene, prog_shadow, prog_atmos, prog_style;
+    u32    prog_scene, prog_shadow, prog_atmos, prog_style, prog_upscale;
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
     Target scene, atmos, ldr;
@@ -124,16 +124,18 @@ bool render_reload_shaders(void)
     const char *full_vs[] = { "fullscreen.vert" };
     const char *atmos_fs[] = { "common.glsl", "atmos.frag" };
     const char *style_fs[] = { "common.glsl", "style.frag" };
+    const char *upscale_fs[] = { "upscale.frag" };
 
     u32 scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, scene_fs, 2));
     u32 shadow = link(compile(GL_VERTEX_SHADER, "#define SHADOW_PASS\n", scene_vs, 1),
                       compile(GL_FRAGMENT_SHADER, NULL, shadow_fs, 1));
     u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 2));
     u32 style = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, style_fs, 2));
+    u32 upscale = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, upscale_fs, 1));
     R.scratch->used = mark;
 
-    u32 progs[] = { scene, shadow, atmos, style };
-    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_atmos, &R.prog_style };
+    u32 progs[] = { scene, shadow, atmos, style, upscale };
+    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_atmos, &R.prog_style, &R.prog_upscale };
     bool ok = true;
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) {
@@ -234,7 +236,7 @@ void render_shutdown(void)
     if (R.empty_vao) glDeleteVertexArrays(1, &R.empty_vao);
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
-    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_atmos, R.prog_style };
+    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_atmos, R.prog_style, R.prog_upscale };
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
         if (progs[i]) glDeleteProgram(progs[i]);
     memset(&R, 0, sizeof R);
@@ -335,6 +337,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         target_make(&R.scene, iw, ih, GL_RGBA16F, true);
         target_make(&R.atmos, iw, ih, GL_RGBA16F, false);
         target_make(&R.ldr, iw, ih, GL_RGBA8, false);
+        glTextureParameteri(R.ldr.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(R.ldr.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         log_info("РЕНДЕР: внутреннее разрешение %dx%d -> окно %dx%d", iw, ih, win_w, win_h);
     }
 
@@ -413,10 +417,13 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (timing) mark(4);
 
-    // 5. Апскейл без фильтрации: крупный пиксель
+    // 5. Апскейл до окна: крупный ровный пиксель
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, win_w, win_h);
-    glBlitNamedFramebuffer(R.ldr.fbo, 0, 0, 0, iw, ih, 0, 0, win_w, win_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glUseProgram(R.prog_upscale);
+    glUniform2f(U_U_OUT, (f32)win_w, (f32)win_h);
+    glBindTextureUnit(0, R.ldr.color);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
     if (timing) {
         mark(5);
         R.timer_pending[R.timer_slot] = true;
