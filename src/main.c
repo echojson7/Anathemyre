@@ -459,14 +459,13 @@ int main(int argc, char **argv)
     Bench bench = { .frame_ms = ARENA_PUSH_ARRAY(&perm, f32, BENCH_MAX_FRAMES) };
     bool bench_request = opt.bench && !opt.shot_path;
 
-    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — инвентарь, P — персонаж, пробел — пауза, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F2 — люди для сравнения, F3 — vsync, F4 — остановить сутки, F5 — шейдеры, F8 — пиксельность вкл/выкл, F10 — замер кадра");
+    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — инвентарь, P — персонаж, пробел — пауза, средняя кнопка и Q/E — поворот, F — следовать, F1 — фильтр вкл/выкл, F2 — люди для сравнения, F3 — vsync, F4 — остановить сутки, F5 — шейдеры, F10 — замер кадра");
 
     while (!in.quit) {
         platform_poll(&in);
         // Esc сначала закрывает окна
         if (in.key_pressed[KEY_ESCAPE] && !hud_window_open(&hud)) break;
         if (in.key_pressed[KEY_F1]) rs.post = !rs.post;
-        if (in.key_pressed[KEY_F8]) rs.pixel = !rs.pixel;
         if (in.key_pressed[KEY_F5]) render_reload_shaders();
         if (in.key_pressed[KEY_F4]) {
             day_run = !day_run;
