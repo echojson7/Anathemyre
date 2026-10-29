@@ -10,7 +10,8 @@
 
 #define SHADOW_SIZE 2048
 #define SHADOW_EXTENT 45.0f   // полуразмер области теней, м
-#define PIXEL_M (1.0f / 80.0f)  // пиксель мира вблизи, м: мельче не рисуется (style.frag)
+#define PIXEL_M   (1.0f / 80.0f)  // пиксель мира у камеры, м: мельче не рисуется (style.frag)
+#define PIXEL_FAR (1.0f / 26.0f)  // пиксель мира вдали, м: крупнее не растёт, дальше пиксель кадра
 
 // Расположения uniform задаются явно в GLSL (layout(location = N))
 enum {
@@ -696,7 +697,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUseProgram(R.prog_style);
     glUniform1i(U_S_POST, rs->post ? 1 : 0);
     glUniform1i(U_S_FRAME, (GLint)fv->frame);
-    glUniform3f(U_S_PIX, rs->pixel ? fv->proj.m[5] * 0.5f * (f32)ih * PIXEL_M : 0.0f, fv->proj.m[10], fv->proj.m[14]);
+    f32 px_m = rs->pixel ? fv->proj.m[5] * 0.5f * (f32)ih : 0.0f;  // пикселей кадра на метр на дальности 1 м
+    glUniform4f(U_S_PIX, px_m * PIXEL_M, px_m * PIXEL_FAR, fv->proj.m[10], fv->proj.m[14]);
     glBindTextureUnit(0, R.atmos.color);
     glBindTextureUnit(1, R.scene.depth);
     glDrawArrays(GL_TRIANGLES, 0, 3);

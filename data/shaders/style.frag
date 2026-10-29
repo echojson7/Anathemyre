@@ -4,7 +4,7 @@ in vec2 v_uv;
 
 layout(location = 41) uniform int u_post;
 layout(location = 42) uniform int u_frame;
-layout(location = 44) uniform vec3 u_pix;   // пикселей кадра на пиксель мира PIXEL_M на 1 м; m10, m14 проекции
+layout(location = 44) uniform vec4 u_pix;   // пикселей кадра на PIXEL_M и на PIXEL_FAR на 1 м; m10, m14 проекции
 layout(binding = 0) uniform sampler2D u_src;
 layout(binding = 1) uniform sampler2D u_depth;
 
@@ -15,20 +15,21 @@ vec3 aces(vec3 x)
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
-// Во сколько пикселей кадра ложится пиксель мира в этой точке: 1, 2 или 3
+// Размер пикселя в точке, пикселей кадра: 4 у самой камеры (пиксель мира не мельче PIXEL_M),
+// 2 обычно, 1 вдали, где блок 2x2 был бы крупнее PIXEL_FAR в мире. Сетки 4/2/1 вложены
 int level_at(ivec2 t)
 {
     float z = texelFetch(u_depth, t, 0).r * 2.0 - 1.0;
-    float s = u_pix.x * (z + u_pix.y) / u_pix.z;
-    return int(clamp(floor(s), 1.0, 3.0));
+    float inv_d = (z + u_pix.z) / u_pix.w;
+    if (u_pix.x * inv_d >= 4.0) return 4;
+    return u_pix.y * inv_d >= 2.0 ? 2 : 1;
 }
 
-// Одно правило для всего кадра: ячейка k×k берёт цвет своего центра, если центр так близко,
-// что пиксель мира там не мельче k. Вблизи пиксели крупнее, вдали — пиксель кадра
+// Одно правило для всего кадра: ячейка k×k берёт цвет своего центра, если там пиксель не мельче k
 ivec2 pixel_src(ivec2 p)
 {
     ivec2 size = textureSize(u_depth, 0) - 1;
-    for (int k = 3; k >= 2; k--) {
+    for (int k = 4; k >= 2; k /= 2) {
         ivec2 c = min((p / k) * k + k / 2, size);
         if (level_at(c) >= k) return c;
     }
