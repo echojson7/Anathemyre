@@ -224,7 +224,7 @@ void ui_begin(i32 win_w, i32 win_h)
 {
     U.win_w = win_w;
     U.win_h = win_h;
-    U.scale = MAX(1, win_h / 720);
+    U.scale = MAX(1, win_h / 1080);
     U.count = 0;
 }
 

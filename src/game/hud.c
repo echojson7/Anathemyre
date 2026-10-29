@@ -52,14 +52,73 @@ static const u8 g_slot_order[SLOT_COUNT + 1] = {
     SLOT_LEGS, SLOT_BELT, SLOT_FEET, SLOT_BACK, SLOT_WEAPON,
 };
 
-// Схема тела в Т-позе, клетки 31x30: x, y, w, h. Лицом к зрителю: левая рука справа
-static const u8 g_tpose[PART_COUNT][4] = {
-    [PART_HEAD] = { 13, 0, 5, 5 }, [PART_CHEST] = { 11, 6, 9, 7 }, [PART_STOMACH] = { 11, 14, 9, 5 },
-    [PART_ARM_R] = { 0, 6, 10, 3 }, [PART_ARM_L] = { 21, 6, 10, 3 },
-    [PART_LEG_R] = { 11, 20, 4, 10 }, [PART_LEG_L] = { 16, 20, 4, 10 },
+// Схема тела: силуэт человека, руки вдоль тела. Лицом к зрителю: правая рука слева.
+// H голова, C грудь, S живот, A/B правая/левая рука, R/L правая/левая нога
+#define TPOSE_W 32
+#define TPOSE_H 46
+static const char *g_tpose[TPOSE_H] = {
+    "..............HHHH..............",
+    "............HHHHHHHH............",
+    "...........HHHHHHHHHH...........",
+    "...........HHHHHHHHHH...........",
+    "...........HHHHHHHHHH...........",
+    "............HHHHHHHH............",
+    ".............HHHHHH.............",
+    "..............HHHH..............",
+    "..........CCCCCCCCCCCC..........",
+    "........A.CCCCCCCCCCCC.B........",
+    "......AAA.CCCCCCCCCCCC.BBB......",
+    "......AAA.CCCCCCCCCCCC.BBB......",
+    "......AAA.CCCCCCCCCCCC.BBB......",
+    "......AAA..CCCCCCCCCC..BBB......",
+    ".....AAA...CCCCCCCCCC...BBB.....",
+    ".....AAA...CCCCCCCCCC...BBB.....",
+    ".....AAA...CCCCCCCCCC...BBB.....",
+    ".....AAA...CCCCCCCCCC...BBB.....",
+    ".....AAA...SSSSSSSSSS...BBB.....",
+    ".....AA....SSSSSSSSSS....BB.....",
+    "....AAA....SSSSSSSSSS....BBB....",
+    "....AAA....SSSSSSSSSS....BBB....",
+    "....AAA...SSSSSSSSSSSS...BBB....",
+    "....AAA...SSSSSSSSSSSS...BBB....",
+    "....AA....SSSSSSSSSSSS....BB....",
+    "....AAA...SSSSSSSSSSSS...BBB....",
+    "...AAAA...RRRRR..LLLLL...BBBB...",
+    "...AAAA...RRRRR..LLLLL...BBBB...",
+    "....AA....RRRRR..LLLLL....BB....",
+    "..........RRRRR..LLLLL..........",
+    "..........RRRRR..LLLLL..........",
+    "...........RRRR..LLLL...........",
+    "...........RRRR..LLLL...........",
+    "...........RRRR..LLLL...........",
+    "...........RRRR..LLLL...........",
+    "...........RRRR..LLLL...........",
+    "...........RRR....LLL...........",
+    "..........RRRR....LLLL..........",
+    "..........RRRR....LLLL..........",
+    "...........RRR....LLL...........",
+    "...........RRR....LLL...........",
+    "...........RRR....LLL...........",
+    "...........RRR....LLL...........",
+    "...........RRR....LLL...........",
+    "..........RRRR....LLLL..........",
+    ".........RRRRR....LLLLL.........",
 };
-#define TPOSE_W 31
-#define TPOSE_H 30
+
+static i32 tpose_part(i32 x, i32 y)
+{
+    if (x < 0 || y < 0 || x >= TPOSE_W || y >= TPOSE_H) return -1;
+    switch (g_tpose[y][x]) {
+    case 'H': return PART_HEAD;
+    case 'C': return PART_CHEST;
+    case 'S': return PART_STOMACH;
+    case 'A': return PART_ARM_R;
+    case 'B': return PART_ARM_L;
+    case 'R': return PART_LEG_R;
+    case 'L': return PART_LEG_L;
+    default: return -1;
+    }
+}
 
 static const char *g_gait_btn[GAIT_COUNT] = { "ШАГ", "ТРУСЦА", "БЕГ" };
 static const char *g_gait_key[GAIT_COUNT] = { "Z", "X", "C" };
@@ -614,44 +673,53 @@ static void bar(f32 x, f32 y, f32 w, f32 h, f32 r, u32 color)
     for (u32 k = 1; k < 10 && w >= 60; k++) ui_rect(x + floorf(w * (f32)k * 0.1f), y, 1, h, UI_RGBA(0, 0, 0, 110));
 }
 
-// Схема тела в Т-позе: пластины по ранам, в каждой — оставшиеся ХП мелкими цифрами
+// Схема тела клетками маски: цвет по ранам, тёмный контур частей, мелкие цифры ХП
 static void tpose(f32 x, f32 y, f32 unit, const f32 *hp, u8 fracture, u8 severed, bool numbers)
 {
+    for (i32 cy = 0; cy < TPOSE_H; cy++) {
+        for (i32 cx = 0; cx < TPOSE_W; cx++) {
+            i32 p = tpose_part(cx, cy);
+            if (p < 0) continue;
+            bool edge = tpose_part(cx - 1, cy) != p || tpose_part(cx + 1, cy) != p ||
+                        tpose_part(cx, cy - 1) != p || tpose_part(cx, cy + 1) != p;
+            f32 px = x + (f32)cx * unit, py = y + (f32)cy * unit;
+            if (severed & (1u << p)) {
+                // Отсечена: пунктир по контуру
+                if (edge && (cx + cy) % 2 == 0) ui_rect(px, py, unit, unit, C_BAD);
+                continue;
+            }
+            u32 c = health_color(hp[p] / g_part_hp[p]);
+            // Сверху светлее, снизу темнее: объём без текстур
+            c = darker(c, 0.95f - 0.15f * (f32)cy / TPOSE_H);
+            if (edge) c = darker(c, 0.55f);
+            else if ((fracture & (1u << p)) && (cx + cy) % 3 == 0) c = UI_RGBA(60, 10, 6, 255);
+            ui_rect(px, py, unit, unit, c);
+        }
+    }
+    if (!numbers) return;
+    // Цифра по центру части, если влезает в её ширину на этой высоте
     char buf[8];
     for (u32 p = 0; p < PART_COUNT; p++) {
-        const u8 *r = g_tpose[p];
-        f32 px = x + r[0] * unit, py = y + r[1] * unit, pw = r[2] * unit, ph = r[3] * unit;
-        if (severed & (1u << p)) {
-            // Отсечена: пунктир на месте
-            for (f32 k = 0; k < pw; k += 3) {
-                ui_rect(px + k, py, 1, 1, C_BAD);
-                ui_rect(px + k, py + ph - 1, 1, 1, C_BAD);
-            }
-            for (f32 k = 0; k < ph; k += 3) {
-                ui_rect(px, py + k, 1, 1, C_BAD);
-                ui_rect(px + pw - 1, py + k, 1, 1, C_BAD);
-            }
-            continue;
-        }
-        f32 ratio = hp[p] / g_part_hp[p];
-        u32 c = health_color(ratio);
-        ui_rect_grad(px, py, pw, ph, c, darker(c, 0.72f));
-        ui_rect(px, py, pw, 1, darker(c, 1.15f > 1.0f ? 1.0f : 1.0f));
-        ui_frame(px, py, pw, ph, UI_RGBA(0, 0, 0, 140));
-        // Перелом: косая штриховка
-        if (fracture & (1u << p))
-            for (f32 k = 2; k < pw + ph; k += 3)
-                for (f32 t = 0; t < ph; t++) {
-                    f32 xx = k - t;
-                    if (xx >= 1 && xx < pw - 1 && t >= 1 && t < ph - 1 && (u32)t % 2 == 0)
-                        ui_rect(px + xx, py + t, 1, 1, UI_RGBA(30, 6, 4, 200));
+        if (severed & (1u << p)) continue;
+        i32 y0 = TPOSE_H, y1 = -1;
+        for (i32 cy = 0; cy < TPOSE_H; cy++)
+            for (i32 cx = 0; cx < TPOSE_W; cx++)
+                if (tpose_part(cx, cy) == (i32)p) {
+                    y0 = MIN(y0, cy);
+                    y1 = MAX(y1, cy);
                 }
-        if (numbers) {
-            snprintf(buf, sizeof buf, "%d", (int)ceilf(hp[p]));
-            f32 nw = ui_num_width(buf);
-            if (nw <= pw - 2 && ph >= UI_SMALL_H + 2)
-                ui_num(floorf(px + (pw - nw) * 0.5f), floorf(py + (ph - UI_SMALL_H) * 0.5f), UI_RGBA(14, 12, 10, 255), buf);
-        }
+        if (y1 < 0) continue;
+        i32 cy = (y0 + y1) / 2, x0 = -1, x1 = -1;
+        for (i32 cx = 0; cx < TPOSE_W; cx++)
+            if (tpose_part(cx, cy) == (i32)p) {
+                if (x0 < 0) x0 = cx;
+                x1 = cx;
+            }
+        snprintf(buf, sizeof buf, "%d", (int)ceilf(hp[p]));
+        f32 nw = ui_num_width(buf), pw = (f32)(x1 - x0 - 1) * unit;
+        if (nw > pw) continue;
+        ui_num(floorf(x + (f32)(x0 + 1) * unit + (pw - nw) * 0.5f), floorf(y + ((f32)cy + 0.5f) * unit - UI_SMALL_H * 0.5f),
+               UI_RGBA(14, 12, 10, 255), buf);
     }
 }
 
@@ -801,12 +869,11 @@ static void draw_selected(const Hud *h, const Layout *L, const HudWorld *w)
     }
 
     // Т-поза справа
-    f32 fx = x + SEL_W - TPOSE_W * 2 - 10, fy = y + 22;
-    inset(fx - 4, fy - 4, TPOSE_W * 2 + 8, TPOSE_H * 2 + 8);
-    tpose(fx, fy, 2, d.hp, d.fracture, d.severed, true);
+    f32 fx = x + SEL_W - TPOSE_W - 14, fy = y + 22;
+    inset(fx - 6, fy - 4, TPOSE_W + 12, TPOSE_H + 8);
+    tpose(fx, fy, 1, d.hp, d.fracture, d.severed, false);
     snprintf(buf, sizeof buf, "%.0f%%", (f64)(fmaxf(0.0f, vital_ratio(d.hp)) * 100.0f));
-    small_label(fx - 4, fy + TPOSE_H * 2 + 8, "ЖИЗНЬ");
-    num_right(fx + TPOSE_W * 2 + 4, fy + TPOSE_H * 2 + 9, health_color(vital_ratio(d.hp)), buf);
+    ui_num(floorf(fx + (TPOSE_W - ui_num_width(buf)) * 0.5f), fy + TPOSE_H + 9, health_color(vital_ratio(d.hp)), buf);
 }
 
 static void draw_card(const Hud *h, const HudWorld *w, const Layout *L, u32 i)
@@ -973,8 +1040,8 @@ static void draw_character(const Hud *h, const Layout *L, const HudWorld *w)
     f32 by = y + 110;
     ui_text(x + 9, by, C_ACCENT, "ТЕЛО");
     ui_rect(x + 37, by + 4, CHAR_WIN_W - 46, 1, darker(C_BRACKET, 0.7f));
-    inset(x + 9, by + 12, TPOSE_W * 3 + 10, TPOSE_H * 3 + 10);
-    tpose(x + 14, by + 17, 3, d.hp, d.fracture, d.severed, true);
+    inset(x + 9, by + 12, TPOSE_W * 2 + 20, TPOSE_H * 2 + 10);
+    tpose(x + 19, by + 17, 2, d.hp, d.fracture, d.severed, true);
     f32 lx = x + 120, ly = by + 13;
     for (u32 p = 0; p < PART_COUNT; p++, ly += 14) {
         f32 r = d.hp[p] / g_part_hp[p];
