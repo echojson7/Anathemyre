@@ -96,6 +96,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_QUERY_RESULT_AVAILABLE 0x8867
 #define GL_TIMESTAMP 0x8E28
 #define GL_R8UI 0x8232
+#define GL_RG16UI 0x823A
 #define GL_EXTENSIONS 0x1F03
 #define GL_NUM_EXTENSIONS 0x821D
 // GL_NV_shading_rate_image
