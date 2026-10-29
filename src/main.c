@@ -20,7 +20,9 @@
 #include "render/ui.h"
 #include "world/sky.h"
 
-#define CHAR_VARIANTS 4
+// Тела людей (tools/humanconv): мужчина, женщина, худой мужчина; у каждого LOD0..2
+#define BODY_KINDS 3
+static const char *const g_body_file[BODY_KINDS] = { "mh_male", "mh_female", "mh_thin" };
 #define CROWD_SIZE 9
 // Арена у зала, перед его открытым краем
 #define ARENA_CENTER v3(14.0f, 0.0f, 34.0f)
@@ -60,15 +62,26 @@ typedef struct Options {
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
 } Options;
 
+// Что сейчас нарисовано в ячейке атласа портретов: портрет неподвижен, перерисовка только при смене
+typedef struct PortraitKey {
+    const GpuMesh *body, *weapon;
+    f32 seed, height, width;
+    i32 size;
+} PortraitKey;
+static PortraitKey g_portrait_key[RENDER_PORTRAIT_SLOTS];
+
 // Портрет: неподвижная фигура в покое, камера по кости головы спереди, чуть сверху
 static void portrait(const FrameView *base, u32 slot, i32 size, const GpuMesh *body, const GpuMesh *weapon, u8 wid,
                      f32 seed, f32 height, f32 width, M4 *bones)
 {
+    PortraitKey key = { body, weapon, seed, height, width, size };
+    if (slot >= RENDER_PORTRAIT_SLOTS || !memcmp(&g_portrait_key[slot], &key, sizeof key)) return;
+    g_portrait_key[slot] = key;
     CharPose p = { .seed = seed, .height = height, .width = width, .calm = true, .weapon = weapon ? (u8)(wid + 1) : 0 };
     character_pose(&p, NULL, bones);
     DrawItem items[2] = { { .mesh = body, .bones = bones }, { .mesh = weapon, .bones = bones } };
     M4 hb = bones[BONE_HEAD];
-    V3 head = m4_point(hb, v3(0, 1.62f, 0));
+    V3 head = m4_point(hb, v3(0, 1.70f, 0.03f));
     V3 fwd = v3_norm(m4_dir(hb, v3(0, 0, 1)));
     V3 up = v3_norm(m4_dir(hb, v3(0, 1, 0)));
     FrameView fv = *base;
@@ -130,6 +143,17 @@ static int cmp_f32(const void *a, const void *b)
     return (x > y) - (x < y);
 }
 
+// Время проходов GPU одной строкой; драйвер может не отдавать метки времени (например, D3D12 в WSL)
+static void gpu_line(char *out, size_t size, const RenderStats *st)
+{
+    if (st->samples && st->gpu_total_ms > 0.0)
+        snprintf(out, size, "GPU %.3f: тени %.3f, глубина %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f, интерфейс %.3f",
+                 st->gpu_total_ms, st->gpu_ms[PASS_SHADOW], st->gpu_ms[PASS_DEPTH], st->gpu_ms[PASS_SCENE],
+                 st->gpu_ms[PASS_ATMOS], st->gpu_ms[PASS_STYLE], st->gpu_ms[PASS_BLIT], st->gpu_ms[PASS_UI]);
+    else
+        snprintf(out, size, "GPU: драйвер не отдаёт метки времени");
+}
+
 static void bench_report(Bench *b, f64 seconds, i32 ww, i32 wh)
 {
     RenderStats st;
@@ -142,13 +166,9 @@ static void bench_report(Bench *b, f64 seconds, i32 ww, i32 wh)
     f64 k = 1000.0 / b->cpu_frames;
     log_stat("ЗАМЕР: окно %dx%d, %u кадров за %.1f с | кадр: среднее %.3f мс (%.0f к/с), медиана %.3f, худший 1%% %.3f",
              ww, wh, n, seconds, sum / n, n / seconds, b->frame_ms[n / 2], b->frame_ms[MIN(n - 1, n * 99 / 100)]);
-    if (st.samples && st.gpu_total_ms > 0.0)
-        log_stat("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | GPU %.3f: тени %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f",
-                 b->cpu_logic * k, b->cpu_submit * k, b->cpu_swap * k, st.gpu_total_ms, st.gpu_ms[PASS_SHADOW],
-                 st.gpu_ms[PASS_SCENE], st.gpu_ms[PASS_ATMOS], st.gpu_ms[PASS_STYLE], st.gpu_ms[PASS_BLIT]);
-    else
-        log_stat("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | GPU: драйвер не отдаёт метки времени",
-                 b->cpu_logic * k, b->cpu_submit * k, b->cpu_swap * k);
+    char gpu[256];
+    gpu_line(gpu, sizeof gpu, &st);
+    log_stat("ЗАМЕР: CPU логика %.3f, отправка %.3f, swap %.3f | %s", b->cpu_logic * k, b->cpu_submit * k, b->cpu_swap * k, gpu);
     log_stat("ЗАМЕР: сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk | шейдинг блоками: %s",
              st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0,
              st.vrs ? "да" : "нет");
@@ -355,21 +375,23 @@ int main(int argc, char **argv)
     log_info("МИР: зал %u треугольников, рельеф и мегаструктуры %u", tris, mb.icount / 3);
     perm.used = mark;
 
-    // Фигуры без оружия: оружие отдельной сеткой, поза кладёт его в руку или в ножны.
-    // Грубые уровни лежат отдельно: остальной код видит только полный (body_mesh)
-    GpuMesh body_mesh[CHAR_VARIANTS], weapon_mesh[W_COUNT];
-    GpuMesh body_lod[CHAR_VARIANTS][CHAR_LODS - 1];
-    for (u32 v = 0; v < CHAR_VARIANTS; v++) {
+    // Тела людей; грубые уровни лежат отдельно: остальной код видит только полный (body_mesh)
+    GpuMesh body_mesh[BODY_KINDS], body_lod[BODY_KINDS][CHAR_LODS - 1], weapon_mesh[W_COUNT];
+    for (u32 k = 0; k < BODY_KINDS; k++)
         for (u32 l = 0; l < CHAR_LODS; l++) {
-            GpuMesh *gm = l ? &body_lod[v][l - 1] : &body_mesh[v];
-            mb_init(&mb, &perm, 40000, 120000);
-            character_build(&mb, v, false, l);
+            char path[700], suf[16] = "";
+            if (l) snprintf(suf, sizeof suf, "_lod%u", l);
+            snprintf(path, sizeof path, "%s/meshes/%s%s.mesh", data_dir, g_body_file[k], suf);
+            if (!mb_load(&mb, &perm, path)) {
+                render_shutdown();
+                platform_shutdown();
+                return 1;
+            }
+            GpuMesh *gm = l ? &body_lod[k][l - 1] : &body_mesh[k];
             gpu_mesh_upload(gm, &mb);
-            if (v == 0) log_info("ФИГУРА: уровень %u, %u вершин, %u треугольников", l, mb.vcount, mb.icount / 3);
-            if (l) gpu_mesh_set_lod(l == 1 ? &body_mesh[v] : &body_lod[v][l - 2], gm, g_char_lod_px[l - 1]);
+            if (l) gpu_mesh_set_lod(l == 1 ? &body_mesh[k] : &body_lod[k][l - 2], gm, g_char_lod_px[l - 1]);
             perm.used = mark;
         }
-    }
     for (u32 k = 0; k < W_COUNT; k++) {
         mb_init(&mb, &perm, 4000, 12000);
         weapon_build(&mb, (u8)k);
@@ -378,8 +400,7 @@ int main(int argc, char **argv)
     }
 
     // Люди из MakeHuman (tools/humanconv): у каждого три LOD рядом, для сравнения
-    static const char *const mh_name[3] = { "mh_male", "mh_female", "mh_thin" };
-    enum { HUMAN_N = 3 * CHAR_LODS };
+    enum { HUMAN_N = BODY_KINDS * CHAR_LODS };
     GpuMesh human_mesh[HUMAN_N];
     u32 human_count = 0;
     M4 *human_bones = ARENA_PUSH_ARRAY(&perm, M4, HUMAN_N * RENDER_MAX_BONES);
@@ -486,7 +507,7 @@ int main(int argc, char **argv)
                 char path[700], suf[16] = "";
                 u32 lod = k % CHAR_LODS;
                 if (lod) snprintf(suf, sizeof suf, "_lod%u", lod);
-                snprintf(path, sizeof path, "%s/meshes/%s%s.mesh", data_dir, mh_name[k / CHAR_LODS], suf);
+                snprintf(path, sizeof path, "%s/meshes/%s%s.mesh", data_dir, g_body_file[k / CHAR_LODS], suf);
                 if (!mb_load(&mb, &perm, path)) continue;
                 gpu_mesh_upload(&human_mesh[human_count], &mb);
                 log_info("ЧЕЛОВЕК %u: %u вершин, %u треугольников", k, mb.vcount, mb.icount / 3);
@@ -581,7 +602,10 @@ int main(int argc, char **argv)
             snprintf(val, sizeof val, "%.2f МС  %.0f К/С", (f64)shown_ms, (f64)shown_fps);
             hud_debug_text(&hud, "КАДР", val);
             hud_debug_check(&hud, "СЧЁТЧИК КАДРОВ", &hud.dbg.fps_on);
-            if (hud_debug_button(&hud, "ПЕРЕЗАГРУЗИТЬ ШЕЙДЕРЫ")) render_reload_shaders();
+            if (hud_debug_button(&hud, "ПЕРЕЗАГРУЗИТЬ ШЕЙДЕРЫ")) {
+                render_reload_shaders();
+                memset(g_portrait_key, 0, sizeof g_portrait_key);
+            }
             if (hud_debug_button(&hud, "ЗАМЕР КАДРА")) bench_request = true;
             hud_debug_check(&hud, "ЖУРНАЛ", &hud.dbg.journal);
         }
@@ -629,7 +653,7 @@ int main(int argc, char **argv)
             };
             M4 *b = &bones[i * RENDER_MAX_BONES];
             character_pose(&p, NULL, b);
-            items[n++] = (DrawItem){ .mesh = &body_mesh[crowd.variant[i]], .bones = b };
+            items[n++] = (DrawItem){ .mesh = &body_mesh[crowd.variant[i] % BODY_KINDS], .bones = b };
             if (armed) items[n++] = (DrawItem){ .mesh = &weapon_mesh[wid], .bones = b };
         }
         for (u32 i = 0; i < mobs->count; i++) {
@@ -644,10 +668,10 @@ int main(int argc, char **argv)
             };
             M4 *b = &mob_bones[i * RENDER_MAX_BONES];
             character_pose(&p, NULL, b);
-            items[n++] = (DrawItem){ .mesh = &body_mesh[mobs->variant[i] % CHAR_VARIANTS], .bones = b };
+            items[n++] = (DrawItem){ .mesh = &body_mesh[mobs->variant[i] % BODY_KINDS], .bones = b };
             items[n++] = (DrawItem){ .mesh = &weapon_mesh[wid], .bones = b };
         }
-        n += arena_view_draw(aview, arena, sim_time, body_mesh, CHAR_VARIANTS, weapon_mesh, arena_bones, items + n);
+        n += arena_view_draw(aview, arena, sim_time, body_mesh, BODY_KINDS, weapon_mesh, arena_bones, items + n);
         for (u32 i = 0; i < squad->count; i++) {
             const Player *pl = &squad->body[i];
             const CharSheet *cs = &squad->sheet[i];
@@ -659,7 +683,7 @@ int main(int argc, char **argv)
                 .weapon = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? (u8)(cs->equip[SLOT_WEAPON].id + 1) : 0,
             };
             character_pose(&p, NULL, b);
-            items[n++] = (DrawItem){ .mesh = &body_mesh[squad->variant[i] % CHAR_VARIANTS], .bones = b };
+            items[n++] = (DrawItem){ .mesh = &body_mesh[squad->variant[i] % BODY_KINDS], .bones = b };
             if (cs->equip[SLOT_WEAPON].kind == IK_WEAPON)
                 items[n++] = (DrawItem){ .mesh = &weapon_mesh[cs->equip[SLOT_WEAPON].id], .bones = b };
             if (squad->selected[i]) {
@@ -713,7 +737,7 @@ int main(int argc, char **argv)
             if (focus && hud.look_kind == LOOK_ARENA) {
                 const FighterDesc *d = &arena->roster[k].d;
                 f32 seed = (f32)k * 13.7f + 3.0f;
-                portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, &body_mesh[k % CHAR_VARIANTS], &weapon_mesh[d->weapon],
+                portrait(&fv, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, &body_mesh[k % BODY_KINDS], &weapon_mesh[d->weapon],
                          d->weapon, seed, d->height / 1.8f, 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), pb);
                 continue;
             }
@@ -721,12 +745,13 @@ int main(int argc, char **argv)
             const CharSheet *cs = &squad->sheet[k];
             const GpuMesh *wm = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? &weapon_mesh[cs->equip[SLOT_WEAPON].id] : NULL;
             portrait(&fv, focus ? HUD_PORTRAIT_FOCUS : i, focus ? HUD_PORTRAIT_FOCUS_PX : HUD_PORTRAIT_CARD_PX,
-                     &body_mesh[squad->variant[k] % CHAR_VARIANTS], wm, cs->equip[SLOT_WEAPON].id, 7.0f + (f32)k * 5.3f, cs->d.height / 1.8f, 0.0f, pb);
+                     &body_mesh[squad->variant[k] % BODY_KINDS], wm, cs->equip[SLOT_WEAPON].id, 7.0f + (f32)k * 5.3f, cs->d.height / 1.8f, 0.0f, pb);
         }
         ui_set_image(render_portrait_texture());
         ui_set_time(real_time);
         hud_draw(&hud, &hin, &hw);
         ui_end();
+        render_frame_end();
         f64 t_swap = time_now();
         cpu_submit += t_swap - t_submit;
 
@@ -782,14 +807,8 @@ int main(int argc, char **argv)
             RenderStats st;
             render_take_stats(&st);
             f64 k = 1000.0 / stat_frames;
-            char gpu[192];
-            // Драйвер может не отдавать метки времени (например, D3D12 в WSL)
-            if (st.samples && st.gpu_total_ms > 0.0)
-                snprintf(gpu, sizeof gpu, "GPU %.3f: тени %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f",
-                         st.gpu_total_ms, st.gpu_ms[PASS_SHADOW], st.gpu_ms[PASS_SCENE], st.gpu_ms[PASS_ATMOS],
-                         st.gpu_ms[PASS_STYLE], st.gpu_ms[PASS_BLIT]);
-            else
-                snprintf(gpu, sizeof gpu, "GPU: драйвер не отдаёт метки времени");
+            char gpu[256];
+            gpu_line(gpu, sizeof gpu, &st);
             log_stat("КАДР: %.2f мс, %.0f к/с | CPU: логика %.3f, отправка %.3f, swap %.3f | %s",
                      (now - stat_t) * k, stat_frames / (now - stat_t),
                      cpu_logic * k, cpu_submit * k, cpu_swap * k, gpu);

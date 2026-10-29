@@ -13,7 +13,7 @@
 #define RENDER_PORTRAIT_SLOTS 10
 
 typedef struct GpuMesh {
-    u32 vao, vbo, ibo;
+    u32 vao, vbo, ibo, skin_vbo;  // skin_vbo — веса до 4 костей, 0 у жёстких сеток
     u32 index_count;
     V4  bound;                          // сфера всей сетки: центр xyz, радиус w
     V4  bone_bound[RENDER_MAX_BONES];   // сфера вершин каждой кости в позе привязки
@@ -51,7 +51,8 @@ typedef struct RenderSettings {
 } RenderSettings;
 
 // Время проходов на GPU, мс, среднее с прошлого render_take_stats
-enum { PASS_SHADOW, PASS_SCENE, PASS_ATMOS, PASS_STYLE, PASS_BLIT, PASS_COUNT };
+// глубина — проход глубины и карты пикселей; интерфейс — портреты и HUD после render_frame
+enum { PASS_SHADOW, PASS_DEPTH, PASS_SCENE, PASS_ATMOS, PASS_STYLE, PASS_BLIT, PASS_UI, PASS_COUNT };
 typedef struct RenderStats {
     f64 gpu_ms[PASS_COUNT];
     f64 gpu_total_ms;
@@ -70,6 +71,8 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb);
 // Сделать coarse следующим уровнем детализации fine: fine рисуется, пока сфера не меньше min_px пикселей
 void gpu_mesh_set_lod(GpuMesh *fine, const GpuMesh *coarse, f32 min_px);
 void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const RenderSettings *rs, i32 win_w, i32 win_h);
+// Конец кадра GPU: после портретов и интерфейса, перед swap
+void render_frame_end(void);
 // Портрет в ячейку slot атласа (size x size от левого нижнего угла ячейки), после render_frame:
 // тот же свет и тени, фон прозрачный. cam_pos во fv — глаз портретной камеры
 void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, const DrawItem *items, u32 count);

@@ -27,8 +27,15 @@ typedef struct Vertex {
     u8  mat, bone, pad0, pad1;
 } Vertex;
 
+// Мягкий скиннинг: до 4 костей на вершину, веса в сумме 255, самая тяжёлая первой
+typedef struct VertexSkin {
+    u8 bone[4];
+    u8 weight[4];
+} VertexSkin;
+
 typedef struct MeshBuilder {
     Vertex *v;
+    VertexSkin *skin;  // NULL — жёсткий скиннинг по Vertex.bone
     u32    *idx;
     u32     vcount, vcap;
     u32     icount, icap;
@@ -40,8 +47,8 @@ typedef struct MeshBuilder {
 } MeshBuilder;
 
 bool mb_init(MeshBuilder *mb, Arena *arena, u32 vcap, u32 icap);
-// Готовая сетка из файла .mesh (tools/humanconv): "AMSH", версия 1, число вершин и индексов, Vertex[], u32[].
-// Буферы берутся из арены по размеру файла
+// Готовая сетка из файла .mesh (tools/humanconv): "AMSH", версия, число вершин и индексов, Vertex[], u32[];
+// с версии 2 следом VertexSkin[]. Буферы берутся из арены по размеру файла
 bool mb_load(MeshBuilder *mb, Arena *arena, const char *path);
 void mb_set(MeshBuilder *mb, V3 color, Material mat, u8 bone);
 

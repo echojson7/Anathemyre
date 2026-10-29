@@ -3,6 +3,8 @@ layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec3 a_nrm;
 layout(location = 2) in vec4 a_color;
 layout(location = 3) in uvec2 a_mat_bone;
+layout(location = 4) in uvec4 a_bones;    // до 4 костей; без потока скиннинга вес первой 0
+layout(location = 5) in vec4 a_weights;
 
 layout(location = 0) uniform mat4 u_view_proj;
 layout(location = 17) uniform int u_skinned;
@@ -27,12 +29,21 @@ void main()
     vec3 n = a_nrm;
     v_rot = mat3(1.0);
     if (u_skinned != 0) {
-        // Жёсткий скиннинг: одна кость на вершину
-        uint pose = inst_pose[u_inst_base + gl_InstanceID];
-        mat4 b = bones[pose * 24u + min(a_mat_bone.y, 23u)];
+        uint base = inst_pose[u_inst_base + gl_InstanceID] * 24u;
+        mat4 b;
+        if (a_weights.x > 0.0) {
+            // Мягкий скиннинг: смесь матриц до 4 костей; поворот квадратов материала — от главной
+            uvec4 k = min(a_bones, uvec4(23u));
+            mat4 b0 = bones[base + k.x];
+            b = b0 * a_weights.x + bones[base + k.y] * a_weights.y + bones[base + k.z] * a_weights.z + bones[base + k.w] * a_weights.w;
+            v_rot = mat3(b0);
+        } else {
+            // Жёсткий: одна кость на вершину
+            b = bones[base + min(a_mat_bone.y, 23u)];
+            v_rot = mat3(b);
+        }
         p = b * p;
         n = mat3(b) * n;
-        v_rot = mat3(b);
     }
     v_world = p.xyz;
     v_nrm = n;
