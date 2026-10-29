@@ -175,7 +175,8 @@ GPU тот же. У пользователя (8+ ядер, быстрее CPU) �
   консоли, последняя — по зонам. Сравнивать с пунктом «SWAP ПОСЛЕ ЛОГИКИ» и без него, с `--threads 1`
   и без него.
 - Без окна: `--battle-bench A B [--threads N]` (бой, тик и контрольная сумма), `--field-bench N`
-  (шаг мира: ходьба и тик поля на N телах), `--arena-bench N`.
+  (шаг мира: ходьба и тик поля на N телах), `--arena-bench N`, `--bands-bench N --hours H` (отряды вдали:
+  шаг мира, бои формулой, сумма).
 - Инструкции: `valgrind --tool=callgrind ./build/anathemyre --shot k.ppm --frames 40 --size 128 72 ...`
   под `xvfb-run` с `LIBGL_ALWAYS_SOFTWARE=1`; смотреть свои функции (`callgrind_annotate --inclusive=yes`).
 - Кадр бит в бит: снимок `--shot` до и после правки, сравнить всё, кроме верхней полосы (там счётчик к/с).

@@ -82,6 +82,17 @@ bool world_init(World *w, Arena *perm, MeshBuilder *mb, u64 seed, f32 tod, bool 
     field_init(w->field, perm, seed);
     people_join_field(p, w->field);
     memcpy(p->last, p->body, p->count * sizeof *p->body);
+
+    // Места и дороги: пока три места лагеря и долины, отрядов вдали нет
+    Places *pl = &w->places;
+    u32 hall = places_add(pl, "зал", 10.0f, 25.0f), town = places_add(pl, "Скудель", 78.0f, 4.0f);
+    u32 valley = places_add(pl, "долина у реки", w->valley->spawn.x, w->valley->spawn.z);
+    places_road(pl, hall, town);
+    places_road(pl, hall, valley);
+    places_road(pl, town, valley);
+    if (!places_build(pl, perm)) return false;
+    w->bands = ARENA_PUSH_ARRAY(perm, Bands, 1);
+    bands_init(w->bands, perm, pl, seed, TICK_HZ);
     return true;
 }
 
@@ -97,6 +108,7 @@ static void world_tick(World *w)
     arena_view_tick(&w->aview, w->arena);
     prof_zone(PZ_FIELD);
     field_tick(w->field, world_ground);
+    bands_tick(w->bands);
     if (w->day_run) {
         w->tod += TICK_DT / DAY_LENGTH_S;
         if (w->tod >= 1.0f) {

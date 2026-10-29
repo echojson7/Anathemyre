@@ -49,6 +49,9 @@ typedef struct Options {
     u32         field_bench; // сценка атаки и нагрузка поля на N−1 тел без окна
     i32         attack;      // для снимков: весь отряд сразу атакует бродящего номер attack−1
     u32         arena_log;   // сколько первых боёв печатать подробно
+    u32         bands_bench; // отряды вдали без окна: столько отрядов
+    f32         bands_hours; // часов дальнего мира
+    u32         bands_log;   // сколько первых событий печатать
     u32         battle[2];   // полевой бой: бойцов в каждом отряде
     bool        battle_verify;
     u32         threads;     // потоков вместе с главным (позы людей, бой); 0 — по числу ядер
@@ -103,6 +106,7 @@ static void usage(void)
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
     puts("anathemyre --field-bench N [--seed N]   приказ атаки без окна, затем нагрузка поля на N тел");
+    puts("anathemyre --bands-bench N [--hours H] [--bands-log K] [--seed N]   отряды вдали без окна: N отрядов, H часов мира");
     puts("anathemyre --sound-demo out.wav   сценка звука (ветер, шаги, бой, даль) в файл и замер микшера; --mute — играть без звука");
 }
 
@@ -140,6 +144,9 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--field-bench") && i + 1 < argc) o->field_bench = (u32)atoi(argv[++i]) + 1;
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
+        else if (!strcmp(a, "--bands-bench") && i + 1 < argc) o->bands_bench = (u32)atoi(argv[++i]);
+        else if (!strcmp(a, "--hours") && i + 1 < argc) o->bands_hours = strtof(argv[++i], NULL);
+        else if (!strcmp(a, "--bands-log") && i + 1 < argc) o->bands_log = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--battle-bench") && i + 2 < argc) {
             o->battle[0] = (u32)atoi(argv[++i]);
             o->battle[1] = (u32)atoi(argv[++i]);
@@ -215,7 +222,7 @@ int main(int argc, char **argv)
     platform_preinit();
     time_init();
     Options opt = {
-        .tod = 0.31f, .shot_frames = 90, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
+        .tod = 0.31f, .shot_frames = 90, .bands_hours = 1.0f, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
@@ -223,6 +230,7 @@ int main(int argc, char **argv)
     if (opt.field_bench) return field_bench(opt.field_bench - 1, opt.seed);
     if (opt.sound_demo) return audio_demo(opt.sound_demo);
     if (opt.arena_bench) return arena_bench(opt.arena_bench, opt.seed, opt.arena_log);
+    if (opt.bands_bench) return bands_bench(opt.bands_bench, opt.bands_hours, opt.seed, TICK_HZ, opt.bands_log);
     if (opt.battle[0] || opt.battle[1])
         return battle_bench(opt.battle[0], opt.battle[1], opt.seed, opt.threads, opt.battle_verify);
     // Дальше в консоль — только к/с, замеры и сбои; остальное в журнал на экране

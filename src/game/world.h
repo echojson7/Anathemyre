@@ -8,6 +8,8 @@
 #include "../core/arena.h"
 #include "../core/rng.h"
 #include "../render/render.h"
+#include "../sim/bands.h"
+#include "../world/places.h"
 #include "arena.h"
 #include "arena_view.h"
 #include "field.h"
@@ -34,6 +36,8 @@ typedef struct World {
     ArenaSession *arena;
     ArenaView     aview;
     ValleyView   *valley;        // долина у реки на карте: вода, руины, растения
+    Places        places;        // места и дороги: зал, Скудель, долина
+    Bands        *bands;         // отряды вдали (пока ни одного)
     GpuMesh       hall, far, town_mesh;  // статика лагеря: зал и обломки, мегаструктуры, посёлок
     u64           tick;          // шагов мира с начала
     f32           acc;           // игровое время после последнего шага, с (< TICK_DT)
@@ -45,7 +49,7 @@ typedef struct World {
 
 bool world_init(World *w, Arena *perm, MeshBuilder *mb, u64 seed, f32 tod, bool day_run);
 // Прошло dt игрового времени (кадр с учётом скорости): сделать столько шагов мира, сколько набралось.
-// Шаг: люди, отряд, арена, поле боя, сутки
+// Шаг: люди, отряд, арена, поле боя, отряды вдали, сутки
 void world_update(World *w, f32 dt);
 // Вид боя для кадра: сглаживание бойцов поля и арены между шагами; dt — игровое время кадра
 void world_present(World *w, f32 dt);
