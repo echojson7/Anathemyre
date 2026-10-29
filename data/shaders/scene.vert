@@ -5,8 +5,12 @@ layout(location = 2) in vec4 a_color;
 layout(location = 3) in uvec2 a_mat_bone;
 
 layout(location = 0) uniform mat4 u_view_proj;
-layout(location = 50) uniform mat4 u_bones[24];
 layout(location = 17) uniform int u_skinned;
+layout(location = 19) uniform int u_inst_base;
+
+// Наборы костей кадра по 24 матрицы; экземпляр берёт номер своего набора из списка прохода
+layout(std430, binding = 0) readonly buffer BoneBuf { mat4 bones[]; };
+layout(std430, binding = 1) readonly buffer InstBuf { uint inst_pose[]; };
 
 out vec3 v_world;
 out vec3 v_nrm;
@@ -22,7 +26,8 @@ void main()
     v_rot = mat3(1.0);
     if (u_skinned != 0) {
         // Жёсткий скиннинг: одна кость на вершину
-        mat4 b = u_bones[min(a_mat_bone.y, 23u)];
+        uint pose = inst_pose[u_inst_base + gl_InstanceID];
+        mat4 b = bones[pose * 24u + min(a_mat_bone.y, 23u)];
         p = b * p;
         n = mat3(b) * n;
         v_rot = mat3(b);

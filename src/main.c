@@ -24,6 +24,8 @@
 #define CROWD_SIZE 9
 // Арена у зала, перед его открытым краем
 #define ARENA_CENTER v3(14.0f, 0.0f, 34.0f)
+// Пороги детализации фигуры: диаметр её сферы на экране, пикселей. Больше первого — полный уровень
+static const f32 g_char_lod_px[CHAR_LODS - 1] = { 200.0f, 70.0f };
 #define ARENA_SHOW_AFTER_BOUT_S 12.0f
 #define CAM_FOV 0.95f  // по вертикали, рад
 #define DAY_LENGTH_S 120.0f  // полные сутки, с; пока быстро, чтобы смену было видно
@@ -274,17 +276,23 @@ int main(int argc, char **argv)
     perm.used = mark;
 
     // Фигуры зала с оружием тестовой комнаты; бойцы и зрители арены без него
+    // Грубые уровни лежат отдельно: остальной код видит только полный (char_mesh, body_mesh)
     GpuMesh char_mesh[CHAR_VARIANTS], body_mesh[CHAR_VARIANTS], weapon_mesh[W_COUNT];
+    GpuMesh char_lod[CHAR_VARIANTS][CHAR_LODS - 1], body_lod[CHAR_VARIANTS][CHAR_LODS - 1];
     for (u32 v = 0; v < CHAR_VARIANTS; v++) {
-        mb_init(&mb, &perm, 40000, 120000);
-        character_build(&mb, v, true);
-        gpu_mesh_upload(&char_mesh[v], &mb);
-        if (v == 0) log_info("ФИГУРА: %u вершин, %u треугольников", mb.vcount, mb.icount / 3);
-        perm.used = mark;
-        mb_init(&mb, &perm, 40000, 120000);
-        character_build(&mb, v, false);
-        gpu_mesh_upload(&body_mesh[v], &mb);
-        perm.used = mark;
+        for (u32 armed = 0; armed < 2; armed++) {
+            GpuMesh *full = armed ? &char_mesh[v] : &body_mesh[v];
+            GpuMesh *lods = armed ? char_lod[v] : body_lod[v];
+            for (u32 l = 0; l < CHAR_LODS; l++) {
+                GpuMesh *gm = l ? &lods[l - 1] : full;
+                mb_init(&mb, &perm, 40000, 120000);
+                character_build(&mb, v, armed, l);
+                gpu_mesh_upload(gm, &mb);
+                if (v == 0 && armed) log_info("ФИГУРА: уровень %u, %u вершин, %u треугольников", l, mb.vcount, mb.icount / 3);
+                if (l) gpu_mesh_set_lod(l == 1 ? full : &lods[l - 2], gm, g_char_lod_px[l - 1]);
+                perm.used = mark;
+            }
+        }
     }
     for (u32 k = 0; k < W_COUNT; k++) {
         mb_init(&mb, &perm, 4000, 12000);
@@ -549,6 +557,8 @@ int main(int argc, char **argv)
             log_info("КАДР: %.2f мс, %.0f к/с | CPU: логика %.3f, отправка %.3f, swap %.3f | %s",
                      (now - stat_t) * k, stat_frames / (now - stat_t),
                      cpu_logic * k, cpu_submit * k, cpu_swap * k, gpu);
+            log_info("ОТРИСОВКА: элементов %u | сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk",
+                     st.items, st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0);
             stat_t = now;
             stat_frames = 0;
             cpu_logic = cpu_submit = cpu_swap = 0;

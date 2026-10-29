@@ -85,6 +85,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_DEPTH_ATTACHMENT 0x8D00
 #define GL_FRAMEBUFFER 0x8D40
 #define GL_DYNAMIC_STORAGE_BIT 0x0100
+#define GL_SHADER_STORAGE_BUFFER 0x90D2
 #define GL_DEBUG_SEVERITY_HIGH 0x9146
 #define GL_DEBUG_SEVERITY_MEDIUM 0x9147
 #define GL_DEBUG_SEVERITY_NOTIFICATION 0x826B
@@ -111,6 +112,8 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, ReadPixels, (GLint x, GLint y, GLsizei w, GLsizei h, GLenum fmt, GLenum type, void *data)) \
     X(void, DrawArrays, (GLenum mode, GLint first, GLsizei count)) \
     X(void, DrawElements, (GLenum mode, GLsizei count, GLenum type, const void *indices)) \
+    X(void, DrawElementsInstanced, (GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instances)) \
+    X(void, BindBufferBase, (GLenum target, GLuint index, GLuint buffer)) \
     X(void, CreateBuffers, (GLsizei n, GLuint *buffers)) \
     X(void, NamedBufferStorage, (GLuint buffer, GLsizeiptr size, const void *data, GLbitfield flags)) \
     X(void, NamedBufferSubData, (GLuint buffer, GLintptr offset, GLsizeiptr size, const void *data)) \

@@ -160,8 +160,10 @@ void mb_smooth_normals(MeshBuilder *mb, u32 vfirst, u32 ifirst)
 
 void mb_capsule(MeshBuilder *mb, V3 a, V3 b, f32 r0, f32 r1, u32 segs, f32 ex, f32 ez)
 {
-    enum { CAP = 4 };
-    V2 prof[2 * (CAP + 1)];
+    // Колец на полусферу: четверть сегментов по кругу (16 -> 4), не меньше одного
+    enum { CAP_MAX = 8 };
+    u32 CAP = segs / 4 < 1 ? 1 : (segs / 4 > CAP_MAX ? CAP_MAX : segs / 4);
+    V2 prof[2 * (CAP_MAX + 1)];
     f32 len = v3_len(v3_sub(b, a));
     u32 n = 0;
     for (u32 i = 0; i <= CAP; i++) {
