@@ -43,7 +43,6 @@ typedef struct AttackDef {
     f32 windup_mul;
     f32 reach_add;
     f32 arc_deg;      // 0 = дуга оружия (только для размаха)
-    f32 part_w[PART_COUNT];
 } AttackDef;
 
 #define ARM_REACH 0.7f

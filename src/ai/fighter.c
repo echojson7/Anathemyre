@@ -203,13 +203,12 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
     }
     if (s != FS_READY && !cornered) return;
 
-    // Держать дистанцию своего оружия и кружить
-    f32 want = reach * 0.85f;
+    // Держать дистанцию своего оружия: ударом достаёт, вплотную не лезет; между — кружит
     f32 side = (i & 1) ? 1.0f : -1.0f;
-    if (d > reach * 0.95f) {
+    if (d > reach * 0.98f) {
         w->mvx[i] = dx;
         w->mvz[i] = dz;
-    } else if (d < want * 0.6f) {
+    } else if (d < reach * 0.82f) {
         w->mvx[i] = -dx * 0.7f;
         w->mvz[i] = -dz * 0.7f;
     } else {

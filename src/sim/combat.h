@@ -74,6 +74,8 @@ typedef enum CombatEventKind {
     EV_GETUP,      // a поднялся
 } CombatEventKind;
 
+enum { REACT_NONE, REACT_BLOCK, REACT_DODGE };
+
 enum { EVF_STAGGER = 1, EVF_FRACTURE = 2, EVF_SEVER = 4, EVF_ALLY = 8 };
 
 typedef struct CombatEvent {
@@ -114,7 +116,8 @@ typedef struct CombatWorld {
 
     // Горячие данные каждого тика
     f32 *x, *z, *heading;
-    u8  *state, *team, *attack, *react;
+    u8  *state, *team, *attack, *react;  // react — ответ цели на текущий удар, REACT_*
+    f32 *aim_x, *aim_y, *aim_s;  // куда идёт удар: точка на цели в плоскости взгляда (м, поза привязки) и наклон следа
     f32 *timer;      // осталось в состоянии, с
     f32 *dur;        // полная длительность состояния
     f32 *pause;      // пауза до следующей атаки

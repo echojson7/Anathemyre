@@ -7,8 +7,6 @@
 #define MAX_STRIKE_TARGETS 8
 #define GRID_SLACK 1.5f  // запас запроса: за тик сбитого с ног отбрасывает до 1.5 м
 
-enum { REACT_NONE, REACT_BLOCK, REACT_DODGE };
-
 // ---------------------------------------------------------------- служебное
 
 static u32 mix32(u32 x)
@@ -289,24 +287,131 @@ static u8 apply_damage(CombatWorld *w, u32 t, u32 part, f32 cut, f32 blunt, f32 
     return flags;
 }
 
+// ---------------------------------------------------------------- куда пришёлся удар
+//
+// Удар оставляет на цели след в плоскости взгляда атакующего (x — влево от него, y — вверх,
+// метры позы привязки цели): размах — наклонная линия справа налево, удар сверху — почти отвесная
+// сверху вниз, укол — точка. Попадает то, во что след входит первым (укол — ближнее к атакующему).
+// Тело цели — капсулы стойки g_body_hit_guard, повёрнутые так, как цель стоит к атакующему
+
+// Куда метит: середина и разброс по виду удара; ловкость сужает разброс
+static void roll_aim(CombatWorld *w, u32 i, u32 t, u8 kind)
+{
+    f32 r1 = combat_roll(w, i, t, 20), r2 = combat_roll(w, i, t, 21), r3 = combat_roll(w, i, t, 22);
+    f32 spread = 1.0f - sk(w, i, SK_DEXTERITY) / 250.0f;
+    f32 tri = (r1 + r2 - 1.0f) * spread;  // -1..1, к середине гуще
+    switch (kind) {
+    case ATK_SWING:
+        // Наискось сверху в ключицу, поперёк живота или низом по ногам
+        if (r3 < 0.40f) {
+            w->aim_y[i] = 1.40f + 0.14f * tri;
+            w->aim_s[i] = -(0.50f + 0.35f * r2);
+        } else if (r3 < 0.88f) {
+            w->aim_y[i] = 1.05f + 0.12f * tri;
+            w->aim_s[i] = -(0.10f + 0.30f * r1);
+        } else {
+            w->aim_y[i] = 0.50f + 0.25f * r2;
+            w->aim_s[i] = -0.10f;
+        }
+        w->aim_x[i] = 0.0f;
+        break;
+    case ATK_OVERHEAD:
+        // В голову или в плечо справа от себя, клинок идёт чуть справа налево; точка — на высоте плеч
+        w->aim_x[i] = -0.12f + 0.26f * tri;
+        w->aim_y[i] = 1.45f;
+        w->aim_s[i] = 0.20f + 0.30f * r3;
+        break;
+    default:
+        w->aim_x[i] = 0.12f * (r3 - 0.5f) * 2.0f * spread;
+        // Укол в корпус, изредка в лицо
+        w->aim_y[i] = combat_roll(w, i, t, 23) < 0.07f ? 1.60f : 1.12f + 0.34f * tri;
+        w->aim_s[i] = 0.0f;
+        break;
+    }
+}
+
+// С какого места по следу (o + u·d, d единичный) след входит в капсулу a-b радиуса r; 1e9 — мимо
+static f32 trace_entry(f32 ox, f32 oy, f32 dx, f32 dy, f32 ax, f32 ay, f32 bx, f32 by, f32 r)
+{
+    // В координатах следа: u вдоль, v поперёк
+    f32 ua = (ax - ox) * dx + (ay - oy) * dy, va = -(ax - ox) * dy + (ay - oy) * dx;
+    f32 ub = (bx - ox) * dx + (by - oy) * dy, vb = -(bx - ox) * dy + (by - oy) * dx;
+    f32 best = 1e9f;
+    if (fabsf(va) <= r) best = fminf(best, ua - sqrtf(r * r - va * va));
+    if (fabsf(vb) <= r) best = fminf(best, ub - sqrtf(r * r - vb * vb));
+    // Боковые стороны капсулы
+    f32 du = ub - ua, dv = vb - va, l = sqrtf(du * du + dv * dv);
+    if (l > 1e-6f && fabsf(dv) > 1e-6f) {
+        f32 nu = -dv / l * r, nv = du / l * r;
+        for (f32 sgn = -1.0f; sgn <= 1.0f; sgn += 2.0f) {
+            f32 k = -(va + sgn * nv) / dv;
+            if (k >= 0.0f && k <= 1.0f) best = fminf(best, ua + k * du + sgn * nu);
+        }
+    }
+    return best;
+}
+
 static u32 choose_part(const CombatWorld *w, u32 att, u32 t, u8 kind, u32 salt)
 {
-    f32 wgt[PART_COUNT];
-    f32 sum = 0.0f;
-    bool lying = fs_lying(w->state[t]);
-    f32 dex = 1.0f + sk(w, att, SK_DEXTERITY) / 200.0f;
-    for (u32 p = 0; p < PART_COUNT; p++) {
-        wgt[p] = lying ? 1.0f : g_attacks[kind].part_w[p];
-        if (p <= PART_CHEST) wgt[p] *= dex;
-        if (w->severed[t] & (1u << p)) wgt[p] = 0.0f;
-        sum += wgt[p];
+    if (fs_lying(w->state[t])) {
+        // Лежачего бьют куда придётся
+        u32 n = 0, opts[PART_COUNT];
+        for (u32 p = 0; p < PART_COUNT; p++)
+            if (!(w->severed[t] & (1u << p))) opts[n++] = p;
+        u32 k = (u32)(combat_roll(w, att, t, salt) * (f32)n);
+        return n ? opts[k < n ? k : n - 1] : PART_CHEST;
     }
-    f32 r = combat_roll(w, att, t, salt) * sum;
-    for (u32 p = 0; p < PART_COUNT; p++) {
-        if (r < wgt[p]) return p;
-        r -= wgt[p];
+    // Цель в осях атакующего: δ — разворот цели относительно линии удара
+    f32 dir = atan2f(w->x[t] - w->x[att], w->z[t] - w->z[att]);
+    f32 sd = sinf(w->heading[t] - dir), cd = cosf(w->heading[t] - dir);
+    f32 ox = w->aim_x[att], oy = w->aim_y[att], s = w->aim_s[att];
+    f32 dx, dy;
+    if (kind == ATK_SWING) {
+        dx = 1.0f;
+        dy = s;
+    } else {
+        dx = s;
+        dy = -1.0f;
     }
-    return PART_CHEST;
+    f32 dl = sqrtf(dx * dx + dy * dy);
+    dx /= dl;
+    dy /= dl;
+    u32 best = PART_COUNT, near = PART_CHEST;
+    f32 best_u = 1e9f, near_d = 1e9f;
+    for (u32 c = 0; c < g_body_hit_count; c++) {
+        const HitCapsule *h = &g_body_hit_guard[c];
+        if (w->severed[t] & (1u << h->part)) continue;
+        f32 ax = h->a.x * cd + h->a.z * sd, az = -h->a.x * sd + h->a.z * cd;
+        f32 bx = h->b.x * cd + h->b.z * sd, bz = -h->b.x * sd + h->b.z * cd;
+        f32 ay = h->a.y, by = h->b.y;
+        f32 u;
+        if (kind == ATK_THRUST) {
+            // Укол: точка внутри капсулы; ближе к атакующему — та, что спереди
+            f32 ex = bx - ax, ey = by - ay, ee = ex * ex + ey * ey;
+            f32 k = ee > 1e-9f ? clampf(((ox - ax) * ex + (oy - ay) * ey) / ee, 0.0f, 1.0f) : 0.0f;
+            f32 px = ax + k * ex - ox, py = ay + k * ey - oy, d2 = px * px + py * py;
+            f32 d = sqrtf(d2) - h->r;
+            if (d < near_d) {
+                near_d = d;
+                near = h->part;
+            }
+            u = d2 <= h->r * h->r ? az + k * (bz - az) - sqrtf(h->r * h->r - d2) : 1e9f;
+        } else {
+            u = trace_entry(ox, oy, dx, dy, ax, ay, bx, by, h->r);
+            // Промах мимо всех: ближайшая к следу
+            f32 va = fabsf(-(ax - ox) * dy + (ay - oy) * dx), vb = fabsf(-(bx - ox) * dy + (by - oy) * dx);
+            f32 d = fminf(va, vb) - h->r;
+            if (d < near_d) {
+                near_d = d;
+                near = h->part;
+            }
+        }
+        if (u < best_u) {
+            best_u = u;
+            best = h->part;
+        }
+    }
+    return best < PART_COUNT ? best : near;
 }
 
 // ---------------------------------------------------------------- удар
@@ -355,6 +460,7 @@ void combat_begin_attack(CombatWorld *w, u32 i, u8 kind, u32 t, bool counter)
     combat_set_state(w, i, FS_WINDUP, wt);
     w->attack[i] = kind;
     w->target[i] = (i32)t;
+    roll_aim(w, i, t, kind);
     combat_event(w, counter ? EV_COUNTER : EV_ATTACK, i, t);
     w->ev[w->last_ev].arg = kind;
     gain(w, i, SK_ATTACK, 0.02f, defense_eff(w, t));
@@ -733,7 +839,7 @@ void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap)
 #define F(name) w->name = ARENA_PUSH_ARRAY(a, f32, cap)
 #define B(name) w->name = ARENA_PUSH_ARRAY(a, u8, cap)
     F(x); F(z); F(heading); F(timer); F(dur); F(pause); F(since_hit); F(mvx); F(mvz);
-    B(state); B(team); B(attack); B(react);
+    B(state); B(team); B(attack); B(react); F(aim_x); F(aim_y); F(aim_s);
     w->target = ARENA_PUSH_ARRAY(a, i32, cap);
     w->order = ARENA_PUSH_ARRAY(a, i32, cap);
     B(idle);
@@ -808,6 +914,8 @@ void combat_load(CombatWorld *w, u32 i, const FighterDesc *d)
     w->since_hit[i] = 100.0f;
     w->react[i] = REACT_NONE;
     w->attack[i] = ATK_SWING;
+    w->aim_x[i] = w->aim_s[i] = 0.0f;
+    w->aim_y[i] = 1.3f;
     bool fresh = d->blood <= 0.0f;
     for (u32 p = 0; p < PART_COUNT; p++) w->hp[p][i] = fresh ? g_part_hp[p] : d->hp[p];
     w->mass[i] = d->mass;

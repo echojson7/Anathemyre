@@ -66,6 +66,10 @@ void fight_anim_update(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, f32
             if (f->dodge_kind >= DODGE_COUNT) f->dodge_kind = DODGE_BACK;
             f->dodge_side = hashf(h + 1u) < 0.5f ? 1.0f : -1.0f;
         }
+        if (st == FS_WINDUP && w->target[i] >= 0) {
+            f->lock_x = w->x[w->target[i]];
+            f->lock_z = w->z[w->target[i]];
+        }
         f->vst = st;
         f->vt = 0.0f;
     } else {
@@ -159,6 +163,20 @@ bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha,
         .flinch = f->flinch, .flinch_part = f->flinch_part, .wield = f->wield,
         .prone = f->prone, .limp = f->limp, .severed = w->severed[i],
     };
+    // Удар ведётся в точку на цели, куда метит бой: туда же, где он ищет, во что попало
+    i32 t = w->target[i];
+    if (swing > 0.0f && t >= 0) {
+        bool dodged = w->react[i] == REACT_DODGE;
+        f32 ts = w->height[t] / 1.8f;
+        f32 rx = origin.x + (dodged ? f->lock_x : w->x[t]) - p->pos.x;
+        f32 rz = origin.z + (dodged ? f->lock_z : w->z[t]) - p->pos.z;
+        f32 ry = fs_lying(w->state[t]) ? 0.25f : w->aim_y[i] * ts;
+        f32 hs = sinf(h), hc = cosf(h);
+        a->aim = v3((rx * hc - rz * hs + w->aim_x[i] * ts) / p->width, ry / p->height, (rx * hs + rz * hc) / p->width);
+        a->aim_s = w->aim_s[i];
+        a->aim_on = true;
+        a->aim_stop = w->react[i] == REACT_BLOCK;
+    }
     // Всем телом
     switch (st) {
     case FS_KNOCKED:
