@@ -276,5 +276,6 @@ void main()
     }
     // Портрет: неподвижный свет спереди-сверху-слева, без солнца и теней мира
     if (u_unlit != 0) col = albedo * (0.25 + 0.75 * max(dot(N, normalize(vec3(-0.5, 0.7, 0.6))), 0.0)) + emissive;
-    o_color = vec4(col, 1.0);
+    // Альфа выше 1 — метка размытия на коже (atmos.frag); в портрете не нужна
+    o_color = vec4(col, 1.0 + (v_mat == MAT_SKIN && u_unlit == 0 ? 1.0 - v_color.a : 0.0));
 }

@@ -86,6 +86,23 @@ float ambient_occlusion(vec2 uv, vec3 P, float view_dist)
     return clamp(1.0 - occ / float(N_SAMPLES) * 1.6, 0.0, 1.0);
 }
 
+// Цензура: размытие по кругу 20 см в мире: формы под меткой не читаются, цвет сцены без AO. Считается только на метке
+vec3 censor_blur(vec2 uv, float view_dist)
+{
+    vec2 res = vec2(textureSize(u_color, 0));
+    float radius_px = min(0.2 * u_proj_scale / max(view_dist, 0.1), 400.0);
+    // Поворот спирали свой у каждого пикселя: вместо колец ровный шум, его прячет зерно фильтра
+    float rnd = ign(gl_FragCoord.xy, u_frame) * 6.2831;
+    vec3 sum = vec3(0.0);
+    const int N_TAPS = 32;
+    for (int i = 0; i < N_TAPS; i++) {
+        float a = rnd + float(i) * 2.399963;
+        float r = radius_px * sqrt((float(i) + 0.5) / float(N_TAPS));
+        sum += texture(u_color, uv + vec2(cos(a), sin(a)) * r / res).rgb;
+    }
+    return sum / float(N_TAPS);
+}
+
 void main()
 {
     vec2 uv = v_uv;
@@ -101,7 +118,11 @@ void main()
         dist = 4000.0;
         col = sky(dir);
     } else {
-        col = texture(u_color, uv).rgb * ambient_occlusion(uv, P, dist);
+        vec4 c = texture(u_color, uv);
+        col = c.rgb;
+        float cz = clamp(c.a - 1.0, 0.0, 1.0);
+        if (cz > 0.0) col = mix(col, censor_blur(uv, dist), cz);
+        col *= ambient_occlusion(uv, P, dist);
     }
 
     // Высотный туман: плотнее у земли
