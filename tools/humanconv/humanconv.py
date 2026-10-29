@@ -15,7 +15,7 @@ import numpy as np
 MAT_CLOTH, MAT_SKIN = 3, 7
 HEIGHT = 1.80
 # Треугольников тела на LOD0..2 (без оболочки волос)
-LOD_TRIS = (12000, 2500, 800)
+LOD_TRIS = (8500, 1800, 500)
 
 # Сложение и цвета как у нашей тройки (src/main.c human_shape), чтобы сравнивать честно
 PEOPLE = [
@@ -454,7 +454,7 @@ def build(p, base, faces, Z, skel, W):
     fe = vote(fpid[eyes])
     Tf, Pf = refine(vote(fpid[body]).reshape(4, nf0).T)
     rs = ((5, 6), (4, 4))
-    eye_n = (80, 48)
+    eye_n = (64, 40)
     tail_n = [(r - 1) * s * 2 if p['hair'] == 'long' else 0 for r, s in rs]
     body_l = decimate(vl, Tf, Pf, [LOD_TRIS[l + 1] - tail_n[l] - eye_n[l] for l in range(2)], wv)
     eye_l = decimate(vl, tri(eyes), np.concatenate([fe, fe]), list(eye_n), wv)
