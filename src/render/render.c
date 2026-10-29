@@ -18,6 +18,10 @@ enum {
     U_S_TIME = 40, U_S_POST = 41, U_S_FRAME = 42,
 };
 
+// Метки времени GPU: кольцо из нескольких кадров, чтобы чтение не ждало GPU
+#define TIMER_FRAMES 4
+#define TIMER_MARKS (PASS_COUNT + 1)
+
 typedef struct Target {
     u32 fbo, color, depth;
     i32 w, h;
@@ -30,6 +34,11 @@ static struct {
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
     Target scene, atmos, ldr;
+    u32    timer[TIMER_FRAMES][TIMER_MARKS];
+    bool   timer_pending[TIMER_FRAMES];
+    u32    timer_slot;
+    f64    stat_ms[PASS_COUNT];
+    u32    stat_samples;
 } R;
 
 static char *read_file(const char *path)
@@ -206,6 +215,7 @@ bool render_init(Arena *scratch, const char *data_dir)
     if (!render_reload_shaders()) return false;
 
     glCreateVertexArrays(1, &R.empty_vao);
+    for (u32 i = 0; i < TIMER_FRAMES; i++) glCreateQueries(GL_TIMESTAMP, TIMER_MARKS, R.timer[i]);
 
     R.shadow_tex = make_tex(GL_DEPTH_COMPONENT24, SHADOW_SIZE, SHADOW_SIZE, GL_LINEAR);
     glTextureParameteri(R.shadow_tex, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
@@ -228,6 +238,8 @@ void render_shutdown(void)
     if (R.shadow_fbo) glDeleteFramebuffers(1, &R.shadow_fbo);
     if (R.shadow_tex) glDeleteTextures(1, &R.shadow_tex);
     if (R.empty_vao) glDeleteVertexArrays(1, &R.empty_vao);
+    for (u32 i = 0; i < TIMER_FRAMES; i++)
+        if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
     if (R.prog_scene) {
         glDeleteProgram(R.prog_scene);
         glDeleteProgram(R.prog_shadow);
@@ -259,10 +271,44 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
     return true;
 }
 
-static void draw_items(const DrawItem *items, u32 count)
+// Забирает результаты самого старого кадра в кольце, если GPU их уже посчитал
+static void timer_collect(u32 slot)
+{
+    if (!R.timer_pending[slot]) return;
+    GLuint ready = 0;
+    glGetQueryObjectuiv(R.timer[slot][TIMER_MARKS - 1], GL_QUERY_RESULT_AVAILABLE, &ready);
+    if (!ready) return;
+    GLuint64 t[TIMER_MARKS];
+    for (u32 i = 0; i < TIMER_MARKS; i++) glGetQueryObjectui64v(R.timer[slot][i], GL_QUERY_RESULT, &t[i]);
+    for (u32 p = 0; p < PASS_COUNT; p++) R.stat_ms[p] += (f64)(t[p + 1] - t[p]) * 1e-6;
+    R.stat_samples++;
+    R.timer_pending[slot] = false;
+}
+
+static void mark(u32 i)
+{
+    glQueryCounter(R.timer[R.timer_slot][i], GL_TIMESTAMP);
+}
+
+void render_take_stats(RenderStats *out)
+{
+    memset(out, 0, sizeof *out);
+    out->samples = R.stat_samples;
+    if (R.stat_samples) {
+        for (u32 p = 0; p < PASS_COUNT; p++) {
+            out->gpu_ms[p] = R.stat_ms[p] / R.stat_samples;
+            out->gpu_total_ms += out->gpu_ms[p];
+        }
+    }
+    memset(R.stat_ms, 0, sizeof R.stat_ms);
+    R.stat_samples = 0;
+}
+
+static void draw_items(const DrawItem *items, u32 count, bool shadow_pass)
 {
     for (u32 i = 0; i < count; i++) {
         const DrawItem *it = &items[i];
+        if (shadow_pass && it->no_shadow) continue;
         if (it->bones) {
             glUniform1i(U_SKINNED, 1);
             glUniformMatrix4fv(U_BONES, RENDER_MAX_BONES, GL_FALSE, it->bones[0].m);
@@ -301,6 +347,11 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         log_info("РЕНДЕР: внутреннее разрешение %dx%d -> окно %dx%d", iw, ih, win_w, win_h);
     }
 
+    // Слот занят непрочитанным кадром: забираем или пропускаем замер
+    timer_collect(R.timer_slot);
+    bool timing = !R.timer_pending[R.timer_slot];
+    if (timing) mark(0);
+
     M4 vp = m4_mul(fv->proj, fv->view);
     M4 light_vp = light_matrix(fv);
     V3 L = v3_norm(fv->sun_dir);
@@ -317,8 +368,9 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glClear(GL_DEPTH_BUFFER_BIT);
     glUseProgram(R.prog_shadow);
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, light_vp.m);
-    draw_items(items, count);
+    draw_items(items, count, true);
     glDisable(GL_POLYGON_OFFSET_FILL);
+    if (timing) mark(1);
 
     // 2. Сцена в низком разрешении
     glBindFramebuffer(GL_FRAMEBUFFER, R.scene.fbo);
@@ -333,7 +385,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform3f(U_SUN_COLOR, fv->sun_color.x, fv->sun_color.y, fv->sun_color.z);
     glUniform1f(U_TIME, fv->time);
     glBindTextureUnit(0, R.shadow_tex);
-    draw_items(items, count);
+    draw_items(items, count, false);
+    if (timing) mark(2);
 
     // 3. Атмосфера: небо, туман, объёмный свет, AO
     glDisable(GL_DEPTH_TEST);
@@ -354,6 +407,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindTextureUnit(1, R.scene.depth);
     glBindTextureUnit(2, R.shadow_tex);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+    if (timing) mark(3);
 
     // 4. Стилизация: тонмаппинг, грейд, аберрация, зерно, дизеринг
     glBindFramebuffer(GL_FRAMEBUFFER, R.ldr.fbo);
@@ -363,11 +417,19 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform1i(U_S_FRAME, (GLint)fv->frame);
     glBindTextureUnit(0, R.atmos.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+    if (timing) mark(4);
 
     // 5. Апскейл без фильтрации: крупный пиксель
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, win_w, win_h);
     glBlitNamedFramebuffer(R.ldr.fbo, 0, 0, 0, iw, ih, 0, 0, win_w, win_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    if (timing) {
+        mark(5);
+        R.timer_pending[R.timer_slot] = true;
+    }
+    R.timer_slot = (R.timer_slot + 1) % TIMER_FRAMES;
+    // Старые кадры, до которых очередь дойдёт не скоро, забираем сразу
+    for (u32 i = 0; i < TIMER_FRAMES; i++) timer_collect(i);
 }
 
 void render_read_pixels(u8 *rgb, i32 w, i32 h)

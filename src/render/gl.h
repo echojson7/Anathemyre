@@ -21,6 +21,7 @@ typedef char         GLchar;
 typedef unsigned char GLubyte;
 typedef ptrdiff_t    GLintptr;
 typedef ptrdiff_t    GLsizeiptr;
+typedef uint64_t     GLuint64;
 
 typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GLenum severity,
                                        GLsizei length, const GLchar *message, const void *user);
@@ -83,6 +84,9 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_DEBUG_SEVERITY_MEDIUM 0x9147
 #define GL_DEBUG_SEVERITY_NOTIFICATION 0x826B
 #define GL_DEBUG_OUTPUT 0x92E0
+#define GL_QUERY_RESULT 0x8866
+#define GL_QUERY_RESULT_AVAILABLE 0x8867
+#define GL_TIMESTAMP 0x8E28
 
 // X-макрос: тип возврата, имя, аргументы
 #define GL_FUNCS(X) \
@@ -145,7 +149,12 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, Uniform3f, (GLint loc, GLfloat a, GLfloat b, GLfloat c)) \
     X(void, Uniform4f, (GLint loc, GLfloat a, GLfloat b, GLfloat c, GLfloat d)) \
     X(void, UniformMatrix4fv, (GLint loc, GLsizei count, GLboolean transpose, const GLfloat *v)) \
-    X(void, DebugMessageCallback, (GLDEBUGPROC callback, const void *user))
+    X(void, DebugMessageCallback, (GLDEBUGPROC callback, const void *user)) \
+    X(void, CreateQueries, (GLenum target, GLsizei n, GLuint *ids)) \
+    X(void, DeleteQueries, (GLsizei n, const GLuint *ids)) \
+    X(void, QueryCounter, (GLuint id, GLenum target)) \
+    X(void, GetQueryObjectuiv, (GLuint id, GLenum pname, GLuint *params)) \
+    X(void, GetQueryObjectui64v, (GLuint id, GLenum pname, GLuint64 *params))
 
 #define GL_DECLARE(ret, name, args) typedef ret (GLAPIENTRY *PFN_gl##name) args; extern PFN_gl##name gl##name;
 GL_FUNCS(GL_DECLARE)

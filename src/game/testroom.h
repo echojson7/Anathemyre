@@ -21,7 +21,10 @@ typedef struct Crowd {
     bool stationary[TR_MAX_CHARS];
 } Crowd;
 
-void testroom_build(MeshBuilder *mb, Rng *rng);
+// Зал и обломки: отбрасывают тени
+void testroom_build_near(MeshBuilder *mb, Rng *rng);
+// Рельеф и мегаструктуры: тени не отбрасывают, в теневую карту не попадают
+void testroom_build_far(MeshBuilder *mb, Rng *rng);
 void crowd_init(Crowd *c, Rng *rng, u32 count);
 void crowd_update(Crowd *c, Rng *rng, f32 dt);
 

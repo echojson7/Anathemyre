@@ -29,6 +29,7 @@ typedef struct Options {
     bool        cam_set;
     RtsCamera   cam;
     u64         seed;
+    bool        no_vsync;
 } Options;
 
 static void camera_update(RtsCamera *c, const Input *in, f32 dt)
@@ -71,7 +72,7 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--res H] [--seed N] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
+    puts("anathemyre [--size W H] [--res H] [--seed N] [--novsync] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N]");
 }
 
 static bool parse_args(int argc, char **argv, Options *o)
@@ -80,6 +81,7 @@ static bool parse_args(int argc, char **argv, Options *o)
         const char *a = argv[i];
         if (!strcmp(a, "--shot") && i + 1 < argc) o->shot_path = argv[++i];
         else if (!strcmp(a, "--frames") && i + 1 < argc) o->shot_frames = atoi(argv[++i]);
+        else if (!strcmp(a, "--novsync")) o->no_vsync = true;
         else if (!strcmp(a, "--res") && i + 1 < argc) o->internal_h = atoi(argv[++i]);
         else if (!strcmp(a, "--seed") && i + 1 < argc) o->seed = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(a, "--size") && i + 2 < argc) {
@@ -159,7 +161,7 @@ int main(int argc, char **argv)
         platform_shutdown();
         return 1;
     }
-    platform_set_vsync(opt.shot_path == NULL);
+    platform_set_vsync(!opt.no_vsync && opt.shot_path == NULL);
 
     Rng rng;
     rng_seed(&rng, opt.seed, 1);
@@ -167,11 +169,16 @@ int main(int argc, char **argv)
     // Геометрия мира
     MeshBuilder mb;
     size_t mark = perm.used;
+    GpuMesh near_mesh, far_mesh;
     mb_init(&mb, &perm, 400000, 1200000);
-    testroom_build(&mb, &rng);
-    GpuMesh world_mesh;
-    gpu_mesh_upload(&world_mesh, &mb);
-    log_info("МИР: %u вершин, %u треугольников", mb.vcount, mb.icount / 3);
+    testroom_build_near(&mb, &rng);
+    gpu_mesh_upload(&near_mesh, &mb);
+    u32 tris = mb.icount / 3;
+    perm.used = mark;
+    mb_init(&mb, &perm, 400000, 1200000);
+    testroom_build_far(&mb, &rng);
+    gpu_mesh_upload(&far_mesh, &mb);
+    log_info("МИР: зал %u треугольников, рельеф и мегаструктуры %u", tris, mb.icount / 3);
     perm.used = mark;
 
     GpuMesh char_mesh[CHAR_VARIANTS];
@@ -186,7 +193,7 @@ int main(int argc, char **argv)
     Crowd crowd;
     crowd_init(&crowd, &rng, CROWD_SIZE);
     M4 *bones = ARENA_PUSH_ARRAY(&perm, M4, (size_t)TR_MAX_CHARS * RENDER_MAX_BONES);
-    DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS + 1);
+    DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, TR_MAX_CHARS + 2);
     u8 *shot_buf = NULL;
     if (opt.shot_path) shot_buf = arena_push(&perm, (size_t)opt.width * (size_t)opt.height * 3, 1);
     for (u32 i = 0; i < TR_MAX_CHARS * RENDER_MAX_BONES; i++) bones[i] = m4_identity();
@@ -201,10 +208,12 @@ int main(int argc, char **argv)
     f64 last = time_now();
     f64 stat_t = last;
     u32 stat_frames = 0;
+    f64 cpu_logic = 0, cpu_submit = 0, cpu_swap = 0;
+    bool vsync = !opt.no_vsync && opt.shot_path == NULL;
     f32 sim_time = 0;
     u32 frame = 0;
 
-    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, Q/E и ПКМ — поворот, колесо — дистанция, F1 — стиль, F2 — разрешение, F5 — шейдеры");
+    log_info("УПРАВЛЕНИЕ: WASD — сдвиг, Q/E и ПКМ — поворот, колесо — дистанция, F1 — стиль, F2 — разрешение, F3 — vsync, F5 — шейдеры");
 
     while (!in.quit) {
         platform_poll(&in);
@@ -215,17 +224,24 @@ int main(int argc, char **argv)
             rs.internal_h = res_steps[res_index];
         }
         if (in.key_pressed[KEY_F5]) render_reload_shaders();
+        if (in.key_pressed[KEY_F3]) {
+            vsync = !vsync;
+            platform_set_vsync(vsync);
+            log_info("VSYNC: %s", vsync ? "вкл" : "выкл");
+        }
 
         f64 now = time_now();
         f32 dt = opt.shot_path ? 1.0f / 60.0f : (f32)fmin(now - last, 0.05);
         last = now;
         sim_time += dt;
 
+        f64 t_logic = time_now();
         camera_update(&cam, &in, dt);
         crowd_update(&crowd, &rng, dt);
 
         u32 n = 0;
-        items[n++] = (DrawItem){ .mesh = &world_mesh, .bones = NULL };
+        items[n++] = (DrawItem){ .mesh = &near_mesh };
+        items[n++] = (DrawItem){ .mesh = &far_mesh, .no_shadow = true };
         for (u32 i = 0; i < crowd.count; i++) {
             CharPose p = {
                 .pos = v3(crowd.x[i], 0.1f, crowd.z[i]), .heading = crowd.heading[i],
@@ -236,6 +252,8 @@ int main(int argc, char **argv)
             items[n++] = (DrawItem){ .mesh = &char_mesh[crowd.variant[i]], .bones = b };
         }
 
+        f64 t_submit = time_now();
+        cpu_logic += t_submit - t_logic;
         i32 ww, wh;
         platform_window_size(&ww, &wh);
         if (opt.shot_path) {
@@ -253,6 +271,8 @@ int main(int argc, char **argv)
         fv.time = sim_time;
         fv.frame = frame;
         render_frame(&fv, items, n, &rs, ww, wh);
+        f64 t_swap = time_now();
+        cpu_submit += t_swap - t_submit;
 
         frame++;
         if (opt.shot_path && (i32)frame >= opt.shot_frames) {
@@ -262,12 +282,22 @@ int main(int argc, char **argv)
             break;
         }
         platform_swap();
+        cpu_swap += time_now() - t_swap;
 
         stat_frames++;
         if (now - stat_t >= 2.0) {
-            log_info("КАДР: %.2f мс, %.0f к/с", (now - stat_t) * 1000.0 / stat_frames, stat_frames / (now - stat_t));
+            RenderStats st;
+            render_take_stats(&st);
+            f64 k = 1000.0 / stat_frames;
+            log_info("КАДР: %.2f мс, %.0f к/с | CPU: логика %.3f, отправка %.3f, swap %.3f | "
+                     "GPU %.3f: тени %.3f, сцена %.3f, атмосфера %.3f, стиль %.3f, апскейл %.3f",
+                     (now - stat_t) * k, stat_frames / (now - stat_t),
+                     cpu_logic * k, cpu_submit * k, cpu_swap * k, st.gpu_total_ms,
+                     st.gpu_ms[PASS_SHADOW], st.gpu_ms[PASS_SCENE], st.gpu_ms[PASS_ATMOS],
+                     st.gpu_ms[PASS_STYLE], st.gpu_ms[PASS_BLIT]);
             stat_t = now;
             stat_frames = 0;
+            cpu_logic = cpu_submit = cpu_swap = 0;
         }
     }
 

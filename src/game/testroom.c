@@ -216,11 +216,15 @@ static void megastructures(MeshBuilder *mb, Rng *rng)
     mb_cylinder(mb, v3(-1500.0f, 60.0f, -600.0f), v3(1500.0f, 90.0f, -650.0f), 32.0f, 24);
 }
 
-void testroom_build(MeshBuilder *mb, Rng *rng)
+void testroom_build_near(MeshBuilder *mb, Rng *rng)
+{
+    hall(mb, rng);
+}
+
+void testroom_build_far(MeshBuilder *mb, Rng *rng)
 {
     mb_set(mb, C_SAND, MAT_SAND, BONE_NONE);
     mb_terrain(mb, 3000.0f, 220, terrain_height, NULL);
-    hall(mb, rng);
     megastructures(mb, rng);
 }
 

@@ -17,6 +17,7 @@ typedef struct GpuMesh {
 typedef struct DrawItem {
     const GpuMesh *mesh;
     const M4      *bones;
+    bool           no_shadow;  // не отбрасывает тень (рельеф, дальние мегаструктуры)
 } DrawItem;
 
 typedef struct FrameView {
@@ -34,7 +35,16 @@ typedef struct RenderSettings {
     bool post;          // пост-обработка вкл/выкл
 } RenderSettings;
 
+// Время проходов на GPU, мс, среднее с прошлого render_take_stats
+enum { PASS_SHADOW, PASS_SCENE, PASS_ATMOS, PASS_STYLE, PASS_BLIT, PASS_COUNT };
+typedef struct RenderStats {
+    f64 gpu_ms[PASS_COUNT];
+    f64 gpu_total_ms;
+    u32 samples;
+} RenderStats;
+
 bool render_init(Arena *scratch, const char *data_dir);
+void render_take_stats(RenderStats *out);
 void render_shutdown(void);
 bool render_reload_shaders(void);
 bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb);
