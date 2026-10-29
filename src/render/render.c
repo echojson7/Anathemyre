@@ -35,6 +35,7 @@ static struct {
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
     Target scene, atmos, ldr;
+    Target portrait;  // атлас портретов: ячейки RENDER_PORTRAIT_PX в ряд, HDR
     u32    timer[TIMER_FRAMES][TIMER_MARKS];
     bool   timer_pending[TIMER_FRAMES];
     u32    timer_slot;
@@ -223,7 +224,7 @@ bool render_init(Arena *scratch, const char *data_dir)
         log_error("FBO: теневая карта неполна");
         return false;
     }
-    return true;
+    return target_make(&R.portrait, RENDER_PORTRAIT_PX * RENDER_PORTRAIT_SLOTS, RENDER_PORTRAIT_PX, GL_RGBA16F, true);
 }
 
 void render_shutdown(void)
@@ -231,6 +232,7 @@ void render_shutdown(void)
     target_free(&R.scene);
     target_free(&R.atmos);
     target_free(&R.ldr);
+    target_free(&R.portrait);
     if (R.shadow_fbo) glDeleteFramebuffers(1, &R.shadow_fbo);
     if (R.shadow_tex) glDeleteTextures(1, &R.shadow_tex);
     if (R.empty_vao) glDeleteVertexArrays(1, &R.empty_vao);
@@ -447,3 +449,39 @@ u32 render_program(const char *vs_file, const char *fs_file)
     R.scratch->used = mark;
     return p;
 }
+
+void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, const DrawItem *items, u32 count)
+{
+    if (slot >= RENDER_PORTRAIT_SLOTS || !R.prog_scene) return;
+    size = CLAMP(size, 8, RENDER_PORTRAIT_PX);
+    // Тот же шейдер и свет, что у сцены; тень берётся из карты этого кадра
+    M4 light_vp = light_matrix(fv);
+    V3 L = v3_norm(fv->sun_dir);
+    i32 x = (i32)slot * RENDER_PORTRAIT_PX;
+    glBindFramebuffer(GL_FRAMEBUFFER, R.portrait.fbo);
+    glViewport(x, 0, size, size);
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(x, 0, size, size);
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glUseProgram(R.prog_scene);
+    glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, view_proj.m);
+    glUniformMatrix4fv(U_LIGHT_VP, 1, GL_FALSE, light_vp.m);
+    glUniform3f(U_CAM_POS, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
+    glUniform3f(U_SUN_DIR, L.x, L.y, L.z);
+    glUniform3f(U_SUN_COLOR, fv->sun_color.x, fv->sun_color.y, fv->sun_color.z);
+    glUniform1f(U_TIME, fv->time);
+    glUniform3f(U_SKY_AMB, fv->sky_amb.x, fv->sky_amb.y, fv->sky_amb.z);
+    glUniform3f(U_GROUND_AMB, fv->ground_amb.x, fv->ground_amb.y, fv->ground_amb.z);
+    glBindTextureUnit(0, R.shadow_tex);
+    draw_items(items, count, false);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+}
+
+u32 render_portrait_texture(void) { return R.portrait.color; }

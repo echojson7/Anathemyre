@@ -9,13 +9,15 @@
 #define UI_GLYPH_H 7
 #define UI_ADVANCE 6     // шаг буквы
 #define UI_LINE 10       // шаг строки
+#define UI_SMALL_W 3     // мелкие цифры
+#define UI_SMALL_H 5
 
 // Цвет в байтах RGBA
 #define UI_RGBA(r, g, b, a) ((u32)(r) | ((u32)(g) << 8) | ((u32)(b) << 16) | ((u32)(a) << 24))
 
 bool ui_init(void);
 void ui_shutdown(void);
-// Начать кадр интерфейса: масштаб выбирается по высоте окна (360 логических строк и больше)
+// Начать кадр интерфейса: один к одному до 1440 строк, дальше целый масштаб
 void ui_begin(i32 win_w, i32 win_h);
 // Отрисовать накопленное в текущий кадровый буфер
 void ui_end(void);
@@ -25,6 +27,16 @@ f32  ui_width(void);   // логический размер окна
 f32  ui_height(void);
 
 void ui_rect(f32 x, f32 y, f32 w, f32 h, u32 color);
+void ui_rect_grad(f32 x, f32 y, f32 w, f32 h, u32 top, u32 bottom);
+// Заливка панели: градиент со сканлайнами и живым шумом
+void ui_panel_fill(f32 x, f32 y, f32 w, f32 h, u32 top, u32 bottom);
+// Картинка из текстуры ui_set_image (HDR: тонмаппинг и зерно в шейдере), uv в долях текстуры
+void ui_image(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 tint);
+void ui_set_image(u32 tex);
+void ui_set_time(f32 t);
+// Мелкие цифры 3x5 (и / - . % + :)
+f32  ui_num(f32 x, f32 y, u32 color, const char *s);
+f32  ui_num_width(const char *s);
 // Рамка толщиной в один логический пиксель
 void ui_frame(f32 x, f32 y, f32 w, f32 h, u32 color);
 // Текст UTF-8, строчные выводятся заглавными. Возвращает x после последней буквы
