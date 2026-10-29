@@ -22,7 +22,7 @@ enum {
     U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26, U_TEXEL = 27, U_MORPHS = 28,
     U_FADE = 29,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
-    U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39, U_A_AO_HALF = 47,
+    U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39, U_A_AO_HALF = 47, U_NOISE_TEX = 48,
     U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44, U_V_TILE = 45, U_S_PIX_INT = 46,
 };
 
@@ -76,6 +76,7 @@ static struct {
     Arena *scratch;
     char   data_dir[512];
     u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_src_map, prog_vrs_block, prog_vrs, prog_level, prog_level_max, prog_ao;
+    u32    noise_tex;  // значения hash13 в узлах решётки NOISE_N³: noise3 одной выборкой (common.glsl)
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
     Target scene, rays, atmos, ldr;
@@ -295,6 +296,36 @@ static bool target_make(Target *t, i32 w, i32 h, GLenum color_fmt, bool depth)
     return true;
 }
 
+// hash13 из common.glsl теми же операциями: узлы решётки для шума одной выборкой
+#define NOISE_N 128
+static f32 fract_f(f32 x) { return x - floorf(x); }
+static f32 hash13_c(f32 x, f32 y, f32 z)
+{
+    x = fract_f(x * 0.1031f); y = fract_f(y * 0.1031f); z = fract_f(z * 0.1031f);
+    f32 d = x * (z + 31.32f) + y * (y + 31.32f) + z * (x + 31.32f);
+    x += d; y += d; z += d;
+    return fract_f((x + y) * z);
+}
+
+static void noise_make(void)
+{
+    static u16 slice[NOISE_N * NOISE_N];
+    glCreateTextures(GL_TEXTURE_3D, 1, &R.noise_tex);
+    glTextureStorage3D(R.noise_tex, 1, GL_R16, NOISE_N, NOISE_N, NOISE_N);
+    for (u32 z = 0; z < NOISE_N; z++) {
+        for (u32 y = 0; y < NOISE_N; y++)
+            for (u32 x = 0; x < NOISE_N; x++)
+                slice[y * NOISE_N + x] = (u16)(hash13_c((f32)x, (f32)y, (f32)z) * 65535.0f + 0.5f);
+        glTextureSubImage3D(R.noise_tex, 0, 0, 0, (GLint)z, NOISE_N, NOISE_N, 1, GL_RED, GL_UNSIGNED_SHORT, slice);
+    }
+    glTextureParameteri(R.noise_tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(R.noise_tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(R.noise_tex, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTextureParameteri(R.noise_tex, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTextureParameteri(R.noise_tex, GL_TEXTURE_WRAP_R, GL_REPEAT);
+    glBindTextureUnit(7, R.noise_tex);  // блок 7 больше никто не занимает
+}
+
 bool render_init(Arena *scratch, const char *data_dir)
 {
     R.scratch = scratch;
@@ -326,6 +357,7 @@ bool render_init(Arena *scratch, const char *data_dir)
     if (!render_reload_shaders()) return false;
 
     glCreateVertexArrays(1, &R.empty_vao);
+    noise_make();
     for (u32 i = 0; i < STREAM_FRAMES; i++) {
         glCreateBuffers(1, &R.bone_buf[i]);
         glNamedBufferStorage(R.bone_buf[i], (GLsizeiptr)sizeof g_bones, NULL, GL_DYNAMIC_STORAGE_BIT);
@@ -352,6 +384,7 @@ void render_shutdown(void)
     target_free(&R.scene);
     target_free(&R.rays);
     target_free(&R.ao);
+    if (R.noise_tex) glDeleteTextures(1, &R.noise_tex);
     target_free(&R.atmos);
     target_free(&R.ldr);
     target_free(&R.src_map);
@@ -997,6 +1030,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     }
     if (timing) mark(2);
     glUseProgram(R.prog_scene);
+    glUniform1i(U_NOISE_TEX, rs->noise_tex ? 1 : 0);
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, vp.m);
     glUniformMatrix4fv(U_LIGHT_VP, 1, GL_FALSE, light_vp.m);
     glUniform3f(U_CAM_POS, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
@@ -1045,6 +1079,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindFramebuffer(GL_FRAMEBUFFER, R.atmos.fbo);
     glViewport(0, 0, iw, ih);
     glUseProgram(R.prog_atmos);
+    glUniform1i(U_NOISE_TEX, rs->noise_tex ? 1 : 0);
     glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
     glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
     glUniform3f(U_A_SUN_DIR, L.x, L.y, L.z);
@@ -1128,7 +1163,7 @@ void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, cons
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
-    glUseProgram(R.prog_scene);
+    glUseProgram(R.prog_scene);  // шум материалов — как в последнем кадре (U_NOISE_TEX хранится в программе)
     glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, view_proj.m);
     glUniform3f(U_CAM_POS, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
     glUniform1f(U_TIME, fv->time);
