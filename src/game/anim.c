@@ -1058,7 +1058,9 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     // Оружие в руке вне стойки: опущено, остриё вперёд-вниз; двуручное — наперевес у бедра
     if (wield > 0.0f) {
         bool two = weapon_two_hand(wpn);
-        ArmK carry = two ? (ArmK){ -0.45f, 0.35f, 0.10f, -1.25f, 0.75f, 0.0f } : (ArmK){ -0.20f, 0.05f, 0.10f, -0.45f, 0.55f, 0.0f };
+        ArmK carry = (ArmK){ -0.20f, 0.05f, 0.10f, -0.45f, 0.95f, 0.0f };
+        if (g_weapons[wpn].wclass == WC_POLEARM) carry = (ArmK){ -0.45f, 0.35f, 0.10f, -1.25f, 0.75f, 0.0f };
+        else if (two) carry = (ArmK){ -0.15f, 0.30f, 0.10f, -0.75f, 1.10f, 0.0f };
         set_arm(&o, R, arm_lerp(get_arm(&o, R), carry, smooth01((wield - 0.45f) / 0.55f)));
     }
 
