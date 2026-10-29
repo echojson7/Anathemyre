@@ -1478,6 +1478,10 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     if (a->severed & (1u << PART_ARM_L)) torch = (Xf){ v3(0, 0, 0), v3(0, 0, 0), v3(0, 0, 0), torch.t };
     Xf tw_world = xf_mul(&root, &torch);
     out[CHAR_BONE_TORCH] = xf_m4(&tw_world);
+    // Огонь тянется вверх: у пламени только поворот тела, без наклона руки
+    Xf flame = { v3(hc, 0, -hs), v3(0, 1, 0), v3(hs, 0, hc), xf_point(&tw_world, v3(0, TORCH_FLAME_BASE, 0)) };
+    if (a->severed & (1u << PART_ARM_L)) flame = (Xf){ v3(0, 0, 0), v3(0, 0, 0), v3(0, 0, 0), flame.t };
+    out[CHAR_BONE_FLAME] = xf_m4(&flame);
 
     // Отсечённая конечность: вершины стягиваются в точку сустава
     static const u8 limb_bones[PART_COUNT][3] = {
