@@ -7,7 +7,7 @@
 
 | Что | Где | Вместо |
 |---|---|---|
-| `hash_u32`, `hashf` — хеш без состояния, число 0..1 | `src/core/hash.h` | `hashf` в anim.c, fight_anim.c, arena_view.c; `mix32` в combat.c; тело `hash01` в look.c |
+| `hash_u32`, `hashf` — хеш без состояния, число 0..1 (и выбор позы отдыха в player.c) | `src/core/hash.h` | `hashf` в anim.c, fight_anim.c, arena_view.c; `mix32` в combat.c; тело `hash01` в look.c |
 | `smoothstepf(a, b, x)` — плавный переход | `src/core/math3d.h` | `smooth` в sky.c, map.c, valley.c, arena_view.c, valley_view.c; `smooth01(a, b, x)` в ostov.c |
 | `smooth01(t)` — то же для доли 0..1 | `src/core/math3d.h` | копии в anim.c и player.c |
 | `wrap_angle` — угол в −π..π | `src/core/math3d.h` | копии в player.c, fight_anim.c, arena_view.c |

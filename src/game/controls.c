@@ -9,6 +9,7 @@
 #include "../world/map.h"
 #include "figures.h"
 #include "ostov.h"
+#include "showhall.h"
 
 const char *const g_stage_name[STAGE_COUNT] = {
     "ПУСТО", "ТЕНИ", "НЕБО И ТУМАН", "ЛУЧИ", "AO", "ПИКСЕЛЬНОСТЬ", "ФИЛЬТР", "РАСТЕНИЯ", "ШАГ МИРА", "ЛЮДИ", "СУТКИ И ОГНИ", "ПОЛНАЯ",
@@ -88,6 +89,7 @@ static void menu_light(Hud *h, Settings *s, World *w, RtsCamera *cam, const Fram
     hud_form_slider(f, "ВРЕМЯ СУТОК", &w->tod, 0.0f, 0.999f, val);
     hud_form_check(f, "ПИКСЕЛЬНОСТЬ", &rs->pixel);
     if (hud_form_button(f, "КАМЕРА: В ОСТОВ")) *cam = OSTOV_CAM;
+    if (hud_form_button(f, "КАМЕРА: В МЕРИЛЬНЮ")) *cam = SHOWHALL_CAM;
     snprintf(val, sizeof val, "%.2f МС  %.0f К/С", (f64)st->shown_ms, (f64)st->shown_fps);
     hud_form_text(f, "КАДР", val);
     if (hud_form_button(f, "ЗАМЕР ПО ЭТАПАМ")) s->bench_stages = true;
@@ -140,6 +142,7 @@ static void menu_debug(Hud *h, Settings *s, World *w, RtsCamera *cam, bool human
     bool humans_want = humans_on;
     if (hud_debug_button(h, world_squad_in_valley(w) ? "ПЕРЕХОД: В ЛАГЕРЬ" : "ПЕРЕХОД: В ДОЛИНУ")) s->travel = true;
     if (hud_debug_button(h, "КАМЕРА: В ОСТОВ")) *cam = OSTOV_CAM;
+    if (hud_debug_button(h, "КАМЕРА: В МЕРИЛЬНЮ")) *cam = SHOWHALL_CAM;
     if (hud_debug_button(h, "ОТРЯДЫ ВДАЛИ: ПУСТИТЬ ПРОБНЫЕ")) s->bands_test = true;
     if (hud_debug_button(h, "МИР: СОХРАНИТЬ")) s->save = true;
     if (hud_debug_button(h, "МИР: ЗАГРУЗИТЬ")) s->load = true;

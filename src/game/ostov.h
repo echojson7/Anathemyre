@@ -13,6 +13,10 @@
 
 // Геометрия руины (отбрасывает тени), своя сетка: вне кадра и вне области теней отсекается целиком
 void ostov_build(MeshBuilder *mb);
+// Неровный бетон Остова для других построек: брус lo..hi текущим цветом сетки. cell — шаг сетки граней, м;
+// chip — глубина сколов рёбер, м; hide — грани, которых не видно (OSTOV_HIDE_*); seed — свой узор
+enum { OSTOV_HIDE_BOT = 1, OSTOV_HIDE_TOP = 2, OSTOV_HIDE_ZN = 4, OSTOV_HIDE_XP = 8, OSTOV_HIDE_ZP = 16, OSTOV_HIDE_XN = 32 };
+void ostov_rough_box(MeshBuilder *mb, V3 lo, V3 hi, f32 cell, f32 chip, u8 hide, u32 seed);
 // Высота пола руины под точкой (пол, лестница, площадка, галерея); вне руины — base
 f32  ostov_ground(f32 x, f32 z, f32 base);
 

@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "anim.h"
+#include "../core/hash.h"
 
 #define ARRIVE_DIST 0.15f
 #define MARKER_S    1.2f
@@ -16,6 +17,8 @@
 #define TURN_BODY   5.5f   // разворот тела на месте, рад/с: 180° за ~0.6 с
 #define TURN_TRACK  10.0f  // на ходу тело следует за направлением шага
 #define PIVOT_SPEED 1.3f   // темп, до которого сбрасывает перед крутым разворотом, м/с
+#define REST_AFTER  14.0f  // поза отдыха не раньше, чем постоял столько (+ до REST_AFTER случайно), с
+#define REST_HURRY  1.3f   // позвали: встаёт и садится назад быстрее спокойного
 #define STRIDE_ROOM 1.5f   // за столько до начала торможения шаги начинают подгоняться под остановку, м
 #define STRIDE_RATE 0.8f   // как быстро меняется длина шага, доля в секунду
 
@@ -75,6 +78,82 @@ void player_init(Player *p, V3 pos, f32 heading)
     p->gait = GAIT_RUN;
     p->vmax = g_gait_speed[GAIT_RUN];
     p->slot = -1;
+    // Зерно поз от места появления: одно и то же при каждом запуске
+    u32 bx, bz;
+    memcpy(&bx, &pos.x, 4);
+    memcpy(&bz, &pos.z, 4);
+    p->rest_seed = bx * 2654435761u ^ bz * 2246822519u;
+}
+
+void player_rest(Player *p, u8 kind, f32 hold)
+{
+    if (kind == REST_NONE || kind >= REST_COUNT) return;
+    p->rest = kind;
+    p->rest_ph = RP_ENTER;
+    p->rest_t = 0.0f;
+    p->rest_hold = hold;
+}
+
+// Поза отдыха. true — тело занято позой и не идёт
+static bool rest_update(Player *p, f32 dt)
+{
+    bool called = p->moving || p->ctrl != CTRL_FREE;
+    if (p->rest == REST_NONE) {
+        // Постоял — садится или скрещивает руки; выбор по весам из g_rest
+        u32 h = p->rest_seed + p->rest_n * 0x9e3779b9u;
+        if (called || p->idle < REST_AFTER * (1.0f + hashf(h))) return false;
+        f32 sum = 0.0f;
+        for (u32 k = 1; k < REST_COUNT; k++) sum += g_rest[k].weight;
+        f32 pick = hashf(h + 1u) * sum;
+        u8 kind = REST_COUNT - 1;
+        for (u32 k = 1; k < REST_COUNT; k++) {
+            pick -= g_rest[k].weight;
+            if (pick <= 0.0f) {
+                kind = (u8)k;
+                break;
+            }
+        }
+        const RestDef *d = &g_rest[kind];
+        player_rest(p, kind, lerpf(d->hold_min, d->hold_max, hashf(h + 2u)));
+    }
+    const RestDef *d = &g_rest[p->rest];
+    f32 hurry = called ? REST_HURRY : 1.0f;
+    switch (p->rest_ph) {
+    case RP_ENTER:
+        // Позвали на входе — встаёт тем же путём назад, а не садится до конца
+        if (called) {
+            p->rest_ph = RP_BACK;
+            break;
+        }
+        p->rest_t += dt;
+        if (p->rest_t >= d->enter_s) {
+            p->rest_ph = RP_HOLD;
+            p->rest_t = 0.0f;
+        }
+        break;
+    case RP_HOLD:
+        p->rest_t += dt;
+        if (called || p->rest_t >= p->rest_hold) {
+            p->rest_ph = RP_EXIT;
+            p->rest_t = 0.0f;
+        }
+        break;
+    case RP_EXIT:
+        p->rest_t += dt * hurry;
+        break;
+    default:
+        p->rest_t -= dt * hurry;
+        break;
+    }
+    if ((p->rest_ph == RP_EXIT && p->rest_t >= d->exit_s) || (p->rest_ph == RP_BACK && p->rest_t <= 0.0f)) {
+        p->rest = REST_NONE;
+        p->rest_ph = RP_ENTER;
+        p->rest_t = 0.0f;
+        p->rest_n++;
+        p->idle = 0.0f;
+        return false;
+    }
+    return true;
 }
 
 void player_order_move(Player *p, V3 target)
@@ -86,7 +165,19 @@ void player_order_move(Player *p, V3 target)
 
 void player_update(Player *p, f32 dt, GroundFn ground)
 {
-    if (dt <= 0.0f || p->ctrl == CTRL_FIGHT) return;
+    if (dt <= 0.0f) return;
+    // Сидит или встаёт: стоит на месте, пока поза не кончится
+    if (rest_update(p, dt) && p->ctrl == CTRL_FREE) {
+        p->marker = fmaxf(0.0f, p->marker - dt);
+        p->speed = p->turn_rate = 0.0f;
+        p->walk = follow(p->walk, 0.0f, 0.15f, dt);
+        p->look = follow(p->look, 0.0f, 0.12f, dt);
+        p->lean_fwd = follow(p->lean_fwd, 0.0f, 0.15f, dt);
+        p->lean_side = follow(p->lean_side, 0.0f, 0.12f, dt);
+        if (p->rest_ph == RP_HOLD) p->idle += dt;
+        return;
+    }
+    if (p->ctrl == CTRL_FIGHT) return;
     p->marker = fmaxf(0.0f, p->marker - dt);
     f32 dx = p->target.x - p->pos.x, dz = p->target.z - p->pos.z;
     f32 d = sqrtf(dx * dx + dz * dz);
@@ -181,6 +272,8 @@ void player_lerp(const Player *a, const Player *b, f32 t, Player *out)
     out->lean_side = lerpf(a->lean_side, b->lean_side, t);
     out->look = lerpf(a->look, b->look, t);
     out->idle = lerpf(a->idle, b->idle, t);
+    // Поза отдыха: время фазы между шагами, если фаза та же
+    if (a->rest == b->rest && a->rest_ph == b->rest_ph) out->rest_t = lerpf(a->rest_t, b->rest_t, t);
     out->walk = lerpf(a->walk, b->walk, t);
     out->run = lerpf(a->run, b->run, t);
     out->marker = lerpf(a->marker, b->marker, t);
