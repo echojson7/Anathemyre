@@ -1,0 +1,4 @@
+# Шейдеры Vulkan: собираются в data/spv/<имя>.spv. После правки исходников: ./tools/spv/build.sh
+# <имя> <стадия vert|frag|comp> [-DИМЯ=ЗНАЧ ...] <файлы, склеиваются по порядку>
+vkcheck.vert vert tools/vkcheck/check.vert
+vkcheck.frag frag tools/vkcheck/check.frag

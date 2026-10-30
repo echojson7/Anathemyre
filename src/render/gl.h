@@ -100,8 +100,6 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_DYNAMIC_STORAGE_BIT 0x0100
 #define GL_SHADER_STORAGE_BUFFER 0x90D2
 #define GL_DRAW_INDIRECT_BUFFER 0x8F3F
-#define GL_COMPUTE_SHADER 0x91B9
-#define GL_SHADER_STORAGE_BARRIER_BIT 0x00002000
 #define GL_UNIFORM_BUFFER 0x8A11
 #define GL_DEBUG_SEVERITY_HIGH 0x9146
 #define GL_DEBUG_SEVERITY_MEDIUM 0x9147
@@ -121,6 +119,22 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_SHADING_RATE_1_INVOCATION_PER_4X4_PIXELS_NV 0x956B
 #define GL_SHADING_RATE_IMAGE_TEXEL_WIDTH_NV 0x955C
 #define GL_SHADING_RATE_IMAGE_TEXEL_HEIGHT_NV 0x955D
+#define GL_UNPACK_ALIGNMENT 0x0CF5
+#define GL_UNPACK_IMAGE_HEIGHT 0x806E
+#define GL_HALF_FLOAT 0x140B
+#define GL_RG 0x8227
+#define GL_RG_INTEGER 0x8228
+#define GL_RED_INTEGER 0x8D94
+#define GL_R16F 0x822D
+#define GL_R32UI 0x8236
+#define GL_R11F_G11F_B10F 0x8C3A
+#define GL_UNSIGNED_INT_10F_11F_11F_REV 0x8C3B
+#define GL_COMPUTE_SHADER 0x91B9
+#define GL_DISPATCH_INDIRECT_BUFFER 0x90EE
+#define GL_ALL_BARRIER_BITS 0xFFFFFFFFu
+#define GL_READ_WRITE 0x88BA
+#define GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT 0x8A34
+#define GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT 0x90DF
 
 // X-макрос: тип возврата, имя, аргументы
 #define GL_FUNCS(X) \
@@ -145,6 +159,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, PixelStorei, (GLenum pname, GLint param)) \
     X(void, ReadPixels, (GLint x, GLint y, GLsizei w, GLsizei h, GLenum fmt, GLenum type, void *data)) \
     X(void, DrawArrays, (GLenum mode, GLint first, GLsizei count)) \
+    X(void, DrawArraysInstanced, (GLenum mode, GLint first, GLsizei count, GLsizei instances)) \
     X(void, DrawElements, (GLenum mode, GLsizei count, GLenum type, const void *indices)) \
     X(void, DrawElementsInstanced, (GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instances)) \
     X(void, MultiDrawElements, (GLenum mode, const GLsizei *count, GLenum type, const void *const *indices, GLsizei drawcount)) \
@@ -152,10 +167,9 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, DrawElementsInstancedBaseVertexBaseInstance, (GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instances, GLint basevertex, GLuint baseinstance)) \
     X(void, MultiDrawElementsIndirect, (GLenum mode, GLenum type, const void *indirect, GLsizei drawcount, GLsizei stride)) \
     X(void, BindBuffer, (GLenum target, GLuint buffer)) \
-    X(void, DispatchCompute, (GLuint x, GLuint y, GLuint z)) \
-    X(void, MemoryBarrier, (GLbitfield barriers)) \
     X(void, VertexArrayBindingDivisor, (GLuint vao, GLuint bindingindex, GLuint divisor)) \
     X(void, BindBufferBase, (GLenum target, GLuint index, GLuint buffer)) \
+    X(void, BindBufferRange, (GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size)) \
     X(void, CreateBuffers, (GLsizei n, GLuint *buffers)) \
     X(void, NamedBufferStorage, (GLuint buffer, GLsizeiptr size, const void *data, GLbitfield flags)) \
     X(void, NamedBufferSubData, (GLuint buffer, GLintptr offset, GLsizeiptr size, const void *data)) \
@@ -181,7 +195,17 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, CreateFramebuffers, (GLsizei n, GLuint *framebuffers)) \
     X(void, DeleteFramebuffers, (GLsizei n, const GLuint *framebuffers)) \
     X(void, NamedFramebufferTexture, (GLuint fb, GLenum attachment, GLuint texture, GLint level)) \
+    X(void, NamedFramebufferTextureLayer, (GLuint fb, GLenum attachment, GLuint texture, GLint level, GLint layer)) \
     X(void, NamedFramebufferDrawBuffer, (GLuint fb, GLenum buf)) \
+    X(void, NamedFramebufferDrawBuffers, (GLuint fb, GLsizei n, const GLenum *bufs)) \
+    X(void, CreateSamplers, (GLsizei n, GLuint *samplers)) \
+    X(void, DeleteSamplers, (GLsizei n, const GLuint *samplers)) \
+    X(void, SamplerParameteri, (GLuint sampler, GLenum pname, GLint param)) \
+    X(void, BindSampler, (GLuint unit, GLuint sampler)) \
+    X(void, BindImageTexture, (GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer, GLenum access, GLenum format)) \
+    X(void, DispatchCompute, (GLuint x, GLuint y, GLuint z)) \
+    X(void, DispatchComputeIndirect, (GLintptr indirect)) \
+    X(void, MemoryBarrier, (GLbitfield barriers)) \
     X(GLenum, CheckNamedFramebufferStatus, (GLuint fb, GLenum target)) \
     X(void, BindFramebuffer, (GLenum target, GLuint fb)) \
     X(void, BlitNamedFramebuffer, (GLuint src, GLuint dst, GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLbitfield mask, GLenum filter)) \
@@ -199,14 +223,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, DeleteProgram, (GLuint program)) \
     X(void, UseProgram, (GLuint program)) \
     X(GLint, GetUniformLocation, (GLuint program, const GLchar *name)) \
-    X(void, Uniform1i, (GLint loc, GLint v)) \
-    X(void, Uniform1f, (GLint loc, GLfloat v)) \
-    X(void, Uniform2i, (GLint loc, GLint a, GLint b)) \
-    X(void, Uniform2f, (GLint loc, GLfloat a, GLfloat b)) \
-    X(void, Uniform3f, (GLint loc, GLfloat a, GLfloat b, GLfloat c)) \
-    X(void, Uniform4f, (GLint loc, GLfloat a, GLfloat b, GLfloat c, GLfloat d)) \
-    X(void, Uniform4i, (GLint loc, GLint a, GLint b, GLint c, GLint d)) \
-    X(void, UniformMatrix4fv, (GLint loc, GLsizei count, GLboolean transpose, const GLfloat *v)) \
+    X(void, Uniform4uiv, (GLint loc, GLsizei count, const GLuint *v)) \
     X(void, DebugMessageCallback, (GLDEBUGPROC callback, const void *user)) \
     X(void, CreateQueries, (GLenum target, GLsizei n, GLuint *ids)) \
     X(void, DeleteQueries, (GLsizei n, const GLuint *ids)) \

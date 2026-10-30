@@ -10,6 +10,6 @@ void main()
     float d = texelFetch(u_depth, t, 0).r;
     if (d >= 1.0) { o_ao = vec2(1.0, 4000.0); return; }
     vec3 P = world_at(uv, d);
-    float dist = length(P - u_cam);
+    float dist = length(P - u_cam_pos);
     o_ao = vec2(ambient_occlusion(uv, P, dist), dist);
 }

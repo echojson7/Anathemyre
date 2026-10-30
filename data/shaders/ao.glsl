@@ -1,10 +1,6 @@
 // Затенение углов (AO) по глубине: общее для атмосферы (полное разрешение) и ao.frag (половинное)
 
-layout(location = 30) uniform mat4 u_inv_vp;
-layout(location = 31) uniform vec3 u_cam;
-layout(location = 36) uniform int u_frame;
-layout(location = 37) uniform float u_proj_scale;
-layout(binding = 1) uniform sampler2D u_depth;
+layout(binding = 7) uniform sampler2D u_depth;
 
 vec3 world_at(vec2 uv, float d)
 {
@@ -33,13 +29,13 @@ vec3 depth_normal(vec2 uv)
     }
     vec3 n = cross(a[0], a[1]);
     // Тонкий предмет на фоне неба: соседей на поверхности нет, нормаль — к камере
-    return dot(n, n) > 1e-24 && !any(isinf(n)) ? normalize(n) : normalize(u_cam - C);
+    return dot(n, n) > 1e-24 && !any(isinf(n)) ? normalize(n) : normalize(u_cam_pos - C);
 }
 
 float ambient_occlusion(vec2 uv, vec3 P, float view_dist)
 {
     vec3 N = depth_normal(uv);
-    if (dot(N, u_cam - P) < 0.0) N = -N;
+    if (dot(N, u_cam_pos - P) < 0.0) N = -N;
     vec2 res = vec2(textureSize(u_depth, 0));
     float radius_px = clamp(0.9 * u_proj_scale / max(view_dist, 0.1), 2.0, 40.0);
     float rnd = ign(gl_FragCoord.xy, u_frame) * 6.2831;

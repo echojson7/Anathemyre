@@ -1,11 +1,10 @@
 #include "terrain.h"
 
-#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "../core/log.h"
-#include "gl.h"
+#include "rb.h"
 
 // Сетка уровня: TERRAIN_CELLS клеток, G узлов на сторону; для отсечения — BLOCKS×BLOCKS кусков.
 // Узел (0,0) уровня стоит на чётном узле его шага, поэтому уровень мельче лежит в дыре крупного
@@ -25,15 +24,18 @@
 // Центр колец не дальше этого от глаза: с далёкой камеры подробная земля под ногами у кадра
 #define FOCUS_MAX 40.0f
 
-// Расположения uniform (scene.vert); U_SKINNED — как в render.c
-enum { U_SKINNED = 17, U_TERR_GRID = 49, U_TERR_VIEW = 50 };
+// Привязки текстур уровня (scene.vert) и смещения констант вызова (frame.glsl: u_skinned, u_terr_grid)
+enum { B_TERR_H = 16, B_TERR_C = 17 };
+#define PUSH_DRAW 64
+#define PUSH_TERR 96
 #define SKIN_TERRAIN 3
 
 static struct {
     TerrainFill fill;
     void *user;
-    u32  tex_h, tex_c, ibo, vao;
-    u32  off[VARIANTS][BLOCKS * BLOCKS], cnt[VARIANTS][BLOCKS * BLOCKS];  // куски в буфере индексов: байт, индексов
+    RbTex tex_h, tex_c;
+    RbBuf ibo;
+    u32  off[VARIANTS][BLOCKS * BLOCKS], cnt[VARIANTS][BLOCKS * BLOCKS];  // куски в буфере индексов: первый индекс, индексов
     f32  cx, cz;                         // центр колец
     i32  og[TERRAIN_LEVELS][2];          // узел (0,0) уровня в узлах уровня
     bool valid[TERRAIN_LEVELS];
@@ -100,36 +102,27 @@ bool terrain_init(Arena *scratch)
                 if (k0 == 0) n = emit_seam(idx, n, (i32)i, 0, 1, 0, 0, 1);
                 if (k0 + BC == TERRAIN_CELLS) n = emit_seam(idx, n, (i32)i, TERRAIN_CELLS, 1, 0, 0, -1);
             }
-            T.off[v][b] = start * (u32)sizeof(u16);
+            T.off[v][b] = start;
             T.cnt[v][b] = n - start;
         }
     }
-    glCreateBuffers(1, &T.ibo);
-    glNamedBufferStorage(T.ibo, (GLsizeiptr)(sizeof(u16) * n), idx, 0);
+    T.ibo = rb_buf_make(sizeof(u16) * n, RB_BUF_INDEX, idx);
     scratch->used = mark;
-    glCreateVertexArrays(1, &T.vao);
-    glVertexArrayElementBuffer(T.vao, T.ibo);
-    glCreateTextures(GL_TEXTURE_2D_ARRAY, 1, &T.tex_h);
-    glTextureStorage3D(T.tex_h, 1, GL_R32F, TEX, TEX, TERRAIN_LEVELS);
-    glCreateTextures(GL_TEXTURE_2D_ARRAY, 1, &T.tex_c);
-    glTextureStorage3D(T.tex_c, 1, GL_RGBA8, TEX, TEX, TERRAIN_LEVELS);
-    u32 tex[2] = { T.tex_h, T.tex_c };
-    for (u32 i = 0; i < 2; i++) {
-        glTextureParameteri(tex[i], GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTextureParameteri(tex[i], GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    }
-    // Блоки 8 и 9 больше никто не занимает (scene.vert)
-    glBindTextureUnit(8, T.tex_h);
-    glBindTextureUnit(9, T.tex_c);
-    return true;
+    T.tex_h = rb_tex_make(&(RbTexDesc){ .kind = RB_TEX_2D_ARRAY, .fmt = RB_FMT_R32F, .w = TEX, .h = TEX, .d = TERRAIN_LEVELS,
+                                        .usage = RB_TEX_SAMPLED });
+    T.tex_c = rb_tex_make(&(RbTexDesc){ .kind = RB_TEX_2D_ARRAY, .fmt = RB_FMT_RGBA8, .w = TEX, .h = TEX, .d = TERRAIN_LEVELS,
+                                        .usage = RB_TEX_SAMPLED });
+    // Привязки больше никто не занимает (scene.vert)
+    rb_bind_tex(B_TERR_H, T.tex_h, RB_SMP_NEAREST);
+    rb_bind_tex(B_TERR_C, T.tex_c, RB_SMP_NEAREST);
+    return T.ibo && T.tex_h && T.tex_c;
 }
 
 void terrain_shutdown(void)
 {
-    if (T.ibo) glDeleteBuffers(1, &T.ibo);
-    if (T.vao) glDeleteVertexArrays(1, &T.vao);
-    if (T.tex_h) glDeleteTextures(1, &T.tex_h);
-    if (T.tex_c) glDeleteTextures(1, &T.tex_c);
+    rb_buf_free(&T.ibo);
+    rb_tex_free(&T.tex_h);
+    rb_tex_free(&T.tex_c);
     memset(&T, 0, sizeof T);
 }
 
@@ -148,22 +141,17 @@ static void fill_rect(u32 l, i32 gx, i32 gz, u32 w, u32 h)
     for (u32 i = 0; i < h; i++)
         for (u32 k = 0; k < w; k++)
             g_h[l][((u32)(gz + (i32)i) & MASK) * TEX + ((u32)(gx + (i32)k) & MASK)] = g_fill_h[i * w + k];
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)w);
     for (u32 z = 0; z < h;) {
         u32 tz = (u32)(gz + (i32)z) & MASK, hz = MIN(h - z, (u32)TEX - tz);
         for (u32 x = 0; x < w;) {
             u32 tx = (u32)(gx + (i32)x) & MASK, wx = MIN(w - x, (u32)TEX - tx);
-            glPixelStorei(GL_UNPACK_SKIP_PIXELS, (GLint)x);
-            glPixelStorei(GL_UNPACK_SKIP_ROWS, (GLint)z);
-            glTextureSubImage3D(T.tex_h, 0, (GLint)tx, (GLint)tz, (GLint)l, (GLsizei)wx, (GLsizei)hz, 1, GL_RED, GL_FLOAT, g_fill_h);
-            glTextureSubImage3D(T.tex_c, 0, (GLint)tx, (GLint)tz, (GLint)l, (GLsizei)wx, (GLsizei)hz, 1, GL_RGBA, GL_UNSIGNED_BYTE, g_fill_c);
+            u32 at = z * w + x;
+            rb_tex_write(T.tex_h, 0, (i32)tx, (i32)tz, (i32)l, (i32)wx, (i32)hz, 1, g_fill_h + at, w);
+            rb_tex_write(T.tex_c, 0, (i32)tx, (i32)tz, (i32)l, (i32)wx, (i32)hz, 1, g_fill_c + at, w);
             x += wx;
         }
         z += hz;
     }
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-    glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
-    glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
 }
 
 static void level_bounds(u32 l)
@@ -229,10 +217,11 @@ static bool box_visible(const V4 p[6], V3 lo, V3 hi)
 void terrain_draw(const V4 planes[6], u32 levels, f32 min_relief, u32 *draws, f64 *tris)
 {
     if (!T.fill || !T.valid[0]) return;
-    glBindVertexArray(T.vao);
-    glUniform1i(U_SKINNED, SKIN_TERRAIN);
-    GLsizei counts[BLOCKS * BLOCKS];
-    const void *offs[BLOCKS * BLOCKS];
+    // Конвейер рельефа (без вершинных потоков) привязывает render.c
+    rb_bind_index(T.ibo, 0, true);
+    i32 skin[4] = { SKIN_TERRAIN, 0, 0, 0 };
+    rb_push(PUSH_DRAW, sizeof skin, skin);
+    u32 counts[BLOCKS * BLOCKS], offs[BLOCKS * BLOCKS];
     for (u32 l = 0; l < MIN(levels, (u32)TERRAIN_LEVELS); l++) {
         u32 v = 9;
         if (l > 0) {
@@ -252,14 +241,14 @@ void terrain_draw(const V4 planes[6], u32 levels, f32 min_relief, u32 *draws, f6
             if (!T.cnt[v][b] || T.hi[l][b] - T.lo[l][b] < min_relief) continue;
             f32 x0 = (f32)(T.og[l][0] + (i32)((b % BLOCKS) * BC)) * s, z0 = (f32)(T.og[l][1] + (i32)((b / BLOCKS) * BC)) * s;
             if (!box_visible(planes, v3(x0, T.lo[l][b], z0), v3(x0 + BC * s, T.hi[l][b], z0 + BC * s))) continue;
-            counts[n] = (GLsizei)T.cnt[v][b];
-            offs[n++] = (const void *)(uintptr_t)T.off[v][b];
+            counts[n] = T.cnt[v][b];
+            offs[n++] = T.off[v][b];
             t += T.cnt[v][b] / 3;
         }
         if (!n) continue;
-        glUniform4i(U_TERR_GRID, T.og[l][0], T.og[l][1], (GLint)l, 0);
-        glUniform4f(U_TERR_VIEW, s, T.cx, T.cz, 0.0f);
-        glMultiDrawElements(GL_TRIANGLES, counts, GL_UNSIGNED_SHORT, offs, (GLsizei)n);
+        struct { i32 grid[4]; f32 view[4]; } c = { { T.og[l][0], T.og[l][1], (i32)l, 0 }, { s, T.cx, T.cz, 0.0f } };
+        rb_push(PUSH_TERR, sizeof c, &c);
+        rb_draw_indexed_multi(counts, offs, n);
         *draws += 1;
         *tris += t;
     }

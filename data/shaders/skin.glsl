@@ -1,9 +1,9 @@
 // Поза и морфы вершины человека: один и тот же счёт в scene.vert (режимы 1 и 4) и в skin.comp (кеш поз)
 
 // Наборы костей кадра по 24 матрицы; последний слот — внешность (render.h, RENDER_LOOK_SLOT)
-layout(std430, binding = 0) readonly buffer BoneBuf { mat4 bones[]; };
+layout(std430, binding = 2) readonly buffer BoneBuf { mat4 bones[]; };
 // Сдвиги морфов: на вершину и морф три uint — snorm16 пары (dx dy) (dz nx) (ny nz)
-layout(std430, binding = 2) readonly buffer MorphBuf { uint morph[]; };
+layout(std430, binding = 4) readonly buffer MorphBuf { uint morph[]; };
 const float MORPH_POS = 0.25, MORPH_NRM = 2.0;  // как в tools/humanconv
 
 // base — первая матрица набора, vid — номер вершины в сетке, moff — начало морфов сетки (в uint);

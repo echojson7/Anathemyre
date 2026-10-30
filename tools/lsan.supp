@@ -6,3 +6,6 @@ leak:libGLX_mesa
 leak:libnvidia
 leak:radeonsi_dri
 leak:iris_dri
+# Утечки внутри Vulkan: загрузчик, lavapipe, слой validation
+leak:libvulkan
+leak:libVkLayer

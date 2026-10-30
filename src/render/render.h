@@ -5,6 +5,7 @@
 #include "../core/arena.h"
 #include "../core/math3d.h"
 #include "mesh.h"
+#include "rb.h"
 
 #define RENDER_MAX_BONES 24
 // Последний слот набора — не кость, а внешность экземпляра (scene.vert): числа 0..7 — веса морфов,
@@ -18,8 +19,9 @@
 #define RENDER_MAX_LIGHTS 16        // точечных источников в кадре: ближайшие из видимых (common.glsl)
 
 typedef struct GpuMesh {
-    u32 vao, vbo, ibo, skin_vbo;  // skin_vbo — веса до 4 костей, 0 у жёстких сеток
-    u32 morph_buf, morph_count;   // сдвиги морфов внешности (mesh.h), 0 — нет
+    RbBuf vbo, ibo, skin_vbo;     // skin_vbo — веса до 4 костей, 0 у жёстких сеток
+    RbBuf morph_buf;              // сдвиги морфов внешности (mesh.h), 0 — нет
+    u32 morph_count;
     u32 index_count;
     V4  bound;                          // сфера всей сетки: центр xyz, радиус w
     V4  bone_bound[RENDER_MAX_BONES];   // сфера вершин каждой кости в позе привязки
@@ -30,7 +32,7 @@ typedef struct GpuMesh {
     // Для экземпляров: редеет с дальности fade[0] и пропадает к fade[1], м (0 — не редеет)
     f32  fade[2];
     bool two_sided;     // без отсечения задних граней (листья, трава)
-    // В общем буфере (gpu_mesh_upload_pooled): vao и буферы свои не заводятся, сетка лежит с первой вершины
+    // В общем буфере (gpu_mesh_upload_pooled): буферы свои не заводятся, сетка лежит с первой вершины
     // pool_vbase и первого индекса pool_ibase, морфы — с pool_moff (в uint)
     bool pooled;
     u32  pool_vbase, pool_ibase, pool_moff, pool_vcount;
@@ -122,7 +124,7 @@ typedef struct RenderStats {
     f64 draws[2], tris[2], visible[2];
     u32 items;          // элементов в последнем кадре
     f64 prep_ms;        // CPU: границы, отсечение, LOD и раскладка по вызовам до первого вызова GL, мс за кадр
-    f64 cpu_ms[PASS_COUNT];  // CPU: вызовы GL каждого прохода после сбора, мс за кадр (интерфейс — портреты и HUD)
+    f64 cpu_ms[PASS_COUNT];  // CPU: вызовы рендера каждого прохода после сбора, мс за кадр (интерфейс — портреты и HUD)
     f64 poses;          // наборов костей за кадр
     f64 skin_verts;     // вершин в кеше поз за кадр (0 — кеш выключен)
     bool vrs;           // последний кадр шейдился блоками вблизи
@@ -158,9 +160,7 @@ void render_frame_end(void);
 // Портрет в ячейку slot атласа (size x size от левого нижнего угла ячейки), после render_frame:
 // тот же свет и тени, фон прозрачный. cam_pos во fv — глаз портретной камеры
 void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, const DrawItem *items, u32 count);
-u32  render_portrait_texture(void);  // HDR, ячейки в ряд, RENDER_PORTRAIT_PX
-// Программа из двух файлов data/shaders (для слоёв поверх сцены: интерфейс)
-u32  render_program(const char *vs_file, const char *fs_file);
+RbTex render_portrait_texture(void);  // HDR, ячейки в ряд, RENDER_PORTRAIT_PX
 // RGB, снизу вверх, размер окна
 void render_read_pixels(u8 *rgb, i32 w, i32 h);
 

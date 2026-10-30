@@ -1,5 +1,5 @@
 // Самый крупный размер пикселя в блоке 8x8 (level.frag): с него pixel_q начинает перебор
-layout(binding = 4) uniform usampler2D u_level;
+layout(binding = 12) uniform usampler2D u_level;
 
 out uint o_level;
 
