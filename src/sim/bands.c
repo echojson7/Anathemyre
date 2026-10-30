@@ -64,12 +64,18 @@ static f32 strength(const Bands *b, u32 i)
     return (f32)b->men[i][0] * tier_w[0] + (f32)b->men[i][1] * tier_w[1] + (f32)b->men[i][2] * tier_w[2];
 }
 
-// Где отряд: место или дорога, для журнала
+// Где отряд, для журнала: у места (ближе 100 м к нему) или на дороге
 static const char *where(const Bands *b, u32 i, char *buf, size_t n)
 {
     const Places *p = b->places;
     u32 a = b->from[i], c = b->to[i];
-    if (b->along[i] * 2.0f > places_dist(p, a, c)) a = c;
+    f32 len = places_dist(p, a, c), t = b->along[i];
+    if (a != c && t > 100.0f && t < len - 100.0f) {
+        if (p->name[a] && p->name[c]) snprintf(buf, n, "на дороге «%s» — «%s»", p->name[a], p->name[c]);
+        else snprintf(buf, n, "на дороге %u — %u", a, c);
+        return buf;
+    }
+    if (t * 2.0f > len) a = c;
     if (p->name[a]) snprintf(buf, n, "у места «%s»", p->name[a]);
     else snprintf(buf, n, "у места %u", a);
     return buf;
@@ -135,7 +141,7 @@ static void engage(Bands *b, u32 i)
     f32 best_d = BAND_ENGAGE_R * BAND_ENGAGE_R;
     for (u32 k = 0; k < n; k++) {
         u32 j = near[k];
-        if (j == i || (b->state[j] != BAND_REST && b->state[j] != BAND_TRAVEL)) continue;
+        if (j == i || b->near[j] || (b->state[j] != BAND_REST && b->state[j] != BAND_TRAVEL)) continue;
         if (b->state[j] == BAND_TRAVEL && b->wait[j] > 0.0f) continue;
         f32 dx = b->x[j] - b->x[i], dz = b->z[j] - b->z[i], d = dx * dx + dz * dz;
         if (d < best_d) {
@@ -154,7 +160,7 @@ static void engage(Bands *b, u32 i)
     b->fights++;
     if (b->log_left) {
         b->log_left--;
-        char buf[64];
+        char buf[96];
         log_info("ОТРЯДЫ: стычка %s: %u против %u", where(b, i, buf, sizeof buf), b->men0[i], b->men0[j]);
     }
 }
@@ -173,7 +179,7 @@ static void rout(Bands *b, u32 i)
     b->routs++;
     if (b->log_left) {
         b->log_left--;
-        char buf[64];
+        char buf[96];
         log_info("ОТРЯДЫ: отряд %u бежит %s, осталось %u из %u", i, where(b, i, buf, sizeof buf), bands_men(b, i), b->men0[i]);
     }
     if (b->from[i] != b->to[i]) {
@@ -214,7 +220,7 @@ static void fight(Bands *b, u32 i, f32 dt)
         b->wiped++;
         if (b->log_left) {
             b->log_left--;
-            char buf[64];
+            char buf[96];
             log_info("ОТРЯДЫ: отряд %u истреблён %s", i, where(b, i, buf, sizeof buf));
         }
     } else if (left * 2 < b->men0[i]) rout(b, i);
@@ -232,9 +238,10 @@ static void step(Bands *b, u32 i)
         break;
     case BAND_TRAVEL:
         b->wait[i] = fmaxf(b->wait[i] - dt, 0.0f);
-        walk(b, i, dt);
+        if (!(b->near[i] && b->hold[i])) walk(b, i, dt);
         break;
     }
+    if (b->near[i]) return;  // рядом бьются тела, не формула
     if (b->state[i] == BAND_REST || (b->state[i] == BAND_TRAVEL && b->wait[i] <= 0.0f)) engage(b, i);
 }
 
@@ -250,6 +257,41 @@ void bands_tick(Bands *b)
     if (++b->phase == b->phases) {
         b->phase = 0;
         b->sec++;
+    }
+}
+
+bool bands_send(Bands *b, u32 i, u32 goal)
+{
+    if (i >= b->count || b->state[i] != BAND_REST || goal >= b->places->count || goal == b->from[i]) return false;
+    u8 nx = places_next(b->places, b->from[i], goal);
+    if (nx == PLACE_NONE) return false;
+    b->goal[i] = (u8)goal;
+    b->to[i] = nx;
+    b->along[i] = 0.0f;
+    b->state[i] = BAND_TRAVEL;
+    b->wait[i] = 0.0f;
+    return true;
+}
+
+void bands_set_near(Bands *b, u32 i, bool on)
+{
+    if (i >= b->count) return;
+    b->near[i] = on;
+    b->hold[i] = 0;
+    if (on && b->state[i] == BAND_FIGHT) resume(b, i);
+}
+
+void bands_set_men(Bands *b, u32 i, const u16 men[BAND_TIERS])
+{
+    if (i >= b->count || b->state[i] == BAND_GONE) return;
+    memcpy(b->men[i], men, sizeof b->men[i]);
+    if (bands_men(b, i)) return;
+    b->state[i] = BAND_GONE;
+    b->wiped++;
+    if (b->log_left) {
+        b->log_left--;
+        char buf[96];
+        log_info("ОТРЯДЫ: отряд %u истреблён %s", i, where(b, i, buf, sizeof buf));
     }
 }
 

@@ -12,6 +12,7 @@
 #include "../world/places.h"
 #include "arena.h"
 #include "arena_view.h"
+#include "bands_near.h"
 #include "field.h"
 #include "people.h"
 #include "squad.h"
@@ -37,7 +38,9 @@ typedef struct World {
     ArenaView     aview;
     ValleyView   *valley;        // долина у реки на карте: вода, руины, растения
     Places        places;        // места и дороги: зал, Скудель, долина
-    Bands        *bands;         // отряды вдали (пока ни одного)
+    Bands        *bands;         // отряды вдали; в мире их нет, пробные — кнопкой в НАСТРОЙКАХ
+    NearBands    *near;          // отряды вдали рядом: тела
+    V3            focus;         // точка взгляда камеры: рядом с ней отряды становятся телами
     GpuMesh       hall, far, town_mesh;  // статика лагеря: зал и обломки, мегаструктуры, посёлок
     u64           tick;          // шагов мира с начала
     f32           acc;           // игровое время после последнего шага, с (< TICK_DT)
@@ -65,5 +68,7 @@ bool world_squad_in_valley(const World *w);
 bool world_travel(World *w);
 // Отряд дерётся
 bool world_squad_fighting(const World *w);
+// Пробные отряды вдали (отладка): по одному у Скудели и в долине, враждуют и идут навстречу по одной дороге
+void world_bands_test(World *w);
 
 #endif

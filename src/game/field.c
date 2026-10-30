@@ -45,6 +45,48 @@ u32 field_add(Field *f, Player *body, CharSheet *sheet, u8 team, u8 flags)
     return i;
 }
 
+void field_reuse(Field *f, u32 i, u8 team, u8 flags)
+{
+    CombatWorld *w = &f->w;
+    if (i >= w->count) return;
+    Player *p = f->body[i];
+    FighterDesc d = f->sheet[i]->d;
+    d.team = team;
+    d.pos = p->pos;
+    d.heading = p->heading;
+    combat_load(w, i, &d);
+    w->idle[i] = 1;
+    w->order[i] = w->target[i] = -1;
+    w->grid_dirty = true;
+    f->flags[i] = flags;
+    f->soft[i] = f->leave[i] = 0;
+    f->calm[i] = 0.0f;
+    p->slot = (i32)i;
+    p->ctrl = CTRL_FREE;
+}
+
+void field_free(Field *f, u32 i)
+{
+    CombatWorld *w = &f->w;
+    if (i >= w->count) return;
+    w->idle[i] = 1;
+    w->team[i] = FIELD_TEAM_NOBODY;
+    w->order[i] = w->target[i] = -1;
+    w->mvx[i] = w->mvz[i] = 0.0f;
+    combat_set_state(w, i, FS_DEAD, 0.0f);
+    w->grid_dirty = true;
+    f->flags[i] = FF_ABSENT;
+    f->soft[i] = f->leave[i] = 0;
+}
+
+void field_enmity(Field *f, u8 a, u8 b)
+{
+    if (a >= COMBAT_MAX_TEAMS || b >= COMBAT_MAX_TEAMS || a == b) return;
+    f->enmity[a] |= 1u << b;
+    f->enmity[b] |= 1u << a;
+    combat_set_foes(&f->w, a, b, true);
+}
+
 static f32 dist(const CombatWorld *w, u32 i, u32 j)
 {
     f32 dx = w->x[j] - w->x[i], dz = w->z[j] - w->z[i];
@@ -303,7 +345,7 @@ static void rules_tick(Field *f, GroundFn ground)
         } else if (f->grudge[t] > 0.0f && (f->grudge[t] -= COMBAT_DT) <= 0.0f) {
             f->grudge[t] = 0.0f;
             for (u32 u = 0; u < COMBAT_MAX_TEAMS; u++)
-                if (f->grudge[u] <= 0.0f) combat_set_foes(w, (u8)t, (u8)u, false);
+                if (f->grudge[u] <= 0.0f && !(f->enmity[t] >> u & 1u)) combat_set_foes(w, (u8)t, (u8)u, false);
         }
     }
 }

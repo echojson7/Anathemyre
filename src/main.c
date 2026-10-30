@@ -45,6 +45,8 @@ typedef struct Options {
     bool        inspect;     // выбрать отряд и открыть осмотр (для снимков)
     bool        editor;      // выбрать первого из отряда и открыть ВНЕШНОСТЬ (для снимков)
     i32         look_slot;   // для снимков: осмотреть чужого в слоте поля look_slot−1
+    bool        bands_test;  // пробные отряды вдали сразу при старте
+    f32         warp;        // для снимков: прогнать столько секунд мира до первого кадра
     u32         arena_bench; // прогнать N боёв арены без окна
     u32         field_bench; // сценка атаки и нагрузка поля на N−1 тел без окна
     i32         attack;      // для снимков: весь отряд сразу атакует бродящего номер attack−1
@@ -101,7 +103,7 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--attack K] [--look-slot N] [--valley] [--threads N]");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N]");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
@@ -123,6 +125,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--inspect")) o->inspect = true;
         else if (!strcmp(a, "--editor")) o->editor = true;
         else if (!strcmp(a, "--look-slot") && i + 1 < argc) o->look_slot = atoi(argv[++i]) + 1;
+        else if (!strcmp(a, "--bands-test")) o->bands_test = true;
+        else if (!strcmp(a, "--warp") && i + 1 < argc) o->warp = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--move-bench")) {
             o->move_bench = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
@@ -341,6 +345,14 @@ int main(int argc, char **argv)
         squad->selected[i] = true;
         field_attack(field, (u32)squad_body(squad, i)->slot, (u32)victim);
     }
+    if (opt.bands_test) world_bands_test(world);
+    // Прогон мира до первого кадра (снимки): камера стоит, журнал — в консоль
+    if (opt.warp > 0.0f) {
+        log_set_echo(true);
+        world->focus = opt.cam.target;
+        for (u32 k = 0; k < (u32)(opt.warp * (f32)TICK_HZ); k++) world_update(world, TICK_DT);
+        log_set_echo(false);
+    }
     u8 *shot_buf = NULL;
     if (opt.shot_path) shot_buf = arena_push(&perm, (size_t)opt.width * (size_t)opt.height * 3, 1);
 
@@ -447,7 +459,8 @@ int main(int argc, char **argv)
         editor_input(&editor, &hud, &hin, world, &cam, humans->on);
         humans_flip |= set.humans;
         bench_request |= set.bench;
-        set.humans = set.bench = false;
+        if (set.bands_test) world_bands_test(world);
+        set.humans = set.bench = set.bands_test = false;
         HudWorld hw = { .squad = squad, .arena = world->arena, .aview = &world->aview, .field = field, .view = fig->view,
                         .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day };
         bool ui_busy = hud_input(&hud, &hin, &hw);
@@ -462,7 +475,11 @@ int main(int argc, char **argv)
         }
         orders_input(&hud, &in, &hin, &hw, ui_busy, fv.cam_pos, ww, wh, world);
 
+        world->focus = cam.target;
         world_update(world, dt);
+        // Отряд вдали ушёл: его человека больше нет на месте, на которое смотрели
+        if (hud.look_kind == LOOK_FIELD && hud.look < field->w.count && (field->flags[hud.look] & FF_ABSENT))
+            hud_look(&hud, LOOK_NONE, 0);
         // Вид мира для кадра: бой между шагами, люди между двумя последними шагами
         prof_zone(PZ_FIGURES);
         world_present(world, dt);

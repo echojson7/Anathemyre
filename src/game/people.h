@@ -1,8 +1,8 @@
-// Люди мира одной таблицей: свой отряд, бродящие, зрители арены, жители Скудели, мобы.
+// Люди мира одной таблицей: свой отряд, бродящие, зрители арены, жители Скудели, мобы, люди отрядов вдали.
 // Номер человека — место в таблице; он же слот на поле боя (people_join_field).
 // Поведение — по роли (people_update), позы и отрисовка — одним циклом для всех (figures.c).
-// Поколение номера (чтобы старый номер не находил нового человека на том же месте) появится,
-// когда люди начнут уходить из таблицы; сейчас никто не уходит.
+// Из таблицы никто не уходит: места для людей отрядов вдали заняты заранее и освобождаются (ROLE_FREE,
+// bands_near.h). Поколение номера появится, когда освобождённое место понадобится помнить дольше кадра.
 #ifndef ANA_PEOPLE_H
 #define ANA_PEOPLE_H
 
@@ -14,11 +14,12 @@
 
 #define PEOPLE_MAX 256
 
-typedef enum Role { ROLE_SQUAD, ROLE_WANDER, ROLE_WATCHER, ROLE_TOWN, ROLE_MOB, ROLE_COUNT } Role;
+// ROLE_BAND — человек отряда вдали, пока отряд рядом; ROLE_FREE — свободное место: не рисуется, не ходит
+typedef enum Role { ROLE_SQUAD, ROLE_WANDER, ROLE_WATCHER, ROLE_TOWN, ROLE_MOB, ROLE_BAND, ROLE_FREE, ROLE_COUNT } Role;
 
 // Команды на поле боя: свой отряд, шайка мобов, бродящие (каждый сам за себя: TEAM_WANDER + номер),
-// за ними зрители и посёлок
-enum { TEAM_SQUAD, TEAM_MOBS, TEAM_WANDER };
+// за ними зрители и посёлок. Отряды вдали — TEAM_BANDS + команда отряда; свободные места — ничья команда
+enum { TEAM_SQUAD, TEAM_MOBS, TEAM_WANDER, TEAM_BANDS = 16, TEAM_FREE = FIELD_TEAM_NOBODY };
 
 typedef struct People {
     u32       count;
@@ -50,6 +51,8 @@ typedef struct People {
 
 // Новый человек с ролью и местом на поле боя: тело в pos лицом к heading, остальное заполняет роль
 u32  people_add(People *p, Role role, V3 pos, f32 heading, u8 team, u8 fflags);
+// Человек на месте i заново, как people_add. Место на поле боя вернёт field_reuse
+void people_reset(People *p, u32 i, Role role, V3 pos, f32 heading, u8 team, u8 fflags);
 // Внешность прохожего: сложение из зерна позы, лицо из look_seed, одежда случайная по gear_seed
 void people_look_random(People *p, u32 i, u32 look_seed, u32 gear_seed);
 // Внешность из листа: надетые вещи, сложение и сила из листа. Отряд и мобы — каждый кадр (переодеваются)

@@ -41,6 +41,16 @@ jobs:
           ! grep -q "СБОЙ" build/valley.txt
           python3 -c "from PIL import Image; Image.open('build/valley.ppm').save('build/valley.png')"
 
+      - name: Отряды вдали рядом под ASan (пробные отряды, бой телами)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          LSAN_OPTIONS: suppressions=tools/lsan.supp
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --bands-test --warp 800 --cam 1026 249 2.0 0.3 9 --no-pixel --shot build/bands.ppm --frames 3 | tee build/bands_near.txt | grep "ОТРЯДЫ"
+          ! grep -q "СБОЙ" build/bands_near.txt
+          grep -q "отряд 1 рядом" build/bands_near.txt
+
       - name: Бой под ASan, детерминизм полевого боя на 1/2/4/8 потоках, отряды вдали
         env:
           LSAN_OPTIONS: suppressions=tools/lsan.supp

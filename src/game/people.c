@@ -6,6 +6,12 @@ u32 people_add(People *p, Role role, V3 pos, f32 heading, u8 team, u8 fflags)
 {
     if (p->count >= PEOPLE_MAX) return PEOPLE_MAX - 1;
     u32 i = p->count++;
+    people_reset(p, i, role, pos, heading, team, fflags);
+    return i;
+}
+
+void people_reset(People *p, u32 i, Role role, V3 pos, f32 heading, u8 team, u8 fflags)
+{
     player_init(&p->body[i], pos, heading);
     memset(&p->sheet[i], 0, sizeof p->sheet[i]);
     p->role[i] = (u8)role;
@@ -23,7 +29,6 @@ u32 people_add(People *p, Role role, V3 pos, f32 heading, u8 team, u8 fflags)
     p->home_h[i] = heading;
     p->wait[i] = p->pace[i] = 0.0f;
     p->node[i] = p->prev[i] = 0;
-    return i;
 }
 
 void people_look_random(People *p, u32 i, u32 look_seed, u32 gear_seed)
