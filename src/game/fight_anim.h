@@ -39,6 +39,8 @@ typedef struct FightAnim {
 
 // Боец вошёл в бой: оружие ещё убрано, достанет сам
 void fight_anim_reset(FightAnim *f, const CombatWorld *w, u32 i, f32 seed);
+// После чтения сохранения: вид не пишется в файл — заново и сразу в нынешнем состоянии (оружие в руке или на земле)
+void fight_anim_settle(FightAnim *f, const CombatWorld *w, u32 i, f32 seed);
 // Перед каждым combat_tick: запомнить позицию
 void fight_anim_pre_tick(FightAnim *f, const CombatWorld *w, u32 i);
 // Раз в кадр; alpha — доля времени до следующего тика

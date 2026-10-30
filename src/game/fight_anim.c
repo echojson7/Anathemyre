@@ -135,6 +135,13 @@ void fight_anim_reset(FightAnim *f, const CombatWorld *w, u32 i, f32 seed)
     for (u32 p = 0; p < PART_COUNT; p++) f->hp_prev[p] = w->hp[p][i];
 }
 
+void fight_anim_settle(FightAnim *f, const CombatWorld *w, u32 i, f32 seed)
+{
+    fight_anim_reset(f, w, i, seed);
+    // Две секунды вида без хода боя: оружие достано, выпавшее легло, стойка встала
+    for (u32 k = 0; k < 60; k++) fight_anim_update(f, w, i, 0.0f, 1.0f / 30.0f);
+}
+
 void fight_anim_pre_tick(FightAnim *f, const CombatWorld *w, u32 i)
 {
     f->prev_x = w->x[i];

@@ -7,6 +7,7 @@
 #include "ostov.h"
 #include "../core/log.h"
 #include "../core/palette.h"
+#include "../defs/defs.h"
 #include "../render/ui.h"
 
 // Цвета поверхностей (альбедо, линейные): общие из palette.h, свои — краска, железо, натрий ламп
@@ -299,7 +300,7 @@ void showhall_init(ShowHall *s, MeshBuilder *mb, Arena *perm)
     // Ряд B — движения стоя лицом к входу
     for (u32 k = MOVE_NECK; k < MOVE_COUNT; k++) {
         add(s, EX_MOVE, (u8)k, v3(ROW_B_X(k - 1), plinth(), ROW_B_Z), 0.25f, 0.9f * (f32)k);
-        if (k == MOVE_HILT) s->ex[s->count - 1].weapon = W_SEKACH + 1;
+        if (k == MOVE_HILT) s->ex[s->count - 1].weapon = (u8)(def_weapon("sekach") + 1);
     }
     // Клипы всем телом у восточной стены, падают вдоль площадки
     for (u32 k = 0; k < CL_COUNT; k++) add(s, EX_CLIP, (u8)k, v3(17.5f, plinth(), -75.5f - 3.6f * (f32)k), -1.5708f, 1.1f * (f32)k);
