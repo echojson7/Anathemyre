@@ -1,4 +1,4 @@
-// Рендерер: сцена в низком разрешении -> атмосфера -> стилизация -> апскейл
+// Рендерер: сцена в полном разрешении окна -> атмосфера -> стилизация с пиксельностью по глубине
 #ifndef ANA_RENDER_H
 #define ANA_RENDER_H
 
@@ -91,19 +91,16 @@ typedef struct FrameView {
 } FrameView;
 
 typedef struct RenderSettings {
-    i32  internal_h;    // высота внутреннего разрешения
     bool post;          // фильтр кадра вкл/выкл
     bool pixel;         // пиксельность (квадраты на поверхностях и блоки вблизи) вкл/выкл
-    i32  pixel_div;     // 1 — размер пикселя по глубине; 2, 3 — весь кадр в 1/2, 1/3 окна (internal_h), ровные пиксели
     bool vrs;           // шейдинг блоками там, где фильтр сливает пиксели (если есть у видеокарты)
     bool noise_tex;     // шум материалов одной выборкой из 3D-текстуры вместо 8 хешей (по умолчанию, +14% к/с на RTX)
     bool ao_half;       // AO в половинном разрешении с апскейлом по глубине (сравнение)
-    bool pixel_int;     // пиксели только целых размеров 1, 2, 4, 8 по вложенным сеткам (сравнение)
 } RenderSettings;
 
 // Время проходов на GPU, мс, среднее с прошлого render_take_stats
 // глубина — проход глубины и карты пикселей; интерфейс — портреты и HUD после render_frame
-enum { PASS_SHADOW, PASS_DEPTH, PASS_SCENE, PASS_ATMOS, PASS_STYLE, PASS_BLIT, PASS_UI, PASS_COUNT };
+enum { PASS_SHADOW, PASS_DEPTH, PASS_SCENE, PASS_ATMOS, PASS_STYLE, PASS_UI, PASS_COUNT };
 typedef struct RenderStats {
     f64 gpu_ms[PASS_COUNT];
     f64 gpu_total_ms;

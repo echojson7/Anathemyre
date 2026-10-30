@@ -56,9 +56,7 @@ typedef struct Options {
     bool        move_bench;  // проверка разворотов без окна
     const char *move_trace;
     bool        no_pixel;    // кадр без пиксельности (сравнение моделей)
-    i32         pixel_div;   // --pixel-div: 1 — пиксель по глубине, 2/3 — кадр в 1/2, 1/3 окна
     bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
-    bool        pixel_int;   // пиксели только целых размеров 1, 2, 4, 8
     bool        ao_half;     // AO в половинном разрешении
     bool        noise_tex;   // шум материалов из 3D-текстуры (по умолчанию; --hash-noise — прежний счёт хешами)
     bool        fullscreen;  // окно без рамки на весь монитор
@@ -125,12 +123,10 @@ static bool parse_args(int argc, char **argv, Options *o)
         } else if (!strcmp(a, "--humans")) o->humans = true;
         else if (!strcmp(a, "--stand") && i + 1 < argc) o->stand = atoi(argv[++i]) + 1;
         else if (!strcmp(a, "--no-pixel")) o->no_pixel = true;
-        else if (!strcmp(a, "--pixel-div") && i + 1 < argc) o->pixel_div = atoi(argv[++i]);
         else if (!strcmp(a, "--valley")) o->valley = true;
         else if (!strcmp(a, "--mute")) o->mute = true;
         else if (!strcmp(a, "--sound-demo") && i + 1 < argc) o->sound_demo = argv[++i];
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
-        else if (!strcmp(a, "--pixel-int")) o->pixel_int = true;
         else if (!strcmp(a, "--ao-half")) o->ao_half = true;
         else if (!strcmp(a, "--hash-noise")) o->noise_tex = false;
         else if (!strcmp(a, "--fullscreen")) o->fullscreen = true;
@@ -294,8 +290,8 @@ int main(int argc, char **argv)
     PointLight *lights = ARENA_PUSH_ARRAY(&perm, PointLight, TORCH_LIGHTS_MAX);
     DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, RENDER_MAX_ITEMS);
     Settings set = {
-        .rs = { .post = true, .pixel = !opt.no_pixel, .pixel_div = CLAMP(opt.pixel_div, 1, 3), .vrs = !opt.no_vrs,
-                .pixel_int = opt.pixel_int, .ao_half = opt.ao_half, .noise_tex = opt.noise_tex },
+        .rs = { .post = true, .pixel = !opt.no_pixel, .vrs = !opt.no_vrs,
+                .ao_half = opt.ao_half, .noise_tex = opt.noise_tex },
         .vsync = !opt.no_vsync && opt.shot_path == NULL, .fullscreen = opt.fullscreen && opt.shot_path == NULL,
         // Swap после логики: пока GPU рисует прошлый кадр, CPU уже считает следующий (только без vsync,
         // иначе кадр показывался бы на период позже)
@@ -518,8 +514,6 @@ int main(int argc, char **argv)
         fv.light_count = nl;
         fv.time = wtime;
         fv.frame = frame;
-        // Полное разрешение окна, размер пикселя задаёт глубина (pixel.glsl); либо весь кадр в 1/2, 1/3 окна
-        set.rs.internal_h = set.rs.pixel && set.rs.pixel_div > 1 ? wh / set.rs.pixel_div : wh;
         render_frame(&fv, items, n, &set.rs, ww, wh);
         prof_zone(PZ_UI);
         draw_portraits(fig, &fv, cm, world, &hud);
