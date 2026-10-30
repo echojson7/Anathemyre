@@ -21,7 +21,7 @@ static bool load_lods(GpuMesh *full, GpuMesh *lods, MeshBuilder *mb, Arena *perm
         snprintf(path, sizeof path, "%s/meshes/%s%s.mesh", data_dir, stem, suf);
         if (!mb_load(mb, perm, path)) return false;
         GpuMesh *gm = l ? &lods[l - 1] : full;
-        gpu_mesh_upload(gm, mb);
+        gpu_mesh_upload_pooled(gm, mb);
         if (l) gpu_mesh_set_lod(l == 1 ? full : &lods[l - 2], gm, g_char_lod_px[l - 1] * scale);
         perm->used = mark;
     }
@@ -37,7 +37,7 @@ static void marks_build(CharMeshes *m, MeshBuilder *mb, Arena *perm)
     mb_set(mb, v3(0.35f, 0.9f, 0.45f), MAT_EMISSIVE, 0);
     mb_box(mb, m4_mul(m4_translate(v3(0, 0.02f, 0)), m4_mul(m4_rot_y(PI_F * 0.25f), m4_scale(v3(0.5f, 0.02f, 0.06f)))));
     mb_box(mb, m4_mul(m4_translate(v3(0, 0.02f, 0)), m4_mul(m4_rot_y(-PI_F * 0.25f), m4_scale(v3(0.5f, 0.02f, 0.06f)))));
-    gpu_mesh_upload(&m->marker, mb);
+    gpu_mesh_upload_pooled(&m->marker, mb);
     perm->used = mark;
     static const V3 ring_color[3] = { { 0.1f, 0.42f, 0.16f }, { 0.5f, 0.3f, 0.08f }, { 0.62f, 0.06f, 0.04f } };
     for (u32 k = 0; k < 3; k++) {
@@ -48,7 +48,7 @@ static void marks_build(CharMeshes *m, MeshBuilder *mb, Arena *perm)
             mb_box(mb, m4_mul(m4_translate(v3(sinf(a) * 0.48f, 0.03f, cosf(a) * 0.48f)),
                               m4_mul(m4_rot_y(a), m4_scale(v3(0.09f, 0.015f, 0.025f)))));
         }
-        gpu_mesh_upload(&m->ring[k], mb);
+        gpu_mesh_upload_pooled(&m->ring[k], mb);
         perm->used = mark;
     }
 }
@@ -82,17 +82,18 @@ bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const
     for (u32 k = 0; k < W_COUNT; k++) {
         mb_init(mb, perm, 4000, 12000);
         weapon_build(mb, (u8)k);
-        gpu_mesh_upload(&m->weapon[k], mb);
+        gpu_mesh_upload_pooled(&m->weapon[k], mb);
         perm->used = mark;
     }
     // Факел: древко и пламя отдельно, пламя рисуется, только пока горит
     for (u32 k = 0; k < 2; k++) {
         mb_init(mb, perm, 2000, 6000);
         torch_build(mb, k == 1);
-        gpu_mesh_upload(&m->torch[k], mb);
+        gpu_mesh_upload_pooled(&m->torch[k], mb);
         perm->used = mark;
     }
     marks_build(m, mb, perm);
+    render_pool_log();
     return true;
 }
 
@@ -284,7 +285,7 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
             PoseJob *j = &f->job[f->jobs++];
             j->p = (CharPose){
                 .pos = b->pos, .heading = b->heading, .phase = b->phase, .walk = b->walk, .run = b->run,
-                .speed = b->speed, .time = v->time, .seed = p->seed[i],
+                .speed = b->speed, .stride = player_stride(b), .time = v->time, .seed = p->seed[i],
                 .lean_fwd = b->lean_fwd, .lean_side = b->lean_side, .look = b->look, .idle = b->idle,
                 .height = p->height[i], .width = p->width[i], .joints = g_body_joints[kind],
                 .weapon = armed ? (u8)(wid + 1) : 0, .torch = lit,

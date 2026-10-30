@@ -6,25 +6,17 @@
 #include "anim.h"
 #include "look.h"
 #include "names.h"
+#include "ostov.h"
 #include "squad.h"
 #include "town.h"
 #include "../world/map.h"
+#include "../core/palette.h"
 
 // Цвета поверхностей (альбедо, линейные)
-#define C_CONCRETE v3(0.42f, 0.40f, 0.37f)
-#define C_CONCRETE_DARK v3(0.30f, 0.29f, 0.27f)
-#define C_RUST v3(0.42f, 0.24f, 0.13f)
-#define C_GLYPH_GREEN v3(0.25f, 1.0f, 0.40f)
-#define C_GLYPH_RED v3(0.95f, 0.18f, 0.10f)
-
-static M4 xf_box(V3 c, V3 size, f32 rx, f32 ry, f32 rz)
-{
-    return m4_mul(m4_translate(c), m4_mul(m4_rot_y(ry), m4_mul(m4_rot_x(rx), m4_mul(m4_rot_z(rz), m4_scale(size)))));
-}
 
 static void box(MeshBuilder *mb, V3 c, V3 size)
 {
-    mb_box(mb, xf_box(c, size, 0, 0, 0));
+    mb_box(mb, m4_trs(c, size, 0, 0, 0));
 }
 
 static void glyph_panel(MeshBuilder *mb, V3 c, V3 normal, f32 hw, f32 hh, V3 color)
@@ -36,7 +28,7 @@ static void glyph_panel(MeshBuilder *mb, V3 c, V3 normal, f32 hw, f32 hh, V3 col
 
 static void hall(MeshBuilder *mb, Rng *rng)
 {
-    mb_set(mb, C_CONCRETE, MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, PAL_CONCRETE, MAT_CONCRETE, BONE_NONE);
 
     // Плита пола
     box(mb, v3(0, -0.3f, -2), v3(64, 0.8f, 52));
@@ -51,8 +43,8 @@ static void hall(MeshBuilder *mb, Rng *rng)
             // Утолщение у основания
             box(mb, v3(x, 0.5f, z), v3(2.2f, 1.0f, 2.2f));
             if (broken) {
-                mb_box(mb, xf_box(v3(x + 3.5f, 0.9f, z + 2.0f), v3(1.6f, 1.6f, 7.5f), 0.08f, 0.9f, 0.1f));
-                mb_box(mb, xf_box(v3(x + 1.5f, 0.6f, z - 1.5f), v3(1.3f, 1.2f, 1.6f), 0.3f, 0.4f, 0.2f));
+                mb_box(mb, m4_trs(v3(x + 3.5f, 0.9f, z + 2.0f), v3(1.6f, 1.6f, 7.5f), 0.08f, 0.9f, 0.1f));
+                mb_box(mb, m4_trs(v3(x + 1.5f, 0.6f, z - 1.5f), v3(1.3f, 1.2f, 1.6f), 0.3f, 0.4f, 0.2f));
             }
         }
 
@@ -85,11 +77,11 @@ static void hall(MeshBuilder *mb, Rng *rng)
     for (int k = -3; k <= 3; k++) {
         f32 x = (f32)k * 9.5f + 4.7f;
         if (fabsf(x) > 33.0f) continue;
-        mb_box(mb, xf_box(v3(x, 7.0f, wz - 3.5f), v3(1.4f, 16.0f, 5.0f), -0.28f, 0, 0));
+        mb_box(mb, m4_trs(v3(x, 7.0f, wz - 3.5f), v3(1.4f, 16.0f, 5.0f), -0.28f, 0, 0));
     }
 
     // Обрушенная боковая стена: ступенчатые обломки
-    mb_set(mb, C_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, PAL_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
     for (int k = 0; k < 12; k++) {
         f32 z = -20.0f + (f32)k * 2.6f;
         f32 h = fmaxf(1.0f, 13.0f - (f32)k * 1.1f + rng_range(rng, -1.5f, 1.5f));
@@ -103,18 +95,18 @@ static void hall(MeshBuilder *mb, Rng *rng)
         f32 s = rng_range(rng, 0.25f, 1.4f);
         V3 c = v3(cosf(ang) * r, s * 0.3f, sinf(ang) * r - 4.0f);
         if (fabsf(c.x) < 6.5f && c.z > -16.0f) continue; // проход по центру
-        mb_set(mb, rng_f32(rng) < 0.5f ? C_CONCRETE : C_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
-        mb_box(mb, xf_box(c, v3(s * rng_range(rng, 0.8f, 2.0f), s, s * rng_range(rng, 0.7f, 1.5f)),
+        mb_set(mb, rng_f32(rng) < 0.5f ? PAL_CONCRETE : PAL_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
+        mb_box(mb, m4_trs(c, v3(s * rng_range(rng, 0.8f, 2.0f), s, s * rng_range(rng, 0.7f, 1.5f)),
                           rng_range(rng, -0.4f, 0.4f), rng_range(rng, 0, PI_F), rng_range(rng, -0.4f, 0.4f)));
         if (rng_f32(rng) < 0.35f) {
-            mb_set(mb, C_RUST, MAT_RUST, BONE_NONE);
+            mb_set(mb, PAL_RUST, MAT_RUST, BONE_NONE);
             V3 tip = v3_add(c, v3(rng_range(rng, -0.6f, 0.6f), rng_range(rng, 0.8f, 1.8f), rng_range(rng, -0.6f, 0.6f)));
             mb_cylinder(mb, c, tip, 0.025f, 6);
         }
     }
 
     // Трубы вдоль задней стены
-    mb_set(mb, C_RUST, MAT_RUST, BONE_NONE);
+    mb_set(mb, PAL_RUST, MAT_RUST, BONE_NONE);
     for (int i = 0; i < 2; i++) {
         f32 y = 4.0f + (f32)i * 1.3f, r = 0.45f - (f32)i * 0.1f;
         mb_cylinder(mb, v3(-33, y, wz + 1.9f), v3(33, y, wz + 1.9f), r, 14);
@@ -138,22 +130,22 @@ static void hall(MeshBuilder *mb, Rng *rng)
 
     // Контейнеры
     mb_set(mb, v3(0.30f, 0.18f, 0.11f), MAT_RUST, BONE_NONE);
-    mb_box(mb, xf_box(v3(-15, 1.3f, 8), v3(2.4f, 2.6f, 6.0f), 0, 0.15f, 0));
-    mb_box(mb, xf_box(v3(-14.2f, 3.4f, 4.5f), v3(2.4f, 2.6f, 6.0f), 0.12f, -0.35f, 0.25f));
+    mb_box(mb, m4_trs(v3(-15, 1.3f, 8), v3(2.4f, 2.6f, 6.0f), 0, 0.15f, 0));
+    mb_box(mb, m4_trs(v3(-14.2f, 3.4f, 4.5f), v3(2.4f, 2.6f, 6.0f), 0.12f, -0.35f, 0.25f));
 
     // Машина неизвестного назначения со знаками
     mb_set(mb, v3(0.22f, 0.21f, 0.20f), MAT_METAL, BONE_NONE);
     box(mb, v3(-4, 1.6f, -15), v3(5.0f, 3.2f, 3.0f));
-    mb_set(mb, C_RUST, MAT_RUST, BONE_NONE);
+    mb_set(mb, PAL_RUST, MAT_RUST, BONE_NONE);
     box(mb, v3(-4, 3.6f, -15.5f), v3(3.6f, 0.8f, 2.0f));
     mb_cylinder(mb, v3(-6, 4.0f, -15.5f), v3(-6, 7.5f, -16.5f), 0.25f, 10);
-    glyph_panel(mb, v3(-4, 1.8f, -13.5f), v3(0, 0, 1), 1.8f, 0.7f, C_GLYPH_GREEN);
+    glyph_panel(mb, v3(-4, 1.8f, -13.5f), v3(0, 0, 1), 1.8f, 0.7f, PAL_GLYPH_GREEN);
 
     // Знаки на стене и колоннах
-    glyph_panel(mb, v3(0, 13.5f, wz + 1.2f), v3(0, 0, 1), 6.0f, 1.6f, C_GLYPH_GREEN);
-    glyph_panel(mb, v3(-24.0f, 16.0f, wz + 1.2f), v3(0, 0, 1), 3.0f, 0.4f, C_GLYPH_RED);
-    glyph_panel(mb, v3(-9, 4.5f, 6.8f), v3(0, 0, 1), 0.65f, 1.6f, C_GLYPH_RED);
-    glyph_panel(mb, v3(9, 6.0f, -5.2f), v3(0, 0, 1), 0.65f, 2.2f, C_GLYPH_GREEN);
+    glyph_panel(mb, v3(0, 13.5f, wz + 1.2f), v3(0, 0, 1), 6.0f, 1.6f, PAL_GLYPH_GREEN);
+    glyph_panel(mb, v3(-24.0f, 16.0f, wz + 1.2f), v3(0, 0, 1), 3.0f, 0.4f, PAL_GLYPH_RED);
+    glyph_panel(mb, v3(-9, 4.5f, 6.8f), v3(0, 0, 1), 0.65f, 1.6f, PAL_GLYPH_RED);
+    glyph_panel(mb, v3(9, 6.0f, -5.2f), v3(0, 0, 1), 0.65f, 2.2f, PAL_GLYPH_GREEN);
 
     // Красные огни на колоннах
     mb_set(mb, v3(0.9f, 0.12f, 0.06f), MAT_EMISSIVE, BONE_NONE);
@@ -180,7 +172,7 @@ static void megastructures(MeshBuilder *mb, Rng *rng)
     for (int i = 0; i < 5; i++)
         box(mb, v3(420.0f, 180.0f + (f32)i * 150.0f, -560.0f), v3(150.0f, 14.0f, 150.0f));
     // Наклонный пилон
-    mb_box(mb, xf_box(v3(-520.0f, 220.0f, -420.0f), v3(60.0f, 600.0f, 60.0f), 0.0f, 0.3f, -0.35f));
+    mb_box(mb, m4_trs(v3(-520.0f, 220.0f, -420.0f), v3(60.0f, 600.0f, 60.0f), 0.0f, 0.3f, -0.35f));
     // Мост на опорах над пустыней
     mb_set(mb, v3(0.27f, 0.26f, 0.25f), MAT_CONCRETE, BONE_NONE);
     box(mb, v3(-200.0f, 140.0f, -330.0f), v3(1400.0f, 22.0f, 40.0f));
@@ -205,7 +197,7 @@ f32 testroom_ground(f32 x, f32 z)
 {
     // Плита пола зала: верх на 0.1
     if (fabsf(x) <= 32.0f && z >= -28.0f && z <= 24.0f) return 0.1f;
-    f32 h = town_ground(x, z, map_height(x, z));
+    f32 h = ostov_ground(x, z, town_ground(x, z, map_height(x, z)));
     // Плита арены
     f32 dx = x - ARENA_CENTER.x, dz = z - ARENA_CENTER.z;
     if (dx * dx + dz * dz < 8.5f * 8.5f) h = fmaxf(h, 0.125f);

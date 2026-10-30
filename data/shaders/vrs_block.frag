@@ -1,7 +1,7 @@
 // Частота шейдинга для выровненного блока 4x4: блок 2x2 или 4x4 шейдится один раз,
 // только если все его пиксели берут цвет из одного центра ячейки. Иначе — каждый пиксель
 
-layout(binding = 2) uniform usampler2D u_src_map;  // src_map.frag
+layout(binding = 11) uniform usampler2D u_src_map;  // src_map.frag
 
 out uint o_rate;  // 0 — каждый пиксель, 1 — 2x2, 2 — 4x4 (палитра в render.c)
 

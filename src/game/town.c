@@ -3,6 +3,7 @@
 #include "look.h"
 #include "names.h"
 #include "squad.h"
+#include "../core/palette.h"
 
 // Ярусы: нижний (улица), средний и верхний; за верхним древняя стена
 #define TX0 56.0f
@@ -25,16 +26,10 @@
 #define SZ0 14.0f
 
 // Цвета (альбедо, линейные)
-#define C_CONC   v3(0.42f, 0.40f, 0.37f)
-#define C_CONC_D v3(0.30f, 0.29f, 0.27f)
-#define C_RUST   v3(0.42f, 0.24f, 0.13f)
 #define C_METAL  v3(0.22f, 0.21f, 0.20f)
-#define C_SAND   v3(0.40f, 0.34f, 0.26f)
 #define C_VOID   v3(0.004f, 0.0035f, 0.003f)  // проёмы: свет внутрь не заходит
 #define C_LAMP   v3(0.55f, 0.34f, 0.11f)
 #define C_WINDOW v3(0.16f, 0.09f, 0.03f)
-#define C_GLYPH_GREEN v3(0.25f, 1.0f, 0.40f)
-#define C_GLYPH_RED   v3(0.95f, 0.18f, 0.10f)
 #define C_PAINT  v3(0.42f, 0.25f, 0.08f)      // знаки торговцев: выцветшая охра
 
 static const V3 k_cloth[] = {
@@ -56,17 +51,12 @@ static V3 tint(Rng *r, V3 c, f32 a)
 
 static V3 pick(Rng *r, const V3 *pal, u32 n, f32 a) { return tint(r, pal[rng_below(r, n)], a); }
 
-static M4 xf(V3 c, V3 s, f32 rx, f32 ry, f32 rz)
-{
-    return m4_mul(m4_translate(c), m4_mul(m4_rot_y(ry), m4_mul(m4_rot_x(rx), m4_mul(m4_rot_z(rz), m4_scale(s)))));
-}
-
-static void box(MeshBuilder *mb, V3 c, V3 s, f32 yaw) { mb_box(mb, xf(c, s, 0, yaw, 0)); }
+static void box(MeshBuilder *mb, V3 c, V3 s, f32 yaw) { mb_box(mb, m4_trs(c, s, 0, yaw, 0)); }
 
 // Локальная система: +z вперёд (к улице), +x вправо
 static M4 frame(V3 p, f32 yaw) { return m4_mul(m4_translate(p), m4_rot_y(yaw)); }
 
-static void lbox(MeshBuilder *mb, M4 L, V3 c, V3 s, f32 rx, f32 ry, f32 rz) { mb_box(mb, m4_mul(L, xf(c, s, rx, ry, rz))); }
+static void lbox(MeshBuilder *mb, M4 L, V3 c, V3 s, f32 rx, f32 ry, f32 rz) { mb_box(mb, m4_mul(L, m4_trs(c, s, rx, ry, rz))); }
 
 static void lcyl(MeshBuilder *mb, M4 L, V3 a, V3 b, f32 r, u32 segs) { mb_cylinder(mb, m4_point(L, a), m4_point(L, b), r, segs); }
 
@@ -82,7 +72,7 @@ static f32 crate(MeshBuilder *mb, Rng *r, V3 p, f32 yaw, f32 s)
 {
     V3 size = v3(s * rng_range(r, 0.9f, 1.5f), s * rng_range(r, 0.7f, 1.0f), s * rng_range(r, 0.8f, 1.1f));
     u32 k = rng_below(r, 3);
-    V3 col = k == 0 ? tint(r, C_RUST, 0.2f) : k == 1 ? tint(r, v3(0.24f, 0.26f, 0.19f), 0.2f) : tint(r, C_METAL, 0.2f);
+    V3 col = k == 0 ? tint(r, PAL_RUST, 0.2f) : k == 1 ? tint(r, v3(0.24f, 0.26f, 0.19f), 0.2f) : tint(r, C_METAL, 0.2f);
     M4 L = frame(p, yaw);
     mb_set(mb, col, k == 0 ? MAT_RUST : MAT_METAL, BONE_NONE);
     lbox(mb, L, v3(0, size.y * 0.5f, 0), size, 0, 0, 0);
@@ -133,8 +123,8 @@ static void sack(MeshBuilder *mb, Rng *r, V3 p, f32 yaw)
 {
     f32 w = rng_range(r, 0.4f, 0.6f);
     mb_set(mb, tint(r, v3(0.40f, 0.35f, 0.25f), 0.18f), MAT_CLOTH, BONE_NONE);
-    mb_box(mb, xf(v3(p.x, p.y + 0.13f, p.z), v3(w, 0.26f, w * 0.65f), rng_range(r, -0.12f, 0.12f), yaw, rng_range(r, -0.12f, 0.12f)));
-    mb_box(mb, xf(v3(p.x, p.y + 0.29f, p.z), v3(0.13f, 0.09f, 0.11f), 0, yaw, rng_range(r, -0.3f, 0.3f)));
+    mb_box(mb, m4_trs(v3(p.x, p.y + 0.13f, p.z), v3(w, 0.26f, w * 0.65f), rng_range(r, -0.12f, 0.12f), yaw, rng_range(r, -0.12f, 0.12f)));
+    mb_box(mb, m4_trs(v3(p.x, p.y + 0.29f, p.z), v3(0.13f, 0.09f, 0.11f), 0, yaw, rng_range(r, -0.3f, 0.3f)));
 }
 
 static void sack_pile(MeshBuilder *mb, Rng *r, V3 p, f32 yaw)
@@ -160,7 +150,7 @@ static void scrap_heap(MeshBuilder *mb, Rng *r, V3 c, f32 rad)
         u32 k = rng_below(r, 4);
         mb_set(mb, k == 2 ? tint(r, C_METAL, 0.3f) : pick(r, k_sheet, 5, 0.2f), k == 2 ? MAT_METAL : MAT_RUST, BONE_NONE);
         if (k == 0) {
-            mb_box(mb, xf(p, v3(rng_range(r, 0.6f, 1.3f), 0.04f, rng_range(r, 0.4f, 0.9f)), rng_range(r, -0.7f, 0.7f),
+            mb_box(mb, m4_trs(p, v3(rng_range(r, 0.6f, 1.3f), 0.04f, rng_range(r, 0.4f, 0.9f)), rng_range(r, -0.7f, 0.7f),
                           rng_range(r, 0, PI_F), rng_range(r, -0.7f, 0.7f)));
         } else if (k == 1) {
             f32 yaw = rng_range(r, 0, PI_F), len = rng_range(r, 0.6f, 1.7f);
@@ -168,7 +158,7 @@ static void scrap_heap(MeshBuilder *mb, Rng *r, V3 c, f32 rad)
             mb_cylinder(mb, v3_sub(p, dd), v3_add(p, dd), rng_range(r, 0.04f, 0.1f), 6);
         } else if (k == 2) {
             f32 s = rng_range(r, 0.2f, 0.5f);
-            mb_box(mb, xf(p, v3(s, s * rng_range(r, 0.5f, 1.0f), s * rng_range(r, 0.6f, 1.2f)), rng_range(r, -0.5f, 0.5f),
+            mb_box(mb, m4_trs(p, v3(s, s * rng_range(r, 0.5f, 1.0f), s * rng_range(r, 0.6f, 1.2f)), rng_range(r, -0.5f, 0.5f),
                           rng_range(r, 0, PI_F), rng_range(r, -0.5f, 0.5f)));
         } else {
             f32 yaw = rng_range(r, 0, PI_F), tilt = rng_range(r, 0.3f, 1.4f);
@@ -199,7 +189,7 @@ static void cable(MeshBuilder *mb, Rng *r, V3 a, V3 b, f32 sag, u32 hang)
             V3 p = v3_lerp(a, b, t);
             p.y -= sag * 4.0f * t * (1.0f - t) + h * 0.5f;
             mb_set(mb, pick(r, k_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
-            mb_box(mb, xf(p, v3(w, h, 0.02f), rng_range(r, -0.15f, 0.15f), yaw, rng_range(r, -0.05f, 0.05f)));
+            mb_box(mb, m4_trs(p, v3(w, h, 0.02f), rng_range(r, -0.15f, 0.15f), yaw, rng_range(r, -0.05f, 0.05f)));
         }
     } else if (hang == 2) {
         V3 p = v3_lerp(a, b, 0.5f);
@@ -217,9 +207,9 @@ static void lamp_post(MeshBuilder *mb, Rng *r, V3 p, f32 yaw)
 {
     f32 h = rng_range(r, 3.0f, 4.0f);
     V3 top = v3(p.x + rng_range(r, -0.08f, 0.08f), p.y + h, p.z + rng_range(r, -0.08f, 0.08f));
-    mb_set(mb, tint(r, C_CONC_D, 0.1f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
     box(mb, v3(p.x, p.y + 0.2f, p.z), v3(0.45f, 0.4f, 0.45f), rng_range(r, 0, PI_F));
-    mb_set(mb, tint(r, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+    mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
     mb_cylinder(mb, p, top, 0.06f, 6);
     V3 arm = v3_add(top, v3(sinf(yaw) * 0.7f, -0.05f, cosf(yaw) * 0.7f));
     mb_cylinder(mb, top, arm, 0.035f, 5);
@@ -244,17 +234,17 @@ static void fire_pit(MeshBuilder *mb, Rng *r, V3 p)
     for (u32 i = 0; i < 8; i++) {
         f32 a = (f32)i * (2 * PI_F / 8) + rng_range(r, -0.2f, 0.2f);
         f32 s = rng_range(r, 0.18f, 0.28f);
-        mb_set(mb, tint(r, C_CONC_D, 0.2f), MAT_CONCRETE, BONE_NONE);
-        mb_box(mb, xf(v3(p.x + cosf(a) * 0.5f, p.y + s * 0.4f, p.z + sinf(a) * 0.5f), v3(s, s * 0.8f, s * 1.2f), 0, a, 0));
+        mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.2f), MAT_CONCRETE, BONE_NONE);
+        mb_box(mb, m4_trs(v3(p.x + cosf(a) * 0.5f, p.y + s * 0.4f, p.z + sinf(a) * 0.5f), v3(s, s * 0.8f, s * 1.2f), 0, a, 0));
     }
     mb_set(mb, v3(0.05f, 0.045f, 0.04f), MAT_CONCRETE, BONE_NONE);
     for (u32 i = 0; i < 4; i++)
-        mb_box(mb, xf(v3(p.x, p.y + 0.06f, p.z), v3(0.6f, 0.06f, 0.07f), 0, rng_range(r, 0, PI_F), rng_range(r, -0.1f, 0.1f)));
+        mb_box(mb, m4_trs(v3(p.x, p.y + 0.06f, p.z), v3(0.6f, 0.06f, 0.07f), 0, rng_range(r, 0, PI_F), rng_range(r, -0.1f, 0.1f)));
     mb_set(mb, v3(0.9f, 0.32f, 0.06f), MAT_EMISSIVE, BONE_NONE);
     for (u32 i = 0; i < 3; i++)
         box(mb, v3(p.x + rng_range(r, -0.15f, 0.15f), p.y + 0.08f, p.z + rng_range(r, -0.15f, 0.15f)), v3(0.12f, 0.05f, 0.1f),
             rng_range(r, 0, PI_F));
-    mb_set(mb, tint(r, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+    mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
     V3 top = v3(p.x, p.y + 1.25f, p.z);
     for (u32 i = 0; i < 3; i++) {
         f32 a = (f32)i * (2 * PI_F / 3) + 0.4f;
@@ -269,7 +259,7 @@ static void fire_pit(MeshBuilder *mb, Rng *r, V3 p)
 static void water_tower(MeshBuilder *mb, Rng *r, V3 p, f32 h)
 {
     f32 rad = rng_range(r, 1.0f, 1.4f), th = rng_range(r, 1.8f, 2.6f);
-    mb_set(mb, tint(r, C_RUST, 0.15f), MAT_RUST, BONE_NONE);
+    mb_set(mb, tint(r, PAL_RUST, 0.15f), MAT_RUST, BONE_NONE);
     for (u32 i = 0; i < 4; i++) {
         f32 a = (f32)i * (PI_F / 2) + PI_F / 4;
         V3 foot = v3(p.x + cosf(a) * rad * 1.1f, p.y, p.z + sinf(a) * rad * 1.1f);
@@ -282,7 +272,7 @@ static void water_tower(MeshBuilder *mb, Rng *r, V3 p, f32 h)
     mb_set(mb, tint(r, C_METAL, 0.2f), MAT_METAL, BONE_NONE);
     mb_cylinder(mb, v3(p.x, p.y + h + th, p.z), v3(p.x, p.y + h + th + 0.25f, p.z), rad * 0.6f, 12);
     // Труба вниз с краном
-    mb_set(mb, tint(r, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+    mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
     mb_cylinder(mb, v3(p.x + rad * 0.5f, p.y + h, p.z), v3(p.x + rad * 0.5f, p.y + 0.9f, p.z), 0.06f, 6);
     mb_cylinder(mb, v3(p.x + rad * 0.5f, p.y + 0.9f, p.z), v3(p.x + rad * 0.5f + 0.3f, p.y + 0.9f, p.z), 0.05f, 6);
 }
@@ -302,16 +292,16 @@ static void fence(MeshBuilder *mb, Rng *r, V3 a, V3 b)
         if (k < 0.08f) {
             // дыра
         } else if (k < 0.3f) {
-            mb_set(mb, tint(r, C_CONC, 0.15f), MAT_CONCRETE, BONE_NONE);
+            mb_set(mb, tint(r, PAL_CONCRETE, 0.15f), MAT_CONCRETE, BONE_NONE);
             f32 h = rng_range(r, 0.8f, 1.4f);
-            mb_box(mb, xf(v3(p.x, p.y + h * 0.5f, p.z), v3(w * 0.95f, h, 0.6f), 0, yaw + rng_range(r, -0.08f, 0.08f), 0));
+            mb_box(mb, m4_trs(v3(p.x, p.y + h * 0.5f, p.z), v3(w * 0.95f, h, 0.6f), 0, yaw + rng_range(r, -0.08f, 0.08f), 0));
         } else {
             mb_set(mb, pick(r, k_sheet, 5, 0.2f), MAT_RUST, BONE_NONE);
             f32 h = rng_range(r, 1.6f, 2.5f);
-            mb_box(mb, xf(v3(p.x, p.y + h * 0.5f - 0.1f, p.z), v3(w * 1.05f, h, 0.04f), rng_range(r, -0.08f, 0.08f),
+            mb_box(mb, m4_trs(v3(p.x, p.y + h * 0.5f - 0.1f, p.z), v3(w * 1.05f, h, 0.04f), rng_range(r, -0.08f, 0.08f),
                           yaw + rng_range(r, -0.05f, 0.05f), rng_range(r, -0.06f, 0.06f)));
             if (rng_f32(r) < 0.4f) {
-                mb_set(mb, tint(r, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+                mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
                 mb_cylinder(mb, v3(p.x, p.y, p.z), v3(p.x, p.y + h + 0.2f, p.z), 0.05f, 5);
             }
         }
@@ -325,7 +315,7 @@ static void railing(MeshBuilder *mb, Rng *r, V3 a, V3 b)
     V3 d = v3_sub(b, a);
     f32 len = sqrtf(d.x * d.x + d.z * d.z);
     u32 n = (u32)(len / 1.8f) + 1;
-    mb_set(mb, tint(r, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+    mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
     for (u32 i = 0; i < n; i++) {
         V3 p0 = v3_add(a, v3_mul(d, (f32)i / n)), p1 = v3_add(a, v3_mul(d, (f32)(i + 1) / n));
         if (rng_f32(r) < 0.12f) continue;
@@ -378,18 +368,18 @@ static f32 house(MeshBuilder *mb, Rng *r, Town *t, V3 base, f32 yaw, f32 w, f32 
             oz = clampf(oz + rng_range(r, -0.3f, 0.45f), -0.4f, 0.7f);  // верх нависает над улицей
         }
         bool concrete = f == 0 || rng_f32(r) < 0.35f;
-        V3 wall = concrete ? tint(r, rng_f32(r) < 0.5f ? C_CONC : C_CONC_D, 0.08f) : pick(r, k_sheet, 5, 0.15f);
+        V3 wall = concrete ? tint(r, rng_f32(r) < 0.5f ? PAL_CONCRETE : PAL_CONCRETE_DARK, 0.08f) : pick(r, k_sheet, 5, 0.15f);
         mb_set(mb, wall, concrete ? MAT_CONCRETE : MAT_RUST, BONE_NONE);
         lbox(mb, L, v3(ox, y + h * 0.5f, oz), v3(fw, h, fd), 0, 0, 0);
         // Плита перекрытия или крыши
-        mb_set(mb, tint(r, C_CONC_D, 0.1f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
         lbox(mb, L, v3(ox, y + h + 0.07f, oz), v3(fw + 0.25f, 0.14f, fd + 0.25f), 0, 0, 0);
         f32 front = oz + fd * 0.5f;
         if (f == 0) {
             f32 dx = ox + rng_range(r, -fw * 0.25f, fw * 0.25f);
             mb_set(mb, C_VOID, MAT_EMISSIVE, BONE_NONE);
             lbox(mb, L, v3(dx, 1.0f, front), v3(0.95f, 2.0f, 0.06f), 0, 0, 0);
-            mb_set(mb, tint(r, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+            mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
             lbox(mb, L, v3(dx, 2.08f, front + 0.04f), v3(1.2f, 0.12f, 0.1f), 0, 0, 0);
             if (rng_f32(r) < 0.5f) {
                 // Навес над дверью
@@ -425,9 +415,9 @@ static f32 house(MeshBuilder *mb, Rng *r, Town *t, V3 base, f32 yaw, f32 w, f32 
             if (rng_f32(r) < 0.55f) {
                 f32 bd = rng_range(r, 0.9f, 1.3f), bw = fw * rng_range(r, 0.45f, 0.85f);
                 f32 bx = ox + rng_range(r, -(fw - bw) * 0.5f, (fw - bw) * 0.5f);
-                mb_set(mb, tint(r, C_CONC_D, 0.1f), MAT_CONCRETE, BONE_NONE);
+                mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
                 lbox(mb, L, v3(bx, y - 0.02f, front + bd * 0.5f), v3(bw, 0.14f, bd), 0, 0, 0);
-                mb_set(mb, tint(r, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+                mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
                 f32 fz = front + bd - 0.04f, ry = y + 0.05f;
                 for (int s = -1; s <= 1; s++)
                     lcyl(mb, L, v3(bx + (f32)s * bw * 0.48f, ry, fz), v3(bx + (f32)s * bw * 0.48f, ry + 1.0f, fz), 0.03f, 4);
@@ -469,7 +459,7 @@ static f32 house(MeshBuilder *mb, Rng *r, Town *t, V3 base, f32 yaw, f32 w, f32 
     }
     // Водосток
     if (rng_f32(r) < 0.5f) {
-        mb_set(mb, tint(r, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+        mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
         f32 sx = (rng_f32(r) < 0.5f ? -1.0f : 1.0f) * (w * 0.5f + 0.08f), sz = d * 0.5f - 0.15f;
         lcyl(mb, L, v3(sx, y, sz), v3(sx, 0.3f, sz), 0.06f, 6);
         lcyl(mb, L, v3(sx, 0.3f, sz), v3(sx, 0.05f, sz + 0.35f), 0.06f, 6);
@@ -483,7 +473,7 @@ static f32 house(MeshBuilder *mb, Rng *r, Town *t, V3 base, f32 yaw, f32 w, f32 
             mb_set(mb, pick(r, k_sheet, 5, 0.15f), MAT_RUST, BONE_NONE);
             f32 rr = rng_range(r, 0.45f, 0.75f), hh = rng_range(r, 0.9f, 1.5f);
             lcyl(mb, L, v3(q.x, q.y + 0.25f, q.z), v3(q.x, q.y + 0.25f + hh, q.z), rr, 12);
-            mb_set(mb, tint(r, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+            mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
             lbox(mb, L, v3(q.x, q.y + 0.12f, q.z), v3(rr * 1.8f, 0.25f, rr * 1.8f), 0, 0, 0);
         } else if (k == 1) {
             mb_set(mb, tint(r, C_METAL, 0.2f), MAT_METAL, BONE_NONE);
@@ -501,7 +491,7 @@ static f32 house(MeshBuilder *mb, Rng *r, Town *t, V3 base, f32 yaw, f32 w, f32 
         } else if (k == 3) {
             crate_stack(mb, r, m4_point(L, q), yaw + rng_range(r, 0, PI_F));
         } else {
-            mb_set(mb, tint(r, C_CONC_D, 0.1f), MAT_CONCRETE, BONE_NONE);
+            mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
             lbox(mb, L, v3(ox, y + 0.3f, oz + pd * 0.5f), v3(pw, 0.6f, 0.15f), 0, 0, 0);
             lbox(mb, L, v3(ox - pw * 0.5f, y + 0.3f, oz), v3(0.15f, 0.6f, pd), 0, 0, 0);
         }
@@ -599,7 +589,7 @@ static void stall(MeshBuilder *mb, Rng *r, Town *t, V3 p, f32 yaw, u32 kind)
     t->stalls++;
     // Стол: лист на ножках, на бетонных блоках или на бочках
     bool rust = rng_f32(r) < 0.5f;
-    mb_set(mb, rust ? tint(r, C_RUST, 0.2f) : tint(r, C_METAL, 0.25f), rust ? MAT_RUST : MAT_METAL, BONE_NONE);
+    mb_set(mb, rust ? tint(r, PAL_RUST, 0.2f) : tint(r, C_METAL, 0.25f), rust ? MAT_RUST : MAT_METAL, BONE_NONE);
     lbox(mb, L, v3(0, h - 0.03f, cz), v3(w, 0.06f, d), 0, rng_range(r, -0.02f, 0.02f), rng_range(r, -0.01f, 0.01f));
     u32 table = rng_below(r, 3);
     if (table == 0) {
@@ -607,7 +597,7 @@ static void stall(MeshBuilder *mb, Rng *r, Town *t, V3 p, f32 yaw, u32 kind)
             lbox(mb, L, v3((i & 1 ? 1.0f : -1.0f) * (w * 0.5f - 0.1f), (h - 0.06f) * 0.5f, cz + (i & 2 ? 1.0f : -1.0f) * (d * 0.5f - 0.08f)),
                  v3(0.05f, h - 0.06f, 0.05f), 0, 0, 0);
     } else if (table == 1) {
-        mb_set(mb, tint(r, C_CONC, 0.1f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, tint(r, PAL_CONCRETE, 0.1f), MAT_CONCRETE, BONE_NONE);
         for (int s = -1; s <= 1; s += 2)
             lbox(mb, L, v3((f32)s * (w * 0.5f - 0.3f), (h - 0.06f) * 0.5f, cz), v3(0.4f, h - 0.06f, d * 0.85f), 0, rng_range(r, -0.05f, 0.05f), 0);
     } else {
@@ -622,7 +612,7 @@ static void stall(MeshBuilder *mb, Rng *r, Town *t, V3 p, f32 yaw, u32 kind)
     // Навес: задние стойки за продавцом, передние не всегда
     f32 hb = rng_range(r, 2.3f, 2.7f), hf = hb - rng_range(r, 0.25f, 0.5f);
     f32 aw = w + rng_range(r, 0.2f, 0.6f), zb = -d - 0.95f, zf = 0.35f;
-    mb_set(mb, tint(r, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+    mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
     for (int s = -1; s <= 1; s += 2) {
         lcyl(mb, L, v3((f32)s * aw * 0.48f, 0, zb), v3((f32)s * aw * 0.48f, hb, zb), 0.04f, 5);
     }
@@ -669,7 +659,7 @@ static void stall(MeshBuilder *mb, Rng *r, Town *t, V3 p, f32 yaw, u32 kind)
     // Вывеска знаками над навесом или лампа под ним
     if (rng_f32(r) < 0.45f) {
         f32 sw = rng_range(r, 1.2f, 1.8f);
-        mb_set(mb, tint(r, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+        mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
         lcyl(mb, L, v3(-sw * 0.3f, hb, zb + 0.1f), v3(-sw * 0.3f, hb + 0.35f, zb + 0.1f), 0.025f, 4);
         lcyl(mb, L, v3(sw * 0.3f, hb, zb + 0.1f), v3(sw * 0.3f, hb + 0.35f, zb + 0.1f), 0.025f, 4);
         mb_set(mb, tint(r, C_PAINT, 0.25f), MAT_GLYPH, BONE_NONE);
@@ -703,20 +693,20 @@ static void slab(MeshBuilder *mb, f32 x0, f32 x1, f32 z0, f32 z1, f32 y0, f32 y1
 
 static void terraces(MeshBuilder *mb, Rng *r)
 {
-    mb_set(mb, tint(r, C_CONC, 0.05f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, tint(r, PAL_CONCRETE, 0.05f), MAT_CONCRETE, BONE_NONE);
     // Средний ярус с вырезом под пандус
     slab(mb, TX0, RX0, TZ1, TZ2, -1.0f, TH1);
     slab(mb, RX1, TX1, TZ1, TZ2, -1.0f, TH1);
     slab(mb, RX0, RX1, RZ1, TZ2, -1.0f, TH1);
     // Верхний ярус
-    mb_set(mb, tint(r, C_CONC_D, 0.05f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.05f), MAT_CONCRETE, BONE_NONE);
     slab(mb, TX0, TX1, TZ2, TZ3, -1.0f, TH2);
     // Пандус: наклонная плита с бортиками
     f32 run = RZ1 - TZ1, rise = TH1 - TH0, len = sqrtf(run * run + rise * rise), a = atan2f(rise, run);
     V3 n = v3(0, cosf(a), -sinf(a));
     V3 top = v3((RX0 + RX1) * 0.5f, (TH0 + TH1) * 0.5f, (TZ1 + RZ1) * 0.5f);
-    mb_set(mb, tint(r, C_CONC, 0.08f), MAT_CONCRETE, BONE_NONE);
-    mb_box(mb, xf(v3_sub(top, v3_mul(n, 0.3f)), v3(RX1 - RX0, 0.6f, len), -a, 0, 0));
+    mb_set(mb, tint(r, PAL_CONCRETE, 0.08f), MAT_CONCRETE, BONE_NONE);
+    mb_box(mb, m4_trs(v3_sub(top, v3_mul(n, 0.3f)), v3(RX1 - RX0, 0.6f, len), -a, 0, 0));
     // Лестница на верхний ярус: ступени по 0.29 м, внизу сплошная кладка
     u32 steps = 12;
     for (u32 k = 0; k < steps; k++) {
@@ -736,26 +726,26 @@ static void terraces(MeshBuilder *mb, Rng *r)
     // Контрфорсы, трубы и водостоки на фронте верхнего яруса
     for (f32 x = TX0 + 2.0f; x < TX1 - 1.0f; x += rng_range(r, 4.5f, 7.0f)) {
         if (x > SX0 - 1.0f && x < SX2 + 0.5f) continue;
-        mb_set(mb, tint(r, C_CONC_D, 0.08f), MAT_CONCRETE, BONE_NONE);
-        mb_box(mb, xf(v3(x, TH1 + 1.5f, TZ2 - 0.5f), v3(0.9f, 3.2f, 1.4f), 0.22f, 0, 0));
+        mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.08f), MAT_CONCRETE, BONE_NONE);
+        mb_box(mb, m4_trs(v3(x, TH1 + 1.5f, TZ2 - 0.5f), v3(0.9f, 3.2f, 1.4f), 0.22f, 0, 0));
         if (rng_f32(r) < 0.5f) {
             mb_set(mb, C_VOID, MAT_EMISSIVE, BONE_NONE);
             box(mb, v3(x + 1.6f, TH1 + 2.4f, TZ2), v3(0.5f, 0.5f, 0.08f), 0);
         }
     }
-    mb_set(mb, tint(r, C_RUST, 0.15f), MAT_RUST, BONE_NONE);
+    mb_set(mb, tint(r, PAL_RUST, 0.15f), MAT_RUST, BONE_NONE);
     mb_cylinder(mb, v3(TX0 + 1.0f, TH1 + 2.6f, TZ2 + 0.35f), v3(SX0 - 1.0f, TH1 + 2.8f, TZ2 + 0.35f), 0.22f, 10);
     // Обломки у западных торцов ярусов: сюда обрушилась часть плит
     for (u32 i = 0; i < 26; i++) {
         f32 z = rng_range(r, TZ1 - 1.0f, TZ3), x = TX0 - rng_range(r, 0.3f, 4.5f);
         f32 top_h = z < TZ2 ? TH1 : TH2;
         f32 s = rng_range(r, 0.6f, 2.2f), yy = rng_range(r, 0.0f, top_h * (1.0f - (TX0 - x) / 5.0f));
-        mb_set(mb, tint(r, rng_f32(r) < 0.5f ? C_CONC : C_CONC_D, 0.1f), MAT_CONCRETE, BONE_NONE);
-        mb_box(mb, xf(v3(x, yy, z), v3(s * rng_range(r, 0.8f, 1.8f), s, s * rng_range(r, 0.7f, 1.4f)), rng_range(r, -0.5f, 0.5f),
+        mb_set(mb, tint(r, rng_f32(r) < 0.5f ? PAL_CONCRETE : PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
+        mb_box(mb, m4_trs(v3(x, yy, z), v3(s * rng_range(r, 0.8f, 1.8f), s, s * rng_range(r, 0.7f, 1.4f)), rng_range(r, -0.5f, 0.5f),
                       rng_range(r, 0, PI_F), rng_range(r, -0.5f, 0.5f)));
     }
     // Песок намело к стенам и в углы
-    mb_set(mb, C_SAND, MAT_SAND, BONE_NONE);
+    mb_set(mb, PAL_SAND, MAT_SAND, BONE_NONE);
     for (u32 i = 0; i < 14; i++) {
         f32 x = rng_range(r, TX0 + 1.0f, TX1 - 1.0f);
         u32 k = rng_below(r, 3);
@@ -763,7 +753,7 @@ static void terraces(MeshBuilder *mb, Rng *r)
         f32 yy = k == 0 ? TH1 : TH2;
         if (k == 0 && x > RX0 - 1.0f && x < RX1 + 1.0f) continue;
         if (k == 1 && x > SX0 - 1.0f && x < SX2 + 1.0f) continue;
-        mb_box(mb, xf(v3(x, yy - 0.2f, z), v3(rng_range(r, 2.0f, 5.0f), 0.6f, rng_range(r, 1.2f, 2.0f)), rng_range(r, 0.15f, 0.3f) * (k == 2 ? 1.0f : -1.0f),
+        mb_box(mb, m4_trs(v3(x, yy - 0.2f, z), v3(rng_range(r, 2.0f, 5.0f), 0.6f, rng_range(r, 1.2f, 2.0f)), rng_range(r, 0.15f, 0.3f) * (k == 2 ? 1.0f : -1.0f),
                       rng_range(r, -0.1f, 0.1f), 0));
     }
 }
@@ -780,7 +770,7 @@ static void ancient_wall(MeshBuilder *mb, Rng *r)
         slab(mb, x, x + w, z0, z1, -1.0f, h);
         // Пилястры
         if (rng_f32(r) < 0.7f) {
-            mb_set(mb, tint(r, C_CONC_D, 0.06f), MAT_CONCRETE, BONE_NONE);
+            mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.06f), MAT_CONCRETE, BONE_NONE);
             f32 px = x + w * 0.5f;
             slab(mb, px - 1.0f, px + 1.0f, z0 - 1.2f, z0, px > TX0 && px < TX1 ? TH2 - 0.2f : -1.0f, h - rng_range(r, 0.0f, 6.0f));
         }
@@ -790,26 +780,26 @@ static void ancient_wall(MeshBuilder *mb, Rng *r)
     f32 gx = 82.0f;
     mb_set(mb, C_VOID, MAT_EMISSIVE, BONE_NONE);
     box(mb, v3(gx, TH2 + 5.5f, z0 - 0.02f), v3(6.0f, 11.0f, 0.1f), 0);
-    mb_set(mb, tint(r, C_CONC_D, 0.05f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.05f), MAT_CONCRETE, BONE_NONE);
     slab(mb, gx - 4.2f, gx + 4.2f, z0 - 1.6f, z0, TH2 + 11.0f, TH2 + 12.6f);
     slab(mb, gx - 4.2f, gx - 3.0f, z0 - 1.6f, z0, TH2, TH2 + 11.0f);
     slab(mb, gx + 3.0f, gx + 4.2f, z0 - 1.6f, z0, TH2, TH2 + 11.0f);
-    mb_set(mb, C_GLYPH_GREEN, MAT_GLYPH, BONE_NONE);
+    mb_set(mb, PAL_GLYPH_GREEN, MAT_GLYPH, BONE_NONE);
     mb_quad(mb, v3(gx, TH2 + 15.0f, z0 - 0.04f), v3(-6.0f, 0, 0), v3(0, 0.9f, 0));
     // Выступ на высоте с двумя лачугами и лестницей к нему: живут и там
-    mb_set(mb, tint(r, C_CONC_D, 0.05f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.05f), MAT_CONCRETE, BONE_NONE);
     slab(mb, 66.5f, 77.0f, z0 - 2.2f, z0, TH2 + 7.6f, TH2 + 8.0f);
     for (int i = 0; i < 2; i++) {
         mb_set(mb, pick(r, k_sheet, 5, 0.15f), MAT_RUST, BONE_NONE);
         f32 x = 68.8f + (f32)i * 4.6f + rng_range(r, -0.3f, 0.3f), hh = rng_range(r, 2.0f, 2.6f);
-        mb_box(mb, xf(v3(x, TH2 + 8.0f + hh * 0.5f, z0 - 1.0f), v3(rng_range(r, 2.4f, 3.2f), hh, 1.8f), 0, rng_range(r, -0.05f, 0.05f), 0));
+        mb_box(mb, m4_trs(v3(x, TH2 + 8.0f + hh * 0.5f, z0 - 1.0f), v3(rng_range(r, 2.4f, 3.2f), hh, 1.8f), 0, rng_range(r, -0.05f, 0.05f), 0));
         mb_set(mb, C_VOID, MAT_EMISSIVE, BONE_NONE);
         box(mb, v3(x, TH2 + 8.9f, z0 - 1.92f), v3(0.8f, 1.7f, 0.05f), 0);
     }
     ladder(mb, frame(v3(77.4f, TH2, z0 - 0.3f), PI_F * 0.5f), v3(0, 0, 0), 8.0f);
     railing(mb, r, v3(66.7f, TH2 + 8.0f, z0 - 2.1f), v3(76.8f, TH2 + 8.0f, z0 - 2.1f));
     // Ржавые трубы по стене и красный огонь на мачте у пролома: единственный ориентир издалека
-    mb_set(mb, tint(r, C_RUST, 0.1f), MAT_RUST, BONE_NONE);
+    mb_set(mb, tint(r, PAL_RUST, 0.1f), MAT_RUST, BONE_NONE);
     mb_cylinder(mb, v3(48.0f, -0.2f, z0 - 0.5f), v3(48.0f, 33.0f, z0 - 0.5f), 0.5f, 12);
     mb_cylinder(mb, v3(95.0f, TH2, z0 - 0.4f), v3(95.0f, 24.0f, z0 - 0.4f), 0.3f, 10);
     mb_cylinder(mb, v3(95.0f, 24.0f, z0 - 0.4f), v3(101.0f, 24.0f, z0 - 0.4f), 0.3f, 10);
@@ -825,8 +815,8 @@ static void ancient_wall(MeshBuilder *mb, Rng *r)
     // Груда обломков у пролома
     for (u32 i = 0; i < 18; i++) {
         f32 s = rng_range(r, 1.0f, 3.5f);
-        mb_set(mb, tint(r, C_CONC_D, 0.1f), MAT_CONCRETE, BONE_NONE);
-        mb_box(mb, xf(v3(rng_range(r, 101.0f, 116.0f), rng_range(r, 0.0f, 4.0f), rng_range(r, TZ3 - 9.0f, TZ3 - 1.0f)),
+        mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
+        mb_box(mb, m4_trs(v3(rng_range(r, 101.0f, 116.0f), rng_range(r, 0.0f, 4.0f), rng_range(r, TZ3 - 9.0f, TZ3 - 1.0f)),
                       v3(s * 1.6f, s, s * 1.2f), rng_range(r, -0.6f, 0.6f), rng_range(r, 0, PI_F), rng_range(r, -0.6f, 0.6f)));
     }
 }
@@ -837,9 +827,9 @@ static void pavement(MeshBuilder *mb, Rng *r)
     for (f32 x = TX0 + 1.5f; x < TX1; x += 3.0f)
         for (f32 z = TZ0 + 1.5f; z < TZ1; z += 3.0f) {
             if (rng_f32(r) < 0.22f) continue;
-            mb_set(mb, tint(r, rng_f32(r) < 0.6f ? C_CONC : C_CONC_D, 0.08f), MAT_CONCRETE, BONE_NONE);
+            mb_set(mb, tint(r, rng_f32(r) < 0.6f ? PAL_CONCRETE : PAL_CONCRETE_DARK, 0.08f), MAT_CONCRETE, BONE_NONE);
             f32 top = rng_range(r, 0.03f, 0.08f);
-            mb_box(mb, xf(v3(x + rng_range(r, -0.3f, 0.3f), top - 0.1f, z + rng_range(r, -0.3f, 0.3f)),
+            mb_box(mb, m4_trs(v3(x + rng_range(r, -0.3f, 0.3f), top - 0.1f, z + rng_range(r, -0.3f, 0.3f)),
                           v3(rng_range(r, 2.2f, 2.9f), 0.2f, rng_range(r, 2.2f, 2.9f)), rng_range(r, -0.015f, 0.015f), rng_range(r, -0.06f, 0.06f),
                           rng_range(r, -0.015f, 0.015f)));
         }
@@ -848,12 +838,12 @@ static void pavement(MeshBuilder *mb, Rng *r)
 // Ворота с запада: столбы, балка, знак, лампы, лоскуты
 static void gate(MeshBuilder *mb, Rng *r, Town *t, f32 x, f32 z0, f32 z1)
 {
-    mb_set(mb, tint(r, C_CONC, 0.08f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, tint(r, PAL_CONCRETE, 0.08f), MAT_CONCRETE, BONE_NONE);
     box(mb, v3(x, 2.6f, z0 - 0.5f), v3(1.0f, 5.2f, 1.0f), 0.04f);
     box(mb, v3(x, 2.4f, z1 + 0.5f), v3(1.0f, 4.8f, 1.0f), -0.03f);
-    mb_set(mb, tint(r, C_RUST, 0.1f), MAT_RUST, BONE_NONE);
-    mb_box(mb, xf(v3(x, 4.95f, (z0 + z1) * 0.5f), v3(0.4f, 0.5f, z1 - z0 + 2.4f), 0.02f, 0, 0));
-    mb_set(mb, C_GLYPH_GREEN, MAT_GLYPH, BONE_NONE);
+    mb_set(mb, tint(r, PAL_RUST, 0.1f), MAT_RUST, BONE_NONE);
+    mb_box(mb, m4_trs(v3(x, 4.95f, (z0 + z1) * 0.5f), v3(0.4f, 0.5f, z1 - z0 + 2.4f), 0.02f, 0, 0));
+    mb_set(mb, PAL_GLYPH_GREEN, MAT_GLYPH, BONE_NONE);
     mb_quad(mb, v3(x - 0.25f, 4.0f, (z0 + z1) * 0.5f), v3(0, 0, 1.5f), v3(0, 0.45f, 0));
     for (u32 i = 0; i < 6; i++) {
         mb_set(mb, pick(r, k_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
@@ -969,7 +959,7 @@ void town_build(MeshBuilder *mb, Rng *r, Town *t)
         f32 x = rng_range(r, 58.0f, 98.0f);
         if (x > SX0 - 1.0f && x < SX2 + 1.0f) continue;
         f32 xb = mid_x[rng_below(r, 6)] + rng_range(r, -1.5f, 1.5f);
-        mb_set(mb, tint(r, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+        mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
         mb_cylinder(mb, v3(x, TH2, TZ2 + 0.35f), v3(x, TH2 + 3.2f, TZ2 + 0.35f), 0.05f, 5);
         cable(mb, r, v3(x, TH2 + 3.1f, TZ2 + 0.35f), v3(xb, TH1 + 2.6f, 8.6f), 0.5f, rng_below(r, 2));
     }

@@ -11,6 +11,7 @@ typedef struct FightAnim {
     f32  disp_x, disp_z;              // показанная позиция: отброшенного ведёт плавно
     f32  phase, walk, speed, move_dir;
     f32  guard, block, dodge, dodge_side, stagger, flinch, wield, limp;
+    f32  swing;                       // замах 0..1, удар 1..2, возврат 2..3 (CharAction.swing)
     f32  calm;                        // сколько бой стоит (w->halted), с
     f32  vt;                          // время в текущем состоянии, с
     f32  seed;
@@ -20,6 +21,14 @@ typedef struct FightAnim {
     V3   drop_pos;                    // в координатах боя
     f32  drop_yaw;
     f32  lock_x, lock_z;              // где была цель в начале замаха: от уворота удар уходит в пустоту
+    f32  knock_x, knock_z;            // откуда отбросило ударом
+    // Боевой шаг: где стоят стопы (координаты боя), шаг из from в нынешнее место в стойке
+    f32  foot_x[2], foot_z[2], from_x[2], from_z[2];
+    f32  step_t[2];                   // доля шага; < 0 — стопа стоит
+    f32  feet;                        // вес стойки у ног
+    f32  untidy;                      // сколько стоит, поставив ноги не на место, с
+    V3   feet_off[2];                 // для позы: сдвиг стоп от места в стойке, модель
+    u32  steps;                       // шагов в стойке: по ним звук
 } FightAnim;
 
 // Боец вошёл в бой: оружие ещё убрано, достанет сам

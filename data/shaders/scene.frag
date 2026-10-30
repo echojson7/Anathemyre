@@ -8,18 +8,8 @@ in vec3 v_local;
 flat in mat3 v_rot;
 flat in vec3 v_tint;
 
-layout(location = 17) uniform int u_skinned;
-layout(location = 18) uniform mat4 u_light_vp;
-layout(location = 20) uniform vec3 u_cam_pos;
-layout(location = 21) uniform vec3 u_sun_dir;
-layout(location = 22) uniform vec3 u_sun_color;
-layout(location = 23) uniform float u_time;
-layout(location = 24) uniform vec3 u_sky_amb;
-layout(location = 25) uniform vec3 u_ground_amb;
-layout(location = 27) uniform float u_texel_on; // 0 — пиксельность выключена (RenderSettings.pixel)
-layout(location = 26) uniform int u_unlit;   // портреты интерфейса: свой неподвижный свет
-layout(location = 51) uniform int u_shadow_on;  // 0 — тени выключены (ЭТАП СЦЕНЫ): карта теней не читается
-layout(binding = 0) uniform sampler2DShadow u_shadow;
+layout(binding = 6) uniform sampler2DShadow u_shadow;
+layout(std430, binding = 31) readonly buffer SkyGrid { vec4 g_sky_origin; uint g_sky[]; };
 
 out vec4 o_color;
 
@@ -28,6 +18,31 @@ const uint MAT_CONCRETE = 0u, MAT_RUST = 1u, MAT_SAND = 2u, MAT_CLOTH = 3u, MAT_
            MAT_TERRAIN = 9u, MAT_ROCK = 10u, MAT_WATER = 11u, MAT_BARK = 12u, MAT_LEAF = 13u, MAT_GRASS = 14u;
 
 const float TEXEL = 1.0 / 10.0;  // «пиксель» на поверхностях, м
+
+float sky_cell(ivec3 c)
+{
+    c = clamp(c, ivec3(0), SKY_N - 1);
+    return float((g_sky[sky_index(c)] >> (uint(c.x & 3) * 8u)) & 255u);
+}
+
+// Доля неба, видимая из точки W (0 — глухой бункер, 1 — открыто). Точка сдвинута по нормали на клетку,
+// чтобы не брать клетки внутри своей же стены; у краёв сетки плавно 1
+float sky_vis(vec3 W, vec3 N)
+{
+    if (u_lightf.w < 0.5 || g_sky_origin.w < 0.5) return 1.0;
+    vec3 g = (W + N * 0.6 - g_sky_origin.xyz) / SKY_CELL - 0.5;
+    vec3 e = min(g, vec3(SKY_N) - 1.0 - g);
+    float edge = clamp(min(e.x, e.z) / 8.0, 0.0, 1.0);
+    if (edge <= 0.0 || g.y > float(SKY_N.y) - 1.0) return 1.0;
+    ivec3 c = ivec3(floor(g));
+    vec3 f = g - floor(g);
+    float v00 = mix(sky_cell(c), sky_cell(c + ivec3(1, 0, 0)), f.x);
+    float v10 = mix(sky_cell(c + ivec3(0, 1, 0)), sky_cell(c + ivec3(1, 1, 0)), f.x);
+    float v01 = mix(sky_cell(c + ivec3(0, 0, 1)), sky_cell(c + ivec3(1, 0, 1)), f.x);
+    float v11 = mix(sky_cell(c + ivec3(0, 1, 1)), sky_cell(c + ivec3(1, 1, 1)), f.x);
+    float v = mix(mix(v00, v10, f.y), mix(v01, v11, f.y), f.z) / SKY_DIRS;
+    return mix(1.0, v, edge);
+}
 
 // Сдвиг точки p к центру квадрата сетки t в плоскости грани с нормалью n.
 // Вдоль оси грани точка не прыгает, а возвращается на плоскость грани
@@ -48,6 +63,20 @@ float seam_line(float u, float p, float h, float t)
 {
     if (t > 0.0) return mod(0.5 * t - u, p) < t ? min(2.0 * h / t, 1.0) : 0.0;
     return 1.0 - smoothstep(0.0, h, abs(fract(u / p + 0.5) - 0.5) * p);
+}
+
+// Блик GGX с учётом угла к свету (уже умножен на N·L): распределение, видимость Смита, Френель Шлика
+vec3 ggx_spec(vec3 N, vec3 V, vec3 L, float a2, vec3 F0)
+{
+    float nl = dot(N, L);
+    if (nl <= 0.0) return vec3(0.0);
+    vec3 H = normalize(L + V);
+    float nv = max(dot(N, V), 1e-3), nh = max(dot(N, H), 0.0), vh = max(dot(V, H), 0.0);
+    float dd = nh * nh * (a2 - 1.0) + 1.0;
+    float D = a2 / (3.14159265 * dd * dd);
+    float vis = 0.5 / (nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2));
+    vec3 F = F0 + (1.0 - F0) * pow(1.0 - vh, 5.0);
+    return D * vis * F * nl;
 }
 
 float sun_shadow(vec3 p, vec3 n)
@@ -105,12 +134,13 @@ void main()
     // одинаково на всех поверхностях. Где квадрат мельче пикселя кадра, пикселем служит пиксель кадра
     vec3 Nl = normalize(transpose(v_rot) * N);
     float mpp = max(length(dFdx(v_local)), length(dFdy(v_local)));
-#ifdef VRS
+#ifdef RB_FRAG_SIZE
     // При шейдинге блоком производные берутся через блок: приводим к пикселю кадра
-    mpp /= float(gl_FragmentSizeNV.x);
+    mpp /= float(RB_FRAG_SIZE.x);
 #endif
     // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
-    float base = u_skinned == 1 ? TEXEL * 0.5 : TEXEL;
+    bool bones = u_skinned == 1 || u_skinned >= 4;
+    float base = bones ? TEXEL * 0.5 : TEXEL;
     bool snap = mpp < base * u_texel_on;
     vec3 dl = snap ? texel_snap(v_local, Nl, base) : vec3(0.0);
     vec3 P = v_local + dl;           // материал: прилипает к телу
@@ -289,11 +319,45 @@ void main()
     vec3 Lflat = normalize(vec3(-L.x, 0.0, -L.z));
     float bounce = max(dot(N, -Lflat), 0.0) * 0.08 + max(-N.y, 0.0) * 0.05;
     ambient += u_ground_amb * 1.5 * bounce;
+    // НЕБО ПО СЕТКЕ: рассеянный свет неба и отражённый — по доле видимого неба (под плитой и в бункере темно).
+    // То, что закрывает небо, само освещено и отдаёт часть света: поправка на переотражения (Jimenez 2016,
+    // по яркости поверхности), без неё доля 0.1 давала бы черноту
+    // Свет от земли закрыт слабее: он идёт от освещённого солнцем песка у горизонта и в проёмах
+    float skyv = sky_vis(W, N);
+    if (skyv < 1.0) {
+        float alb = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+        float ka = 2.0404 * alb - 0.3324, kb = -4.7951 * alb + 0.6417, kc = 2.7552 * alb + 0.6903;
+        skyv = max(skyv, ((skyv * ka + kb) * skyv + kc) * skyv);
+        vec3 sky_part = u_sky_amb * (N.y * 0.5 + 0.5) * 0.6;
+        ambient = sky_part * skyv + (ambient - sky_part) * mix(skyv, 1.0, 0.4);
+    }
 
-    vec3 H = normalize(L + V);
-    float sp = spec * pow(max(dot(N, H), 0.0), gloss) * sh;
-
-    vec3 col = albedo * (u_sun_color * ndl * sh + ambient * ao) + u_sun_color * sp + emissive;
+    vec3 col;
+    bool ggx = u_light.x == 1;
+    // GGX (СВЕТ: МАТЕРИАЛЫ GGX): шероховатость из прежней остроты блика, у матовых 0.9; металл без своего рассеяния
+    float a2 = 0.0;
+    vec3 F0 = vec3(0.04);
+    if (ggx) {
+        float rough = spec > 0.0 ? sqrt(sqrt(2.0 / (gloss + 2.0))) : 0.9;
+        if (v_mat == MAT_WATER) F0 = vec3(0.02);
+        if (v_mat == MAT_METAL) {
+            F0 = mix(F0, albedo * 1.6, 0.7);
+            albedo *= 0.3;
+        }
+        float a = rough * rough;
+        a2 = a * a;
+        float nv = max(dot(N, V), 1e-3);
+        // Небо в отражении: по направлению отражённого луча, Френель с поправкой на шероховатость
+        vec3 Rv = reflect(-V, N);
+        vec3 Fr = F0 + (max(vec3(1.0 - rough), F0) - F0) * pow(1.0 - nv, 5.0);
+        vec3 env = mix(u_ground_amb, u_sky_amb, Rv.y * 0.5 + 0.5) * 0.6 * skyv;
+        col = albedo * (1.0 - Fr) * (u_sun_color * ndl * sh + ambient * ao) + env * Fr * ao + emissive;
+        col += ggx_spec(N, V, L, a2, F0) * u_sun_color * sh;
+    } else {
+        vec3 H = normalize(L + V);
+        float sp = spec * pow(max(dot(N, H), 0.0), gloss) * sh;
+        col = albedo * (u_sun_color * ndl * sh + ambient * ao) + u_sun_color * sp + emissive;
+    }
     // Факелы и фонари: свет без теней, считается в том же квадрате TEXEL
     for (int i = 0; i < l_count.x; i++) {
         vec3 d = l_pos[i].xyz - W;
@@ -303,16 +367,18 @@ void main()
         vec3 Ld = d * inversesqrt(d2);
         float nl = dot(N, Ld);
         float k = foliage ? 0.3 + 0.7 * abs(nl) : max(nl, 0.0);
-        float c = l_col[i].a;
-        if (c > -1.0) k *= smoothstep(c, c + (1.0 - c) * 0.2, dot(-Ld, l_dir[i].xyz));
+        float c = l_col[i].a, cone = 1.0;
+        if (c > -1.0) cone = smoothstep(c, c + (1.0 - c) * 0.2, dot(-Ld, l_dir[i].xyz));
+        k *= cone;
         if (k <= 0.0) continue;
         vec3 li = l_col[i].rgb * (k * light_falloff(d2, r));
-        col += albedo * li + li * spec * pow(max(dot(N, normalize(Ld + V)), 0.0), gloss);
+        if (ggx) col += albedo * li + l_col[i].rgb * (cone * light_falloff(d2, r)) * ggx_spec(N, V, Ld, a2, F0);
+        else col += albedo * li + li * spec * pow(max(dot(N, normalize(Ld + V)), 0.0), gloss);
     }
     // Контровой свет от дымки: фигуры читаются силуэтом
-    if (u_skinned == 1) {
+    if (bones) {
         float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
-        col += (u_sky_amb + u_ground_amb) * rim * 0.35;
+        col += (u_sky_amb + u_ground_amb) * rim * 0.35 * skyv;
     }
     // Портрет: неподвижный свет спереди-сверху-слева, без солнца и теней мира
     if (u_unlit != 0) col = albedo * (0.25 + 0.75 * max(dot(N, normalize(vec3(-0.5, 0.7, 0.6))), 0.0)) + emissive;

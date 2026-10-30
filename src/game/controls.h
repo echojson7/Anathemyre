@@ -43,6 +43,13 @@ typedef struct Settings {
     u32  stand_row;
 } Settings;
 
+// Наборы группы СВЕТ (docs/lighting.md): от прежнего света к самому полному
+typedef enum LightPreset { LIGHT_PRESET_OLD, LIGHT_PRESET_FAST, LIGHT_PRESET_REAL, LIGHT_PRESET_COUNT } LightPreset;
+extern const char *const g_light_preset_name[LIGHT_PRESET_COUNT];
+void light_preset_apply(RenderSettings *rs, LightPreset p);
+// Какой набор совпадает с настройками; LIGHT_PRESET_COUNT — свой
+LightPreset light_preset_of(const RenderSettings *rs);
+
 // Настройки рендера с учётом этапа сцены: проходы выше этапа выключены
 RenderSettings stage_render(const Settings *s);
 

@@ -70,6 +70,10 @@ typedef struct Options {
     bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
     bool        ao_half;     // AO в половинном разрешении
     bool        noise_tex;   // шум материалов из 3D-текстуры (по умолчанию; --hash-noise — прежний счёт хешами)
+    bool        no_mdi;      // люди по вызову на сетку (сравнение с одним вызовом на проход)
+    bool        no_skin_cache; // позы людей в каждом проходе (сравнение с кешем поз)
+    i32         light_preset;  // набор СВЕТ на старте (LightPreset)
+    i32         light[5];      // части СВЕТ на старте: материалы, кривая, экспозиция, свечение, отражённый; -1 — из набора
     bool        fullscreen;  // окно без рамки на весь монитор
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
@@ -108,6 +112,7 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 static void usage(void)
 {
     puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N]");
+    puts("anathemyre [--light 0..2] [--light-parts МАТЕРИАЛЫ КРИВАЯ ЭКСПОЗИЦИЯ СВЕЧЕНИЕ ОТРАЖЁННЫЙ]   свет на старте: набор ПРЕЖНИЙ/БЫСТРЫЙ/РЕАЛИСТИЧНЫЙ или части (docs/lighting.md)");
     puts("anathemyre [--load file.sav] [--warp S] [--save file.sav] [--sum-after S]   сохранение без меню: прочитать, прогнать, записать; сумма мира через S секунд и выход");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
@@ -152,6 +157,11 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
         else if (!strcmp(a, "--ao-half")) o->ao_half = true;
         else if (!strcmp(a, "--hash-noise")) o->noise_tex = false;
+        else if (!strcmp(a, "--no-mdi")) o->no_mdi = true;
+        else if (!strcmp(a, "--no-skin-cache")) o->no_skin_cache = true;
+        else if (!strcmp(a, "--light") && i + 1 < argc) o->light_preset = (i32)((u32)atoi(argv[++i]) % LIGHT_PRESET_COUNT);
+        else if (!strcmp(a, "--light-parts") && i + 5 < argc)
+            for (u32 k = 0; k < 5; k++) o->light[k] = atoi(argv[++i]);
         else if (!strcmp(a, "--fullscreen")) o->fullscreen = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
@@ -238,6 +248,7 @@ int main(int argc, char **argv)
     time_init();
     Options opt = {
         .tod = 0.31f, .shot_frames = 90, .stage = STAGE_FULL, .bands_hours = 1.0f, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
+        .light = { -1, -1, -1, -1, -1 },
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
@@ -318,7 +329,7 @@ int main(int argc, char **argv)
     DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, RENDER_MAX_ITEMS);
     Settings set = {
         .rs = { .post = true, .pixel = !opt.no_pixel, .vrs = !opt.no_vrs,
-                .ao_half = opt.ao_half, .noise_tex = opt.noise_tex },
+                .ao_half = opt.ao_half, .noise_tex = opt.noise_tex, .mdi = !opt.no_mdi, .skin_cache = !opt.no_skin_cache },
         .vsync = !opt.no_vsync && opt.shot_path == NULL, .fullscreen = opt.fullscreen && opt.shot_path == NULL,
         // Swap после логики: пока GPU рисует прошлый кадр, CPU уже считает следующий (только без vsync,
         // иначе кадр показывался бы на период позже)
@@ -327,6 +338,12 @@ int main(int argc, char **argv)
         .stand = opt.stand > 0, .stand_moved = opt.stand > 0, .stand_row = opt.stand > 0 ? (u32)(opt.stand - 1) : 0,
         .stage = opt.stage, .bench_stages = opt.bench_stages,
     };
+    light_preset_apply(&set.rs, (LightPreset)opt.light_preset);
+    if (opt.light[0] >= 0) set.rs.light_mat = (u8)(opt.light[0] % LIGHT_MAT_COUNT);
+    if (opt.light[1] >= 0) set.rs.light_curve = (u8)(opt.light[1] % LIGHT_CURVE_COUNT);
+    if (opt.light[2] >= 0) set.rs.light_expo = opt.light[2] != 0;
+    if (opt.light[3] >= 0) set.rs.light_bloom = opt.light[3] != 0;
+    if (opt.light[4] >= 0) set.rs.light_gi = (u8)(opt.light[4] % LIGHT_GI_COUNT);
     // Звук: слушатель у камеры, шаги, бой поля и арены. Без звука снимки кадров и --mute.
     // Банк собирается в своём потоке при старте; устройство открывается, только если звук включён
     WorldSound *wsound = ARENA_PUSH_ARRAY(&perm, WorldSound, 1);
@@ -580,6 +597,7 @@ int main(int argc, char **argv)
         items[n++] = (DrawItem){ .mesh = &world->hall };
         items[n++] = (DrawItem){ .mesh = &world->far, .no_shadow = true };
         items[n++] = (DrawItem){ .mesh = &world->town_mesh };
+        items[n++] = (DrawItem){ .mesh = &world->ostov };
         n += valley_view_draw(valley, fv.cam_pos, items + n);
         prof_zone(PZ_FIGURES);
         if (st_people) {

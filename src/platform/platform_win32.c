@@ -1,4 +1,4 @@
-// Windows: Win32 + WGL. opengl32.dll подгружается через LoadLibrary, заголовков GL нет
+// Windows: Win32 + WGL или Vulkan. opengl32.dll и vulkan-1.dll подгружаются через LoadLibrary, заголовков нет
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "platform.h"
@@ -33,6 +33,8 @@ static struct {
     HDC       hdc;
     HGLRC     ctx;
     HMODULE   opengl;
+    HMODULE   vulkan_dll;
+    bool      vulkan;  // окно без GL-контекста, выводит rb_vk.c
     i32       width, height;
     Input    *in;          // куда оконная процедура пишет события во время poll
     bool      have_mouse;
@@ -165,22 +167,30 @@ void platform_preinit(void)
     SetConsoleOutputCP(CP_UTF8);
 }
 
+void platform_use_vulkan(void)
+{
+    g_w.vulkan = true;
+}
+
 bool platform_init(const char *title, i32 width, i32 height, bool gl_debug)
 {
     SetProcessDPIAware();
     g_w.inst = GetModuleHandleW(NULL);
-    g_w.opengl = LoadLibraryA("opengl32.dll");
-    if (!g_w.opengl) {
-        log_error("opengl32.dll не загружена");
-        return false;
-    }
-    PFN_wglCreateContext CreateContext = (PFN_wglCreateContext)sym("wglCreateContext");
-    g_w.DeleteContext = (PFN_wglDeleteContext)sym("wglDeleteContext");
-    g_w.MakeCurrent = (PFN_wglMakeCurrent)sym("wglMakeCurrent");
-    g_w.GetProcAddress = (PFN_wglGetProcAddress)sym("wglGetProcAddress");
-    if (!CreateContext || !g_w.DeleteContext || !g_w.MakeCurrent || !g_w.GetProcAddress) {
-        log_error("WGL: не хватает функций");
-        return false;
+    PFN_wglCreateContext CreateContext = NULL;
+    if (!g_w.vulkan) {
+        g_w.opengl = LoadLibraryA("opengl32.dll");
+        if (!g_w.opengl) {
+            log_error("opengl32.dll не загружена");
+            return false;
+        }
+        CreateContext = (PFN_wglCreateContext)sym("wglCreateContext");
+        g_w.DeleteContext = (PFN_wglDeleteContext)sym("wglDeleteContext");
+        g_w.MakeCurrent = (PFN_wglMakeCurrent)sym("wglMakeCurrent");
+        g_w.GetProcAddress = (PFN_wglGetProcAddress)sym("wglGetProcAddress");
+        if (!CreateContext || !g_w.DeleteContext || !g_w.MakeCurrent || !g_w.GetProcAddress) {
+            log_error("WGL: не хватает функций");
+            return false;
+        }
     }
 
     WNDCLASSW wc;
@@ -209,6 +219,10 @@ bool platform_init(const char *title, i32 width, i32 height, bool gl_debug)
     g_w.hdc = GetDC(g_w.hwnd);
     g_w.width = width;
     g_w.height = height;
+    if (g_w.vulkan) {
+        ShowWindow(g_w.hwnd, SW_SHOW);
+        return true;
+    }
 
     PIXELFORMATDESCRIPTOR pfd;
     memset(&pfd, 0, sizeof pfd);
@@ -267,6 +281,7 @@ void platform_shutdown(void)
         DestroyWindow(g_w.hwnd);
     }
     if (g_w.opengl) FreeLibrary(g_w.opengl);
+    if (g_w.vulkan_dll) FreeLibrary(g_w.vulkan_dll);
     memset(&g_w, 0, sizeof g_w);
 }
 
@@ -289,11 +304,13 @@ void platform_poll(Input *in)
 
 void platform_swap(void)
 {
+    if (g_w.vulkan) return;
     SwapBuffers(g_w.hdc);
 }
 
 void platform_set_vsync(bool on)
 {
+    if (g_w.vulkan) return;
     PFN_wglSwapIntervalEXT f = (PFN_wglSwapIntervalEXT)wgl_proc("wglSwapIntervalEXT");
     if (f) f(on ? 1 : 0);
 }
@@ -322,6 +339,24 @@ void platform_window_size(i32 *w, i32 *h)
 {
     *w = g_w.width;
     *h = g_w.height;
+}
+
+PlatformNative platform_native(void)
+{
+    return (PlatformNative){ .display = (void *)g_w.inst, .window = (u64)(uintptr_t)g_w.hwnd };
+}
+
+PlatformProc platform_vk_loader(void)
+{
+    if (!g_w.vulkan_dll) g_w.vulkan_dll = LoadLibraryA("vulkan-1.dll");
+    if (!g_w.vulkan_dll) {
+        log_error("vulkan-1.dll не загружена");
+        return NULL;
+    }
+    FARPROC p = GetProcAddress(g_w.vulkan_dll, "vkGetInstanceProcAddr");
+    PlatformProc f;
+    memcpy(&f, &p, sizeof f);
+    return f;
 }
 
 PlatformProc platform_gl_proc(const char *name)
