@@ -22,6 +22,7 @@
 #include "game/figures.h"
 #include "game/hud.h"
 #include "game/humans_row.h"
+#include "game/look.h"
 #include "game/stand.h"
 #include "game/sfx.h"
 #include "game/testroom.h"
@@ -268,6 +269,7 @@ int main(int argc, char **argv)
         log_error("ДАННЫЕ: папка data/shaders не найдена");
         return 1;
     }
+    if (!look_load_skeletons(data_dir)) return 1;
 
     // Вся память выделяется здесь, один раз
     Arena perm, scratch;

@@ -2006,6 +2006,36 @@ def merge(parts):
     return [c[live] for c in cols] + [remap[T]]
 
 
+# Кости игры (BodyBone в src/sim/body.h) и их родители: стандартный скелет гуманоида
+BONE_ORDER = ['ROOT', 'PELVIS', 'SPINE', 'CHEST', 'NECK', 'HEAD'] \
+    + ['%s_%s' % (k, sd) for sd in 'LR' for k in ('CLAVICLE', 'UPPER_ARM', 'FOREARM', 'HAND')] \
+    + ['%s_%s' % (k, sd) for sd in 'LR' for k in ('THIGH', 'SHIN', 'FOOT')]
+BONE_PARENT = {'ROOT': None, 'PELVIS': 'ROOT', 'SPINE': 'PELVIS', 'CHEST': 'SPINE', 'NECK': 'CHEST', 'HEAD': 'NECK'}
+for _sd in 'LR':
+    BONE_PARENT.update({'CLAVICLE_' + _sd: 'CHEST', 'UPPER_ARM_' + _sd: 'CLAVICLE_' + _sd, 'FOREARM_' + _sd: 'UPPER_ARM_' + _sd,
+                        'HAND_' + _sd: 'FOREARM_' + _sd, 'THIGH_' + _sd: 'PELVIS', 'SHIN_' + _sd: 'THIGH_' + _sd,
+                        'FOOT_' + _sd: 'SHIN_' + _sd})
+
+
+def write_skel(path, J):
+    # ASKL 1: u32 число костей, затем на кость: имя char[16], i32 родитель (номер в файле, -1 — корень),
+    # f32 сустав x y z в позе привязки. Сустав — голова первой кости MH, что ведёт кость игры, с точностью до мм;
+    # правые — зеркало левых
+    jt = {b: J[n + '____head'] for b, n in JOINT_SRC}
+
+    def at(b):
+        if b == 'ROOT':
+            return np.zeros(3)
+        if b.endswith('_R'):
+            return jt[b[:-2] + '_L'] * np.array([-1.0, 1.0, 1.0])
+        return jt[b]
+    with open(path, 'wb') as f:
+        f.write(b'ASKL' + struct.pack('<II', 1, len(BONE_ORDER)))
+        for b in BONE_ORDER:
+            par = BONE_PARENT[b]
+            f.write(struct.pack('<16si3f', b.encode(), BONE_ORDER.index(par) if par else -1, *(np.round(at(b), 3) + 0.0)))
+
+
 def write_mesh(path, V, N, C, M, L, S, D, T):
     # AMSH 3: после индексов поток скиннинга, на вершину u8 кости[4] и u8 веса[4] (сумма 255);
     # затем u32 число морфов и сдвиги: на вершину и морф три u32 = snorm16 пары (dx dy) (dz nx) (ny nz),
@@ -2055,21 +2085,8 @@ def main():
             write_mesh('%s/%s.mesh' % (out, name), *mesh)
             V, T = mesh[0], mesh[-1]
             print('%-15s %5d вершин %6d треугольников' % (name, len(V), len(T)))
-        # Суставы тела для src/game/look.c (g_body_joints, порядок BONE_*): голова первой кости MH, что ведёт кость игры;
-        # мужские — и в src/sim/body.c (g_body_bones). Правые — зеркало левых
-        jt = {b: J[n + '____head'] for b, n in JOINT_SRC}
-        order = ['ROOT', 'PELVIS', 'SPINE', 'CHEST', 'NECK', 'HEAD'] + ['%s_%s' % (k, sd) for sd in 'LR' for k in ('CLAVICLE', 'UPPER_ARM', 'FOREARM', 'HAND')] \
-            + ['%s_%s' % (k, sd) for sd in 'LR' for k in ('THIGH', 'SHIN', 'FOOT')]
-        def at(b):
-            if b == 'ROOT':
-                return np.zeros(3)
-            if b.endswith('_R'):
-                return jt[b[:-2] + '_L'] * np.array([-1.0, 1.0, 1.0])
-            return jt[b]
-        print('  [%s] = {' % p['name'])
-        for i in range(0, len(order), 4):
-            print('    ' + ' '.join('{ %.3ff, %.3ff, %.3ff },' % tuple(np.round(at(b), 3) + 0.0) for b in order[i:i + 4]))
-        print('  },')
+        # Скелет тела рядом с сеткой: суставы, по которым вращаются кости игры (src/sim/body.c читает его при старте)
+        write_skel('%s/%s.skel' % (out, p['name']), J)
 
 if __name__ == '__main__':
     main()

@@ -74,7 +74,9 @@ typedef struct BodyClass {
 
 #define BODY_MAX_HIT_CAPSULES 12
 
-extern const BoneDef    g_body_bones[BONE_COUNT];
+// Родители — стандарт гуманоида; суставы — мужское тело, заполняются при старте (look_load_skeletons)
+extern BoneDef          g_body_bones[BONE_COUNT];
+extern const char *const g_bone_name[BONE_COUNT];
 extern const BodyClass  g_body_classes[BODY_CLASS_COUNT];
 extern const HitCapsule g_body_hit[BODY_MAX_HIT_CAPSULES];
 extern const HitCapsule g_body_hit_guard[BODY_MAX_HIT_CAPSULES];  // в боевой стойке
@@ -83,6 +85,10 @@ extern const SocketDef  g_body_sockets[SOCKET_COUNT];
 extern const f32        g_part_hp[PART_COUNT];      // HP класса H
 extern const f32        g_part_hit_share[PART_COUNT]; // доля попаданий без учёта вида удара
 extern const char      *g_part_name[PART_COUNT];
+
+// Скелет из файла .skel (tools/humanconv): суставы в позе привязки по ролям BONE_*. Кости находят роль по имени,
+// родители сверяются со стандартом g_body_bones. false — файла нет или он не по стандарту
+bool body_skeleton_load(const char *path, V3 *joints);
 
 // Жизненная часть: при HP <= порога — нокаут, при <= -max — смерть
 static inline bool body_part_vital(BodyPart p) { return p <= PART_STOMACH; }
