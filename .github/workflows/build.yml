@@ -37,6 +37,17 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x720x24" ./build/vkcheck --frames 60 --verify --present mailbox --shot build/vk.ppm
           python3 -c "from PIL import Image; Image.open('build/vk.ppm').save('build/vk.png')"
 
+      - name: Кадр игры на Vulkan под ASan (lavapipe, validation; любой СБОЙ — провал, в том числе уход на GL)
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+          LSAN_OPTIONS: suppressions=tools/lsan.supp
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          make debug -j"$(nproc)" WERROR=1 CC=clang
+          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --vk --size 640 360 --tod 0.4 --day-stop --mute --shot build/vk_game.ppm --frames 5 | tee build/vk_game.txt
+          ! grep -q "СБОЙ" build/vk_game.txt
+          python3 -c "from PIL import Image; Image.open('build/vk_game.ppm').save('build/vk_game.png')"
+
       - name: Кадр под ASan (программный рендер)
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
@@ -98,6 +109,7 @@ jobs:
             build/shot.png
             build/valley.png
             build/vk.png
+            build/vk_game.png
             build/sound.wav
 
   windows:

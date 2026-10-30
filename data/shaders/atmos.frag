@@ -1,12 +1,12 @@
 // Небо, высотный туман, объёмные лучи солнца, затенение углов (AO)
 
-in vec2 v_uv;
+layout(location = 0) in vec2 v_uv;
 
 layout(binding = 8) uniform sampler2D u_color;
 layout(binding = 9) uniform sampler2D u_rays;   // rays.frag, половинное разрешение
 layout(binding = 10) uniform sampler2D u_ao;     // ao.frag, половинное разрешение
 
-out vec4 o_color;
+layout(location = 0) out vec4 o_color;
 
 vec3 sky(vec3 dir)
 {

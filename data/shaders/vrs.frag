@@ -2,7 +2,7 @@
 
 layout(binding = 14) uniform usampler2D u_block;  // vrs_block.frag
 
-out uint o_rate;
+layout(location = 0) out uint o_rate;
 
 void main()
 {

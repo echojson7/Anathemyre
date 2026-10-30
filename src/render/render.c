@@ -7,7 +7,9 @@
 
 #include "../core/clock.h"
 #include "../core/log.h"
+#include "../platform/platform.h"
 #include "rb.h"
+#include "rb_vk.h"
 #include "terrain.h"
 
 #define SHADOW_SIZE 2048
@@ -506,7 +508,10 @@ void render_shutdown(void)
                       &R.skin_out, &R.skin_job, &R.skin_group, &R.expo_buf };
     for (u32 i = 0; i < ARRAY_COUNT(bufs); i++) rb_buf_free(bufs[i]);
     pipes_free();
+    bool vk = rb_api() == RB_API_VULKAN;
     rb_shutdown();
+    // Ошибки validation (отладочная сборка или ANA_VK_VALIDATION=1): в CI должно быть 0
+    if (vk && rb_vk_validation_errors()) log_error("Vulkan: ошибок validation %u", rb_vk_validation_errors());
     memset(&R, 0, sizeof R);
 }
 
@@ -1599,6 +1604,14 @@ void render_frame_end(void)
 }
 
 void render_read_pixels(u8 *rgb, i32 w, i32 h) { rb_read_window(rgb, w, h); }
+
+const char *render_api_name(void) { return rb_api() == RB_API_VULKAN ? "VULKAN" : "GL"; }
+
+void render_set_vsync(bool on)
+{
+    if (rb_api() == RB_API_VULKAN) rb_vk_set_present(on ? RB_PRESENT_FIFO : RB_PRESENT_IMMEDIATE);
+    else platform_set_vsync(on);
+}
 
 void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, const DrawItem *items, u32 count)
 {

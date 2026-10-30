@@ -1,4 +1,5 @@
-// Проверка Vulkan-бэкенда: окно, swapchain, кадры в полёте, проход в окно, очистка, конвейер из .spv.
+// Проверка Vulkan-бэкенда через слой rb: окно, swapchain, кадры в полёте, проход в окно, очистка,
+// конвейер из .spv по рецепту (data/shaders/vkcheck.*), константы вызова.
 // vkcheck [--frames N] [--present fifo|mailbox|immediate] [--size W H] [--shot file.ppm] [--verify]
 // --verify сверяет пиксели кадра с ожидаемыми и ошибки validation: код выхода 1 при сбое
 #include <stdio.h>
@@ -56,7 +57,8 @@ int main(int argc, char **argv)
     time_init();
     Arena scratch;
     if (!arena_init(&scratch, MB(4))) return 1;
-    platform_use_vulkan();
+    platform_use_vulkan(true);
+    rb_select(RB_API_VULKAN);
     if (!platform_init("Anathemyre — Vulkan", w, h, false)) return 1;
     if (!rb_init(&scratch, "data")) {
         platform_shutdown();
@@ -65,8 +67,7 @@ int main(int argc, char **argv)
     rb_vk_set_present(present);
     log_stat("VK: %s", rb_vk_device_name());
 
-    RbPipeDesc pd = { .name = "vkcheck", .blend = RB_BLEND_ALPHA };
-    RbPipe pipe = rb_vk_pipe_spv(&pd, "spv/vkcheck.vert.spv", "spv/vkcheck.frag.spv");
+    RbPipe pipe = rb_pipe_make(&(RbPipeDesc){ .vs = { "vkcheck.vert" }, .fs = { "vkcheck.frag" }, .name = "vkcheck", .blend = RB_BLEND_ALPHA });
     bool ok = pipe != 0;
 
     u8 *rgb = arena_push(&scratch, (size_t)w * (size_t)h * 3, 16);

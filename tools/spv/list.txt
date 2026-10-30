@@ -1,4 +1,27 @@
-# Шейдеры Vulkan: собираются в data/spv/<имя>.spv. После правки исходников: ./tools/spv/build.sh
-# <имя> <стадия vert|frag|comp> [-DИМЯ=ЗНАЧ ...] <файлы, склеиваются по порядку>
-vkcheck.vert vert tools/vkcheck/check.vert
-vkcheck.frag frag tools/vkcheck/check.frag
+# Шейдеры Vulkan: рецепт на строку, собираются в data/spv. После правки шейдеров: ./tools/spv/build.sh
+# <стадия vert|frag|comp> [-DИМЯ[=ЗНАЧ] ...] <файлы из data/shaders, склеиваются по порядку после rb.glsl>
+# Дописывается сама: ANA_SPV_LIST=tools/spv/list.txt ./build/anathemyre (игра под GL дописывает рецепты своих конвейеров)
+vert vkcheck.vert
+frag vkcheck.frag
+vert -DSHADOW_PASS frame.glsl skin.glsl scene.vert
+frag -DSHADOW_PASS shadow.frag
+vert frame.glsl skin.glsl scene.vert
+frag frame.glsl common.glsl scene.frag
+vert -DNOISE_HASH fullscreen.vert
+frag -DNOISE_HASH frame.glsl common.glsl rays.frag
+vert fullscreen.vert
+frag frame.glsl common.glsl ao.glsl atmos.frag
+frag frame.glsl common.glsl ao.glsl ao.frag
+frag frame.glsl common.glsl pixel.glsl style.frag
+frag frame.glsl pixel.glsl src_map.frag
+frag vrs_block.frag
+frag frame.glsl vrs.frag
+frag frame.glsl pixel.glsl level.frag
+frag level_max.frag
+comp skin.glsl skin.comp
+comp frame.glsl expo.comp
+frag frame.glsl bloom_down.frag
+frag bloom_up.frag
+vert ui.vert
+frag ui.frag
+frag upscale.frag
