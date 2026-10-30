@@ -51,6 +51,8 @@ typedef struct Options {
     bool        editor;      // выбрать первого из отряда и открыть ВНЕШНОСТЬ (для снимков)
     i32         look_slot;   // для снимков: осмотреть чужого в слоте поля look_slot−1
     bool        bands_test;  // пробные отряды вдали сразу при старте
+    u32         phys_drop;   // куча лома у точки камеры на первом шаге (проверка физики)
+    u32         loot_drop;   // вещи (оружие, товар) у точки камеры на первом шаге
     f32         warp;        // для снимков: прогнать столько секунд мира до первого кадра
     const char *save_path;   // записать мир после прогона (--warp)
     const char *load_path;   // прочитать мир до прогона
@@ -119,7 +121,7 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N] [--hall-t S]");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--phys-drop N] [--loot-drop N] [--warp S] [--threads N] [--hall-t S]");
     puts("anathemyre [--light 0..2] [--light-parts МАТЕРИАЛЫ КРИВАЯ ЭКСПОЗИЦИЯ СВЕЧЕНИЕ ОТРАЖЁННЫЙ КАСКАДЫ МЯГКИЙ КОНТАКТ УГЛЫ]   свет на старте: набор ПРЕЖНИЙ/БЫСТРЫЙ/РЕАЛИСТИЧНЫЙ или части (docs/lighting.md)");
     puts("anathemyre [--load file.sav] [--warp S] [--save file.sav] [--sum-after S]   сохранение без меню: прочитать, прогнать, записать; сумма мира через S секунд и выход");
     puts("anathemyre [--defs DIR] [--mods DIR]   описания вещей и моды из других папок (по умолчанию data/defs и mods, docs/content.md)");
@@ -147,6 +149,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--editor")) o->editor = true;
         else if (!strcmp(a, "--look-slot") && i + 1 < argc) o->look_slot = atoi(argv[++i]) + 1;
         else if (!strcmp(a, "--bands-test")) o->bands_test = true;
+        else if (!strcmp(a, "--phys-drop") && i + 1 < argc) o->phys_drop = (u32)atoi(argv[++i]);
+        else if (!strcmp(a, "--loot-drop") && i + 1 < argc) o->loot_drop = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--warp") && i + 1 < argc) o->warp = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--save") && i + 1 < argc) o->save_path = argv[++i];
         else if (!strcmp(a, "--load") && i + 1 < argc) o->load_path = argv[++i];
@@ -456,6 +460,11 @@ int main(int argc, char **argv)
         field_attack(field, (u32)squad_body(squad, i)->slot, (u32)victim);
     }
     if (opt.bands_test) world_bands_test(world);
+    if (opt.phys_drop || opt.loot_drop) {
+        world->focus = opt.cam.target;
+        world->phys_drop = opt.phys_drop;
+        world->loot_drop = opt.loot_drop;
+    }
     // Сохранение в папке saves рядом с data
     char save_path[600];
     snprintf(save_path, sizeof save_path, "%s/../saves", data_dir);
@@ -637,7 +646,8 @@ int main(int argc, char **argv)
         }
         set.humans = set.bench = set.bands_test = set.save = set.load = false;
         HudWorld hw = { .squad = squad, .arena = world->arena, .aview = &world->aview, .field = field, .view = fig->view,
-                        .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day };
+                        .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day,
+                        .ground = world->ground, .phys = world->phys, .ground_ask = &world->ground_ask, .alpha = world->alpha };
         bool ui_busy = hud_input(&hud, &hin, &hw);
         if (hud.focus >= 0 && !jumped) {
             V3 fp = fig->view[squad->member[hud.focus]].pos;
@@ -692,6 +702,9 @@ int main(int argc, char **argv)
         if (st_people) n += showhall_draw(hall, cm, fv.cam_pos, wtime, st_live ? dt : 0.0f, items + n);
         else items[n++] = (DrawItem){ .mesh = &hall->mesh };
         n += valley_view_draw(valley, fv.cam_pos, items + n);
+        n += scrap_draw(&world->scrap, world->phys, world->alpha, fv.cam_pos, items + n, RENDER_MAX_ITEMS / 8);
+        n += loot_draw(&world->loot, world->ground, world->phys, cm->weapon, world->alpha, fv.cam_pos, items + n,
+                       RENDER_MAX_ITEMS / 8);
         prof_zone(PZ_FIGURES);
         if (st_people) {
             people_dress_live(world->people);

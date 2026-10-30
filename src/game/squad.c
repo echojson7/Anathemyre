@@ -68,6 +68,7 @@ void squad_init(Squad *s, People *p, Rng *rng, V3 origin, f32 heading, GroundFn 
     memset(s, 0, sizeof *s);
     s->people = p;
     s->count = ARRAY_COUNT(g_start);
+    for (u32 i = 0; i < SQUAD_MAX; i++) s->pick[i] = -1;
     for (u32 i = 0; i < s->count; i++) {
         f32 x = origin.x + (f32)(i % 2) * 1.2f - 0.6f, z = origin.z - (f32)(i / 2) * 1.3f;
         u32 k = people_add(p, ROLE_SQUAD, v3(x, ground(x, z), z), heading, TEAM_SQUAD, FF_PLAYER | FF_ASSIST);
@@ -130,6 +131,7 @@ void squad_order_move(Squad *s, V3 target)
         V3 p = v3_add(target, v3_add(v3_mul(right, col * FORMATION_STEP), v3_mul(fwd, -(f32)row * FORMATION_STEP)));
         player_order_move(squad_body(s, i), p);
         squad_body(s, i)->group = group;
+        s->pick[i] = -1;
         k++;
     }
     // Метка там, куда щёлкнули, а не на месте первого в строю
@@ -202,4 +204,16 @@ void squad_ser(Ser *s, Squad *sq)
     SER(s, sq->order_marker);
     SER(s, sq->formation);
     SER(s, sq->next_group);
+    SER(s, sq->pick);
+}
+
+void squad_order_pick(Squad *s, i32 k, V3 at)
+{
+    i32 i = squad_primary(s);
+    if (i < 0) return;
+    // Остальные выбранные стоят: за вещью идёт один, как в Kenshi
+    Player *b = squad_body(s, (u32)i);
+    player_order_move(b, at);
+    b->group = 0;
+    s->pick[i] = k;
 }

@@ -24,8 +24,6 @@ typedef struct FightAnim {
     f32  clip_t, pclip_t, fade, fade_s;
     bool pprone;
     i8   side, pside;
-    V3   drop_pos;                    // в координатах боя
-    f32  drop_yaw, drop_age;          // drop_age — с момента, как выпало: летит из руки на землю
     f32  lock_x, lock_z;              // где была цель в начале замаха: от уворота удар уходит в пустоту
     f32  knock_x, knock_z;            // откуда отбросило ударом
     // Боевой шаг: где стоят стопы (координаты боя), шаг из from в нынешнее место в стойке
@@ -48,8 +46,8 @@ void fight_anim_update(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, f32
 // Через сколько секунд после события падения тело касается земли (звук удара о землю)
 f32  fight_anim_contact(const CombatWorld *w, u32 i, u8 ev_kind);
 // Поза в мире: origin — начало координат боя, floor_y — высота земли.
-// true — оружие выпало и лежит в drop_pos/drop_yaw (мир), в руке его нет
+// true — оружия в руке нет: лежит на земле вещью мира (рисует её физика) или его забрали
 bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, V3 origin, f32 floor_y, f32 time,
-                     CharPose *p, CharAction *a, V3 *drop_pos, f32 *drop_yaw);
+                     CharPose *p, CharAction *a);
 
 #endif

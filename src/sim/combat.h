@@ -112,6 +112,9 @@ typedef struct FighterDesc {
 struct CombatWorld;
 typedef void (*CombatSink)(void *user, const struct CombatWorld *w);
 
+#define COMBAT_IN_HAND (-1)
+#define COMBAT_GONE    (-2)
+
 typedef struct CombatWorld {
     u32 cap, count;
     u64 seed;
@@ -141,6 +144,8 @@ typedef struct CombatWorld {
     u8  *fall;       // FALL_*: куда толкнул последний удар
     u8  *prone;      // LIE_*: как лежит — от этого, где лежит тело, как его обходят и как встаёт
     u8  *loose;      // выронил оружие при падении: лежит рядом, после подъёма поднимет
+    i32 *gitem;      // оружие на земле (вещь Ground) — пишет мир, бой не трогает; COMBAT_IN_HAND — в руке,
+                     // COMBAT_GONE — не в руке и не его (подобрал другой, выпало у мёртвого)
 
     // Навыки и снаряжение
     f32 *skill[SK_COUNT];

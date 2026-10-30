@@ -390,6 +390,32 @@ bool hud_pick(const Hud *h, const Input *in, const HudWorld *w, u8 *kind, u32 *i
     return L.my < L.bottom_top && pick_at(w, L.mx, L.my, kind, index, &head);
 }
 
+// Вещь на земле под курсором: ближайшая к курсору на экране в пределах ITEM_PICK_PX
+#define ITEM_PICK_PX 12.0f
+static i32 item_at(const HudWorld *w, f32 mx, f32 my)
+{
+    if (!w->ground || !w->phys) return -1;
+    i32 best = -1;
+    f32 bd = ITEM_PICK_PX * ITEM_PICK_PX;
+    for (u32 k = 0; k < w->ground->count; k++) {
+        if (!w->ground->item[k].kind) continue;
+        u32 b = (u32)w->ground->body[k];
+        f32 sx, sy;
+        if (!project(w->view_proj, v3_lerp(w->phys->x_tick[b], w->phys->x[b], w->alpha), &sx, &sy)) continue;
+        f32 d = (sx - mx) * (sx - mx) + (sy - my) * (sy - my);
+        if (d < bd) {
+            bd = d;
+            best = (i32)k;
+        }
+    }
+    return best;
+}
+
+i32 hud_pick_item(const Hud *h, const Input *in, const HudWorld *w)
+{
+    Layout L = layout(h, in);
+    return L.my < L.bottom_top ? item_at(w, L.mx, L.my) : -1;
+}
 
 // Вещь с курсора обратно в мешок; некуда — false, окно не закрывается
 static bool drop_held(Hud *h, Squad *sq)
@@ -580,6 +606,21 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
         if (sq->selected[i]) look_at(h, sq, LOOK_SQUAD, i);
         lmb = false;
         break;
+    }
+
+    // Вещь с курсора — в мир: бросает тот, чей мешок открыт, себе под ноги (упадёт на следующем шаге мира)
+    GroundAsks *ask = w->ground_ask;
+    if (lmb && !over && h->held.kind && h->look_kind == LOOK_SQUAD && h->look < sq->count && ask && ask->n < GROUND_ASKS &&
+        L.my < L.bottom_top) {
+        const Player *b = &w->view[sq->member[h->look]];
+        f32 hs = sinf(b->heading), hc = cosf(b->heading);
+        ask->it[ask->n] = h->held;
+        ask->at[ask->n] = v3_add(b->pos, v3(hs * 0.35f, 1.1f, hc * 0.35f));
+        ask->yaw[ask->n] = b->heading;
+        ask->who[ask->n] = (u8)h->look;
+        ask->n++;
+        h->held.kind = IK_NONE;
+        lmb = false;
     }
 
     // Мир: щелчок выбирает, протяжка тянет рамку
@@ -1147,6 +1188,16 @@ void hud_draw(const Hud *h, const Input *in, const HudWorld *w)
             u32 edge = kind == LOOK_SQUAD ? C_SEL : (foe ? C_BAD : C_BRACKET);
             brackets(x - 4, y - 3, tw + 8, 13, 3, edge);
             ui_text(x, y, kind == LOOK_SQUAD ? C_SEL : (foe ? C_BAD : C_TEXT), d.name);
+        }
+    } else if (!h->drag_live && L.my < L.bottom_top) {
+        // Вещь на земле: имя у курсора (ПКМ — подобрать)
+        i32 k = item_at(w, L.mx, L.my);
+        if (k >= 0) {
+            const char *name = item_name(w->ground->item[k]);
+            f32 tw = ui_text_width(name), x = floorf(L.mx + 10), y = floorf(L.my - 14);
+            ui_rect(x - 4, y - 3, tw + 8, 13, UI_RGBA(10, 10, 9, 200));
+            brackets(x - 4, y - 3, tw + 8, 13, 3, C_BRACKET);
+            ui_text(x, y, C_TEXT, name);
         }
     }
 

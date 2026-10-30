@@ -240,8 +240,7 @@ static void fighter(WorldSound *s, SfxFight *f, u32 i, const FightAnim *a, V3 fo
     f->wield[i] = a->wield;
     bool near = dist2(p, s->lis) < 30.0f * 30.0f;
     if (a->dropped && !f->dropped[i]) {
-        V3 dp = v3(a->drop_pos.x + f->origin.x, p.y - 1.0f, a->drop_pos.z + f->origin.z);
-        audio_play(SFX_DROP_METAL, dp, 1.0f, 1.0f, 0.4f);  // падает из руки 0.4 с
+        audio_play(SFX_DROP_METAL, foot, 1.0f, 1.0f, 0.4f);  // падает из руки ~0.4 с
     } else if (near && !a->dropped) {
         if (w0 < 0.3f && a->wield >= 0.3f) audio_play(SFX_DRAW, p, 1.0f, 1.0f, 0.0f);
         if (w0 > 0.7f && a->wield <= 0.7f) audio_play(SFX_SHEATH, p, 1.0f, 1.0f, 0.0f);
