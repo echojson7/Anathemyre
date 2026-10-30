@@ -17,6 +17,8 @@ typedef struct FighterAI {
 } FighterAI;
 
 void fighter_ai_init(FighterAI *ai, Arena *a, u32 cap);
+// Сохранение: решения первых count бойцов и середины строя
+void fighter_ai_ser(Ser *s, FighterAI *ai, u32 count);
 // Вызывать перед каждым combat_tick
 void fighter_think_all(FighterAI *ai, CombatWorld *w);
 

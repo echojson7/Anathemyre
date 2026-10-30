@@ -3,8 +3,10 @@
 #ifndef ANA_NAMES_H
 #define ANA_NAMES_H
 
-#include "../core/types.h"
+#include "../core/ser.h"
 
 const char *name_next(bool female);
+// Сохранение: сколько имён уже выдано
+void names_ser(Ser *s);
 
 #endif

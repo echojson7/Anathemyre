@@ -1,6 +1,7 @@
 #include "player.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #include "anim.h"
 
@@ -35,8 +36,13 @@ static f32 follow(f32 x, f32 goal, f32 tau, f32 dt) { return x + (goal - x) * fm
 
 void player_init(Player *p, V3 pos, f32 heading)
 {
-    *p = (Player){ .pos = pos, .heading = heading, .move_yaw = heading, .target = pos, .gait = GAIT_RUN,
-                   .vmax = g_gait_speed[GAIT_RUN], .slot = -1 };
+    // Нули целиком, с байтами выравнивания: тело идёт в сохранение и в сумму мира
+    memset(p, 0, sizeof *p);
+    p->pos = p->target = pos;
+    p->heading = p->move_yaw = heading;
+    p->gait = GAIT_RUN;
+    p->vmax = g_gait_speed[GAIT_RUN];
+    p->slot = -1;
 }
 
 void player_order_move(Player *p, V3 target)

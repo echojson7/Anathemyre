@@ -37,7 +37,7 @@ typedef struct Settings {
     bool sound_ok, sound_on, music_on;
     f32  sound_vol, music_vol;
     // Просьбы меню на этот кадр
-    bool travel, humans, bench, bands_test, bench_stages;
+    bool travel, humans, bench, bands_test, bench_stages, save, load;
     u32  stage;              // SceneStage
     bool stand, stand_moved;  // стенд фигур: показан; показать ряд stand_row или убрать
     u32  stand_row;

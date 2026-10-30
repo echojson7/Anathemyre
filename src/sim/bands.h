@@ -7,6 +7,7 @@
 #define ANA_BANDS_H
 
 #include "../core/grid.h"
+#include "../io/chronicle.h"
 #include "../world/places.h"
 
 #define BANDS_MAX 4096
@@ -39,6 +40,7 @@ typedef struct Bands {
     u32 fights, routs, wiped;
     u64 dead;
     u32 log_left;                 // сколько ещё событий писать в журнал
+    Chronicle *chron;             // журнал событий мира; NULL — некуда (замер)
 } Bands;
 
 void bands_init(Bands *b, Arena *perm, const Places *places, u64 seed, u32 phases);
@@ -54,6 +56,8 @@ void bands_set_near(Bands *b, u32 i, bool on);
 // Люди отряда после тел: кто вернулся. Никого — отряд истреблён
 void bands_set_men(Bands *b, u32 i, const u16 men[BAND_TIERS]);
 u32  bands_men(const Bands *b, u32 i);
+// Сохранение: все отряды и сетка; места и дороги — у мира
+void bands_ser(Ser *s, Bands *b);
 // Сумма состояния: одинаковый мир — одинаковая сумма
 u64  bands_checksum(const Bands *b);
 // Замер без окна: count отрядов на случайных местах и дорогах, hours часов дальнего мира

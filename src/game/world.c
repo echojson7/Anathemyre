@@ -5,7 +5,9 @@
 #include "../core/clock.h"
 #include "../core/log.h"
 #include "../core/prof.h"
+#include "../io/save.h"
 #include "../world/map.h"
+#include "names.h"
 #include "testroom.h"
 
 #define CROWD_SIZE 9
@@ -97,6 +99,10 @@ bool world_init(World *w, Arena *perm, MeshBuilder *mb, u64 seed, f32 tod, bool 
     w->bands = ARENA_PUSH_ARRAY(perm, Bands, 1);
     bands_init(w->bands, perm, pl, seed, TICK_HZ);
     w->bands->log_left = 0xFFFFFFFFu;  // стычки и бегство — в журнал
+    // Журнал событий: пишут отряды вдали и поле боя
+    w->chron = ARENA_PUSH_ARRAY(perm, Chronicle, 1);
+    w->bands->chron = w->field->chron = w->chron;
+    w->strings = ARENA_PUSH_ARRAY(perm, char, WORLD_STRINGS);
     w->focus = squad_home();
     return true;
 }
@@ -105,6 +111,7 @@ bool world_init(World *w, Arena *perm, MeshBuilder *mb, u64 seed, f32 tod, bool 
 static void world_tick(World *w)
 {
     People *p = w->people;
+    w->chron->tick = w->tick;
     memcpy(p->last, p->body, p->count * sizeof *p->body);
     prof_zone(PZ_PEOPLE);
     people_update(p, &w->rng, &w->town_rng, TICK_DT, testroom_ground);
@@ -203,4 +210,67 @@ bool world_travel(World *w)
         w->people->last[sq->member[i]] = w->people->body[sq->member[i]];
     }
     return true;
+}
+
+// Раскладка таблиц этой сборки: другие размеры или ёмкости — сохранение не читается
+static u64 world_layout(void)
+{
+    const u64 v[] = { SAVE_VERSION, sizeof(People), sizeof(Player), sizeof(CharSheet), sizeof(FighterDesc),
+                      sizeof(FightAnim), sizeof(CombatEvent), sizeof(Bands), sizeof(NearBands), sizeof(ArenaSession),
+                      sizeof(ArenaView), sizeof(Squad), sizeof(Field), sizeof(Chronicle), PEOPLE_MAX, FIELD_MAX, BANDS_MAX,
+                      CHRON_CAP, PART_COUNT, SK_COUNT, SLOT_COUNT, COMBAT_MAX_TEAMS, TICK_HZ };
+    return ser_fnv(SER_HASH_START, v, sizeof v);
+}
+
+// Обход мира в одном порядке для записи, чтения и суммы
+static void world_ser(Ser *s, void *user)
+{
+    World *w = user;
+    SER(s, w->tick);
+    SER(s, w->acc);
+    SER(s, w->tod);
+    SER(s, w->day);
+    SER(s, w->rng);
+    SER(s, w->town_rng);
+    names_ser(s);
+    chron_ser(s, w->chron);
+    people_ser(s, w->people);
+    squad_ser(s, &w->squad);
+    field_ser(s, w->field);
+    // Слот поля — номер в таблице людей: тела и листы поля указывают на тех же людей
+    ser_check(s, w->field->w.count == w->people->count);
+    arena_ser(s, w->arena);
+    arena_view_ser(s, &w->aview);
+    bands_ser(s, w->bands);
+    near_ser(s, w->near, w->bands->count);
+}
+
+bool world_save(World *w, const char *path)
+{
+    f64 t0 = time_now();
+    SaveInfo info = { .layout = world_layout(), .seed = w->seed, .tick = w->tick };
+    if (!save_write(path, &info, world_ser, w)) return false;
+    u32 mins = (u32)(w->tod * 24.0f * 60.0f);
+    log_info("СОХРАНЕНИЕ: мир записан, день %u, %02u:%02u, %.2f МБ за %.0f мс", w->day, mins / 60 % 24, mins % 60,
+             (f64)info.bytes / 1048576.0, (time_now() - t0) * 1000.0);
+    return true;
+}
+
+bool world_load(World *w, const char *path)
+{
+    f64 t0 = time_now();
+    SaveInfo info = { .layout = world_layout(), .seed = w->seed };
+    if (!save_read(path, &info, world_ser, w, w->strings, WORLD_STRINGS)) return false;
+    w->alpha = w->acc / TICK_DT;
+    u32 mins = (u32)(w->tod * 24.0f * 60.0f);
+    log_info("СОХРАНЕНИЕ: мир прочитан, день %u, %02u:%02u, за %.0f мс", w->day, mins / 60 % 24, mins % 60,
+             (time_now() - t0) * 1000.0);
+    return true;
+}
+
+u64 world_checksum(World *w)
+{
+    Ser s = { .mode = SER_HASH, .hash = SER_HASH_START };
+    world_ser(&s, w);
+    return s.hash;
 }

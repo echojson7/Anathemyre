@@ -345,6 +345,11 @@ bool platform_exe_dir(char *buf, size_t size)
     return true;
 }
 
+bool platform_make_dir(const char *path)
+{
+    return CreateDirectoryA(path, NULL) || GetLastError() == ERROR_ALREADY_EXISTS;
+}
+
 // ---------------------------------------------------------------- потоки
 
 struct PlatformThread {

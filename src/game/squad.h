@@ -37,6 +37,8 @@ void squad_set_gait(Squad *s, Gait g);
 f32  sheet_speed(const CharSheet *c, Gait g);
 f32  squad_member_speed(const Squad *s, u32 i, Gait g);
 void squad_update(Squad *s, f32 dt, GroundFn ground);
+// Сохранение: состав, выбор, метка приказа; люди — в таблице людей
+void squad_ser(Ser *s, Squad *sq);
 // Первый выбранный или -1
 i32  squad_primary(const Squad *s);
 

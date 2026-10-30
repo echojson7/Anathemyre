@@ -40,6 +40,8 @@ void         platform_window_size(i32 *w, i32 *h);
 PlatformProc platform_gl_proc(const char *name);
 // Папка исполняемого файла, без завершающего '/'
 bool         platform_exe_dir(char *buf, size_t size);
+// Создать папку (одну, без родителей); true — есть или создана
+bool         platform_make_dir(const char *path);
 
 // Потоки и семафор для рабочих потоков. Создаются один раз при старте
 typedef struct PlatformThread PlatformThread;

@@ -73,6 +73,43 @@ void people_dress_live(People *p)
         if (p->role[i] == ROLE_SQUAD || p->role[i] == ROLE_MOB) people_dress(p, i);
 }
 
+void people_ser(Ser *s, People *p)
+{
+    ser_count(s, &p->count, PEOPLE_MAX);
+    u32 n = p->count;
+    SER_N(s, p->body, n);
+    SER_N(s, p->last, n);
+    for (u32 i = 0; i < n; i++) {
+        CharSheet *c = &p->sheet[i];
+        ser_str(s, &c->name);
+        ser_str(s, &c->role);
+        SER(s, c->d);
+        SER(s, c->equip);
+        SER(s, c->inv);
+    }
+    SER_N(s, p->role, n);
+    SER_N(s, p->team, n);
+    SER_N(s, p->fflags, n);
+    SER_N(s, p->variant, n);
+    SER_N(s, p->seed, n);
+    SER_N(s, p->height, n);
+    SER_N(s, p->width, n);
+    SER_N(s, p->look_seed, n);
+    SER_N(s, p->look, n);
+    SER_N(s, p->lk, n);
+    SER_N(s, p->lk_own, n);
+    SER_N(s, p->gear, n);
+    SER_N(s, p->ngear, n);
+    SER_N(s, p->torch, n);
+    SER_N(s, p->stand, n);
+    SER_N(s, p->home, n);
+    SER_N(s, p->home_h, n);
+    SER_N(s, p->wait, n);
+    SER_N(s, p->pace, n);
+    SER_N(s, p->node, n);
+    SER_N(s, p->prev, n);
+}
+
 void people_join_field(People *p, Field *f)
 {
     for (u32 i = 0; i < p->count; i++) field_add(f, &p->body[i], &p->sheet[i], p->team[i], p->fflags[i]);

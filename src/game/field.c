@@ -79,6 +79,24 @@ void field_free(Field *f, u32 i)
     f->soft[i] = f->leave[i] = 0;
 }
 
+void field_ser(Ser *s, Field *f)
+{
+    combat_ser(s, &f->w);
+    u32 n = f->w.count;
+    fighter_ai_ser(s, &f->ai, n);
+    SER_N(s, f->flags, n);
+    SER_N(s, f->soft, n);
+    SER_N(s, f->leave, n);
+    SER_N(s, f->calm, n);
+    SER_N(s, f->px, n);
+    SER_N(s, f->pz, n);
+    SER_N(s, f->ph, n);
+    SER_N(s, f->anim, n);
+    SER(s, f->grudge);
+    SER(s, f->enmity);
+    SER(s, f->fights);
+}
+
 void field_enmity(Field *f, u8 a, u8 b)
 {
     if (a >= COMBAT_MAX_TEAMS || b >= COMBAT_MAX_TEAMS || a == b) return;
@@ -257,13 +275,17 @@ static void log_events(Field *f)
     for (u32 k = 0; k < w->ev_count; k++) {
         const CombatEvent *e = &w->ev[k];
         const char *a = f->sheet[e->a]->name;
+        u8 kind = CH_KIND_COUNT;
         switch (e->kind) {
-        case EV_KO:        log_info("%s БЕЗ СОЗНАНИЯ", a); break;
-        case EV_DEATH:     log_info("%s МЁРТВ", a); break;
-        case EV_SURRENDER: log_info("%s СДАЁТСЯ", a); break;
+        case EV_KO:        log_info("%s БЕЗ СОЗНАНИЯ", a); kind = CH_KO; break;
+        case EV_DEATH:     log_info("%s МЁРТВ", a); kind = CH_DEATH; break;
+        case EV_SURRENDER: log_info("%s СДАЁТСЯ", a); kind = CH_SURRENDER; break;
         case EV_RETREAT:   log_info("%s ОТСТУПАЕТ", a); break;
         default: break;
         }
+        if (kind < CH_KIND_COUNT)
+            chron_add(f->chron, (ChronRec){ .kind = kind, .from = 255, .to = 255, .a = e->a, .b = CHRON_NOBODY,
+                                            .x = w->x[e->a], .z = w->z[e->a] });
     }
     combat_events_done(w);
 }

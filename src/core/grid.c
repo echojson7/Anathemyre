@@ -158,3 +158,24 @@ u32 grid_tags(const Grid *g, f32 x, f32 z, f32 r)
         for (i32 bx = bx0; bx <= bx1; bx++) m |= g->block_mask[(u32)bz * g->bw + (u32)bx];
     return m;
 }
+
+void grid_ser(Ser *s, Grid *g)
+{
+    SER(s, g->cell);
+    SER(s, g->inv_cell);
+    SER(s, g->ox);
+    SER(s, g->oz);
+    SER(s, g->w);
+    SER(s, g->h);
+    SER(s, g->ntags);
+    SER(s, g->bw);
+    SER(s, g->bh);
+    ser_count(s, &g->count, g->cap);
+    u64 keys = (u64)g->w * g->h * g->ntags, blocks = (u64)g->bw * g->bh;
+    ser_check(s, keys <= g->max_keys && blocks <= g->max_keys);
+    if (s->bad) return;
+    SER_N(s, g->start, keys + 1);
+    SER_N(s, g->items, g->count);
+    SER_N(s, g->key_of, g->count);
+    SER_N(s, g->block_mask, blocks);
+}

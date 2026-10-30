@@ -21,6 +21,7 @@ typedef enum Role { ROLE_SQUAD, ROLE_WANDER, ROLE_WATCHER, ROLE_TOWN, ROLE_MOB, 
 // за ними зрители и посёлок. Отряды вдали — TEAM_BANDS + команда отряда; свободные места — ничья команда
 enum { TEAM_SQUAD, TEAM_MOBS, TEAM_WANDER, TEAM_BANDS = 16, TEAM_FREE = FIELD_TEAM_NOBODY };
 
+// Новый столбец — и в people_ser, иначе он не переживёт сохранение
 typedef struct People {
     u32       count;
     Player    body[PEOPLE_MAX];
@@ -60,6 +61,8 @@ void people_dress(People *p, u32 i);
 void people_dress_live(People *p);
 // Внешность из lk[i] (после правки в редакторе): матрица и причёска в списке вещей
 void people_relook(People *p, u32 i);
+// Сохранение: все столбцы первых count человек; имена и роли — текстом
+void people_ser(Ser *s, People *p);
 // Всех на поле боя по порядку: слот = номер в таблице
 void people_join_field(People *p, Field *f);
 // Шаг всех, кроме своего отряда (им правит squad_update): rng — пустошь, town_rng — посёлок
