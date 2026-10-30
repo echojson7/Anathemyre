@@ -109,7 +109,8 @@ void main()
     float T = exp(-fog_amount);
     float sun_amt = pow(max(dot(dir, u_sun_dir), 0.0), 6.0);
     vec3 fog_col = u_haze + u_sun_color * sun_amt * 0.18;
-    if (!is_sky) col = col * T + fog_col * (1.0 - T);
+    // Пыль в помещении без неба не освещена: дымка набирается только на пути снаружи
+    if (!is_sky) col = col * T + fog_col * (1.0 - T) * (1.0 - room_path(u_cam_pos, P));
     else col = mix(col, fog_col, clamp(1.0 - T, 0.0, 0.6) * smoothstep(0.3, 0.0, dir.y));
 
     // Объёмный свет
