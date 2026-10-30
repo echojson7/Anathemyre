@@ -11,6 +11,7 @@ typedef struct FightAnim {
     f32  disp_x, disp_z;              // показанная позиция: отброшенного ведёт плавно
     f32  phase, walk, speed, move_dir;
     f32  guard, block, dodge, dodge_side, stagger, flinch, wield, limp;
+    f32  swing;                       // замах 0..1, удар 1..2, возврат 2..3 (CharAction.swing)
     f32  calm;                        // сколько бой стоит (w->halted), с
     f32  vt;                          // время в текущем состоянии, с
     f32  seed;

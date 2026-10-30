@@ -1312,6 +1312,25 @@ i32 hud_form_step(HudForm *f, const char *label, const char *value)
     return f->mx < tx + tw * 0.5f ? -1 : 1;
 }
 
+bool hud_form_tabs(HudForm *f, const char *const *names, u32 n, u8 *cur)
+{
+    f32 x, y;
+    bool hot = form_row(f, &x, &y);
+    f32 w = floorf((f->w - 16 - (f32)(n - 1) * 3) / (f32)n);
+    bool changed = false;
+    for (u32 i = 0; i < n; i++) {
+        f32 bx = x + (f32)i * (w + 3);
+        bool h = hot && inside(f->mx, f->my, bx, y - 1, w, 12);
+        button(bx, y - 1, w, 12, NULL, names[i], *cur == i, h);
+        if (h && f->lmb && *cur != i) {
+            *cur = (u8)i;
+            changed = true;
+        }
+    }
+    if (hot && f->lmb) f->lmb = false;
+    return changed;
+}
+
 void hud_form_head(HudForm *f, const char *label)
 {
     f32 x = f->x + 8, y = f->row + 3;

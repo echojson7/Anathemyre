@@ -2,10 +2,15 @@
 
 #include <string.h>
 
+#include "../core/hash.h"
+
 #define COLLAPSE_S 0.9f   // оседает на землю без сознания
 #define KNEEL_S 1.1f      // опускается на колени
-#define DRAW_S 0.85f      // достать или убрать оружие
-#define DRAW_HEAVY_S 1.2f // тяжёлое снять со спины
+#define DRAW_S 0.6f       // достать или убрать оружие: основа, с, и прибавка за килограмм (DRAW_KG)
+#define DRAW_KG 0.04f     // клинок 3 кг — 0.72 с, балка 18 кг — 1.3 с
+#define DRAW_HURRY 1.8f   // в замахе и в блоке достаёт быстрее во столько раз
+#define STRIKE_S 0.11f    // сам удар от верха замаха до цели: основа, с, и прибавка за килограмм (STRIKE_KG)
+#define STRIKE_KG 0.012f  // клинок 3 кг — 0.15 с, балка 18 кг — 0.33 с
 #define KNOCK_TRAVEL 0.7f // отброшенный пятится назад первые столько от падения
 #define DODGE_LEAD 0.3f   // уворачивается за столько до удара; до того отступает в стойке
 #define SHEATHE_AFTER 2.5f  // бой стоит столько, прежде чем убирают оружие
@@ -18,28 +23,12 @@
 #define STEP_TIDY_S 0.5f  // ... столько секунд — поправляет
 #define STEP_LIFT  0.07f  // подъём стопы в шаге, м
 
-static f32 hashf(u32 x)
-{
-    x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
-    return (f32)(x & 0xFFFFFF) / 16777215.0f;
-}
-
-static f32 wrap_angle(f32 a)
-{
-    while (a > PI_F) a -= 2.0f * PI_F;
-    while (a < -PI_F) a += 2.0f * PI_F;
-    return a;
-}
-
 static f32 approach(f32 x, f32 target, f32 rate, f32 dt) { return x + (target - x) * fminf(1.0f, rate * dt); }
 
 static f32 step_to(f32 x, f32 target, f32 step) { return x + clampf(target - x, -step, step); }
 
-static f32 smooth01(f32 t)
-{
-    t = clampf(t, 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
-}
+// Вес оружия в руке, кг (без оружия — 0)
+static f32 weapon_kg(const CombatWorld *w, u32 i) { return w->disarmed[i] ? 0.0f : g_weapons[w->weapon[i]].weight; }
 
 // Множители позы: рост и ширина, как в fight_anim_pose
 static f32 body_h(const CombatWorld *w, u32 i) { return w->height[i] / 1.8f; }
@@ -198,9 +187,27 @@ void fight_anim_update(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, f32
     if (w->halted && !calm && st == FS_READY) guard_t = 0.35f;
     // Оружие достаёт сразу; в стойку встаёт, когда оно в руке
     f32 wield_t = armed && !calm && !fs_out(st) ? 1.0f : 0.0f;
-    f32 draw_s = g_weapons[w->weapon[i]].wclass == WC_HEAVY ? DRAW_HEAVY_S : DRAW_S;
-    f32 rate = (st == FS_WINDUP || st == FS_BLOCK) ? 3.0f / draw_s : 1.0f / draw_s;
+    // Тяжёлое достаёт дольше; в замахе — быстрее и в любом случае до начала самого удара
+    f32 kg = weapon_kg(w, i), draw_s = DRAW_S + DRAW_KG * kg, strike_s = STRIKE_S + STRIKE_KG * kg;
+    f32 rate = (st == FS_WINDUP || st == FS_BLOCK) ? DRAW_HURRY / draw_s : 1.0f / draw_s;
+    if (st == FS_WINDUP) {
+        f32 left = (1.0f - state_progress(w, i, alpha)) * w->dur[i] - strike_s;
+        rate = fmaxf(rate, (1.0f - f->wield) / fmaxf(left, 0.05f));
+    }
     f->wield = step_to(f->wield, wield_t, rate * dt);
+    // Замах и удар: бой засчитывает попадание в конце замаха, поэтому сам удар (0..1 → 1..2) идёт в его
+    // последние strike_s секунд и доходит до цели в миг попадания; длина удара — по весу оружия. После
+    // попадания (FS_STRIKE) оружие на миг остаётся у цели, затем возврат
+    if (st == FS_WINDUP) {
+        f32 wt = w->dur[i], e = state_progress(w, i, alpha) * wt, raise = fmaxf(wt - strike_s, 0.4f * wt);
+        f->swing = e < raise ? e / raise : 1.0f + fminf((e - raise) / strike_s, 1.0f);
+    } else if (st == FS_STRIKE) {
+        f->swing = fminf(2.0f, fmaxf(f->swing, 1.0f) + dt / strike_s);
+    } else if (st == FS_RECOVER) {
+        f->swing = 2.0f + state_progress(w, i, alpha);
+    } else {
+        f->swing = 0.0f;
+    }
     if (f->wield < 0.9f) guard_t *= f->wield / 0.9f;
     f->guard = approach(f->guard, guard_t, 5.0f, dt);
     f->block = approach(f->block, st == FS_BLOCK ? 1.0f : 0.0f, 14.0f, dt);
@@ -260,10 +267,7 @@ bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha,
         .width = 1.0f + 0.08f * sinf(f->seed * 3.17f + 1.0f), .move_dir = f->move_dir,
         .weapon = f->dropped ? 0 : (u8)(w->weapon[i] + 1),
     };
-    f32 swing = 0.0f;
-    if (st == FS_WINDUP) swing = state_progress(w, i, alpha);
-    else if (st == FS_STRIKE) swing = 1.0f + state_progress(w, i, alpha);
-    else if (st == FS_RECOVER) swing = 2.0f + state_progress(w, i, alpha);
+    f32 swing = f->swing;
     *a = (CharAction){
         .guard = f->guard, .attack = w->attack[i], .swing = swing, .block = f->block,
         .dodge = f->dodge, .dodge_kind = f->dodge_kind, .dodge_side = f->dodge_side, .stagger = f->stagger,
@@ -316,7 +320,7 @@ bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha,
             a->clip_t = f->vt / COLLAPSE_S;
         } else {
             a->clip = CLIP_CRAWL;
-            a->clip_t = f->phase * 2.6f + time * 0.0f + f->vt;
+            a->clip_t = f->phase * 2.6f + f->vt;
         }
         break;
     case FS_SURRENDER:

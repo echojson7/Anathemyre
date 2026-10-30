@@ -10,29 +10,61 @@
 #define ACCEL       3.0f   // разгон, м/с²
 #define BRAKE       6.0f   // торможение, м/с²
 #define ARRIVE_DEC  2.5f   // мягкое торможение к цели, м/с²
-#define LAT_ACC     7.0f   // предел бокового ускорения в повороте, м/с²
+#define LAT_ACC     4.5f   // предел бокового ускорения в повороте, м/с² (~0.45 g, живой на бегу берёт 0.3–0.5 g)
+#define TURN_K      3.0f   // руление: поворот скорости, рад/с на радиан отклонения от цели
 #define TURN_MOVE   6.0f   // предел поворота скорости на малом ходу, рад/с
 #define TURN_BODY   5.5f   // разворот тела на месте, рад/с: 180° за ~0.6 с
 #define TURN_TRACK  10.0f  // на ходу тело следует за направлением шага
 #define PIVOT_SPEED 1.3f   // темп, до которого сбрасывает перед крутым разворотом, м/с
+#define STRIDE_ROOM 1.5f   // за столько до начала торможения шаги начинают подгоняться под остановку, м
+#define STRIDE_RATE 0.8f   // как быстро меняется длина шага, доля в секунду
 
 const f32 g_gait_speed[GAIT_COUNT] = { 1.6f, 3.2f, 4.8f };
 
-static f32 wrap_angle(f32 a)
-{
-    while (a > PI_F) a -= 2.0f * PI_F;
-    while (a < -PI_F) a += 2.0f * PI_F;
-    return a;
-}
-
-static f32 smooth01(f32 t)
-{
-    t = clampf(t, 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
-}
-
 // Сглаживание к цели за время tau, с
 static f32 follow(f32 x, f32 goal, f32 tau, f32 dt) { return x + (goal - x) * fminf(1.0f, dt / tau); }
+
+// Фаза шага, которую тело пройдёт обычными шагами за последние u метров до остановки (у цели за ARRIVE_DIST,
+// скорость по ARRIVE_DEC и не выше нынешней), циклов
+static f32 stop_phase(const Player *p, f32 u)
+{
+    const u32 n = 16;
+    f32 ph = 0.0f, du = u / (f32)n;
+    for (u32 i = 0; i < n; i++) {
+        f32 v = fminf(p->speed, fmaxf(0.4f, sqrtf(2.0f * ARRIVE_DEC * (((f32)i + 0.5f) * du + ARRIVE_DIST))));
+        f32 run = fminf(p->run, char_run_from_speed(v));
+        if (p->gait != GAIT_WALK) run = fminf(p->run, fmaxf(run, (p->gait == GAIT_RUN ? 0.6f : 0.5f) * smooth01((v - 1.0f) / 0.6f)));
+        ph += du / char_stride_run(v, run);
+    }
+    return ph;
+}
+
+f32 player_stride(const Player *p) { return 1.0f + (f32)p->stride / 400.0f; }
+
+// Какой множитель шага нужен, чтобы встать у цели в точке покоя; hold — держать прежний (у самой цели
+// остаток фазы мал и расчёт неустойчив)
+static f32 stride_goal(const Player *p, bool *hold)
+{
+    *hold = false;
+    if (!p->moving || p->speed < 0.3f) return 1.0f;
+    f32 dx = p->target.x - p->pos.x, dz = p->target.z - p->pos.z;
+    f32 u = sqrtf(dx * dx + dz * dz) - ARRIVE_DIST;  // путь до остановки
+    f32 zone = p->speed * p->speed / (2.0f * ARRIVE_DEC) + STRIDE_ROOM;
+    if (u <= 0.0f || u >= zone) return 1.0f;
+    f32 need = stop_phase(p, u);  // столько фазы до цели обычными шагами
+    if (need < 0.2f) {
+        *hold = true;
+        return 1.0f;
+    }
+    // Доля цикла до следующей точки покоя; к остановке фаза ещё набегает ~0.1 (торможение, удержание шага у цели)
+    f32 r = p->phase - (CHAR_REST_PHASE - 0.11f);
+    r = 0.5f - (r - floorf(r * 2.0f) * 0.5f);
+    // Точка покоя, до которой шаг меняется меньше всего: на столько же раз длиннее или короче
+    f32 k = fmaxf(0.0f, floorf((need - r) * 2.0f));
+    f32 f0 = need / (r + 0.5f * k), f1 = need / (r + 0.5f * (k + 1.0f));
+    f32 f = fabsf(logf(f0)) < fabsf(logf(f1)) ? f0 : f1;
+    return lerpf(1.0f, clampf(f, 0.75f, 1.3f), smooth01((zone - u) / STRIDE_ROOM));
+}
 
 void player_init(Player *p, V3 pos, f32 heading)
 {
@@ -74,9 +106,14 @@ void player_update(Player *p, f32 dt, GroundFn ground)
         // Со старта трогается, когда до цели осталось меньше ~100° поворота тела
         f32 face = fabsf(wrap_angle(p->move_yaw - p->heading));
         goal *= 1.0f - smooth01((face - 0.6f) / 1.1f);
-        // Направление скорости поворачивает не быстрее, чем позволяет боковое ускорение
-        f32 w = fminf(TURN_MOVE, LAT_ACC / fmaxf(p->speed, 0.1f)) * dt;
-        p->move_yaw = wrap_angle(p->move_yaw + clampf(wrap_angle(want - p->move_yaw), -w, w));
+        // Руление плавное: малую поправку курса растягивает на шаг-другой, а не берёт самой тугой дугой.
+        // Поворот скорости — не быстрее, чем позволяет боковое ускорение
+        f32 err = wrap_angle(want - p->move_yaw);
+        f32 wmax = fminf(TURN_MOVE, LAT_ACC / fmaxf(p->speed, 0.1f));
+        f32 rate = clampf(err * TURN_K, -wmax, wmax);
+        f32 step = rate * dt;
+        if (fabsf(step) > fabsf(err)) step = err;
+        p->move_yaw = wrap_angle(p->move_yaw + step);
     }
     p->speed += clampf(goal - p->speed, -BRAKE * dt, ACCEL * dt);
     p->pos.x += sinf(p->move_yaw) * p->speed * dt;
@@ -105,10 +142,30 @@ void player_update(Player *p, f32 dt, GroundFn ground)
     f32 step_turn = 0.35f * fabsf(p->turn_rate) * still;
     f32 walk_goal = fmaxf(clampf(p->speed / 0.7f, 0.0f, 1.0f), 0.45f * clampf(fabsf(p->turn_rate) / 3.0f, 0.0f, 1.0f));
     p->walk = follow(p->walk, walk_goal, 0.15f, dt);
-    // Походка по фактической скорости: в повороте с бега видно сброс на трусцу
-    p->run += clampf(char_run_from_speed(p->speed) - p->run, -dt * 2.5f, dt * 2.5f);
-    p->phase += (p->speed + step_turn) * dt / char_stride(p->speed);
+    // Походка по фактической скорости: в повороте с бега видно сброс на трусцу. Но трусцой и бегом
+    // уже с первого шага бежит, а не идёт (короткий частый шаг), и тормозит беговыми шагами до ~1 м/с
+    f32 run_goal = char_run_from_speed(p->speed);
+    if (p->gait != GAIT_WALK) {
+        f32 intent = p->gait == GAIT_RUN ? 0.6f : 0.5f;
+        bool speeding = goal > p->speed + 0.05f;
+        run_goal = fmaxf(run_goal, intent * smooth01(speeding ? (p->speed - 0.2f) / 0.4f : (p->speed - 1.0f) / 0.6f));
+    }
+    p->run += clampf(run_goal - p->run, -dt * 2.5f, dt * 2.5f);
+    // Перед целью шаги чуть короче или длиннее: встаёт, когда опорная стопа под телом, вторая нога
+    // приставляется по воздуху, а не доезжает до стойки по земле. Длина шага меняется плавно
+    bool hold;
+    f32 sg = stride_goal(p, &hold), sc = player_stride(p);
+    if (!hold) sc += clampf(sg - sc, -STRIDE_RATE * dt, STRIDE_RATE * dt);
+    p->stride = (i8)clampf(roundf((sc - 1.0f) * 400.0f), -127.0f, 127.0f);
+    p->phase += (p->speed + step_turn) * dt / (char_stride_run(p->speed, p->run) * player_stride(p));
     p->phase -= floorf(p->phase);
+    // Совсем встал: фаза — в ближайшую точку покоя, чтобы трогаться с шага, а не со скольжения стоп
+    if (!p->moving && p->speed <= 0.0f && p->walk < 0.02f && fabsf(p->turn_rate) < 0.2f) {
+        f32 r = p->phase - CHAR_REST_PHASE;
+        r -= floorf(r * 2.0f + 0.5f) * 0.5f;
+        p->phase -= r;
+        p->phase -= floorf(p->phase);
+    }
     p->idle = p->speed < 0.05f && fabsf(p->turn_rate) < 0.2f ? p->idle + dt : 0.0f;
 }
 
