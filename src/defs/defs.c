@@ -25,9 +25,10 @@ static const char *const g_quality_word[Q_COUNT] = { "junk", "worn", "sound", "m
 static const char *const g_slot_word[SLOT_COUNT] = { "head", "face", "shirt", "armor", "legs",
                                                      "feet", "hands", "back", "belt", "pants" };
 static const char *const g_part_word[PART_COUNT] = { "head", "chest", "stomach", "arm_l", "arm_r", "leg_l", "leg_r" };
-static const char *const g_mat_word[] = { "concrete", "rust", "sand", "cloth", "leather", "glyph", "emissive", "skin", "metal" };
+static const char *const g_mat_word[] = { "concrete", "rust", "sand", "cloth", "leather", "glyph", "emissive", "skin", "metal",
+                                          "terrain", "rock", "water", "bark", "leaf", "grass", "steel" };
 static const char *const g_voice_word[] = { "ressora", "sekach", "armatura", "bagor", "hook", "balka" };
-_Static_assert(MAT_METAL == 8 && MAT_GLYPH == 5, "g_mat_word по номерам MAT_*");
+_Static_assert(MAT_METAL == 8 && MAT_GLYPH == 5 && MAT_STEEL == 15, "g_mat_word по номерам MAT_*");
 _Static_assert(SFX_WPN_BALKA - SFX_WPN_RESSORA == 5 && SFX_WPN_HOOK - SFX_WPN_RESSORA == 4, "g_voice_word по SFX_WPN_*");
 
 // Имена, которые ставит сам код: свой отряд, наборы арены, тестовые сцены. Переедут в файлы с фракциями
@@ -282,11 +283,33 @@ static bool weapon_field(const DefLine *l, Block *b, Arena *mem)
         p->npt = (u16)(p->npt + na);
         return true;
     }
+    // Дол клинка: к последней части blade
+    if (def_is(k, "fuller")) {
+        WeaponPart *p = d->parts && b->shape ? &s_parts[d->part + d->parts - 1] : NULL;
+        if (!p || p->kind != WP_BLADE) {
+            def_error(l, "fuller — после blade");
+            return false;
+        }
+        if (!nums(l, 4, v)) return false;
+        memcpy(&p->v[2], v, sizeof(f32) * 4);
+        return true;
+    }
+    // Части формы: слово и от shape_min до shape_max чисел, недостающие — 0
     static const char *const shape[] = { "rod", "box", "blade", "plate", "hole", "wrap", "knob" };
-    static const u32 shape_n[] = { 4, 6, 0, 1, 4, 4, 4 };
+    static const u32 shape_min[] = { 4, 6, 0, 1, 4, 4, 4 }, shape_n[] = { 4, 6, 2, 1, 4, 6, 6 };
     i32 sk = def_word(k, shape, ARRAY_COUNT(shape));
     if (sk >= 0) {
-        if (!nums(l, shape_n[sk], v)) return false;
+        u32 na = l->n - 1;
+        if (na < shape_min[sk] || na > shape_n[sk]) {
+            def_error(l, "у %.*s нужно значений: от %u до %u", (int)k->n, k->s, shape_min[sk], shape_n[sk]);
+            return false;
+        }
+        memset(v, 0, sizeof v);
+        for (u32 i = 0; i < na; i++)
+            if (!def_num(&l->tok[1 + i], &v[i])) {
+                def_error(l, "не число: %.*s", (int)l->tok[1 + i].n, l->tok[1 + i].s);
+                return false;
+            }
         if (!b->paint) {
             def_error(l, "перед частями формы нужен paint");
             return false;
@@ -312,7 +335,7 @@ static bool weapon_field(const DefLine *l, Block *b, Arena *mem)
         WeaponPart *p = &s_parts[d->part + d->parts++];
         *p = (WeaponPart){ .kind = (u8)sk, .mat = b->mat, .pt = at };
         memcpy(p->color, b->color, sizeof p->color);
-        memcpy(p->v, v, sizeof(f32) * shape_n[sk]);
+        memcpy(p->v, v, sizeof p->v);
         return true;
     }
     def_error(l, "у оружия нет поля %.*s", (int)k->n, k->s);

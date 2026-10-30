@@ -5,7 +5,7 @@ frame.glsl+common.glsl+ao.glsl+atmos.frag.frag 8a001914e82eda639c6a51125fdc3fcb7
 frame.glsl+common.glsl+contact.frag.frag 4e1837822fe040ee213a8ffc4478ccaaf0552343963e73124e367ebc53145f81
 frame.glsl+common.glsl+pixel.glsl+style.frag.frag 103c21782fff8363ec010b4cc96a5a6dcaa83dc8f34b03d5bded5d72dcb8d7df
 frame.glsl+common.glsl+rays.frag~NOISE_HASH.frag 6eca402568b32b9136065a3bc31f2ff49963f15efdbfe3936c215062f773cbf4
-frame.glsl+common.glsl+sky.glsl+shadow_sun.glsl+scene.frag.frag 2af88916f7d49c03cda6b79b6fa6a71367be9189cd04f5bdcdf10e89bc8fd34e
+frame.glsl+common.glsl+sky.glsl+shadow_sun.glsl+scene.frag.frag 0057830abe7575a13b5386bae7172528e1a721fd179787b4d205105a1b256fac
 frame.glsl+expo.comp.comp cffaf0ac62a1eee0e096eb41f8511808a7fbb05dbcff2fb55447c47782515f11
 frame.glsl+pixel.glsl+level.frag.frag 1c5981800abe82e0adabf438f2b6f5ecc0fe7029e59cf6109e49e15837e481a5
 frame.glsl+pixel.glsl+src_map.frag.frag 235f1f6e7d8081cd77d826e21e1fcf5a021e1bf4c665523ff891c1d35581f184

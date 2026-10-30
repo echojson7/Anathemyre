@@ -14,7 +14,8 @@ layout(location = 0) out vec4 o_color;
 
 const uint MAT_CONCRETE = 0u, MAT_RUST = 1u, MAT_SAND = 2u, MAT_CLOTH = 3u, MAT_LEATHER = 4u,
            MAT_GLYPH = 5u, MAT_EMISSIVE = 6u, MAT_SKIN = 7u, MAT_METAL = 8u,
-           MAT_TERRAIN = 9u, MAT_ROCK = 10u, MAT_WATER = 11u, MAT_BARK = 12u, MAT_LEAF = 13u, MAT_GRASS = 14u;
+           MAT_TERRAIN = 9u, MAT_ROCK = 10u, MAT_WATER = 11u, MAT_BARK = 12u, MAT_LEAF = 13u, MAT_GRASS = 14u,
+           MAT_STEEL = 15u;
 
 const float TEXEL = 1.0 / 10.0;  // «пиксель» на поверхностях, м
 
@@ -152,6 +153,8 @@ void main()
     // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
     bool bones = u_skinned == 1 || u_skinned >= 4;
     float base = bones ? TEXEL * 0.5 : TEXEL;
+    // Сталь клинков: квадрат вчетверо мельче, иначе узкая фаска и дол тонут в одном квадрате
+    if (v_mat == MAT_STEEL) base = TEXEL * 0.25;
     bool snap = mpp < base * u_texel_on;
     vec3 dl = snap ? texel_snap(v_local, Nl, base) : vec3(0.0);
     vec3 P = v_local + dl;           // материал: прилипает к телу
@@ -232,6 +235,20 @@ void main()
         albedo *= 0.7 + 0.5 * m;
         spec = 0.6;
         gloss = 40.0;
+    } else if (v_mat == MAT_STEEL) {
+        // Сталь клинка: мелкое зерно и риски, ржавчина пятнами; альфа цвета — чистота (1 — без ржавчины)
+        // Сетка у стоек запечена в мир, ось клинка шейдеру неизвестна: зерно без направления, плюс разводы окалины
+        float grain = noise3(P * 160.0);
+        albedo *= (0.85 + 0.25 * grain + 0.06 * fine) * (0.75 + 0.4 * fbm3(P * 6.0));
+        // Ржавчина: мелкие пятна и точки коррозии, у края пятна — бурый налёт
+        float rust = fbm3(P * 26.0 + 7.3) + 0.3 * (noise3(P * 140.0) - 0.5);
+        float r = smoothstep(v_color.a - 0.03, v_color.a + 0.03, rust);
+        float stain = smoothstep(v_color.a - 0.12, v_color.a, rust) * 0.45;
+        albedo = mix(albedo, albedo * vec3(0.7, 0.6, 0.5), stain);
+        albedo = mix(albedo, vec3(0.12, 0.066, 0.04) * (0.7 + 0.6 * fine), r * 0.9);
+        spec = mix(0.9, 0.05, r);
+        gloss = mix(70.0, 8.0, r);
+        texel_mat = r > 0.5 ? MAT_RUST : MAT_STEEL;
     } else if (v_mat == MAT_GLYPH) {
         // Знаки на плите; цвет вершины — цвет свечения
         // На стене строки идут по высоте, на полу — по плоскости XZ
@@ -359,7 +376,7 @@ void main()
     if (ggx) {
         float rough = spec > 0.0 ? sqrt(sqrt(2.0 / (gloss + 2.0))) : 0.9;
         if (v_mat == MAT_WATER) F0 = vec3(0.02);
-        if (v_mat == MAT_METAL) {
+        if (v_mat == MAT_METAL || (v_mat == MAT_STEEL && spec > 0.5)) {
             F0 = mix(F0, albedo * 1.6, 0.7);
             albedo *= 0.3;
         }
