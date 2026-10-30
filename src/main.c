@@ -370,6 +370,11 @@ int main(int argc, char **argv)
         if (set.stand_moved) {
             set.stand_moved = false;
             stand_show(stand, set.stand, set.stand_row, &mb, &perm, world_ground, &cam);
+            // --stand N --cam ...: снимок стенда своей камерой (крупно голову и т. п.), --cam-y тут — высота над морем
+            if (opt.cam_set && opt.stand > 0) {
+                cam = opt.cam;
+                opt.stand = 0;
+            }
             // Высоту взгляда над плитами задаёт стенд: держать её над землёй, пока он открыт
             if (set.stand) {
                 cam_y = world_ground(cam.target.x, cam.target.z);

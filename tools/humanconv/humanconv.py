@@ -22,7 +22,9 @@ NL = len(LOD_TRIS)
 # Пропорции (переработка 2026-10-29, замеры при росте 1.80 м): голова около 7.7 высоты тела у мужчин и 7.65 у женщин
 # (у MakeHuman 7.1 — голова крупная), талия в профиль 21 см у мужчины и 18 см у женщины (была тоньше, чем видно спереди)
 # Руки до нормы: локоть на 0.635 роста, запястье на 0.49, размах около роста (было 0.67 и 0.52, размах 1.67 м)
-HEAD_SMALLER = {'head/head-scale-vert-decr': 0.5, 'head/head-scale-horiz-decr': 0.3, 'head/head-scale-depth-decr': 0.4}
+# Затылок короче: у MakeHuman он раздут за ухом, лысая голова выглядела обросшей лишним
+HEAD_SMALLER = {'head/head-scale-vert-decr': 0.5, 'head/head-scale-horiz-decr': 0.3, 'head/head-scale-depth-decr': 0.4,
+                'head/head-back-scale-depth-decr': 0.5}
 ARMS = {'measure/measure-upperarm-length-incr': 0.6, 'measure/measure-lowerarm-length-decr': 0.4}
 PEOPLE = [
     dict(name='mh_male', gender=1.0, muscle=0.8, weight=0.5, beard=False,
@@ -34,6 +36,7 @@ PEOPLE = [
          skin=(0.60, 0.45, 0.36), hcol=(0.20, 0.13, 0.08),
          cup=0.65, firm=0.7,
          mods={'head/head-scale-vert-decr': 0.3, 'head/head-scale-horiz-decr': 0.35, 'head/head-scale-depth-decr': 0.3,
+               'head/head-back-scale-depth-decr': 0.5,
                'bodyshapes/bodyshapes-elvs-fem-neat-hourglass': 0.5, 'hip/hip-scale-horiz-decr': 0.4, 'measure/measure-hips-circ-decr': 0.15,
                'measure/measure-thigh-circ-decr': 0.15, 'armslegs/l-upperleg-fat-decr': 0.2, 'armslegs/r-upperleg-fat-decr': 0.2,
                'measure/measure-knee-circ-decr': 0.4, 'measure/measure-calf-circ-decr': 0.3,
@@ -111,7 +114,6 @@ MORPHS = (
     dict(weight=1.0),                  # полнее
     dict(weight=0.0),                  # худее
     dict(muscle=1.0),                  # сильнее
-    dict(muscle=0.0),                  # слабее
     dict(age=1.0),                     # старше: 1 — глубокая старость
     dict(mods={'nose/nose-volume-incr': 0.5, 'nose/nose-scale-horiz-incr': 0.5, 'nose/nose-scale-vert-incr': 0.3,
                'nose/nose-scale-depth-incr': 0.4}),  # нос крупнее; минус — мельче
@@ -415,10 +417,8 @@ def build(p, base, faces, Z, skel, W):
     tz = tz * tz * (3 - 2 * tz)
     line = top_y + hk * (-0.20 + 0.118 * tz - 0.012 * np.clip(ax / (0.07 * hk), 0, 1) * tz)
     ear_d = ((ax - ear_c[0]) / (0.03 * hk)) ** 2 + ((y - ear_c[1]) / (0.04 * hk)) ** 2 + ((z - ear_c[2]) / (0.032 * hk)) ** 2
-    hair_t = hd & (ear_d > 1) & (y > line)
-    hair_k = np.where(hair_t, np.clip((y - line) / 0.015, 0, 1), 0.0)
-    # Кожа головы — щетина: причёски отдельными сетками поверх (garments, hair/)
-    col = col * (1 - 0.35 * hair_k[:, None]) + hcol * 0.35 * hair_k[:, None]
+    # Кожа головы без щетины (решение 2026-10-29): тёмная шапка с краем по линии волос читалась как лишняя
+    # кожа поверх черепа. Линия и уши нужны причёскам и вещам (garments, hair/)
 
     # Окраска по граням: грань берёт самую частую окраску своих вершин.
     # Сглаженная сетка нужна только для точной окраски; LOD0 — исходная сетка MakeHuman,
