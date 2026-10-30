@@ -203,15 +203,31 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
     }
     if (s != FS_READY && !cornered) return;
 
-    // Держать дистанцию своего оружия: ударом достаёт, вплотную не лезет; между — кружит
+    // Держать дистанцию своего оружия: ударом достаёт, вплотную не лезет; между — кружит.
+    // Издали идёт к цели обычным шагом, в паре шагов от досягаемости — приставным, медленнее
     f32 side = (i & 1) ? 1.0f : -1.0f;
     if (d > reach * 0.98f) {
-        w->mvx[i] = dx;
-        w->mvz[i] = dz;
+        f32 k = d > reach + 1.0f ? 1.0f : 0.7f;
+        w->mvx[i] = dx * k;
+        w->mvz[i] = dz * k;
     } else if (d < reach * 0.82f) {
-        w->mvx[i] = -dx * 0.7f;
-        w->mvz[i] = -dz * 0.7f;
+        w->mvx[i] = -dx * 0.6f;
+        w->mvz[i] = -dz * 0.6f;
     } else {
+        // Не кружит навстречу своему: свой рядом с той стороны — обходит цель с другой
+        u32 near[COMBAT_NEAR_MAX];
+        u32 nn = combat_near(w, w->x[i], w->z[i], 1.5f, TAG_BIT(2u + w->team[i]), near);
+        f32 best = 1.5f * 1.5f;
+        for (u32 q = 0; q < nn; q++) {
+            u32 j = near[q];
+            f32 ax = w->x[j] - w->x[i], az = w->z[j] - w->z[i];
+            f32 a2 = ax * ax + az * az;
+            if (j == i || a2 >= best) continue;
+            best = a2;
+            // Касательная в свою сторону смотрит на своего — в другую сторону
+            f32 own = (i & 1) ? 1.0f : -1.0f;
+            side = (-dz * ax + dx * az) * own > 0.0f ? -own : own;
+        }
         w->mvx[i] = -dz * side * 0.5f;
         w->mvz[i] = dx * side * 0.5f;
     }

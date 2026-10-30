@@ -636,9 +636,10 @@ static const FightK K_STRIKE[ATK_COUNT] = {
                        0.30f, 0.35f, 0.0f, 0.25f, 0.16f, 0.20f, 0.42f, 0.0f },
 };
 
-static void apply_fight(Pose *o, FightK k, f32 w, f32 *chest_yaw)
+static void apply_fight(Pose *o, FightK k, f32 w, const CharAction *a, f32 *chest_yaw)
 {
-    if (w <= 0.0f) return;
+    f32 fw = a->steps ? a->feet : w;
+    if (w <= 0.0f && fw <= 0.0f) return;
     Pose f = *o;
     set_arm(&f, R, k.r);
     set_arm(&f, L, k.l);
@@ -655,12 +656,27 @@ static void apply_fight(Pose *o, FightK k, f32 w, f32 *chest_yaw)
     f.r[BONE_HEAD].y -= (k.twist + k.pyaw * 0.2f) * 0.8f;
     f.r[BONE_HEAD].x -= k.lean * 0.6f;
     *chest_yaw += (k.twist + k.pyaw * 0.2f) * w;
-    // Стопы: стойка шире, левая впереди
+    // Стопы: стойка шире, левая впереди. С боевым шагом стопа стоит, где поставлена, а не на своём месте
     V3 fl = joint(BONE_FOOT_L), fr = joint(BONE_FOOT_R);
-    f.foot[L] = v3(fl.x + 0.07f, fl.y, 0.20f + k.front);
-    f.foot[R] = v3(fr.x - 0.05f, fr.y, -0.20f + k.back);
+    f.foot[L] = v3(fl.x + CHAR_STANCE_OUT_L, fl.y, CHAR_STANCE_Z + k.front);
+    f.foot[R] = v3(fr.x - CHAR_STANCE_OUT_R, fr.y, -CHAR_STANCE_Z + k.back);
     f.fpitch[L] = f.fpitch[R] = 0.0f;
+    if (a->steps)
+        for (u32 s = 0; s < 2; s++) {
+            f.foot[s] = v3_add(f.foot[s], a->feet_off[s]);
+            // Переносимая нога веса не несёт и чуть разгибает носок
+            f32 up = clampf(a->feet_off[s].y / 0.03f, 0.0f, 1.0f);
+            f.plant[s] = 1.0f - up;
+            f.fpitch[s] = 0.15f * up;
+        }
+    Pose before = *o;
     pose_lerp(o, &f, w);
+    if (a->steps)
+        for (u32 s = 0; s < 2; s++) {
+            o->foot[s] = v3_lerp(before.foot[s], f.foot[s], fw);
+            o->fpitch[s] = lerpf(before.fpitch[s], f.fpitch[s], fw);
+            o->plant[s] = lerpf(before.plant[s], f.plant[s], fw);
+        }
 }
 
 // Подъём стопы при переступании: шаг в удар и обратно
@@ -740,7 +756,7 @@ static void combat_layer(const CharAction *a, Pose *o, f32 *chest_yaw, f32 seed)
         }
         k = fk_lerp(k, d, dg);
     }
-    apply_fight(o, k, guard, chest_yaw);
+    apply_fight(o, k, guard, a, chest_yaw);
     if (guard > 0.0f && front_from != front_to) step_lift(o, L, 0.20f + front_from, 0.20f + front_to, guard);
     if (dg > 0.0f && a->dodge_kind == DODGE_SIDE) {
         // Шаг вбок той ногой, куда уходит; таз следом

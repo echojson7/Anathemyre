@@ -44,6 +44,12 @@ void combat_events_done(CombatWorld *w)
 
 void combat_set_state(CombatWorld *w, u32 i, u8 s, f32 dur)
 {
+    // Как ляжет: сбитый ударом — на спину, ползущий — ничком, упавший без сознания стоя — как придётся
+    u8 was = w->state[i];
+    if (s == FS_KNOCKED) w->prone[i] = 0;
+    else if (s == FS_CRAWL) w->prone[i] = 1;
+    else if ((s == FS_UNCONSCIOUS || s == FS_DEAD) && s != was && !fs_lying(was) && was != FS_SURRENDER)
+        w->prone[i] = combat_roll(w, i, 0, 131) < 0.5f;
     w->state[i] = s;
     w->timer[i] = dur;
     w->dur[i] = dur;
@@ -445,6 +451,12 @@ static u8 roll_react(CombatWorld *w, u32 def, u32 att, u8 kind, f32 lead)
     return REACT_NONE;
 }
 
+// Проводка удара после касания: лёгкое проходит за 0.12 с, балка 18 кг — за 0.24 с
+static f32 strike_time(const CombatWorld *w, u32 i)
+{
+    return clampf(0.12f + 0.01f * (weapon_of(w, i)->weight - 3.0f), 0.12f, 0.24f);
+}
+
 static f32 windup_time(const CombatWorld *w, u32 i, u8 kind)
 {
     const WeaponDef *wd = weapon_of(w, i);
@@ -667,7 +679,7 @@ static void tick_state(CombatWorld *w, u32 i, u32 *strikes, u32 *ns)
     if (w->timer[i] > 0.0f) return;
     switch (s) {
     case FS_WINDUP:
-        combat_set_state(w, i, FS_STRIKE, 0.15f);
+        combat_set_state(w, i, FS_STRIKE, strike_time(w, i));
         strikes[(*ns)++] = i;
         break;
     case FS_STRIKE:
@@ -729,6 +741,18 @@ static bool pinned(const CombatWorld *w, u32 i)
     return w->idle[i] || w->state[i] == FS_DEAD || w->state[i] == FS_UNCONSCIOUS;
 }
 
+// Тело на земле: отрезок вдоль взгляда от ног до головы. На спину падают назад, ничком — вперёд
+#define LIE_FEET 0.15f   // ноги от точки тела, м
+#define LIE_HEAD 1.35f   // голова от точки тела, м
+#define LIE_R    0.42f   // стоящий держится от оси лежащего не ближе
+#define LIE_STEP 0.06f   // за тик отходит от лежащего не больше (1.2 м/с)
+
+static bool on_ground(const CombatWorld *w, u32 i)
+{
+    u8 s = w->state[i];
+    return !w->idle[i] && (s == FS_DOWN || s == FS_UNCONSCIOUS || s == FS_DEAD || s == FS_CRAWL);
+}
+
 static void separate_job(void *ctx, u32 b, u32 e)
 {
     CombatWorld *w = ctx;
@@ -737,10 +761,14 @@ static void separate_job(void *ctx, u32 b, u32 e)
     for (u32 i = b; i < e; i++) {
         f32 sx = 0.0f, sz = 0.0f;
         if (!pinned(w, i)) {
+            bool down = on_ground(w, i) || fs_lying(w->state[i]);
             u32 nn = combat_near(w, w->x[i], w->z[i], r2, GRID_ALL_TAGS, near);
             for (u32 q = 0; q < nn; q++) {
                 u32 j = near[q];
                 if (j == i) continue;
+                // Лежащего стоящие не двигают: стоящий обходит его по всему телу, ниже
+                if (on_ground(w, j) && !down) continue;
+                if (down && !fs_lying(w->state[j])) continue;
                 f32 dx = w->x[i] - w->x[j], dz = w->z[i] - w->z[j];
                 f32 d2 = dx * dx + dz * dz;
                 if (d2 >= r2 * r2) continue;
@@ -756,6 +784,37 @@ static void separate_job(void *ctx, u32 b, u32 e)
         }
         w->sep_x[i] = sx;
         w->sep_z[i] = sz;
+    }
+}
+
+// Стоящие обходят тела на земле, а не встают на них. Тел меньше, чем стоящих, поэтому ищут от тела;
+// в одном потоке по возрастанию номера тела: сдвиги складываются в одном порядке
+static void around_bodies(CombatWorld *w)
+{
+    u32 near[COMBAT_NEAR_MAX];
+    const f32 len = LIE_FEET + LIE_HEAD, reach = 0.5f * len + LIE_R;
+    for (u32 j = 0; j < w->count; j++) {
+        if (!on_ground(w, j)) continue;
+        // Ось тела от ног к голове
+        f32 dir = w->prone[j] ? 1.0f : -1.0f;
+        f32 ux = sinf(w->heading[j]) * dir, uz = cosf(w->heading[j]) * dir;
+        f32 ax = w->x[j] - ux * LIE_FEET, az = w->z[j] - uz * LIE_FEET;
+        f32 mx = ax + ux * 0.5f * len, mz = az + uz * 0.5f * len;
+        u32 nn = combat_near(w, mx, mz, reach, TAGS_FIGHTING, near);
+        for (u32 q = 0; q < nn; q++) {
+            u32 i = near[q];
+            f32 ox = w->x[i] - mx, oz = w->z[i] - mz;
+            if (ox * ox + oz * oz >= reach * reach || i == j || pinned(w, i) || fs_lying(w->state[i])) continue;
+            f32 t = clampf((w->x[i] - ax) * ux + (w->z[i] - az) * uz, 0.0f, len);
+            f32 dx = w->x[i] - (ax + ux * t), dz = w->z[i] - (az + uz * t);
+            f32 d = sqrtf(dx * dx + dz * dz);
+            if (d >= LIE_R) continue;
+            f32 push = fminf(LIE_R - d, LIE_STEP);
+            // Стоит прямо на оси: в сторону по номеру
+            if (d < 1e-4f) { dx = i < j ? -uz : uz; dz = i < j ? ux : -ux; d = 1.0f; }
+            w->sep_x[i] += dx / d * push;
+            w->sep_z[i] += dz / d * push;
+        }
     }
 }
 
@@ -824,6 +883,7 @@ void combat_tick(CombatWorld *w)
     // Сетка по позициям после шага: расталкивание и ИИ следующего тика читают её
     build_grid(w);
     jobs_for(w->count, 64, separate_job, w);
+    around_bodies(w);
     jobs_for(w->count, 256, separate_apply_job, w);
     build_grid(w);
     w->tick++;
@@ -845,7 +905,7 @@ void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap)
     B(idle);
     for (u32 p = 0; p < PART_COUNT; p++) w->hp[p] = ARENA_PUSH_ARRAY(a, f32, cap);
     F(blood); F(blood_max); F(bleed); F(shock); F(morale); F(morale_base); F(mass); F(height);
-    B(fracture); B(severed); B(disarmed);
+    B(fracture); B(severed); B(disarmed); B(prone);
     for (u32 s = 0; s < SK_COUNT; s++) w->skill[s] = ARENA_PUSH_ARRAY(a, f32, cap);
     B(weapon); B(weapon_q);
     for (u32 s = 0; s < SLOT_COUNT; s++) w->armor[s] = ARENA_PUSH_ARRAY(a, u8, cap);
@@ -874,7 +934,7 @@ void combat_ser(Ser *s, CombatWorld *w)
     C(timer); C(dur); C(pause); C(target); C(since_hit); C(mvx); C(mvz); C(idle); C(order);
     for (u32 p = 0; p < PART_COUNT; p++) C(hp[p]);
     C(blood); C(blood_max); C(bleed); C(shock); C(morale); C(morale_base); C(mass); C(height);
-    C(fracture); C(severed); C(disarmed);
+    C(fracture); C(severed); C(disarmed); C(prone);
     for (u32 k = 0; k < SK_COUNT; k++) C(skill[k]);
     C(weapon); C(weapon_q);
     for (u32 k = 0; k < SLOT_COUNT; k++) C(armor[k]);
@@ -957,6 +1017,7 @@ void combat_load(CombatWorld *w, u32 i, const FighterDesc *d)
     w->fracture[i] = fresh ? 0 : d->fracture;
     w->severed[i] = fresh ? 0 : d->severed;
     w->disarmed[i] = 0;
+    w->prone[i] = 0;
     for (u32 s = 0; s < SK_COUNT; s++) w->skill[s][i] = d->skill[s];
     w->weapon[i] = d->weapon;
     w->weapon_q[i] = d->weapon_q;
