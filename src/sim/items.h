@@ -23,6 +23,7 @@ typedef struct WeaponDef {
     u8  size_w, size_h;  // клетки инвентаря
     u8  voice, voice_strike;  // голос железа (SFX_WPN_* по порядку): закрылся им и ударил им
     u16 part, parts;  // форма: части в g_weapon_parts
+    const char *model;  // готовая форма data/meshes/weapons/<model>.mesh (tools/weaponconv), части — запасные
     bool common;      // в общем запасе: отряды, арена, толпа берут случайное оружие отсюда
     bool unique;      // единственная вещь: вид не зависит от качества
 } WeaponDef;

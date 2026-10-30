@@ -33,7 +33,7 @@ _Static_assert(SFX_WPN_BALKA - SFX_WPN_RESSORA == 5 && SFX_WPN_HOOK - SFX_WPN_RE
 
 // Имена, которые ставит сам код: свой отряд, наборы арены, тестовые сцены. Переедут в файлы с фракциями
 static const char *const g_need[DK_COUNT][16] = {
-    [DK_WEAPON] = { "ressora", "sekach", "armatura", "bagor", "balka" },
+    [DK_WEAPON] = { "ressora", "sekach", "bagor", "balka" },
     [DK_ARMOR] = { "rags", "jacket", "quilt", "plate", "bucket", "greaves", "pants" },
     [DK_GOODS] = { "water", "rusk", "meat", "bandage", "scrap", "part", "fuel", "token", "wrap", "boots", "mitts", "pack", "belt" },
 };
@@ -186,6 +186,7 @@ static bool weapon_field(const DefLine *l, Block *b, Arena *mem)
     f32 v[6];
     u32 n;
     if (def_is(k, "name")) return text(l, mem, &d->name);
+    if (def_is(k, "model")) return text(l, mem, &d->model);
     if (def_is(k, "class")) return args(l, 1) && word(l, 1, g_class_word, WC_COUNT, &d->wclass);
     if (def_is(k, "attacks")) {
         d->attacks = 0;

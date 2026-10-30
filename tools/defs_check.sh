@@ -22,7 +22,6 @@ cp $DEFS/*.txt "$DIR/defs_rot/"
 cat > "$DIR/defs_rot/0order.txt" <<'END'
 weapon balka
 weapon bagor
-weapon armatura
 weapon sekach
 weapon ressora
 armor pants

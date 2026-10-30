@@ -56,6 +56,7 @@ weapon ressora          # вид и имя записи
 | Ключ | Значения | Смысл |
 |---|---|---|
 | name | строка | название |
+| model | строка | готовая форма из Blender: файл `data/meshes/weapons/<строка>.mesh` ([weapons.md](weapons.md#модели-из-blender)); части формы ниже — запас, если файла нет |
 | class | blade, cleaver, blunt, polearm, heavy | навык, хват, ножны ([weapons.md](weapons.md)) |
 | attacks | overhead, swing, thrust (любые) | какие удары умеет |
 | targets | 1–8 | сколько целей задевает размах |
@@ -66,7 +67,7 @@ weapon ressora          # вид и имя записи
 | arc | градусы | дуга размаха |
 | knock, pen | число, 0..1 | сбивание; пробой брони уколом |
 | size | ширина высота | клетки инвентаря, оружие стоймя |
-| voice | слово [слово] | звук, когда им закрылись, и когда им бьют: ressora, sekach, armatura, bagor, hook, balka ([sound.md](sound.md)) |
+| voice | слово [слово] | звук, когда им закрылись, и когда им бьют: ressora, sekach, armatura, bagor, hook, balka ([sound.md](sound.md)); голос armatura остался без своей вещи |
 | common | yes / no | в общем запасе: отряды, арена, толпа берут случайное оружие только отсюда, по порядку записей |
 | unique | yes / no | единственная вещь: вид не зависит от качества |
 | paint | материал r g b | цвет и материал частей ниже: concrete, rust, sand, cloth, leather, glyph, emissive, skin, metal, steel (сталь клинка: мелкое зерно, разводы окалины, ржавчина пятнами по качеству вещи) |

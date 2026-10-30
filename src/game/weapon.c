@@ -1,6 +1,7 @@
 // Сетки оружия по описаниям: в своей системе — рукоять в начале координат, острие по +Y, лезвие по +Z
 #include "anim.h"
 
+#include <stdio.h>
 #include <string.h>
 
 // Брусок вдоль оси от d0 до d1 (м от кулака); ширина к лезвию, толщина поперёк, сдвиг к лезвию,
@@ -352,11 +353,63 @@ static const f32 g_rust_mix[WEAPON_LOOKS] = { 0.8f, 0.55f, 0.0f };
 static const f32 g_clean[WEAPON_LOOKS] = { 0.5f, 0.68f, 0.97f };
 static const u32 g_nicks[WEAPON_LOOKS] = { 3, 1, 0 };
 
+// Готовые формы: вершины в осях оружия, в pad1 — номер детали (своя ржавчина), альфа не задана
+typedef struct WeaponModel {
+    const Vertex *v;
+    const u32 *idx;
+    u32 nv, ni;
+} WeaponModel;
+static WeaponModel s_model[WEAPON_CAP];
+
+void weapon_models_load(Arena *perm, const char *data_dir)
+{
+    for (u32 w = 0; w < g_weapon_count && w < WEAPON_CAP; w++) {
+        if (!g_weapons[w].model) continue;
+        char path[640];
+        MeshBuilder m;
+        snprintf(path, sizeof path, "%s/meshes/weapons/%s.mesh", data_dir, g_weapons[w].model);
+        if (mb_load(&m, perm, path)) s_model[w] = (WeaponModel){ m.v, m.idx, m.vcount, m.icount };
+    }
+}
+
+// Готовая форма с видом по качеству, как у частей: железо деталей ржавеет по номеру детали,
+// у стали чистота в альфе, кожа и тряпьё у хлама грязнее
+static void model_build(MeshBuilder *mb, const WeaponModel *md, u8 weapon, u8 look, u8 bone)
+{
+    if (!mb_reserve(mb, md->nv, md->ni)) return;
+    u32 v0 = mb->vcount;
+    Vertex *out = &mb->v[v0];
+    for (u32 i = 0; i < md->nv; i++) {
+        Vertex v = md->v[i];
+        u32 seed = (u32)weapon * 131u + v.pad1;
+        V3 col = v3(v.color[0] / 255.0f, v.color[1] / 255.0f, v.color[2] / 255.0f);
+        f32 param = 1.0f;
+        if (v.mat == MAT_METAL && whash(seed, 7) < g_rust_share[look])
+            col = v3_lerp(col, v3(0.27f, 0.16f, 0.10f), g_rust_mix[look] * (0.75f + 0.25f * whash(seed, 8)));
+        if (v.mat == MAT_STEEL) param = g_clean[look] * (0.92f + 0.08f * whash(seed, 9));
+        if (look == 0 && (v.mat == MAT_LEATHER || v.mat == MAT_CLOTH)) col = v3_lerp(col, v3(0.17f, 0.15f, 0.11f), 0.4f);
+        v.color[0] = (u8)(col.x * 255.0f + 0.5f);
+        v.color[1] = (u8)(col.y * 255.0f + 0.5f);
+        v.color[2] = (u8)(col.z * 255.0f + 0.5f);
+        v.color[3] = (u8)(param * 255.0f + 0.5f);
+        v.bone = bone;
+        v.tint = v.pad1 = 0;
+        out[i] = v;
+    }
+    for (u32 i = 0; i < md->ni; i++) mb->idx[mb->icount + i] = v0 + md->idx[i];
+    mb->vcount += md->nv;
+    mb->icount += md->ni;
+}
+
 void weapon_build(MeshBuilder *mb, u8 weapon, u8 look, u8 bone)
 {
-    // Форма из описания (data/defs/weapons.txt) по порядку частей
     const WeaponDef *d = &g_weapons[weapon];
     if (d->unique || look >= WEAPON_LOOKS) look = WEAPON_LOOKS - 1;
+    if (weapon < WEAPON_CAP && s_model[weapon].nv) {
+        model_build(mb, &s_model[weapon], weapon, look, bone);
+        return;
+    }
+    // Форма из описания (data/defs/weapons.txt) по порядку частей
     for (u32 k = 0; k < d->parts; k++) {
         const WeaponPart *p = &g_weapon_parts[d->part + k];
         V3 col = v3(p->color[0], p->color[1], p->color[2]);

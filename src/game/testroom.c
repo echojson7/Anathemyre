@@ -268,7 +268,7 @@ u32 testroom_lights(PointLight *out, u32 max)
 static void weapon_racks(MeshBuilder *mb)
 {
     const f32 wall = -20.8f;
-    static const char *const one[] = { "lopast", "zatochka", "rezak", "polosa", "ressora", "sekach", "teslo", "armatura" };
+    static const char *const one[] = { "lopast", "zatochka", "rezak", "polosa", "ressora", "sekach", "teslo" };
     rack_wall(mb, 3.3f, 10.7f, wall, 0.45f, 2.9f, one, ARRAY_COUNT(one));
     static const char *const two[] = { "dolgaya", "dolgaya", "dolgaya", "resheto", "otval", "otval", "otval" };
     static const u8 two_q[] = { Q_JUNK, Q_WORN, Q_SOUND, Q_SOUND, Q_JUNK, Q_WORN, Q_SOUND };
@@ -381,7 +381,7 @@ void watchers_add(People *p, const V3 *pos, const f32 *heading, const f32 *seed,
         Rng sr;
         rng_seed(&sr, 0x5EE0u + k, 92);
         bool armed = k % 3 == 0;
-        u8 weapon = def_weapon(k % 2 ? "armatura" : "ressora");
+        u8 weapon = def_weapon(k % 2 ? "sekach" : "ressora");
         sheet_random(&p->sheet[i], &sr, name_next(p->variant[i] == BODY_FEMALE), k % 5 == 2 ? 1 : 0, weapon);
         if (!armed) {
             Item old;
@@ -450,7 +450,7 @@ static const MobDef g_mob_defs[] = {
     { "ВЫШАТА", 1, GAIT_WALK, "ressora", { "rags", "jacket" } },
     { "ФЕОКТИСТ", 1, GAIT_JOG, "bagor", { "quilt" } },
     { "ГОРДИАН", 2, GAIT_WALK, "balka", { "quilt", "plate", "bucket" } },
-    { "МИЛОНЕГ", 0, GAIT_RUN, "armatura", { "rags" } },
+    { "МИЛОНЕГ", 0, GAIT_RUN, "sekach", { "rags" } },
     { "КАССИЙ", 1, GAIT_JOG, "sekach", { "jacket", "greaves" } },
 };
 

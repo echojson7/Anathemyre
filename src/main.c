@@ -387,6 +387,8 @@ int main(int argc, char **argv)
     HumansRow *humans = ARENA_PUSH_ARRAY(&perm, HumansRow, 1);
     Stand *stand = ARENA_PUSH_ARRAY(&perm, Stand, 1);
     ShowHall *hall = ARENA_PUSH_ARRAY(&perm, ShowHall, 1);
+    // Формы оружия — до мира: стойки зала собираются из них в world_init
+    weapon_models_load(&perm, data_dir);
     if (!world_init(world, &perm, &mb, opt.seed, opt.tod, !opt.day_stop) || !figures_init(fig, cm, &mb, &perm, data_dir)) {
         jobs_shutdown();
         render_shutdown();
