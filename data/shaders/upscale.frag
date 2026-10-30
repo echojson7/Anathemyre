@@ -1,12 +1,12 @@
 // Апскейл до окна с ровными пикселями: внутри пикселя цвет постоянный,
 // а на границе смешивание шириной в один пиксель экрана — без ряби при дробном масштабе
 
-in vec2 v_uv;
+layout(location = 0) in vec2 v_uv;
 
 #define u_out uintBitsToFloat(u_push[0].xy)  // размер окна
 layout(binding = 20) uniform sampler2D u_src;
 
-out vec4 o_color;
+layout(location = 0) out vec4 o_color;
 
 void main()
 {

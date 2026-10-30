@@ -86,6 +86,8 @@ type VkPipelineRenderingCreateInfo
 ext VK_EXT_depth_clip_control
 type VkPhysicalDeviceDepthClipControlFeaturesEXT
 type VkPipelineViewportDepthClipControlCreateInfoEXT
+ext VK_EXT_robustness2
+type VkPhysicalDeviceRobustness2FeaturesEXT
 
 # Команды и синхронизация
 command vkCreateCommandPool
@@ -107,12 +109,15 @@ command vkCmdBeginRendering
 command vkCmdEndRendering
 command vkCmdBindPipeline
 command vkCmdBindVertexBuffers
+command vkCmdBindVertexBuffers2
 command vkCmdBindIndexBuffer
 command vkCmdPushConstants
 command vkCmdSetViewport
 command vkCmdSetScissor
 command vkCmdClearAttachments
 command vkCmdClearColorImage
+command vkCmdClearDepthStencilImage
+command vkCmdFillBuffer
 command vkCmdDraw
 command vkCmdDrawIndexed
 command vkCmdDrawIndexedIndirect

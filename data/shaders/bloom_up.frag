@@ -1,9 +1,9 @@
 // Свечение, подъём: меньшая ступень размывается шатром 3x3 и прибавляется к большей (смешение сложением)
-in vec2 v_uv;
+layout(location = 0) in vec2 v_uv;
 
 layout(binding = 28) uniform sampler2D u_bloom_src;
 
-out vec4 o_color;
+layout(location = 0) out vec4 o_color;
 
 void main()
 {

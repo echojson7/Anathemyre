@@ -166,9 +166,9 @@ void platform_preinit(void)
     SetConsoleOutputCP(CP_UTF8);
 }
 
-void platform_use_vulkan(void)
+void platform_use_vulkan(bool on)
 {
-    g_w.vulkan = true;
+    g_w.vulkan = on;
 }
 
 bool platform_init(const char *title, i32 width, i32 height, bool gl_debug)

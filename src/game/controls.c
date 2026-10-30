@@ -127,11 +127,14 @@ static void menu_debug(Hud *h, Settings *s, World *w, RtsCamera *cam, bool human
     if (hud_debug_check(h, "ЛЮДИ ОДНИМ ВЫЗОВОМ", &rs->mdi)) log_info("ЛЮДИ ОДНИМ ВЫЗОВОМ: %s", rs->mdi ? "вкл" : "выкл");
     if (hud_debug_check(h, "ПОЗЫ РАЗ ЗА КАДР", &rs->skin_cache)) log_info("ПОЗЫ РАЗ ЗА КАДР: %s", rs->skin_cache ? "вкл" : "выкл");
     if (hud_debug_check(h, "VSYNC", &s->vsync)) {
-        platform_set_vsync(s->vsync);
+        render_set_vsync(s->vsync);
         log_info("VSYNC: %s", s->vsync ? "вкл" : "выкл");
     }
     if (hud_debug_check(h, "ВО ВЕСЬ ЭКРАН", &s->fullscreen)) platform_set_fullscreen(s->fullscreen);
     hud_debug_check(h, "SWAP ПОСЛЕ ЛОГИКИ", &s->swap_late);
+    // Рендер меняется только с перезапуском: окно и все ресурсы создаются под него заново
+    hud_debug_text(h, "РЕНДЕР СЕЙЧАС", render_api_name());
+    if (hud_debug_check(h, "РЕНДЕР: VULKAN (ПОСЛЕ ПЕРЕЗАПУСКА)", &s->render_vk)) s->render_save = true;
     if (hud_debug_check(h, "СУТКИ ИДУТ", &w->day_run)) log_info("СУТКИ: %s", w->day_run ? "идут" : "остановлены");
     if (hud_debug_check(h, "КАМЕРА СЛЕДУЕТ", &s->follow) && s->follow) cam->dist = MIN(cam->dist, 8.0f);
     bool humans_want = humans_on;

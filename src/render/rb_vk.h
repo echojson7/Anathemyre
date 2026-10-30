@@ -1,4 +1,4 @@
-// Vulkan-бэкенд слоя рендера: то, чего нет в rb.h. Остальное — функции rb.h из rb_vk.c
+// Vulkan-бэкенд слоя рендера: то, чего нет в rb.h. Остальное — rb.h после rb_select(RB_API_VULKAN)
 #ifndef ANA_RB_VK_H
 #define ANA_RB_VK_H
 
@@ -14,8 +14,5 @@ RbPresent   rb_vk_present(void);   // что выбрано на деле
 const char *rb_vk_device_name(void);
 // Ошибок validation с начала работы (отладочная сборка или ANA_VK_VALIDATION=1)
 u32         rb_vk_validation_errors(void);
-
-// Конвейер из готовых .spv (пути от data_dir). rb_pipe_make будет собирать путь по рецепту шейдера
-RbPipe rb_vk_pipe_spv(const RbPipeDesc *d, const char *vs_spv, const char *fs_spv);
 
 #endif

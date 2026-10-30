@@ -85,9 +85,9 @@ void platform_preinit(void)
 {
 }
 
-void platform_use_vulkan(void)
+void platform_use_vulkan(bool on)
 {
-    g_x.vulkan = true;
+    g_x.vulkan = on;
 }
 
 static bool init_window(const char *title, i32 width, i32 height, Visual *visual, int depth)

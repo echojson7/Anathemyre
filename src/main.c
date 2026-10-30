@@ -27,6 +27,7 @@
 #include "game/testroom.h"
 #include "game/world.h"
 #include "platform/platform.h"
+#include "render/rb.h"
 #include "render/render.h"
 #include "render/ui.h"
 #include "world/map.h"
@@ -81,6 +82,7 @@ typedef struct Options {
     bool        valley;      // начать в долине (иначе пешком или переход из меню НАСТРОЙКИ)
     bool        mute;        // без звука
     const char *sound_demo;  // сценка звука в WAV без окна
+    i32         api;         // рендер: -1 — из anathemyre.cfg, иначе RbApi (--gl, --vk)
 } Options;
 
 // Замер кадра (меню НАСТРОЙКИ или --bench): камера у арены вплотную, утро, сутки стоят, vsync выкл.
@@ -155,6 +157,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--mute")) o->mute = true;
         else if (!strcmp(a, "--sound-demo") && i + 1 < argc) o->sound_demo = argv[++i];
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
+        else if (!strcmp(a, "--gl")) o->api = RB_API_GL;
+        else if (!strcmp(a, "--vk")) o->api = RB_API_VULKAN;
         else if (!strcmp(a, "--ao-half")) o->ao_half = true;
         else if (!strcmp(a, "--hash-noise")) o->noise_tex = false;
         else if (!strcmp(a, "--no-mdi")) o->no_mdi = true;
@@ -219,6 +223,63 @@ static bool find_data_dir(char *out, size_t size)
     return false;
 }
 
+// Настройки между запусками: anathemyre.cfg рядом с папкой data, строки «ключ значение».
+// Пока одна: render gl|vulkan (НАСТРОЙКИ → РЕНДЕР, после перезапуска)
+static void cfg_path(char *out, size_t size, const char *data_dir) { snprintf(out, size, "%s/../anathemyre.cfg", data_dir); }
+
+static RbApi cfg_api(const char *data_dir)
+{
+    char path[600], line[128];
+    cfg_path(path, sizeof path, data_dir);
+    FILE *f = fopen(path, "r");
+    RbApi api = RB_API_GL;
+    if (!f) return api;
+    while (fgets(line, sizeof line, f))
+        if (!strncmp(line, "render ", 7)) api = !strncmp(line + 7, "vulkan", 6) ? RB_API_VULKAN : RB_API_GL;
+    fclose(f);
+    return api;
+}
+
+static void cfg_save_api(const char *data_dir, RbApi api)
+{
+    char path[600];
+    cfg_path(path, sizeof path, data_dir);
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        log_error("НАСТРОЙКИ: не записан %s", path);
+        return;
+    }
+    fprintf(f, "render %s\n", api == RB_API_VULKAN ? "vulkan" : "gl");
+    fclose(f);
+    log_info("РЕНДЕР: со следующего запуска %s", api == RB_API_VULKAN ? "VULKAN" : "GL");
+}
+
+// Окно и рендер. Vulkan не поднялся (нет драйвера, устройства, шейдера) — всё заново на GL
+static bool gfx_start(RbApi api, const Options *o, Arena *scratch, const char *data_dir)
+{
+#ifdef NDEBUG
+    const bool gl_debug = false;
+#else
+    const bool gl_debug = true;
+#endif
+    for (;;) {
+        platform_use_vulkan(api == RB_API_VULKAN);
+        rb_select(api);
+        bool win = platform_init("ANATHEMYRE", o->width, o->height, gl_debug);
+        if (win && render_init(scratch, data_dir) && ui_init()) {
+            log_info("РЕНДЕР: %s", api == RB_API_VULKAN ? "VULKAN" : "GL");
+            return true;
+        }
+        if (win) {
+            ui_shutdown();
+            render_shutdown();
+            platform_shutdown();
+        }
+        if (api == RB_API_GL) return false;
+        log_error("РЕНДЕР: Vulkan не запустился, кадр рисует GL");
+        api = RB_API_GL;
+    }
+}
 
 // Портреты: миниатюры отряда и крупно выбранный (свой, чужой на поле или боец арены)
 static void draw_portraits(Figures *fig, const FrameView *fv, const CharMeshes *cm, const World *w, const Hud *hud)
@@ -249,7 +310,7 @@ int main(int argc, char **argv)
     Options opt = {
         .tod = 0.31f, .shot_frames = 90, .stage = STAGE_FULL, .bands_hours = 1.0f, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
         .light = { -1, -1, -1, -1, -1 },
-        .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
+        .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f }, .api = -1,
     };
     if (!parse_args(argc, argv, &opt)) return 1;
     if (opt.move_bench) return player_bench(opt.move_trace);
@@ -277,20 +338,9 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (!platform_init("ANATHEMYRE", opt.width, opt.height,
-#ifdef NDEBUG
-                       false
-#else
-                       true
-#endif
-                       )) {
-        return 1;
-    }
-    if (!render_init(&scratch, data_dir) || !ui_init()) {
-        platform_shutdown();
-        return 1;
-    }
-    platform_set_vsync(!opt.no_vsync && opt.shot_path == NULL);
+    RbApi api_want = opt.api >= 0 ? (RbApi)opt.api : cfg_api(data_dir);
+    if (!gfx_start(api_want, &opt, &scratch, data_dir)) return 1;
+    render_set_vsync(!opt.no_vsync && opt.shot_path == NULL);
     // Пул потоков: позы людей и бой на поле
     if (!jobs_init(opt.threads)) log_error("ПОТОКИ: пул не запущен, всё в главном потоке");
     log_info("ПОТОКИ: %u", jobs_threads());
@@ -336,7 +386,7 @@ int main(int argc, char **argv)
         .swap_late = true, .follow = opt.follow, .ui_user = 1.0f, .ui_user_text = 1.0f,
         .sound_vol = 0.8f, .music_vol = 0.7f, .music_on = true, .travel = opt.valley,
         .stand = opt.stand > 0, .stand_moved = opt.stand > 0, .stand_row = opt.stand > 0 ? (u32)(opt.stand - 1) : 0,
-        .stage = opt.stage, .bench_stages = opt.bench_stages,
+        .stage = opt.stage, .bench_stages = opt.bench_stages, .render_vk = api_want == RB_API_VULKAN,
     };
     light_preset_apply(&set.rs, (LightPreset)opt.light_preset);
     if (opt.light[0] >= 0) set.rs.light_mat = (u8)(opt.light[0] % LIGHT_MAT_COUNT);
@@ -477,7 +527,7 @@ int main(int argc, char **argv)
             cam_y = world_ground(cam.target.x, cam.target.z);
             world->tod = BENCH_TOD;
             world->day_run = set.follow = set.vsync = false;
-            platform_set_vsync(false);
+            render_set_vsync(false);
             if (stage_sweep) bench_begin(&bench, time_now(), BENCH_STAGE_WARMUP_S, BENCH_STAGE_S);
             else bench_begin(&bench, time_now(), BENCH_WARMUP_S, BENCH_S);
         }
@@ -533,6 +583,10 @@ int main(int argc, char **argv)
         humans_flip |= set.humans;
         bench_request |= set.bench;
         if (set.bands_test) world_bands_test(world);
+        if (set.render_save) {
+            set.render_save = false;
+            cfg_save_api(data_dir, set.render_vk ? RB_API_VULKAN : RB_API_GL);
+        }
         if (set.save) {
             if (!save_dir) log_error("СОХРАНЕНИЕ: папка для %s не создана", save_path);
             else world_save(world, save_path);
@@ -687,7 +741,7 @@ int main(int argc, char **argv)
                 world->day_run = restore.day_run;
                 set.follow = restore.follow;
                 set.vsync = restore.vsync;
-                platform_set_vsync(set.vsync);
+                render_set_vsync(set.vsync);
                 stats_reset(&stats, time_now());
             }
             continue;

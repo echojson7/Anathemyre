@@ -1,10 +1,10 @@
 // Свечение (СВЕТ: BLOOM), спуск: каждая ступень вдвое меньше, 13 выборок с перекрытием (без порога:
 // светится всё, но слабо, как рассеяние в глазу и линзе). Первая ступень гасит одиночные яркие точки
-in vec2 v_uv;
+layout(location = 0) in vec2 v_uv;
 
 layout(binding = 28) uniform sampler2D u_bloom_src;
 
-out vec4 o_color;
+layout(location = 0) out vec4 o_color;
 
 #define u_bloom_first (u_push[0].x != 0u)
 
