@@ -82,6 +82,14 @@ typedef struct PointLight {
     f32 glow;       // свечение пыли вокруг источника, доля от color
 } PointLight;
 
+// Помещение без неба: внутри коробки lo..hi свет неба и дымка доходят только от входа (door), на door_reach м;
+// остальное освещают лампы (PointLight) и их рассеянный свет fill
+typedef struct RoomDark {
+    bool on;
+    V3   lo, hi, door, fill;
+    f32  door_reach;
+} RoomDark;
+
 typedef struct FrameView {
     M4  view, proj;
     V3  cam_pos;
@@ -94,6 +102,7 @@ typedef struct FrameView {
     u32 light_count;
     f32 time;
     u32 frame;
+    RoomDark room;
 } FrameView;
 
 typedef struct RenderSettings {
@@ -171,6 +180,10 @@ void render_set_groups(const InstGroup *groups, const InstCluster *clusters, u32
 void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const RenderSettings *rs, i32 win_w, i32 win_h);
 // Конец кадра GPU: после портретов и интерфейса, перед swap
 void render_frame_end(void);
+// Ждать кадровую развёртку: в GL — интервал swap, в Vulkan — режим показа (FIFO или IMMEDIATE)
+void render_set_vsync(bool on);
+// «GL» или «VULKAN»: чем рисуется кадр сейчас
+const char *render_api_name(void);
 // Портрет в ячейку slot атласа (size x size от левого нижнего угла ячейки), после render_frame:
 // тот же свет и тени, фон прозрачный. cam_pos во fv — глаз портретной камеры
 void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, const DrawItem *items, u32 count);

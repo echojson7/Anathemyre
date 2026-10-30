@@ -1,12 +1,12 @@
 // Объёмный свет солнца в половинном разрешении: шагаем по лучу в теневой карте.
 // R — накопленный свет, G — длина шага по лучу (для апскейла с учётом глубины)
 
-in vec2 v_uv;
+layout(location = 0) in vec2 v_uv;
 
 layout(binding = 7) uniform sampler2D u_depth;
 layout(binding = 6) uniform sampler2DShadow u_shadow;
 
-out vec2 o_rays;
+layout(location = 0) out vec2 o_rays;
 
 float light_vis(vec3 p)
 {

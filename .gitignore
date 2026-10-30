@@ -4,3 +4,4 @@ build/
 !docs/*.png
 __pycache__/
 saves/
+anathemyre.cfg

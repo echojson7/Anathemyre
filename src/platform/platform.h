@@ -40,7 +40,7 @@ void         platform_window_size(i32 *w, i32 *h);
 PlatformProc platform_gl_proc(const char *name);
 
 // Vulkan: до platform_init — окно без GL-контекста; swap и vsync тогда делает rb_vk.c
-void         platform_use_vulkan(void);
+void         platform_use_vulkan(bool on);
 // Хэндлы окна для поверхности: Display* и Window на X11, HINSTANCE и HWND на Windows
 typedef struct PlatformNative { void *display; u64 window; } PlatformNative;
 PlatformNative platform_native(void);

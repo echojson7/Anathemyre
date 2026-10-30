@@ -1,12 +1,12 @@
 // Небо, высотный туман, объёмные лучи солнца, затенение углов (AO)
 
-in vec2 v_uv;
+layout(location = 0) in vec2 v_uv;
 
 layout(binding = 8) uniform sampler2D u_color;
 layout(binding = 9) uniform sampler2D u_rays;   // rays.frag, половинное разрешение
 layout(binding = 10) uniform sampler2D u_ao;     // ao.frag, половинное разрешение
 
-out vec4 o_color;
+layout(location = 0) out vec4 o_color;
 
 vec3 sky(vec3 dir)
 {
@@ -109,7 +109,8 @@ void main()
     float T = exp(-fog_amount);
     float sun_amt = pow(max(dot(dir, u_sun_dir), 0.0), 6.0);
     vec3 fog_col = u_haze + u_sun_color * sun_amt * 0.18;
-    if (!is_sky) col = col * T + fog_col * (1.0 - T);
+    // Пыль в помещении без неба не освещена: дымка набирается только на пути снаружи
+    if (!is_sky) col = col * T + fog_col * (1.0 - T) * (1.0 - room_path(u_cam_pos, P));
     else col = mix(col, fog_col, clamp(1.0 - T, 0.0, 0.6) * smoothstep(0.3, 0.0, dir.y));
 
     // Объёмный свет

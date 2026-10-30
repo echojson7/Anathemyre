@@ -3,7 +3,7 @@
 
 layout(binding = 11) uniform usampler2D u_src_map;  // src_map.frag
 
-out uint o_rate;  // 0 — каждый пиксель, 1 — 2x2, 2 — 4x4 (палитра в render.c)
+layout(location = 0) out uint o_rate;  // 0 — каждый пиксель, 1 — 2x2, 2 — 4x4 (палитра в render.c)
 
 ivec2 src_at(ivec2 p) { return ivec2(texelFetch(u_src_map, min(p, textureSize(u_src_map, 0) - 1), 0).rg); }
 

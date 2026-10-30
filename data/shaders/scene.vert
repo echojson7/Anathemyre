@@ -24,13 +24,13 @@ const int TERR_G = 129, TERR_MASK = 255;  // узлов на сторону ур
 // От центра колец: с 46 до 62 клеток уровня высота переходит к уровню крупнее, к краю (не ближе 62) — целиком
 const float TERR_MORPH0 = 46.0, TERR_MORPH_W = 16.0;
 
-out vec3 v_world;
-out vec3 v_nrm;
-out vec4 v_color;
-flat out uint v_mat;
-out vec3 v_local;      // координаты тела (у статики — мира): к ним привязаны квадраты материала
-flat out mat3 v_rot;   // поворот из координат тела в мир
-flat out vec3 v_tint;  // оттенок экземпляра
+layout(location = 0) out vec3 v_world;
+layout(location = 1) out vec3 v_nrm;
+layout(location = 2) out vec4 v_color;
+layout(location = 3) flat out uint v_mat;
+layout(location = 4) out vec3 v_local;      // координаты тела (у статики — мира): к ним привязаны квадраты материала
+layout(location = 5) flat out mat3 v_rot;   // поворот из координат тела в мир
+layout(location = 8) flat out vec3 v_tint;  // оттенок экземпляра
 // Проход глубины и сцена должны дать одну и ту же глубину до бита
 invariant gl_Position;
 
