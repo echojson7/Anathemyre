@@ -8,7 +8,7 @@ in vec3 v_local;
 flat in mat3 v_rot;
 flat in vec3 v_tint;
 
-layout(location = 17) uniform int u_skinned;   // как в scene.vert: 1 и 4 — люди (кости)
+layout(location = 17) uniform int u_skinned;   // как в scene.vert: 1, 4 и 5 — люди (кости)
 layout(location = 18) uniform mat4 u_light_vp;
 layout(location = 20) uniform vec3 u_cam_pos;
 layout(location = 21) uniform vec3 u_sun_dir;
@@ -110,7 +110,7 @@ void main()
     mpp /= float(gl_FragmentSizeNV.x);
 #endif
     // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
-    bool bones = u_skinned == 1 || u_skinned == 4;
+    bool bones = u_skinned == 1 || u_skinned >= 4;
     float base = bones ? TEXEL * 0.5 : TEXEL;
     bool snap = mpp < base * u_texel_on;
     vec3 dl = snap ? texel_snap(v_local, Nl, base) : vec3(0.0);

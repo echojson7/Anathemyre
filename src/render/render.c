@@ -37,6 +37,7 @@ enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2, SB_STATIC_INST = 3 };
 #define SKIN_BONES 1
 #define SKIN_INSTANCED 2
 #define SKIN_POOL 4   // кости, сетка из общего буфера: набор костей и морфы — из записи экземпляра
+#define SKIN_CACHED 5 // то же, поза и морфы уже посчитаны в кеш поз (skin.comp)
 // Разных сеток среди экземпляров прохода (с учётом уровней детализации)
 #define MAX_INST_MESHES 256
 // Участки экземпляров (деревья, трава, камни) дальше этого от глаза не рисуются: их не видно в дымке
@@ -53,6 +54,14 @@ enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2, SB_STATIC_INST = 3 };
 #define POOL_MORPH (12u * 1024u * 1024u)   // uint
 // Записей экземпляров и команд за кадр: тени, глубина, сцена и портреты
 #define POOL_RECS (4u * RENDER_MAX_ITEMS)
+// Кеш поз (skin.comp): вершин в половине (половины по чётности кадра, чтобы не писать в то, что ещё читается),
+// экземпляров за кадр (пара сетка + набор костей, общая для теней, глубины и сцены)
+#define SKIN_CACHE_VERTS (1024u * 1024u)
+#define SKIN_JOBS (2u * RENDER_MAX_ITEMS)
+#define SKIN_GROUPS (SKIN_CACHE_VERTS / 64u + SKIN_JOBS)
+#define SKIN_HASH 16384u   // степень двойки, больше SKIN_JOBS вдвое
+// Буферы кеша поз (skin.glsl, skin.comp, scene.vert)
+enum { SB_SKIN_JOB = 22, SB_SKIN_GROUP = 23, SB_SKIN_VERT = 24, SB_SKIN_SKIN = 25, SB_SKIN_OUT = 26 };
 
 // Запись экземпляра (атрибут a_rec в scene.vert): набор костей, морфов у сетки, её первая вершина и начало морфов
 typedef struct PoolRec {
@@ -66,10 +75,16 @@ typedef struct PoolCmd {
     u32 base_instance;
 } PoolCmd;
 
+// Экземпляр для skin.comp (SkinJob)
+typedef struct SkinJob {
+    u32 pose, morphs, vbase, moff, vcount, out_base, first_group, pad;
+} SkinJob;
+
 // Экземпляр в проходе: сетка выбранного уровня детализации и набор костей
 typedef struct Inst {
     const GpuMesh *mesh;
     u32            pose;   // NO_POSE — статика
+    u32            cache;  // первая вершина экземпляра в кеше поз (если он есть в этом кадре)
 } Inst;
 
 // Вызов для экземпляров одной сетки: номера экземпляров лежат в потоке с base
@@ -103,6 +118,7 @@ typedef struct Target {
 static struct {
     Arena *scratch;
     char   data_dir[512];
+    u32    prog_skin;
     u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_src_map, prog_vrs_block, prog_vrs, prog_level, prog_level_max, prog_ao;
     u32    noise_tex;  // значения hash13 в узлах решётки NOISE_N³: noise3 одной выборкой (common.glsl)
     u32    empty_vao;
@@ -150,6 +166,11 @@ static struct {
     u32    used_recs, used_cmds;     // занято в кольце текущего кадра
     bool   warned_pool, warned_recs;
     bool   mdi;
+    // Кеш поз: два полукольца вершин, задания и таблица групп (кольцо кадров)
+    u32    skin_out, skin_job[STREAM_FRAMES], skin_group[STREAM_FRAMES];
+    bool   skin_on;                  // проходы кадра берут позы людей из кеша
+    bool   warned_skin;
+    f64    stat_skin_verts;
     f64    cpu_t[TIMER_MARKS];       // CPU в метках проходов
     f64    stat_cpu[PASS_COUNT];
 } R;
@@ -221,19 +242,20 @@ static u32 compile(GLenum type, const char *defines, const char *const *files, u
     return sh;
 }
 
-static u32 link(u32 vs, u32 fs)
+// Программа из n шейдеров; шейдеры удаляются в любом случае, 0 среди них — ошибка компиляции
+static u32 link_list(const u32 *sh, u32 n)
 {
-    if (!vs || !fs) {
-        if (vs) glDeleteShader(vs);
-        if (fs) glDeleteShader(fs);
+    bool ok_all = true;
+    for (u32 i = 0; i < n; i++) ok_all = ok_all && sh[i];
+    if (!ok_all) {
+        for (u32 i = 0; i < n; i++)
+            if (sh[i]) glDeleteShader(sh[i]);
         return 0;
     }
     u32 p = glCreateProgram();
-    glAttachShader(p, vs);
-    glAttachShader(p, fs);
+    for (u32 i = 0; i < n; i++) glAttachShader(p, sh[i]);
     glLinkProgram(p);
-    glDeleteShader(vs);
-    glDeleteShader(fs);
+    for (u32 i = 0; i < n; i++) glDeleteShader(sh[i]);
     GLint ok = 0;
     glGetProgramiv(p, GL_LINK_STATUS, &ok);
     if (!ok) {
@@ -246,10 +268,17 @@ static u32 link(u32 vs, u32 fs)
     return p;
 }
 
+static u32 link(u32 vs, u32 fs)
+{
+    u32 sh[2] = { vs, fs };
+    return link_list(sh, 2);
+}
+
 bool render_reload_shaders(void)
 {
     size_t mark = R.scratch->used;
-    const char *scene_vs[] = { "scene.vert" };
+    const char *scene_vs[] = { "skin.glsl", "scene.vert" };
+    const char *skin_cs[] = { "skin.glsl", "skin.comp" };
     const char *scene_fs[] = { "common.glsl", "scene.frag" };
     const char *shadow_fs[] = { "shadow.frag" };
     const char *full_vs[] = { "fullscreen.vert" };
@@ -264,14 +293,14 @@ bool render_reload_shaders(void)
     const char *vrs_fs[] = { "vrs.frag" };
 
     const char *vrs_def = R.vrs ? "#extension GL_NV_shading_rate_image : require\n#define VRS\n" : NULL;
-    u32 scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, vrs_def, scene_fs, 2));
+    u32 scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 2), compile(GL_FRAGMENT_SHADER, vrs_def, scene_fs, 2));
     if (!scene && R.vrs) {
         // Драйвер заявил расширение, но шейдер с ним не собрался: считаем каждый пиксель
         log_error("РЕНДЕР: шейдинг блоками отключён, шейдер сцены без него");
         R.vrs = false;
-        scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, scene_fs, 2));
+        scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 2), compile(GL_FRAGMENT_SHADER, NULL, scene_fs, 2));
     }
-    u32 shadow = link(compile(GL_VERTEX_SHADER, "#define SHADOW_PASS\n", scene_vs, 1),
+    u32 shadow = link(compile(GL_VERTEX_SHADER, "#define SHADOW_PASS\n", scene_vs, 2),
                       compile(GL_FRAGMENT_SHADER, NULL, shadow_fs, 1));
     u32 rays = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, rays_fs, 2));
     u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 3));
@@ -282,11 +311,13 @@ bool render_reload_shaders(void)
     u32 level_max = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, level_max_fs, 1));
     u32 vrs_block = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_block_fs, 1));
     u32 vrs = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_fs, 1));
+    u32 skin_sh = compile(GL_COMPUTE_SHADER, NULL, skin_cs, 2);
+    u32 skin = link_list(&skin_sh, 1);
     R.scratch->used = mark;
 
-    u32 progs[] = { scene, shadow, rays, atmos, style, src_map, vrs_block, vrs, level, level_max, ao };
+    u32 progs[] = { scene, shadow, rays, atmos, style, src_map, vrs_block, vrs, level, level_max, ao, skin };
     u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style,
-                     &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs, &R.prog_level, &R.prog_level_max, &R.prog_ao };
+                     &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs, &R.prog_level, &R.prog_level_max, &R.prog_ao, &R.prog_skin };
     bool ok = true;
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) {
@@ -458,13 +489,15 @@ void render_shutdown(void)
     if (R.static_inst_buf) glDeleteBuffers(1, &R.static_inst_buf);
     if (R.pool_vao) {
         glDeleteVertexArrays(1, &R.pool_vao);
-        u32 bufs[] = { R.pool_vbo, R.pool_skin, R.pool_ibo, R.pool_morph, R.pool_rec, R.pool_cmd };
+        u32 bufs[] = { R.pool_vbo, R.pool_skin, R.pool_ibo, R.pool_morph, R.pool_rec, R.pool_cmd, R.skin_out };
         glDeleteBuffers(ARRAY_COUNT(bufs), bufs);
+        glDeleteBuffers(STREAM_FRAMES, R.skin_job);
+        glDeleteBuffers(STREAM_FRAMES, R.skin_group);
     }
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
     u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style,
-                    R.prog_src_map, R.prog_vrs_block, R.prog_vrs, R.prog_level, R.prog_level_max, R.prog_ao };
+                    R.prog_src_map, R.prog_vrs_block, R.prog_vrs, R.prog_level, R.prog_level_max, R.prog_ao, R.prog_skin };
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
         if (progs[i]) glDeleteProgram(progs[i]);
     memset(&R, 0, sizeof R);
@@ -565,6 +598,18 @@ static bool pool_init(void)
     glVertexArrayAttribBinding(vao, 5, 1);
     glVertexArrayAttribBinding(vao, 6, 2);
     R.pool_vao = vao;
+    // Кеш поз: вершины и веса читаются прямо из общего буфера
+    glCreateBuffers(1, &R.skin_out);
+    glNamedBufferStorage(R.skin_out, (GLsizeiptr)(2 * SKIN_CACHE_VERTS * 2 * 4 * sizeof(f32)), NULL, 0);
+    for (u32 i = 0; i < STREAM_FRAMES; i++) {
+        glCreateBuffers(1, &R.skin_job[i]);
+        glNamedBufferStorage(R.skin_job[i], (GLsizeiptr)(SKIN_JOBS * sizeof(SkinJob)), NULL, GL_DYNAMIC_STORAGE_BIT);
+        glCreateBuffers(1, &R.skin_group[i]);
+        glNamedBufferStorage(R.skin_group[i], (GLsizeiptr)(SKIN_GROUPS * sizeof(u32)), NULL, GL_DYNAMIC_STORAGE_BIT);
+    }
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_SKIN_VERT, R.pool_vbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_SKIN_SKIN, R.pool_skin);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_SKIN_OUT, R.skin_out);
     return true;
 }
 
@@ -583,6 +628,7 @@ bool gpu_mesh_upload_pooled(GpuMesh *gm, const MeshBuilder *mb)
     gm->pool_vbase = R.pool_verts;
     gm->pool_ibase = R.pool_indices;
     gm->pool_moff = (u32)R.pool_words;
+    gm->pool_vcount = mb->vcount;
     glNamedBufferSubData(R.pool_vbo, (GLintptr)(R.pool_verts * sizeof(Vertex)), (GLsizeiptr)(mb->vcount * sizeof(Vertex)), mb->v);
     // Жёстким сеткам — нулевые веса: в шейдере это жёсткий скиннинг, как без потока весов
     static const VertexSkin zero[1024];
@@ -745,6 +791,8 @@ void render_take_stats(RenderStats *out)
     for (u32 p = 0; p < PASS_COUNT; p++) out->cpu_ms[p] = R.stat_cpu[p] * 1000.0 * k;
     memset(R.stat_cpu, 0, sizeof R.stat_cpu);
     out->poses = R.stat_poses * k;
+    out->skin_verts = R.stat_skin_verts * k;
+    R.stat_skin_verts = 0;
     R.stat_prep = R.stat_poses = 0;
     out->vrs = R.stat_vrs;
     memset(R.stat_draws, 0, sizeof R.stat_draws);
@@ -877,7 +925,7 @@ static u32 gather(const DrawItem *items, u32 count, const PassView *pv, bool sha
         if (it->bones && g_pose[i] == NO_POSE) continue;
         if (!sphere_visible(&pv->fr, g_sphere[i])) continue;
         const GpuMesh *m = pick_lod(it->mesh, g_sphere[i], pv);
-        vis[n] = (Inst){ m, it->bones ? g_pose[i] : NO_POSE };
+        vis[n] = (Inst){ m, it->bones ? g_pose[i] : NO_POSE, 0 };
         if (!overflow) {
             u32 h = mesh_hash(m);
             while (slot_mesh[h] && slot_mesh[h] != m) h = (h + 1) & (SORT_HASH - 1);
@@ -920,6 +968,61 @@ static u32 gather(const DrawItem *items, u32 count, const PassView *pv, bool sha
     return n;
 }
 
+// Кеш поз: каждая пара сетка + набор костей из общего буфера, видимая в тенях или в сцене, — одно задание
+// skin.comp; экземпляры прохода получают начало своих вершин в кеше. false — кеша в этом кадре нет
+// (не хватило места): проходы считают позы сами, как без него
+static bool skin_prepare(Inst *const *lists, const u32 *counts, u32 nlists)
+{
+    static SkinJob job[SKIN_JOBS];
+    static u32 group_job[SKIN_GROUPS];
+    static const GpuMesh *slot_mesh[SKIN_HASH];
+    static u32 slot_pose[SKIN_HASH], slot_job[SKIN_HASH], used[SKIN_JOBS];
+    u32 half = (u32)(R.frame_no & 1u) * SKIN_CACHE_VERTS;
+    u32 nj = 0, ng = 0, verts = 0;
+    bool ok = true;
+    for (u32 l = 0; l < nlists && ok; l++)
+        for (u32 i = 0; i < counts[l] && ok; i++) {
+            Inst *it = &lists[l][i];
+            const GpuMesh *m = it->mesh;
+            if (!m->pooled || it->pose == NO_POSE) continue;
+            u32 h = (u32)((((uintptr_t)m >> 4) * 2654435761u) ^ (it->pose * 0x9E3779B1u)) & (SKIN_HASH - 1);
+            while (slot_mesh[h] && (slot_mesh[h] != m || slot_pose[h] != it->pose)) h = (h + 1) & (SKIN_HASH - 1);
+            if (!slot_mesh[h]) {
+                u32 groups = (m->pool_vcount + 63u) / 64u;
+                if (nj == SKIN_JOBS || verts + m->pool_vcount > SKIN_CACHE_VERTS || ng + groups > SKIN_GROUPS) {
+                    ok = false;
+                    break;
+                }
+                slot_mesh[h] = m;
+                slot_pose[h] = it->pose;
+                slot_job[h] = nj;
+                used[nj] = h;
+                job[nj] = (SkinJob){ it->pose, m->morph_count, m->pool_vbase, m->pool_moff, m->pool_vcount, half + verts, ng, 0 };
+                for (u32 g = 0; g < groups; g++) group_job[ng++] = nj;
+                verts += m->pool_vcount;
+                nj++;
+            }
+            it->cache = job[slot_job[h]].out_base;
+        }
+    for (u32 j = 0; j < nj; j++) slot_mesh[used[j]] = NULL;
+    if (!ok) {
+        if (!R.warned_skin) log_error("РЕНДЕР: кеш поз мал (вершин больше %u), позы считаются в проходах", SKIN_CACHE_VERTS);
+        R.warned_skin = true;
+        return false;
+    }
+    if (!ng) return true;
+    glNamedBufferSubData(R.skin_job[R.stream], 0, (GLsizeiptr)(nj * sizeof(SkinJob)), job);
+    glNamedBufferSubData(R.skin_group[R.stream], 0, (GLsizeiptr)(ng * sizeof(u32)), group_job);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_SKIN_JOB, R.skin_job[R.stream]);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_SKIN_GROUP, R.skin_group[R.stream]);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_MORPH, R.pool_morph);
+    glUseProgram(R.prog_skin);
+    glDispatchCompute(ng, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    R.stat_skin_verts += verts;
+    return true;
+}
+
 // Подряд идущие экземпляры одной сетки: статика по одному, скелетные — все сразу
 typedef struct InstRun {
     u32 first, end;
@@ -946,7 +1049,8 @@ static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
             if (R.used_recs + nr + (j - i) <= POOL_RECS) {
                 r->cmd = (i32)nc;
                 cmd[nc++] = (PoolCmd){ m->index_count, j - i, m->pool_ibase, (i32)m->pool_vbase, R.used_recs + nr };
-                for (u32 k = i; k < j; k++) rec[nr++] = (PoolRec){ in[k].pose, m->morph_count, m->pool_vbase, m->pool_moff };
+                for (u32 k = i; k < j; k++)
+                    rec[nr++] = (PoolRec){ in[k].pose, R.skin_on ? in[k].cache : m->morph_count, m->pool_vbase, m->pool_moff };
             } else {
                 if (!R.warned_recs) log_error("РЕНДЕР: записей экземпляров больше %u за кадр, лишние не рисуются", POOL_RECS);
                 R.warned_recs = true;
@@ -976,7 +1080,7 @@ static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
             while (q2 < nrun && run[q2].cmd >= 0) q2++;
             if (!pool_on) {
                 glBindVertexArray(R.pool_vao);
-                glUniform1i(U_SKINNED, SKIN_POOL);
+                glUniform1i(U_SKINNED, R.skin_on ? SKIN_CACHED : SKIN_POOL);
                 glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_MORPH, R.pool_morph);
                 pool_on = true;
             }
@@ -1344,6 +1448,13 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     }
     R.stat_frames++;
     pass_mark(0);
+    // Позы людей раз за кадр: тени, глубина и сцена берут готовое (время — в проходе теней)
+    R.skin_on = false;
+    if (rs->skin_cache && R.pool_vao && R.prog_skin) {
+        Inst *lists[2] = { g_inst[0], g_inst[1] };
+        u32 counts[2] = { n_shadow, n_scene };
+        R.skin_on = skin_prepare(lists, counts, 2);
+    }
     R.stat_items = count;
 
     // 1. Тени
@@ -1457,6 +1568,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     draw_insts(g_inst[1], n_scene, base_scene, 1);
     draw_groups(g_idraw[1], ng_scene, 1);
     draw_terrain(&scene_view, 1);
+    R.skin_on = false;   // портреты считают позы сами
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
     pass_mark(3);
