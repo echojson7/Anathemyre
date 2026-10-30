@@ -1,4 +1,4 @@
-// Linux: X11 + GLX. libGL подгружается через dlopen, без линковки и заголовков GL
+// Linux: X11 + GLX или Vulkan. libGL и libvulkan подгружаются через dlopen, без линковки и заголовков
 #define _GNU_SOURCE
 #include "platform.h"
 
@@ -53,6 +53,8 @@ static struct {
     Colormap cmap;
     Atom     wm_delete;
     void    *libgl;
+    void    *libvk;
+    bool     vulkan;   // окно без GL-контекста, выводит rb_vk.c
     GLXContext ctx;
     i32      width, height;
     bool     have_mouse;
@@ -83,8 +85,52 @@ void platform_preinit(void)
 {
 }
 
+void platform_use_vulkan(void)
+{
+    g_x.vulkan = true;
+}
+
+static bool init_window(const char *title, i32 width, i32 height, Visual *visual, int depth)
+{
+    Window root = RootWindow(g_x.dpy, DefaultScreen(g_x.dpy));
+    g_x.cmap = XCreateColormap(g_x.dpy, root, visual, AllocNone);
+
+    XSetWindowAttributes swa;
+    memset(&swa, 0, sizeof swa);
+    swa.colormap = g_x.cmap;
+    swa.background_pixel = 0;
+    swa.border_pixel = 0;
+    swa.event_mask = KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
+                     PointerMotionMask | StructureNotifyMask | FocusChangeMask;
+    g_x.win = XCreateWindow(g_x.dpy, root, 0, 0, (unsigned)width, (unsigned)height, 0, depth,
+                            InputOutput, visual,
+                            CWColormap | CWBorderPixel | CWBackPixel | CWEventMask, &swa);
+    if (!g_x.win) {
+        log_error("X11: окно не создано");
+        return false;
+    }
+    XStoreName(g_x.dpy, g_x.win, title);
+    g_x.wm_delete = XInternAtom(g_x.dpy, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(g_x.dpy, g_x.win, &g_x.wm_delete, 1);
+    XkbSetDetectableAutoRepeat(g_x.dpy, True, NULL);
+    XMapWindow(g_x.dpy, g_x.win);
+    g_x.width = width;
+    g_x.height = height;
+    return true;
+}
+
 bool platform_init(const char *title, i32 width, i32 height, bool gl_debug)
 {
+    if (g_x.vulkan) {
+        g_x.dpy = XOpenDisplay(NULL);
+        if (!g_x.dpy) {
+            log_error("X11: нет дисплея");
+            return false;
+        }
+        XSetErrorHandler(x_error_handler);
+        int screen = DefaultScreen(g_x.dpy);
+        return init_window(title, width, height, DefaultVisual(g_x.dpy, screen), DefaultDepth(g_x.dpy, screen));
+    }
     g_x.libgl = dlopen("libGL.so.1", RTLD_NOW | RTLD_LOCAL);
     if (!g_x.libgl) {
         log_error("libGL.so.1 не найдена: %s", dlerror());
@@ -133,31 +179,9 @@ bool platform_init(const char *title, i32 width, i32 height, bool gl_debug)
         log_error("GLX: нет visual");
         return false;
     }
-    Window root = RootWindow(g_x.dpy, screen);
-    g_x.cmap = XCreateColormap(g_x.dpy, root, vi->visual, AllocNone);
-
-    XSetWindowAttributes swa;
-    memset(&swa, 0, sizeof swa);
-    swa.colormap = g_x.cmap;
-    swa.background_pixel = 0;
-    swa.border_pixel = 0;
-    swa.event_mask = KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
-                     PointerMotionMask | StructureNotifyMask | FocusChangeMask;
-    g_x.win = XCreateWindow(g_x.dpy, root, 0, 0, (unsigned)width, (unsigned)height, 0, vi->depth,
-                            InputOutput, vi->visual,
-                            CWColormap | CWBorderPixel | CWBackPixel | CWEventMask, &swa);
+    bool ok = init_window(title, width, height, vi->visual, vi->depth);
     XFree(vi);
-    if (!g_x.win) {
-        log_error("X11: окно не создано");
-        return false;
-    }
-    XStoreName(g_x.dpy, g_x.win, title);
-    g_x.wm_delete = XInternAtom(g_x.dpy, "WM_DELETE_WINDOW", False);
-    XSetWMProtocols(g_x.dpy, g_x.win, &g_x.wm_delete, 1);
-    XkbSetDetectableAutoRepeat(g_x.dpy, True, NULL);
-    XMapWindow(g_x.dpy, g_x.win);
-    g_x.width = width;
-    g_x.height = height;
+    if (!ok) return false;
 
     PFN_glXCreateContextAttribsARB CreateContextAttribs =
         (PFN_glXCreateContextAttribsARB)g_x.GetProcAddress((const unsigned char *)"glXCreateContextAttribsARB");
@@ -197,6 +221,7 @@ void platform_shutdown(void)
         XCloseDisplay(g_x.dpy);
     }
     if (g_x.libgl) dlclose(g_x.libgl);
+    if (g_x.libvk) dlclose(g_x.libvk);
     memset(&g_x, 0, sizeof g_x);
 }
 
@@ -290,11 +315,13 @@ void platform_poll(Input *in)
 
 void platform_swap(void)
 {
+    if (g_x.vulkan) return;
     g_x.SwapBuffers(g_x.dpy, g_x.win);
 }
 
 void platform_set_vsync(bool on)
 {
+    if (g_x.vulkan) return;
     PFN_glXSwapIntervalEXT f =
         (PFN_glXSwapIntervalEXT)g_x.GetProcAddress((const unsigned char *)"glXSwapIntervalEXT");
     if (f) f(g_x.dpy, g_x.win, on ? 1 : 0);
@@ -319,6 +346,24 @@ void platform_window_size(i32 *w, i32 *h)
 {
     *w = g_x.width;
     *h = g_x.height;
+}
+
+PlatformNative platform_native(void)
+{
+    return (PlatformNative){ .display = g_x.dpy, .window = (u64)g_x.win };
+}
+
+PlatformProc platform_vk_loader(void)
+{
+    if (!g_x.libvk) g_x.libvk = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+    if (!g_x.libvk) {
+        log_error("libvulkan.so.1 не найдена: %s", dlerror());
+        return NULL;
+    }
+    void *p = dlsym(g_x.libvk, "vkGetInstanceProcAddr");
+    PlatformProc f;
+    memcpy(&f, &p, sizeof f);
+    return f;
 }
 
 PlatformProc platform_gl_proc(const char *name)

@@ -70,6 +70,8 @@ typedef struct Options {
     bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
     bool        ao_half;     // AO в половинном разрешении
     bool        noise_tex;   // шум материалов из 3D-текстуры (по умолчанию; --hash-noise — прежний счёт хешами)
+    bool        no_mdi;      // люди по вызову на сетку (сравнение с одним вызовом на проход)
+    bool        no_skin_cache; // позы людей в каждом проходе (сравнение с кешем поз)
     bool        fullscreen;  // окно без рамки на весь монитор
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
@@ -152,6 +154,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
         else if (!strcmp(a, "--ao-half")) o->ao_half = true;
         else if (!strcmp(a, "--hash-noise")) o->noise_tex = false;
+        else if (!strcmp(a, "--no-mdi")) o->no_mdi = true;
+        else if (!strcmp(a, "--no-skin-cache")) o->no_skin_cache = true;
         else if (!strcmp(a, "--fullscreen")) o->fullscreen = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
@@ -318,7 +322,7 @@ int main(int argc, char **argv)
     DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, RENDER_MAX_ITEMS);
     Settings set = {
         .rs = { .post = true, .pixel = !opt.no_pixel, .vrs = !opt.no_vrs,
-                .ao_half = opt.ao_half, .noise_tex = opt.noise_tex },
+                .ao_half = opt.ao_half, .noise_tex = opt.noise_tex, .mdi = !opt.no_mdi, .skin_cache = !opt.no_skin_cache },
         .vsync = !opt.no_vsync && opt.shot_path == NULL, .fullscreen = opt.fullscreen && opt.shot_path == NULL,
         // Swap после логики: пока GPU рисует прошлый кадр, CPU уже считает следующий (только без vsync,
         // иначе кадр показывался бы на период позже)
@@ -580,6 +584,7 @@ int main(int argc, char **argv)
         items[n++] = (DrawItem){ .mesh = &world->hall };
         items[n++] = (DrawItem){ .mesh = &world->far, .no_shadow = true };
         items[n++] = (DrawItem){ .mesh = &world->town_mesh };
+        items[n++] = (DrawItem){ .mesh = &world->ostov };
         n += valley_view_draw(valley, fv.cam_pos, items + n);
         prof_zone(PZ_FIGURES);
         if (st_people) {

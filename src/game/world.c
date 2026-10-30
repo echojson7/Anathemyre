@@ -8,6 +8,7 @@
 #include "../io/save.h"
 #include "../world/map.h"
 #include "names.h"
+#include "ostov.h"
 #include "testroom.h"
 
 #define CROWD_SIZE 9
@@ -59,6 +60,11 @@ bool world_init(World *w, Arena *perm, MeshBuilder *mb, u64 seed, f32 tod, bool 
     town_build(mb, &w->town_rng, &w->town);
     gpu_mesh_upload(&w->town_mesh, mb);
     log_info("МИР: Скудель — %u треугольников, домов %u, прилавков %u", mb->icount / 3, w->town.houses, w->town.stalls);
+    perm->used = mark;
+    mb_init(mb, perm, 400000, 1200000);
+    ostov_build(mb);
+    gpu_mesh_upload(&w->ostov, mb);
+    log_info("МИР: Остов — %u треугольников", mb->icount / 3);
     perm->used = mark;
 
     // Арена: те же бои, что в --arena-bench с этим seed, но в реальном времени

@@ -8,18 +8,7 @@ in vec3 v_local;
 flat in mat3 v_rot;
 flat in vec3 v_tint;
 
-layout(location = 17) uniform int u_skinned;
-layout(location = 18) uniform mat4 u_light_vp;
-layout(location = 20) uniform vec3 u_cam_pos;
-layout(location = 21) uniform vec3 u_sun_dir;
-layout(location = 22) uniform vec3 u_sun_color;
-layout(location = 23) uniform float u_time;
-layout(location = 24) uniform vec3 u_sky_amb;
-layout(location = 25) uniform vec3 u_ground_amb;
-layout(location = 27) uniform float u_texel_on; // 0 — пиксельность выключена (RenderSettings.pixel)
-layout(location = 26) uniform int u_unlit;   // портреты интерфейса: свой неподвижный свет
-layout(location = 51) uniform int u_shadow_on;  // 0 — тени выключены (ЭТАП СЦЕНЫ): карта теней не читается
-layout(binding = 0) uniform sampler2DShadow u_shadow;
+layout(binding = 6) uniform sampler2DShadow u_shadow;
 
 out vec4 o_color;
 
@@ -105,12 +94,13 @@ void main()
     // одинаково на всех поверхностях. Где квадрат мельче пикселя кадра, пикселем служит пиксель кадра
     vec3 Nl = normalize(transpose(v_rot) * N);
     float mpp = max(length(dFdx(v_local)), length(dFdy(v_local)));
-#ifdef VRS
+#ifdef RB_FRAG_SIZE
     // При шейдинге блоком производные берутся через блок: приводим к пикселю кадра
-    mpp /= float(gl_FragmentSizeNV.x);
+    mpp /= float(RB_FRAG_SIZE.x);
 #endif
     // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
-    float base = u_skinned == 1 ? TEXEL * 0.5 : TEXEL;
+    bool bones = u_skinned == 1 || u_skinned >= 4;
+    float base = bones ? TEXEL * 0.5 : TEXEL;
     bool snap = mpp < base * u_texel_on;
     vec3 dl = snap ? texel_snap(v_local, Nl, base) : vec3(0.0);
     vec3 P = v_local + dl;           // материал: прилипает к телу
@@ -310,7 +300,7 @@ void main()
         col += albedo * li + li * spec * pow(max(dot(N, normalize(Ld + V)), 0.0), gloss);
     }
     // Контровой свет от дымки: фигуры читаются силуэтом
-    if (u_skinned == 1) {
+    if (bones) {
         float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
         col += (u_sky_amb + u_ground_amb) * rim * 0.35;
     }

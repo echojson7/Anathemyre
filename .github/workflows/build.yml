@@ -13,13 +13,29 @@ jobs:
       - name: Зависимости
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential clang libclang-rt-18-dev libx11-dev xvfb xauth libgl1 libgl1-mesa-dri python3-pil
+          sudo apt-get install -y --no-install-recommends build-essential clang libclang-rt-18-dev libx11-dev xvfb xauth libgl1 libgl1-mesa-dri python3-pil \
+            mesa-vulkan-drivers vulkan-validationlayers glslang-tools spirv-tools
 
       - name: Релиз, gcc, без предупреждений
         run: make -j"$(nproc)" WERROR=1 CC=gcc
 
       - name: Отладка с ASan/UBSan, clang
         run: make debug -j"$(nproc)" WERROR=1 CC=clang
+
+      - name: Vulkan — vk.h и SPIR-V совпадают с исходниками (vkgen, glslang, spirv-val)
+        run: |
+          ./tools/vkgen/gen.sh --check
+          ./tools/spv/build.sh --check
+
+      - name: Vulkan под ASan на lavapipe (validation, пиксели кадра, переворот)
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+          LSAN_OPTIONS: suppressions=tools/lsan.supp
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          make vkcheck -j"$(nproc)" WERROR=1 CC=clang
+          xvfb-run -a -s "-screen 0 1280x720x24" ./build/vkcheck --frames 60 --verify --present mailbox --shot build/vk.ppm
+          python3 -c "from PIL import Image; Image.open('build/vk.ppm').save('build/vk.png')"
 
       - name: Кадр под ASan (программный рендер)
         env:
@@ -81,6 +97,7 @@ jobs:
           path: |
             build/shot.png
             build/valley.png
+            build/vk.png
             build/sound.wav
 
   windows:
@@ -97,6 +114,7 @@ jobs:
         run: |
           make -j"$(nproc)" WERROR=1 TARGET_OS=windows
           make debug -j"$(nproc)" WERROR=1 TARGET_OS=windows
+          make vkcheck -j"$(nproc)" WERROR=1 TARGET_OS=windows
 
       - name: Только системные DLL
         run: |

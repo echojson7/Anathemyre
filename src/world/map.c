@@ -80,10 +80,17 @@ static f32 town_flat(f32 x, f32 z)
     return clampf((sqrtf(dx * dx + dz * dz) - 30.0f) / 50.0f, 0.0f, 1.0f);
 }
 
-// Лагерь: площадки у зала и посёлка ровные, дальше мелкие дюны
+// Площадка Остова (руина к западу от зала, game/ostov.c) ровная, с запасом вокруг
+static f32 ostov_flat(f32 x, f32 z)
+{
+    f32 dx = fmaxf(fmaxf(-100.0f - x, x + 60.0f), 0.0f), dz = fmaxf(fmaxf(-52.0f - z, z - 22.0f), 0.0f);
+    return clampf((sqrtf(dx * dx + dz * dz) - 6.0f) / 40.0f, 0.0f, 1.0f);
+}
+
+// Лагерь: площадки у зала, посёлка и Остова ровные, дальше мелкие дюны
 static f32 camp_height(f32 x, f32 z, f32 r)
 {
-    f32 flat = fminf(clampf((r - 45.0f) / 60.0f, 0.0f, 1.0f), town_flat(x, z));
+    f32 flat = fminf(fminf(clampf((r - 45.0f) / 60.0f, 0.0f, 1.0f), town_flat(x, z)), ostov_flat(x, z));
     if (flat <= 0.0f) return -0.05f;
     return -0.05f + flat * flat * (dunes_near(x, z) - 0.6f) * 9.0f;
 }

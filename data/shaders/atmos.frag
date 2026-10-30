@@ -2,16 +2,9 @@
 
 in vec2 v_uv;
 
-layout(location = 32) uniform vec3 u_sun_dir;
-layout(location = 33) uniform vec3 u_sun_color;
-layout(location = 35) uniform float u_time;
-layout(location = 38) uniform vec3 u_haze;
-layout(location = 39) uniform vec3 u_zenith;
-layout(binding = 0) uniform sampler2D u_color;
-layout(binding = 3) uniform sampler2D u_rays;   // rays.frag, половинное разрешение
-layout(binding = 4) uniform sampler2D u_ao;     // ao.frag, половинное разрешение
-layout(location = 47) uniform int u_ao_half;    // 1 — AO из половинного разрешения
-layout(location = 52) uniform int u_parts;      // бит 0 — объёмные лучи, бит 1 — AO (ЭТАП СЦЕНЫ)
+layout(binding = 8) uniform sampler2D u_color;
+layout(binding = 9) uniform sampler2D u_rays;   // rays.frag, половинное разрешение
+layout(binding = 10) uniform sampler2D u_ao;     // ao.frag, половинное разрешение
 
 out vec4 o_color;
 
@@ -72,7 +65,7 @@ vec3 light_glow(vec3 dir, float dist)
     vec3 s = vec3(0.0);
     for (int i = 0; i < l_count.x; i++) {
         if (l_dir[i].w <= 0.0) continue;
-        vec3 q = l_pos[i].xyz - u_cam;
+        vec3 q = l_pos[i].xyz - u_cam_pos;
         float tc = dot(q, dir);
         // Светится пыль только у самого огня: ореол не шире метра, к краю сходит в ноль
         const float r = 1.0;
@@ -92,7 +85,7 @@ void main()
     vec2 uv = v_uv;
     float d = texture(u_depth, uv).r;
     vec3 P = world_at(uv, d);
-    vec3 ray = P - u_cam;
+    vec3 ray = P - u_cam_pos;
     float dist = length(ray);
     vec3 dir = ray / dist;
     bool is_sky = d >= 1.0;
@@ -109,7 +102,7 @@ void main()
     // Высотный туман: плотнее у земли
     float a = 0.003, b = 0.05;
     float dy = abs(dir.y) < 1e-4 ? 1e-4 : dir.y;
-    float fog_amount = a / b * exp(-u_cam.y * b) * (1.0 - exp(-dist * dy * b)) / dy;
+    float fog_amount = a / b * exp(-u_cam_pos.y * b) * (1.0 - exp(-dist * dy * b)) / dy;
     fog_amount += dist * 0.0005;
     // Ограничение: дальние мегаструктуры остаются силуэтами, а не тонут целиком
     if (!is_sky) fog_amount = min(fog_amount, 1.25);

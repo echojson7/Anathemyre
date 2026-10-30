@@ -1,0 +1,32 @@
+// Кеш поз: раз за кадр поза и морфы каждой видимой вершины людей (общий буфер сеток, render.c),
+// тени, глубина и сцена берут готовое (scene.vert, режим 5). Поток на вершину, группа — 64 вершины одной сетки
+layout(local_size_x = 64) in;
+
+// Экземпляр: набор костей, морфов у сетки, первая вершина и начало морфов в общем буфере, вершин,
+// куда писать в кеше, первая группа экземпляра
+struct SkinJob { uint pose, morphs, vbase, moff, vcount, out_base, first_group, pad; };
+layout(std430, binding = 22) readonly buffer JobBuf { SkinJob jobs[]; };
+layout(std430, binding = 23) readonly buffer GroupBuf { uint group_job[]; };
+// Вершины общего буфера (Vertex, 8 uint) и веса (VertexSkin, 2 uint)
+layout(std430, binding = 24) readonly buffer VertBuf { uint verts[]; };
+layout(std430, binding = 25) readonly buffer SkinBuf { uint skins[]; };
+// На вершину два vec4: положение (w — сумма весов, как в scene.vert) и нормаль
+layout(std430, binding = 26) writeonly buffer SkinOut { vec4 skin_out[]; };
+
+void main()
+{
+    uint g = gl_WorkGroupID.x;
+    SkinJob j = jobs[group_job[g]];
+    uint i = (g - j.first_group) * 64u + gl_LocalInvocationID.x;
+    if (i >= j.vcount) return;
+    uint v = (j.vbase + i) * 8u, s = (j.vbase + i) * 2u;
+    vec4 p = vec4(uintBitsToFloat(verts[v]), uintBitsToFloat(verts[v + 1u]), uintBitsToFloat(verts[v + 2u]), 1.0);
+    vec3 n = vec3(uintBitsToFloat(verts[v + 3u]), uintBitsToFloat(verts[v + 4u]), uintBitsToFloat(verts[v + 5u]));
+    uint sb = skins[s];
+    uvec4 bi = uvec4(sb & 255u, (sb >> 8u) & 255u, (sb >> 16u) & 255u, sb >> 24u);
+    vec4 bw = unpackUnorm4x8(skins[s + 1u]);
+    skin_apply(j.pose * 24u, int(j.morphs), i, j.moff, bi, bw, (verts[v + 7u] >> 8u) & 255u, p, n);
+    uint o = (j.out_base + i) * 2u;
+    skin_out[o] = p;
+    skin_out[o + 1u] = vec4(n, 0.0);
+}

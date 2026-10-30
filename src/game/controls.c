@@ -8,6 +8,7 @@
 #include "../render/ui.h"
 #include "../world/map.h"
 #include "figures.h"
+#include "ostov.h"
 
 const char *const g_stage_name[STAGE_COUNT] = {
     "ПУСТО", "ТЕНИ", "НЕБО И ТУМАН", "ЛУЧИ", "AO", "ПИКСЕЛЬНОСТЬ", "ФИЛЬТР", "РАСТЕНИЯ", "ШАГ МИРА", "ЛЮДИ", "СУТКИ И ОГНИ", "ПОЛНАЯ",
@@ -45,6 +46,8 @@ void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool h
         hud_debug_check(h, "ШЕЙДИНГ БЛОКАМИ", &rs->vrs);
         hud_debug_check(h, "AO ВПОЛОВИНУ", &rs->ao_half);
         hud_debug_check(h, "ШУМ ИЗ ТЕКСТУРЫ", &rs->noise_tex);
+        if (hud_debug_check(h, "ЛЮДИ ОДНИМ ВЫЗОВОМ", &rs->mdi)) log_info("ЛЮДИ ОДНИМ ВЫЗОВОМ: %s", rs->mdi ? "вкл" : "выкл");
+        if (hud_debug_check(h, "ПОЗЫ РАЗ ЗА КАДР", &rs->skin_cache)) log_info("ПОЗЫ РАЗ ЗА КАДР: %s", rs->skin_cache ? "вкл" : "выкл");
         if (hud_debug_check(h, "VSYNC", &s->vsync)) {
             platform_set_vsync(s->vsync);
             log_info("VSYNC: %s", s->vsync ? "вкл" : "выкл");
@@ -55,6 +58,7 @@ void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool h
         if (hud_debug_check(h, "КАМЕРА СЛЕДУЕТ", &s->follow) && s->follow) cam->dist = MIN(cam->dist, 8.0f);
         bool humans_want = humans_on;
         if (hud_debug_button(h, world_squad_in_valley(w) ? "ПЕРЕХОД: В ЛАГЕРЬ" : "ПЕРЕХОД: В ДОЛИНУ")) s->travel = true;
+        if (hud_debug_button(h, "КАМЕРА: В ОСТОВ")) *cam = OSTOV_CAM;
         if (hud_debug_button(h, "ОТРЯДЫ ВДАЛИ: ПУСТИТЬ ПРОБНЫЕ")) s->bands_test = true;
         if (hud_debug_button(h, "МИР: СОХРАНИТЬ")) s->save = true;
         if (hud_debug_button(h, "МИР: ЗАГРУЗИТЬ")) s->load = true;
