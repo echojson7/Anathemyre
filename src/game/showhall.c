@@ -424,7 +424,8 @@ typedef struct ClipLoop {
 static const ClipLoop g_loops[CL_COUNT] = {
     [CL_KNOCK] = { "СБИТ С НОГ И ВСТАЁТ",
                    { { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S, 0 }, { "ВСТАЁТ", CLIP_GETUP, SH_GETUP_S, 0 },
-                     { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ПАДАЕТ", CLIP_FALL, SH_FALL_S, 0 } } },
+                     { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ПАДАЕТ", CLIP_FALL, SH_FALL_S, 0 } },
+                   .fall = CHAR_FALL_BACK },
     [CL_FAINT_DOWN] = { "ОБМОРОК НИЧКОМ",
                         { { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ОСЕДАЕТ", CLIP_COLLAPSE, SH_COLLAPSE_S, 0 },
                           { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S, 0 }, { "ВСТАЁТ", CLIP_GETUP, SH_GETUP_FRONT_S, 0 } },
@@ -455,13 +456,16 @@ static const ClipLoop g_loops[CL_COUNT] = {
                   .prone = true },
     [CL_TURN] = { "СО СПИНЫ НА ЖИВОТ",
                   { { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S, 0 }, { "ПЕРЕВОРАЧИВАЕТСЯ", CLIP_TURN, SH_TURN_S, 0 },
-                    { "ПОЛЗЁТ", CLIP_CRAWL, SH_LIE_S, 0 }, { "ОБРАТНО", CLIP_TURN, SH_TURN_S, 1 } } },
+                    { "ПОЛЗЁТ", CLIP_CRAWL, SH_LIE_S, 0 }, { "ОБРАТНО", CLIP_TURN, SH_TURN_S, 1 } },
+                   .fall = CHAR_FALL_BACK },
     [CL_PICKUP] = { "ПОДНИМАЕТ ОРУЖИЕ",
                     { { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ПОДНИМАЕТ", CLIP_PICKUP, SH_PICKUP_S, 0 },
-                      { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ОБРАТНО", CLIP_PICKUP, SH_PICKUP_S, 1 } } },
+                      { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ОБРАТНО", CLIP_PICKUP, SH_PICKUP_S, 1 } },
+                   .fall = CHAR_FALL_BACK },
     [CL_KNEEL] = { "СДАЁТСЯ",
                    { { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "НА КОЛЕНИ", CLIP_KNEEL, SH_KNEEL_S, 0 },
-                     { "НА КОЛЕНЯХ", CLIP_KNEEL, SH_LIE_S, 0 }, { "ОБРАТНО", CLIP_KNEEL, SH_KNEEL_S, 1 } } },
+                     { "НА КОЛЕНЯХ", CLIP_KNEEL, SH_LIE_S, 0 }, { "ОБРАТНО", CLIP_KNEEL, SH_KNEEL_S, 1 } },
+                   .fall = CHAR_FALL_BACK },
 };
 
 static void clip_cycle(Exhibit *e, f32 T, CharAction *a)
