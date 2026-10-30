@@ -125,6 +125,9 @@ typedef struct RenderSettings {
     bool light_expo;    // автоэкспозиция: глаз привыкает к темноте и к яркому свету
     bool light_bloom;   // слабое свечение ярких мест, как в объективе
     u8   light_gi;      // LIGHT_GI_*: отражённый свет (рассеянный свет неба и земли)
+    bool light_casc;    // каскады теней до 700 м (иначе тени только в ±45 м)
+    bool light_soft;    // мягкий край тени по расстоянию до заслонки (PCSS)
+    bool light_contact; // контактные тени с экрана: щели, ступни, складки
 } RenderSettings;
 
 enum { LIGHT_MAT_OLD, LIGHT_MAT_GGX, LIGHT_MAT_COUNT };

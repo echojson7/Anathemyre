@@ -17,11 +17,12 @@ const char *const g_stage_name[STAGE_COUNT] = {
 
 const char *const g_light_preset_name[LIGHT_PRESET_COUNT] = { "ПРЕЖНИЙ", "БЫСТРЫЙ", "РЕАЛИСТИЧНЫЙ" };
 
-// Части СВЕТА в наборе: материалы, кривая, автоэкспозиция, свечение, отражённый свет
-static const u8 light_preset_parts[LIGHT_PRESET_COUNT][5] = {
-    { LIGHT_MAT_OLD, LIGHT_CURVE_ACES, 0, 0, LIGHT_GI_SIMPLE },
-    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 0, 0, LIGHT_GI_SKY },
-    { LIGHT_MAT_GGX, LIGHT_CURVE_AGX, 1, 1, LIGHT_GI_SKY },
+// Части СВЕТА в наборе: материалы, кривая, автоэкспозиция, свечение, отражённый свет, каскады, мягкий край,
+// контактные тени
+static const u8 light_preset_parts[LIGHT_PRESET_COUNT][8] = {
+    { LIGHT_MAT_OLD, LIGHT_CURVE_ACES, 0, 0, LIGHT_GI_SIMPLE, 0, 0, 0 },
+    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 0, 0, LIGHT_GI_SKY, 1, 0, 1 },
+    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 1, 1, LIGHT_GI_SKY, 1, 1, 1 },
 };
 
 void light_preset_apply(RenderSettings *rs, LightPreset p)
@@ -32,6 +33,9 @@ void light_preset_apply(RenderSettings *rs, LightPreset p)
     rs->light_expo = v[2];
     rs->light_bloom = v[3];
     rs->light_gi = v[4];
+    rs->light_casc = v[5];
+    rs->light_soft = v[6];
+    rs->light_contact = v[7];
 }
 
 LightPreset light_preset_of(const RenderSettings *rs)
@@ -39,7 +43,7 @@ LightPreset light_preset_of(const RenderSettings *rs)
     for (u32 p = 0; p < LIGHT_PRESET_COUNT; p++) {
         const u8 *v = light_preset_parts[p];
         if (rs->light_mat == v[0] && rs->light_curve == v[1] && rs->light_expo == v[2] && rs->light_bloom == v[3] &&
-            rs->light_gi == v[4])
+            rs->light_gi == v[4] && rs->light_casc == v[5] && rs->light_soft == v[6] && rs->light_contact == v[7])
             return (LightPreset)p;
     }
     return LIGHT_PRESET_COUNT;
@@ -74,6 +78,10 @@ static void menu_light(Hud *h, Settings *s, World *w, RtsCamera *cam, const Fram
         else snprintf(sv, sizeof sv, "%s", ready ? "ГОТОВА" : "НЕТ");
         hud_form_text(f, "СЕТКА НЕБА", sv);
     }
+    hud_form_head(f, "ТЕНИ СОЛНЦА");
+    hud_form_check(f, "КАСКАДЫ ДО 700 М", &rs->light_casc);
+    hud_form_check(f, "МЯГКИЙ КРАЙ", &rs->light_soft);
+    hud_form_check(f, "КОНТАКТНЫЕ ТЕНИ", &rs->light_contact);
     hud_form_head(f, "ПОВЕРХНОСТИ");
     if ((d = hud_form_step(f, "МАТЕРИАЛЫ", mat_name[rs->light_mat])))
         rs->light_mat = (u8)((rs->light_mat + LIGHT_MAT_COUNT + (u32)d) % LIGHT_MAT_COUNT);

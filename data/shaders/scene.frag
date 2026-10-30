@@ -8,7 +8,6 @@ layout(location = 4) in vec3 v_local;
 layout(location = 5) flat in mat3 v_rot;
 layout(location = 8) flat in vec3 v_tint;
 
-layout(binding = 6) uniform sampler2DShadow u_shadow;
 layout(std430, binding = 31) readonly buffer SkyGrid { vec4 g_sky_origin; uint g_sky[]; };
 
 layout(location = 0) out vec4 o_color;
@@ -91,6 +90,18 @@ float sun_shadow(vec3 p, vec3 n)
         for (int x = -1; x <= 1; x++)
             sum += texture(u_shadow, vec3(s.xy + vec2(x, y) * texel * 1.2, s.z));
     return sum / 9.0;
+}
+
+// Солнце с учётом частей СВЕТ: без них — прежняя карта ±45 м как была
+float sun_light(vec3 p, vec3 n)
+{
+    if (u_shade.x == 0 && u_shade.y == 0) return sun_shadow(p, n);
+    float w0 = casc0_weight(p);
+    float s0 = w0 > 0.0 ? (u_shade.y != 0 ? sun_shadow_soft(p, n) : sun_shadow(p, n)) : 1.0;
+    if (u_shade.x == 0 || w0 >= 1.0) return s0;
+    float w1 = casc1_weight(p);
+    float s12 = w1 >= 1.0 ? casc_shadow(0, p, n) : mix(casc_shadow(1, p, n), casc_shadow(0, p, n), w1);
+    return mix(s12, s0, w0);
 }
 
 // Знаки на неизвестном языке пиксельным шрифтом: ячейка 6x8 квадратов TEXEL (знак 5x7 и зазор),
@@ -312,7 +323,7 @@ void main()
 
     // Листва и трава просвечивают: свет заходит и на обратную сторону
     float ndl = foliage ? 0.25 + 0.5 * max(dot(N, L), 0.0) + 0.25 * abs(dot(N, L)) : max(dot(N, L), 0.0);
-    float sh = ndl > 0.0 ? (u_shadow_on != 0 ? sun_shadow(W, N) : 1.0) : 0.0;
+    float sh = ndl > 0.0 ? (u_shadow_on != 0 ? sun_light(W, N) * contact_shadow() : 1.0) : 0.0;
 
     // Небо и отражённый от песка свет (0.6 — тени темнее, решение пользователя 2026-10-29)
     vec3 ambient = mix(u_ground_amb, u_sky_amb, N.y * 0.5 + 0.5) * 0.6;
