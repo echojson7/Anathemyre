@@ -39,6 +39,7 @@ void combat_events_done(CombatWorld *w)
 
 void combat_set_state(CombatWorld *w, u32 i, u8 s, f32 dur)
 {
+    // Как ляжет (prone), решают go_down, begin_getup и check_body до смены состояния
     w->state[i] = s;
     w->timer[i] = dur;
     w->dur[i] = dur;
@@ -207,18 +208,23 @@ static bool legs_hold(const CombatWorld *w, u32 i)
 static void begin_getup(CombatWorld *w, u32 i)
 {
     if (!legs_hold(w, i)) {
-        w->prone[i] = 1;
+        w->prone[i] = LIE_FRONT;
         combat_set_state(w, i, FS_CRAWL, 0.0f);
         return;
     }
-    combat_set_state(w, i, FS_GETUP, w->prone[i] ? GETUP_FRONT_S : GETUP_BACK_S);
+    combat_set_state(w, i, FS_GETUP, w->prone[i] == LIE_FRONT ? GETUP_FRONT_S : GETUP_BACK_S);
     combat_event(w, EV_GETUP, i, i);
 }
 
-// Валится с ног: ничком — если толкнуло в спину или (без сознания) с броском
+// Валится с ног: ничком — если толкнуло в спину или (без сознания) с броском; убитый ударом сбоку
+// остаётся на боку. Уже лежащий лежит как лежал
 static void go_down(CombatWorld *w, u32 i, u8 s, f32 dur, f32 front_p, u32 salt)
 {
-    if (!fs_lying(w->state[i])) w->prone[i] = w->fall[i] == FALL_FRONT || combat_roll(w, i, 0, salt) < front_p;
+    if (!fs_lying(w->state[i])) {
+        u8 f = w->fall[i];
+        if (s == FS_DEAD && w->state[i] != FS_SURRENDER && (f == FALL_LEFT || f == FALL_RIGHT)) w->prone[i] = f == FALL_LEFT ? LIE_SIDE_L : LIE_SIDE_R;
+        else w->prone[i] = f == FALL_FRONT || combat_roll(w, i, 0, salt) < front_p ? LIE_FRONT : LIE_BACK;
+    }
     combat_set_state(w, i, s, dur);
 }
 
@@ -228,7 +234,7 @@ static void after_getup(CombatWorld *w, u32 i)
     if (w->disarmed[i]) {
         combat_set_state(w, i, FS_SURRENDER, 0.0f);
     } else if (!legs_hold(w, i)) {
-        w->prone[i] = 1;
+        w->prone[i] = LIE_FRONT;
         combat_set_state(w, i, FS_CRAWL, 0.0f);
     } else if (w->loose[i]) {
         combat_set_state(w, i, FS_PICKUP, PICKUP_S);
@@ -253,7 +259,8 @@ static void check_body(CombatWorld *w, u32 i)
     }
     if (w->blood[i] <= 0.0f) {
         // Истёк кровью: оседает и валится набок, не ничком
-        if (!fs_lying(w->state[i])) w->prone[i] = 0;
+        if (w->state[i] == FS_SURRENDER) w->prone[i] = LIE_BACK;
+        else if (!fs_lying(w->state[i])) w->prone[i] = combat_roll(w, i, 0, 37) < 0.5f ? LIE_SIDE_L : LIE_SIDE_R;
         combat_set_state(w, i, FS_DEAD, 0.0f);
         combat_event(w, EV_DEATH, i, i);
         return;
@@ -273,7 +280,7 @@ static void check_body(CombatWorld *w, u32 i)
         }
     }
     if (!legs_hold(w, i) && !fs_lying(w->state[i])) {
-        w->prone[i] = 1;
+        w->prone[i] = LIE_FRONT;
         combat_set_state(w, i, FS_CRAWL, 0.0f);
         combat_event(w, EV_FALL, i, i);
     }
@@ -474,6 +481,12 @@ static u8 roll_react(CombatWorld *w, u32 def, u32 att, u8 kind, f32 lead)
     gain(w, def, SK_DODGE, 0.02f, attack_eff(w, att));
     if (combat_roll(w, def, att, 32) < dodge_chance(w, def, att, kind)) return REACT_DODGE;
     return REACT_NONE;
+}
+
+// Проводка удара после касания: лёгкое проходит за 0.12 с, балка 18 кг — за 0.24 с
+static f32 strike_time(const CombatWorld *w, u32 i)
+{
+    return clampf(0.12f + 0.01f * (weapon_of(w, i)->weight - 3.0f), 0.12f, 0.24f);
 }
 
 static f32 windup_time(const CombatWorld *w, u32 i, u8 kind)
@@ -704,7 +717,7 @@ static void tick_state(CombatWorld *w, u32 i, u32 *strikes, u32 *ns)
     if (w->timer[i] > 0.0f) return;
     switch (s) {
     case FS_WINDUP:
-        combat_set_state(w, i, FS_STRIKE, 0.15f);
+        combat_set_state(w, i, FS_STRIKE, strike_time(w, i));
         strikes[(*ns)++] = i;
         break;
     case FS_STRIKE:
@@ -770,6 +783,19 @@ static bool pinned(const CombatWorld *w, u32 i)
     return w->idle[i] || w->state[i] == FS_DEAD || w->state[i] == FS_UNCONSCIOUS;
 }
 
+// Тело на земле: отрезок вдоль взгляда от ног до головы. На спину падают назад, ничком — вперёд
+#define LIE_FEET 0.15f   // ноги от точки тела, м
+#define LIE_HEAD 1.35f   // голова от точки тела, м
+#define LIE_FEET_SIDE 0.6f // на боку ноги дальше: тело сдвинуто в сторону падения
+#define LIE_R    0.42f   // стоящий держится от оси лежащего не ближе
+#define LIE_STEP 0.06f   // за тик отходит от лежащего не больше (1.2 м/с)
+
+static bool on_ground(const CombatWorld *w, u32 i)
+{
+    u8 s = w->state[i];
+    return !w->idle[i] && (s == FS_DOWN || s == FS_UNCONSCIOUS || s == FS_DEAD || s == FS_CRAWL);
+}
+
 static void separate_job(void *ctx, u32 b, u32 e)
 {
     CombatWorld *w = ctx;
@@ -778,10 +804,14 @@ static void separate_job(void *ctx, u32 b, u32 e)
     for (u32 i = b; i < e; i++) {
         f32 sx = 0.0f, sz = 0.0f;
         if (!pinned(w, i)) {
+            bool down = on_ground(w, i) || fs_lying(w->state[i]);
             u32 nn = combat_near(w, w->x[i], w->z[i], r2, GRID_ALL_TAGS, near);
             for (u32 q = 0; q < nn; q++) {
                 u32 j = near[q];
                 if (j == i) continue;
+                // Лежащего стоящие не двигают: стоящий обходит его по всему телу, ниже
+                if (on_ground(w, j) && !down) continue;
+                if (down && !fs_lying(w->state[j])) continue;
                 f32 dx = w->x[i] - w->x[j], dz = w->z[i] - w->z[j];
                 f32 d2 = dx * dx + dz * dz;
                 if (d2 >= r2 * r2) continue;
@@ -797,6 +827,42 @@ static void separate_job(void *ctx, u32 b, u32 e)
         }
         w->sep_x[i] = sx;
         w->sep_z[i] = sz;
+    }
+}
+
+// Стоящие обходят тела на земле, а не встают на них. Тел меньше, чем стоящих, поэтому ищут от тела;
+// в одном потоке по возрастанию номера тела: сдвиги складываются в одном порядке
+static void around_bodies(CombatWorld *w)
+{
+    u32 near[COMBAT_NEAR_MAX];
+    const f32 len = LIE_FEET + LIE_HEAD, reach = 0.5f * len + LIE_R;
+    for (u32 j = 0; j < w->count; j++) {
+        if (!on_ground(w, j)) continue;
+        // Ось тела от ног к голове: на спине голова сзади, ничком — впереди, на боку — поперёк, в сторону падения
+        f32 sh = sinf(w->heading[j]), ch = cosf(w->heading[j]), ux, uz, feet = LIE_FEET;
+        switch (w->prone[j]) {
+        case LIE_FRONT: ux = sh, uz = ch; break;
+        case LIE_SIDE_L: ux = ch, uz = -sh, feet = LIE_FEET_SIDE; break;
+        case LIE_SIDE_R: ux = -ch, uz = sh, feet = LIE_FEET_SIDE; break;
+        default: ux = -sh, uz = -ch; break;
+        }
+        f32 ax = w->x[j] - ux * feet, az = w->z[j] - uz * feet;
+        f32 mx = ax + ux * 0.5f * len, mz = az + uz * 0.5f * len;
+        u32 nn = combat_near(w, mx, mz, reach, TAGS_FIGHTING, near);
+        for (u32 q = 0; q < nn; q++) {
+            u32 i = near[q];
+            f32 ox = w->x[i] - mx, oz = w->z[i] - mz;
+            if (ox * ox + oz * oz >= reach * reach || i == j || pinned(w, i) || fs_lying(w->state[i])) continue;
+            f32 t = clampf((w->x[i] - ax) * ux + (w->z[i] - az) * uz, 0.0f, len);
+            f32 dx = w->x[i] - (ax + ux * t), dz = w->z[i] - (az + uz * t);
+            f32 d = sqrtf(dx * dx + dz * dz);
+            if (d >= LIE_R) continue;
+            f32 push = fminf(LIE_R - d, LIE_STEP);
+            // Стоит прямо на оси: в сторону по номеру
+            if (d < 1e-4f) { dx = i < j ? -uz : uz; dz = i < j ? ux : -ux; d = 1.0f; }
+            w->sep_x[i] += dx / d * push;
+            w->sep_z[i] += dz / d * push;
+        }
     }
 }
 
@@ -865,6 +931,7 @@ void combat_tick(CombatWorld *w)
     // Сетка по позициям после шага: расталкивание и ИИ следующего тика читают её
     build_grid(w);
     jobs_for(w->count, 64, separate_job, w);
+    around_bodies(w);
     jobs_for(w->count, 256, separate_apply_job, w);
     build_grid(w);
     w->tick++;

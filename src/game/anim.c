@@ -660,9 +660,10 @@ static const FightK K_STRIKE[ATK_COUNT] = {
                        0.30f, 0.35f, 0.0f, 0.25f, 0.16f, 0.20f, 0.42f, 0.0f },
 };
 
-static void apply_fight(Pose *o, FightK k, f32 w, f32 *chest_yaw)
+static void apply_fight(Pose *o, FightK k, f32 w, const CharAction *a, f32 *chest_yaw)
 {
-    if (w <= 0.0f) return;
+    f32 fw = a->steps ? a->feet : w;
+    if (w <= 0.0f && fw <= 0.0f) return;
     Pose f = *o;
     set_arm(&f, R, k.r);
     set_arm(&f, L, k.l);
@@ -679,13 +680,30 @@ static void apply_fight(Pose *o, FightK k, f32 w, f32 *chest_yaw)
     f.r[BONE_HEAD].y -= (k.twist + k.pyaw * 0.2f) * 0.8f;
     f.r[BONE_HEAD].x -= k.lean * 0.6f;
     *chest_yaw += (k.twist + k.pyaw * 0.2f) * w;
-    // Стопы: стойка шире, левая впереди
+    // Стопы: стойка шире, левая впереди. С боевым шагом стопа стоит, где поставлена, а не на своём месте
     V3 fl = joint(BONE_FOOT_L), fr = joint(BONE_FOOT_R);
-    f.foot[L] = v3(fl.x + 0.07f, fl.y, 0.20f + k.front);
-    f.foot[R] = v3(fr.x - 0.05f, fr.y, -0.20f + k.back);
+    f.foot[L] = v3(fl.x + CHAR_STANCE_OUT_L, fl.y, CHAR_STANCE_Z + k.front);
+    f.foot[R] = v3(fr.x - CHAR_STANCE_OUT_R, fr.y, -CHAR_STANCE_Z + k.back);
     f.fpitch[L] = f.fpitch[R] = 0.0f;
     f.fshin[L] = f.fshin[R] = 0.0f;
+    if (a->steps)
+        for (u32 s = 0; s < 2; s++) {
+            f.foot[s] = v3_add(f.foot[s], a->feet_off[s]);
+            // Переносимая нога веса не несёт и чуть разгибает носок
+            f32 up = clampf(a->feet_off[s].y / 0.03f, 0.0f, 1.0f);
+            f.plant[s] = 1.0f - up;
+            f.fpitch[s] = 0.15f * up;
+        }
+    Pose before = *o;
     pose_lerp(o, &f, w);
+    if (a->steps)
+        for (u32 s = 0; s < 2; s++) {
+            o->foot[s] = v3_lerp(before.foot[s], f.foot[s], fw);
+            o->fpitch[s] = lerpf(before.fpitch[s], f.fpitch[s], fw);
+            o->plant[s] = lerpf(before.plant[s], f.plant[s], fw);
+            o->fank[s] = lerpf(before.fank[s], f.fank[s], fw);
+            o->fshin[s] = lerpf(before.fshin[s], f.fshin[s], fw);
+        }
 }
 
 // Подъём стопы при переступании: шаг в удар и обратно
@@ -765,7 +783,7 @@ static void combat_layer(const CharAction *a, Pose *o, f32 *chest_yaw, f32 seed)
         }
         k = fk_lerp(k, d, dg);
     }
-    apply_fight(o, k, guard, chest_yaw);
+    apply_fight(o, k, guard, a, chest_yaw);
     if (guard > 0.0f && front_from != front_to) step_lift(o, L, 0.20f + front_from, 0.20f + front_to, guard);
     if (dg > 0.0f && a->dodge_kind == DODGE_SIDE) {
         // Шаг вбок той ногой, куда уходит; таз следом
@@ -847,7 +865,8 @@ typedef struct BodyK {
 
 static const BodyK K_LIE_UP_K = K_LIE_UP(1.0f);
 static const BodyK K_LIE_DOWN_K = K_LIE_DOWN(1.0f);
-static const BodyK K_LIE_SIDE_K = K_LIE_SIDE(1.0f, 0.0f);
+// Таз сдвинут в сторону падения так же, как в конце смерти набок: лёжа тело не съезжает
+static const BodyK K_LIE_SIDE_K = K_LIE_SIDE(1.0f, 0.22f);
 
 // Сбит ударом спереди, 1.1 с: отшатывается, руки вперёд на уровне плеч, второй шаг назад, садится,
 // руки назад ловят землю, перекатывается на лопатки, затылок последним
@@ -971,7 +990,7 @@ static const BodyK K_DIE_SIDE[] = {
     { 0.78f, 0.18f, -0.04f, 0.24f, 0.05f, 0.0f, -1.25f, 0.10f, 0.05f, 0.30f, 0.0f,
       { -0.9f, 0.0f, 0.30f, -0.3f, 0.0f, 0.0f }, { -0.6f, 0.3f, 0.40f, -0.5f, 0.0f, 0.0f },
       { -0.50f, 0.02f, 0.80f, 0.3f }, { -0.85f, 0.05f, 1.10f, 0.3f }, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f },
-    K_LIE_SIDE(1.0f, 0.24f),
+    K_LIE_SIDE(1.0f, 0.22f),
 };
 
 // Истёк кровью стоя, 2 с: шатается, опускается на правое колено, потом на оба, заваливается на левый бок
@@ -992,7 +1011,7 @@ static const BodyK K_BLEED[] = {
     { 0.92f, 0.19f, -0.05f, 0.20f, 0.15f, 0.0f, -1.20f, 0.20f, 0.05f, 0.35f, 0.0f,
       { -1.0f, 0.0f, 0.25f, -0.4f, 0.0f, 0.0f }, { -0.5f, 0.3f, 0.20f, -0.5f, 0.0f, 0.0f },
       { -0.40f, 0.0f, 0.70f, 0.3f }, { -0.80f, 0.05f, 1.10f, 0.3f }, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f },
-    K_LIE_SIDE(1.0f, 0.20f),
+    K_LIE_SIDE(1.0f, 0.22f),
 };
 
 // Без сознания стоя, 1.1 с: колени подламываются, оседает на колени, корпус валится вперёд, руки не ловят

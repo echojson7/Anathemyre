@@ -80,6 +80,8 @@ enum { REACT_NONE, REACT_BLOCK, REACT_DODGE };
 
 // Куда толкнул последний удар, относительно взгляда бойца: туда он и валится
 enum { FALL_BACK, FALL_FRONT, FALL_LEFT, FALL_RIGHT };
+// Как лежит: на спине, ничком, на левом или правом боку (на боку остаются только мёртвые)
+enum { LIE_BACK, LIE_FRONT, LIE_SIDE_L, LIE_SIDE_R };
 
 enum { EVF_STAGGER = 1, EVF_FRACTURE = 2, EVF_SEVER = 4, EVF_ALLY = 8 };
 
@@ -137,7 +139,7 @@ typedef struct CombatWorld {
     f32 *blood, *blood_max, *bleed, *shock, *morale, *morale_base, *mass, *height;
     u8  *fracture, *severed, *disarmed;
     u8  *fall;       // FALL_*: куда толкнул последний удар
-    u8  *prone;      // лежит ничком
+    u8  *prone;      // LIE_*: как лежит — от этого, где лежит тело, как его обходят и как встаёт
     u8  *loose;      // выронил оружие при падении: лежит рядом, после подъёма поднимет
 
     // Навыки и снаряжение
