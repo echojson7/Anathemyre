@@ -27,3 +27,5 @@ frag upscale.frag
 frag frame.glsl common.glsl sky.glsl shadow_sun.glsl scene.frag
 comp sky.glsl sky_bake.comp
 frag frame.glsl common.glsl contact.frag
+frag frame.glsl common.glsl ao.glsl gtao.frag
+frag gtao_blur.frag

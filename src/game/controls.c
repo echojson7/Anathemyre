@@ -18,11 +18,11 @@ const char *const g_stage_name[STAGE_COUNT] = {
 const char *const g_light_preset_name[LIGHT_PRESET_COUNT] = { "ПРЕЖНИЙ", "БЫСТРЫЙ", "РЕАЛИСТИЧНЫЙ" };
 
 // Части СВЕТА в наборе: материалы, кривая, автоэкспозиция, свечение, отражённый свет, каскады, мягкий край,
-// контактные тени
-static const u8 light_preset_parts[LIGHT_PRESET_COUNT][8] = {
-    { LIGHT_MAT_OLD, LIGHT_CURVE_ACES, 0, 0, LIGHT_GI_SIMPLE, 0, 0, 0 },
-    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 0, 0, LIGHT_GI_SKY, 1, 0, 1 },
-    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 1, 1, LIGHT_GI_SKY, 1, 1, 1 },
+// контактные тени, углы
+static const u8 light_preset_parts[LIGHT_PRESET_COUNT][9] = {
+    { LIGHT_MAT_OLD, LIGHT_CURVE_ACES, 0, 0, LIGHT_GI_SIMPLE, 0, 0, 0, LIGHT_AO_SSAO },
+    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 0, 0, LIGHT_GI_SKY, 1, 0, 1, LIGHT_AO_SSAO },
+    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 1, 1, LIGHT_GI_SKY, 1, 1, 1, LIGHT_AO_GTAO },
 };
 
 void light_preset_apply(RenderSettings *rs, LightPreset p)
@@ -36,6 +36,7 @@ void light_preset_apply(RenderSettings *rs, LightPreset p)
     rs->light_casc = v[5];
     rs->light_soft = v[6];
     rs->light_contact = v[7];
+    rs->light_ao = v[8];
 }
 
 LightPreset light_preset_of(const RenderSettings *rs)
@@ -43,7 +44,8 @@ LightPreset light_preset_of(const RenderSettings *rs)
     for (u32 p = 0; p < LIGHT_PRESET_COUNT; p++) {
         const u8 *v = light_preset_parts[p];
         if (rs->light_mat == v[0] && rs->light_curve == v[1] && rs->light_expo == v[2] && rs->light_bloom == v[3] &&
-            rs->light_gi == v[4] && rs->light_casc == v[5] && rs->light_soft == v[6] && rs->light_contact == v[7])
+            rs->light_gi == v[4] && rs->light_casc == v[5] && rs->light_soft == v[6] && rs->light_contact == v[7] &&
+            rs->light_ao == v[8])
             return (LightPreset)p;
     }
     return LIGHT_PRESET_COUNT;
@@ -82,6 +84,10 @@ static void menu_light(Hud *h, Settings *s, World *w, RtsCamera *cam, const Fram
     hud_form_check(f, "КАСКАДЫ ДО 700 М", &rs->light_casc);
     hud_form_check(f, "МЯГКИЙ КРАЙ", &rs->light_soft);
     hud_form_check(f, "КОНТАКТНЫЕ ТЕНИ", &rs->light_contact);
+    hud_form_head(f, "УГЛЫ");
+    static const char *ao_name[LIGHT_AO_COUNT] = { "SSAO", "GTAO" };
+    if ((d = hud_form_step(f, "ЗАТЕНЕНИЕ", ao_name[rs->light_ao])))
+        rs->light_ao = (u8)((rs->light_ao + LIGHT_AO_COUNT + (u32)d) % LIGHT_AO_COUNT);
     hud_form_head(f, "ПОВЕРХНОСТИ");
     if ((d = hud_form_step(f, "МАТЕРИАЛЫ", mat_name[rs->light_mat])))
         rs->light_mat = (u8)((rs->light_mat + LIGHT_MAT_COUNT + (u32)d) % LIGHT_MAT_COUNT);
