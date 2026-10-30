@@ -1,0 +1,144 @@
+# Что берётся из vk.xml в src/render/vk.h. После правки: ./tools/vkgen/gen.sh
+# command <имя>   функция Vulkan (типы её параметров подтянутся сами)
+# type <имя>      тип, который не виден из параметров (структуры для цепочек pNext)
+# ext <имя>       расширение: константы *_EXTENSION_NAME и *_SPEC_VERSION
+
+# Загрузка и instance
+command vkGetInstanceProcAddr
+command vkCreateInstance
+command vkEnumerateInstanceVersion
+command vkEnumerateInstanceExtensionProperties
+command vkEnumerateInstanceLayerProperties
+command vkDestroyInstance
+command vkEnumeratePhysicalDevices
+command vkGetPhysicalDeviceProperties
+command vkGetPhysicalDeviceProperties2
+command vkGetPhysicalDeviceFeatures2
+command vkGetPhysicalDeviceQueueFamilyProperties
+command vkGetPhysicalDeviceMemoryProperties
+command vkGetPhysicalDeviceFormatProperties
+command vkEnumerateDeviceExtensionProperties
+command vkGetDeviceProcAddr
+command vkCreateDevice
+command vkDestroyDevice
+command vkGetDeviceQueue
+command vkDeviceWaitIdle
+
+# Отладка: validation и имена объектов
+command vkCreateDebugUtilsMessengerEXT
+command vkDestroyDebugUtilsMessengerEXT
+command vkSetDebugUtilsObjectNameEXT
+command vkCmdBeginDebugUtilsLabelEXT
+command vkCmdEndDebugUtilsLabelEXT
+ext VK_EXT_debug_utils
+
+# Поверхность и swapchain
+command vkDestroySurfaceKHR
+command vkGetPhysicalDeviceSurfaceSupportKHR
+command vkGetPhysicalDeviceSurfaceCapabilitiesKHR
+command vkGetPhysicalDeviceSurfaceFormatsKHR
+command vkGetPhysicalDeviceSurfacePresentModesKHR
+command vkCreateXlibSurfaceKHR
+command vkCreateWin32SurfaceKHR
+command vkCreateSwapchainKHR
+command vkDestroySwapchainKHR
+command vkGetSwapchainImagesKHR
+command vkAcquireNextImageKHR
+command vkQueuePresentKHR
+ext VK_KHR_surface
+ext VK_KHR_xlib_surface
+ext VK_KHR_win32_surface
+ext VK_KHR_swapchain
+
+# Память, буферы, картинки
+command vkAllocateMemory
+command vkFreeMemory
+command vkMapMemory
+command vkUnmapMemory
+command vkFlushMappedMemoryRanges
+command vkCreateBuffer
+command vkDestroyBuffer
+command vkGetBufferMemoryRequirements
+command vkBindBufferMemory
+command vkCreateImage
+command vkDestroyImage
+command vkGetImageMemoryRequirements
+command vkBindImageMemory
+command vkCreateImageView
+command vkDestroyImageView
+command vkCreateSampler
+command vkDestroySampler
+
+# Шейдеры, конвейеры, привязки
+command vkCreateShaderModule
+command vkDestroyShaderModule
+command vkCreatePipelineLayout
+command vkDestroyPipelineLayout
+command vkCreateGraphicsPipelines
+command vkCreateComputePipelines
+command vkDestroyPipeline
+command vkCreateDescriptorSetLayout
+command vkDestroyDescriptorSetLayout
+command vkCmdPushDescriptorSetKHR
+ext VK_KHR_push_descriptor
+type VkPhysicalDevicePushDescriptorPropertiesKHR
+type VkPipelineRenderingCreateInfo
+ext VK_EXT_depth_clip_control
+type VkPhysicalDeviceDepthClipControlFeaturesEXT
+type VkPipelineViewportDepthClipControlCreateInfoEXT
+
+# Команды и синхронизация
+command vkCreateCommandPool
+command vkDestroyCommandPool
+command vkResetCommandPool
+command vkAllocateCommandBuffers
+command vkBeginCommandBuffer
+command vkEndCommandBuffer
+command vkCreateFence
+command vkDestroyFence
+command vkWaitForFences
+command vkResetFences
+command vkCreateSemaphore
+command vkDestroySemaphore
+command vkQueueSubmit2
+command vkQueueWaitIdle
+command vkCmdPipelineBarrier2
+command vkCmdBeginRendering
+command vkCmdEndRendering
+command vkCmdBindPipeline
+command vkCmdBindVertexBuffers
+command vkCmdBindIndexBuffer
+command vkCmdPushConstants
+command vkCmdSetViewport
+command vkCmdSetScissor
+command vkCmdClearAttachments
+command vkCmdClearColorImage
+command vkCmdDraw
+command vkCmdDrawIndexed
+command vkCmdDrawIndexedIndirect
+command vkCmdDispatch
+command vkCmdDispatchIndirect
+command vkCmdCopyBuffer
+command vkCmdCopyBufferToImage
+command vkCmdCopyImageToBuffer
+command vkCmdBlitImage2
+
+# Метки времени GPU
+command vkCreateQueryPool
+command vkDestroyQueryPool
+command vkCmdResetQueryPool
+command vkCmdWriteTimestamp2
+command vkGetQueryPoolResults
+
+# Частота шейдинга (этап 5)
+command vkCmdSetFragmentShadingRateKHR
+ext VK_KHR_fragment_shading_rate
+type VkPhysicalDeviceFragmentShadingRateFeaturesKHR
+type VkPhysicalDeviceFragmentShadingRatePropertiesKHR
+type VkRenderingFragmentShadingRateAttachmentInfoKHR
+
+# Цепочки pNext при выборе устройства
+type VkPhysicalDeviceVulkan11Features
+type VkPhysicalDeviceVulkan12Features
+type VkPhysicalDeviceVulkan13Features
+type VkPhysicalDeviceVulkan12Properties
