@@ -19,7 +19,8 @@ layout(std140, binding = 1) uniform Frame {
 
 // Константы вызова сцены и теней (render.c, ScenePush)
 #define u_view_proj mat4(uintBitsToFloat(u_push[0]), uintBitsToFloat(u_push[1]), uintBitsToFloat(u_push[2]), uintBitsToFloat(u_push[3]))
-#define u_skinned int(u_push[4].x)    // 0 — статика, 1 — кости, 2 — экземпляры статики, 3 — рельеф, 4 — кости из общего буфера
+#define u_skinned int(u_push[4].x)    // 0 — статика, 1 — кости, 2 — экземпляры статики, 3 — рельеф, 4 — кости из общего буфера,
+                                      // 5 — то же, поза уже в кеше (skin.comp)
 #define u_inst_base int(u_push[4].y)
 #define u_morphs int(u_push[4].z)     // число морфов сетки
 #define u_fade uintBitsToFloat(u_push[5].xy)  // экземпляры редеют с дальности x и пропадают к y (0 — нет)

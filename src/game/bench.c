@@ -187,8 +187,9 @@ void stats_frame(FrameStats *s, f64 now, u32 posed, bool swap_late)
     gpu_line(gpu, sizeof gpu, &st);
     cpu_line(cpu, sizeof cpu, z, k, &st, swap_late);
     log_stat("КАДР: %.2f мс, %.0f к/с | CPU: %s | %s", (now - s->t) * k, s->frames / (now - s->t), cpu, gpu);
-    log_stat("ОТРИСОВКА: элементов %u | сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk",
-             st.items, st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0);
+    log_stat("ОТРИСОВКА: элементов %u | сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk | кеш поз: %.0fk вершин",
+             st.items, st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0,
+             st.skin_verts / 1000.0);
     s->shown_ms = (f32)((now - s->t) * k);
     s->shown_fps = (f32)(s->frames / (now - s->t));
     s->t = now;

@@ -47,6 +47,7 @@ void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool h
         hud_debug_check(h, "AO ВПОЛОВИНУ", &rs->ao_half);
         hud_debug_check(h, "ШУМ ИЗ ТЕКСТУРЫ", &rs->noise_tex);
         if (hud_debug_check(h, "ЛЮДИ ОДНИМ ВЫЗОВОМ", &rs->mdi)) log_info("ЛЮДИ ОДНИМ ВЫЗОВОМ: %s", rs->mdi ? "вкл" : "выкл");
+        if (hud_debug_check(h, "ПОЗЫ РАЗ ЗА КАДР", &rs->skin_cache)) log_info("ПОЗЫ РАЗ ЗА КАДР: %s", rs->skin_cache ? "вкл" : "выкл");
         if (hud_debug_check(h, "VSYNC", &s->vsync)) {
             platform_set_vsync(s->vsync);
             log_info("VSYNC: %s", s->vsync ? "вкл" : "выкл");

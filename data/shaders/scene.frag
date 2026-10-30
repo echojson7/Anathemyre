@@ -99,7 +99,7 @@ void main()
     mpp /= float(RB_FRAG_SIZE.x);
 #endif
     // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
-    bool bones = u_skinned == 1 || u_skinned == 4;
+    bool bones = u_skinned == 1 || u_skinned >= 4;
     float base = bones ? TEXEL * 0.5 : TEXEL;
     bool snap = mpp < base * u_texel_on;
     vec3 dl = snap ? texel_snap(v_local, Nl, base) : vec3(0.0);

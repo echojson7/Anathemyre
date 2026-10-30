@@ -35,7 +35,7 @@ typedef struct GpuMesh {
     // В общем буфере (gpu_mesh_upload_pooled): буферы свои не заводятся, сетка лежит с первой вершины
     // pool_vbase и первого индекса pool_ibase, морфы — с pool_moff (в uint)
     bool pooled;
-    u32  pool_vbase, pool_ibase, pool_moff;
+    u32  pool_vbase, pool_ibase, pool_moff, pool_vcount;
 } GpuMesh;
 
 // Экземпляр статической сетки (32 байта, InstRec в scene.vert): деревья, трава, камни
@@ -109,6 +109,7 @@ typedef struct RenderSettings {
     bool ao;            // затенение углов (только с атмосферой)
     bool flora;         // экземпляры: деревья, кусты, трава, камни
     bool mdi;           // сетки из общего буфера (люди) — один вызов на проход вместо вызова на сетку
+    bool skin_cache;    // поза и морфы людей раз за кадр вычислительным проходом, проходы берут готовое
 } RenderSettings;
 
 // Время проходов на GPU, мс, среднее с прошлого render_take_stats
@@ -125,6 +126,7 @@ typedef struct RenderStats {
     f64 prep_ms;        // CPU: границы, отсечение, LOD и раскладка по вызовам до первого вызова GL, мс за кадр
     f64 cpu_ms[PASS_COUNT];  // CPU: вызовы рендера каждого прохода после сбора, мс за кадр (интерфейс — портреты и HUD)
     f64 poses;          // наборов костей за кадр
+    f64 skin_verts;     // вершин в кеше поз за кадр (0 — кеш выключен)
     bool vrs;           // последний кадр шейдился блоками вблизи
 } RenderStats;
 
