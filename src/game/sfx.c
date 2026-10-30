@@ -221,10 +221,11 @@ static void sfx_on_events(void *user, const CombatWorld *w)
             break;
         }
         case EV_DODGE: audio_play(SFX_SCUFF, fighter_pos(f, w, e->b), 0.8f, 1.0f, 0.0f); break;
-        case EV_KNOCKDOWN: fall(f, w, e->b, 0.35f); break;
-        case EV_FALL: fall(f, w, e->a, 0.4f); break;
+        // Удар тела о землю — в миг касания в клипе падения
+        case EV_KNOCKDOWN: fall(f, w, e->b, fight_anim_contact(w, e->b, e->kind)); break;
+        case EV_FALL:
         case EV_KO:
-        case EV_DEATH: fall(f, w, e->a, 0.45f); break;
+        case EV_DEATH: fall(f, w, e->a, fight_anim_contact(w, e->a, e->kind)); break;
         case EV_GETUP:
             if (e->a < FIELD_MAX) f->down[e->a] = 0;
             audio_play(SFX_SCUFF, fighter_pos(f, w, e->a), 0.7f, 0.9f, 0.0f);
@@ -245,7 +246,7 @@ static void fighter(WorldSound *s, SfxFight *f, u32 i, const FightAnim *a, V3 fo
     bool near = dist2(p, s->lis) < 30.0f * 30.0f;
     if (a->dropped && !f->dropped[i]) {
         V3 dp = v3(a->drop_pos.x + f->origin.x, p.y - 1.0f, a->drop_pos.z + f->origin.z);
-        audio_play(SFX_DROP_METAL, dp, 1.0f, 1.0f, 0.2f);
+        audio_play(SFX_DROP_METAL, dp, 1.0f, 1.0f, 0.4f);  // падает из руки 0.4 с
     } else if (near && !a->dropped) {
         if (w0 < 0.3f && a->wield >= 0.3f) audio_play(SFX_DRAW, p, 1.0f, 1.0f, 0.0f);
         if (w0 > 0.7f && a->wield <= 0.7f) audio_play(SFX_SHEATH, p, 1.0f, 1.0f, 0.0f);

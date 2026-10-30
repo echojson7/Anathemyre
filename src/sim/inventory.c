@@ -21,6 +21,7 @@ const char *g_state_name[FS_COUNT] = {
     [FS_BLOCK] = "БЛОК", [FS_DODGE] = "УВОРОТ", [FS_STAGGER] = "ОШЕЛОМЛЁН", [FS_KNOCKED] = "СБИТ С НОГ",
     [FS_DOWN] = "ЛЕЖИТ", [FS_GETUP] = "ВСТАЁТ", [FS_UNCONSCIOUS] = "БЕЗ СОЗНАНИЯ", [FS_CRAWL] = "ПОЛЗЁТ",
     [FS_RETREAT] = "ОТСТУПАЕТ", [FS_SURRENDER] = "СДАЛСЯ", [FS_DEAD] = "МЁРТВ",
+    [FS_PICKUP] = "ПОДНИМАЕТ",
 };
 
 const char *item_name(Item it)
