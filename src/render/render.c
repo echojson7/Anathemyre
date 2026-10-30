@@ -28,6 +28,7 @@ enum {
     B_SKIN_JOB = 22, B_SKIN_GROUP = 23, B_SKIN_VERT = 24, B_SKIN_SKIN = 25, B_SKIN_OUT = 26,
     // Свет кадра (docs/lighting.md): экспозиция (SSBO), источник ступени свечения, кадр для замера яркости, свечение
     B_EXPO = 27, B_BLOOM_SRC = 28, B_EXPO_SRC = 29, B_BLOOM = 30,
+    B_SKY = 31,       // сетка неба (sky.glsl); глубина запекания — на 29 (B_EXPO_SRC до экспозиции свободна)
 };
 #define SKIN_STATIC 0
 #define SKIN_BONES 1
@@ -146,6 +147,19 @@ _Static_assert(sizeof(ScenePush) == RB_PUSH_BYTES, "ScenePush — весь u_pus
 // Доля свечения в кадре: слабое рассеяние, не ореолы
 #define BLOOM_MIX 0.04f
 
+// Сетка неба (sky.glsl): клетки, размер клетки, направлений, карта глубины запекания, шаг сдвига сетки
+#define SKY_NX 256
+#define SKY_NY 64
+#define SKY_NZ 256
+#define SKY_CELL 0.5f
+#define SKY_DIRS 32
+#define SKY_PX 1024
+#define SKY_STEP 16.0f
+#define SKY_BYTES (16 + SKY_NX * SKY_NY * SKY_NZ)
+// Полуразмер карты глубины: описанная сфера сетки; к небу — запас для высоких построек вне сетки
+#define SKY_R 92.0f
+#define SKY_UP 300.0f
+
 // Цель: цвет и глубина (по желанию) одного размера
 typedef struct Target {
     RbTex color, depth;
@@ -166,6 +180,13 @@ static struct {
     RbBuf  expo_buf;  // автоэкспозиция: множитель и средняя яркость (expo.comp)
     Target bloom[BLOOM_LEVELS];  // ступени свечения: 1/2, 1/4 … кадра
     f64    light_t;   // время прошлого кадра: привыкание глаза
+    RbPipe pipe_sky;
+    RbTex  sky_depth;
+    RbBuf  sky_buf[2];    // готовая и запекаемая сетки (по очереди)
+    V3     sky_origin[2];
+    i32    sky_cur;       // готовая сетка, -1 — ещё нет
+    u32    sky_acc, sky_dir;  // запекаемая и сколько направлений в неё уже легло (SKY_DIRS — не запекается)
+    u32    sky_key;       // отпечаток постоянной части сцены: сменилась — запекается заново
     u32    pset;      // набор текущего прохода
     RbTex  noise_tex; // значения hash13 в узлах решётки NOISE_N³: noise3 одной выборкой (common.glsl)
     RbTex  shadow_tex;
@@ -227,9 +248,11 @@ static struct {
 // Данные кадра на CPU: размер постоянный, выделяются один раз
 static V4   g_sphere[RENDER_MAX_ITEMS];
 static u32  g_pose[RENDER_MAX_ITEMS];
-static Inst g_inst[2][RENDER_MAX_ITEMS];
-static u32  g_inst_pose[2 * RENDER_MAX_ITEMS + 2 * RENDER_MAX_VIS_INST];
-static InstDraw g_idraw[2][MAX_INST_MESHES];
+// Списки проходов: тени, сцена, запекание неба
+static Inst g_inst[3][RENDER_MAX_ITEMS];
+static u32  g_inst_pose[3 * RENDER_MAX_ITEMS + 3 * RENDER_MAX_VIS_INST];
+static InstDraw g_idraw[3][MAX_INST_MESHES];
+static V3   g_sky_dir[SKY_DIRS];  // направления на небо, по косинусу: каждое весит одинаково
 static u32  g_vis_id[RENDER_MAX_VIS_INST];
 static u16  g_vis_bucket[RENDER_MAX_VIS_INST];
 static M4   g_bones[RENDER_MAX_POSED * RENDER_MAX_BONES];
@@ -283,7 +306,8 @@ static RbPipe pipe_mesh(u32 set, u32 lay, bool two_sided)
     } else {
         d.fs[0] = "frame.glsl";
         d.fs[1] = "common.glsl";
-        d.fs[2] = "scene.frag";
+        d.fs[2] = "sky.glsl";
+        d.fs[3] = "scene.frag";
         // Портрет — та же программа, только без карты частоты: размер блока там 1
         d.frag_size = R.vrs;
         d.vrs = R.vrs && set == PS_SCENE;
@@ -307,7 +331,7 @@ static void pipes_free(void)
             for (u32 c = 0; c < 2; c++) rb_pipe_free(&R.mesh_pipe[s][l][c]);
     RbPipe *full[] = { &R.pipe_rays, &R.pipe_atmos, &R.pipe_ao, &R.pipe_style, &R.pipe_src_map,
                        &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max, &R.pipe_skin,
-                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up };
+                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky };
     for (u32 i = 0; i < ARRAY_COUNT(full); i++) rb_pipe_free(full[i]);
 }
 
@@ -354,9 +378,10 @@ static bool pipes_make(void)
     R.pipe_bloom_down = pipe_full("свечение вниз", bloom_down_fs, RB_FMT_RGBA16F, NULL, false);
     R.pipe_bloom_up = rb_pipe_make(&(RbPipeDesc){ .vs = { "fullscreen.vert" }, .fs = { "bloom_up.frag" }, .name = "свечение вверх",
                                                   .color = { RB_FMT_RGBA16F }, .blend = RB_BLEND_ADD });
+    R.pipe_sky = rb_pipe_make(&(RbPipeDesc){ .cs = { "sky.glsl", "sky_bake.comp" }, .name = "сетка неба" });
     if (!R.pipe_rays || !R.pipe_atmos || !R.pipe_ao || !R.pipe_style || !R.pipe_src_map || !R.pipe_vrs_block ||
         !R.pipe_vrs || !R.pipe_level || !R.pipe_level_max || !R.pipe_skin || !R.pipe_expo || !R.pipe_bloom_down ||
-        !R.pipe_bloom_up) {
+        !R.pipe_bloom_up || !R.pipe_sky) {
         pipes_free();
         return false;
     }
@@ -368,7 +393,7 @@ bool render_reload_shaders(void)
     // Старые конвейеры живут, пока новые не собраны целиком
     RbPipe *full[] = { &R.pipe_rays, &R.pipe_atmos, &R.pipe_ao, &R.pipe_style, &R.pipe_src_map,
                        &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max, &R.pipe_skin,
-                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up };
+                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky };
     RbPipe old_mesh[PSETS][LAYS][2], old_full[ARRAY_COUNT(full)];
     memcpy(old_mesh, R.mesh_pipe, sizeof old_mesh);
     memset(R.mesh_pipe, 0, sizeof R.mesh_pipe);
@@ -483,7 +508,20 @@ bool render_init(Arena *scratch, const char *data_dir)
                                              .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
     // Множитель 1.2 — как без автоэкспозиции, пока первый замер не готов
     R.expo_buf = rb_buf_make(4 * sizeof(f32), RB_BUF_STORAGE, (f32[4]){ 1.2f, 0, 0, 0 });
-    if (!R.shadow_tex || !R.frame_buf || !R.expo_buf) return false;
+    // Сетки неба: заголовок нулевой — «не готова», сцена берёт открытое небо
+    R.sky_depth = rb_tex_make(&(RbTexDesc){ .fmt = RB_FMT_D24, .w = SKY_PX, .h = SKY_PX, .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
+    for (u32 i = 0; i < 2; i++) {
+        R.sky_buf[i] = rb_buf_make(SKY_BYTES, RB_BUF_STORAGE, NULL);
+        if (R.sky_buf[i]) rb_buf_write(R.sky_buf[i], 0, 16, (f32[4]){ 0 });
+    }
+    R.sky_cur = -1;
+    R.sky_dir = SKY_DIRS;
+    for (u32 i = 0; i < SKY_DIRS; i++) {
+        // Фибоначчи по полусфере с плотностью по косинусу: доля открытых направлений — освещённость от неба
+        f32 u = ((f32)i + 0.5f) / SKY_DIRS, r = sqrtf(u), a = (f32)i * 2.39996323f;
+        g_sky_dir[i] = v3(r * cosf(a), sqrtf(1.0f - u), r * sinf(a));
+    }
+    if (!R.shadow_tex || !R.frame_buf || !R.expo_buf || !R.sky_depth || !R.sky_buf[0] || !R.sky_buf[1]) return false;
     return target_make(&R.portrait, RENDER_PORTRAIT_PX * RENDER_PORTRAIT_SLOTS, RENDER_PORTRAIT_PX, RB_FMT_RGBA16F, true);
 }
 
@@ -497,13 +535,15 @@ void render_shutdown(void)
     for (u32 i = 0; i < BLOOM_LEVELS; i++) target_free(&R.bloom[i]);
     rb_tex_free(&R.noise_tex);
     rb_tex_free(&R.shadow_tex);
+    rb_tex_free(&R.sky_depth);
     for (u32 i = 0; i < STREAM_FRAMES; i++) {
         rb_buf_free(&R.bone_buf[i]);
         rb_buf_free(&R.inst_buf[i]);
         rb_buf_free(&R.light_buf[i]);
     }
     RbBuf *bufs[] = { &R.frame_buf, &R.static_inst_buf, &R.pool_vbo, &R.pool_skin, &R.pool_ibo, &R.pool_morph, &R.pool_rec, &R.pool_cmd,
-                      &R.skin_out, &R.skin_job, &R.skin_group, &R.expo_buf };
+                      &R.skin_out, &R.skin_job, &R.skin_group, &R.expo_buf,
+                      &R.sky_buf[0], &R.sky_buf[1] };
     for (u32 i = 0; i < ARRAY_COUNT(bufs); i++) rb_buf_free(bufs[i]);
     pipes_free();
     rb_shutdown();
@@ -1357,6 +1397,85 @@ static void v3_to(f32 *out, V3 v)
     out[2] = v.z;
 }
 
+static bool sky_same(V3 a, V3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+
+// Матрица запекания сетки неба: ортогонально вдоль направления d на центр сетки c
+static M4 sky_matrix(V3 d, V3 c)
+{
+    V3 up = fabsf(d.y) > 0.95f ? v3(0, 0, 1) : v3(0, 1, 0);
+    M4 lv = m4_look_at(v3(0, 0, 0), v3_mul(d, -1.0f), up);
+    V3 q = m4_point(lv, c);
+    return m4_mul(m4_ortho(q.x - SKY_R, q.x + SKY_R, q.y - SKY_R, q.y + SKY_R, -q.z - SKY_UP, -q.z + SKY_R), lv);
+}
+
+// Сетка неба: по направлению за кадр, пока не лягут все SKY_DIRS; затем она становится готовой. Заново —
+// когда камера ушла на SKY_STEP (сетка сдвигается) или сменилась постоянная часть сцены. Люди не входят:
+// сетка про постройки, рельеф и деревья
+static void sky_bake(const FrameView *fv, const DrawItem *items, u32 count, bool flora)
+{
+    V3 c = fv->shadow_center;
+    V3 o = v3(floorf((c.x - SKY_NX * SKY_CELL * 0.5f) / SKY_STEP) * SKY_STEP, floorf((c.y - 8.0f) / SKY_STEP) * SKY_STEP,
+              floorf((c.z - SKY_NZ * SKY_CELL * 0.5f) / SKY_STEP) * SKY_STEP);
+    u32 statics = 0;
+    for (u32 i = 0; i < count; i++) statics += !items[i].bones && !items[i].no_shadow;
+    u32 key = statics * 2654435761u ^ R.inst_total * 40503u ^ R.cluster_count;
+    if (R.sky_dir == SKY_DIRS) {
+        if (R.sky_cur >= 0 && sky_same(o, R.sky_origin[R.sky_cur]) && key == R.sky_key) return;
+        R.sky_acc = R.sky_cur >= 0 ? (u32)(1 - R.sky_cur) : 0u;
+        R.sky_dir = 0;
+    } else if (!sky_same(o, R.sky_origin[R.sky_acc]) || key != R.sky_key) {
+        R.sky_dir = 0;
+    }
+    R.sky_origin[R.sky_acc] = o;
+    R.sky_key = key;
+
+    V3 mid = v3_add(o, v3(SKY_NX * SKY_CELL * 0.5f, SKY_NY * SKY_CELL * 0.5f, SKY_NZ * SKY_CELL * 0.5f));
+    M4 vp = sky_matrix(g_sky_dir[R.sky_dir], mid);
+    PassView pv = { .fr = frustum_from(vp), .px_k = SKY_PX / (2.0f * SKY_R), .inst_lod_k = 0.3f };
+    u32 n = gather(items, count, &pv, true, g_inst[2]), ns = 0;
+    for (u32 i = 0; i < n; i++)
+        if (g_inst[2][i].pose == NO_POSE) g_inst[2][ns++] = g_inst[2][i];
+    u32 base = stream_insts(g_inst[2], &ns);
+    u32 ng = flora ? gather_groups(&pv, true, g_idraw[2]) : 0;
+    rb_pass_begin(&(RbPass){ .depth = { .tex = R.sky_depth }, .clear_depth = true });
+    R.pset = PS_SHADOW;
+    push_view_proj(vp);
+    draw_insts(g_inst[2], ns, base, 2);
+    draw_groups(g_idraw[2], ng, 2);
+    u32 draws = 0;
+    f64 tris = 0;
+    use_pipe(LAY_NONE, false);
+    terrain_draw(pv.fr.p, 1, 0.25f, &draws, &tris);
+    rb_pass_end();
+
+    // Запас глубины 0.3 м: клетка на самой поверхности не прячется за ней
+    u32 flags[4];
+    f32 bias = 0.3f / (SKY_UP + SKY_R + SKY_R);
+    memcpy(&flags[1], &bias, sizeof bias);
+    flags[0] = R.sky_dir == 0;
+    flags[2] = flags[3] = 0;
+    f32 base4[4] = { o.x, o.y, o.z, 0 };
+    rb_push(0, sizeof vp.m, vp.m);
+    rb_push(96, sizeof flags, flags);
+    rb_push(112, sizeof base4, base4);
+    rb_bind_ssbo(B_SKY, R.sky_buf[R.sky_acc], 0, 0);
+    rb_bind_tex(B_EXPO_SRC, R.sky_depth, RB_SMP_NEAREST);
+    rb_bind_pipe(R.pipe_sky);
+    rb_dispatch(1, SKY_NY, SKY_NZ);
+    if (++R.sky_dir == SKY_DIRS) {
+        rb_buf_write(R.sky_buf[R.sky_acc], 0, sizeof base4, (f32[4]){ o.x, o.y, o.z, 1.0f });
+        R.sky_cur = (i32)R.sky_acc;
+        log_info("СВЕТ: сетка неба готова у (%.0f, %.0f, %.0f)", (f64)o.x, (f64)o.y, (f64)o.z);
+    }
+}
+
+bool render_sky_progress(u32 *done, u32 *total)
+{
+    *done = R.sky_dir == SKY_DIRS ? SKY_DIRS : R.sky_dir;
+    *total = SKY_DIRS;
+    return R.sky_cur >= 0;
+}
+
 void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const RenderSettings *rs, i32 win_w, i32 win_h)
 {
     rb_frame_begin(win_w, win_h);
@@ -1460,6 +1579,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     R.light_t = now;
     f->lightf[1] = BLOOM_MIX / BLOOM_LEVELS;
     f->lightf[2] = BLOOM_LEVELS;
+    f->lightf[3] = rs->light_gi == LIGHT_GI_SKY ? 1.0f : 0.0f;
     frame_write(0, f);
     R.stat_prep += time_now() - t_prep;
     rb_bind_ssbo(B_BONES, R.bone_buf[R.stream], 0, 0);
@@ -1475,6 +1595,10 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         u32 counts[2] = { n_shadow, n_scene };
         R.skin_on = skin_prepare(lists, counts, 2);
     }
+
+    // Сетка неба запекается только при НЕБЕ ПО СЕТКЕ (время — в столбце тени); сцена читает готовую
+    if (rs->light_gi == LIGHT_GI_SKY && R.pipe_sky) sky_bake(fv, items, count, rs->flora);
+    rb_bind_ssbo(B_SKY, R.sky_buf[R.sky_cur >= 0 ? R.sky_cur : 0], 0, 0);
 
     // 1. Тени. Ветер и прореживание в вершинном шейдере: те же значения во всех проходах (и в проходе глубины)
     if (rs->shadows) {
