@@ -1,21 +1,7 @@
 #include "inventory.h"
 
-//                                     имя              w  h стоп слот        кг    +ноша
-const GoodsDef g_goods[G_COUNT] = {
-    [G_WATER]   = { "ФЛЯГА ВОДЫ", 1, 2, 1, SLOT_NONE, 1.0f, 0, "Вода с привкусом ржавчины." },
-    [G_RUSK]    = { "СУХАРИ", 1, 1, 10, SLOT_NONE, 0.2f, 0, "Твёрдые, как бетон. Едят." },
-    [G_MEAT]    = { "ВЯЛЕНОЕ МЯСО", 1, 1, 10, SLOT_NONE, 0.3f, 0, "Чьё мясо, лучше не спрашивать." },
-    [G_BANDAGE] = { "БИНТЫ", 1, 1, 10, SLOT_NONE, 0.1f, 0, "Серые тряпки. Останавливают кровь." },
-    [G_SCRAP]   = { "МЕТАЛЛОЛОМ", 2, 2, 5, SLOT_NONE, 4.0f, 0, "Ржавое железо. Берут кузнецы." },
-    [G_PART]    = { "ДЕТАЛЬ МАШИНЫ", 2, 1, 1, SLOT_NONE, 2.5f, 0, "Назначение неизвестно. Покупают." },
-    [G_FUEL]    = { "ТОПЛИВО", 1, 2, 1, SLOT_NONE, 3.0f, 0, "Канистра. Пахнет старым миром." },
-    [G_TOKEN]   = { "ЖЕТОН СО ЗНАКАМИ", 1, 1, 1, SLOT_NONE, 0.05f, 0, "Знаки никто не читает." },
-    [G_WRAP]    = { "РЕСПИРАТОР", 1, 1, 1, SLOT_FACE, 0.1f, 0, "Резина и банка фильтра. Пыль держит." },
-    [G_BOOTS]   = { "РАБОЧИЕ БОТИНКИ", 1, 2, 1, SLOT_FEET, 0.6f, 0, "Окованный носок. Подошва из старой резины." },
-    [G_MITTS]   = { "КРАГИ", 1, 1, 1, SLOT_HANDS, 0.3f, 0, "Резина с раструбом. Рукоять не скользит." },
-    [G_PACK]    = { "РАНЕЦ", 2, 2, 1, SLOT_BACK, 1.0f, 15.0f, "Рама из труб, ящик и баллон. Что в баллоне, никто не знает." },
-    [G_BELT]    = { "ПОЯС И ПОДСУМКИ", 2, 1, 1, SLOT_BELT, 0.5f, 4.0f, "Подсумки и шланг. Мелочь под рукой." },
-};
+const GoodsDef *g_goods;
+u32             g_goods_count;
 
 const char *g_skill_name[SK_COUNT] = {
     [SK_ATTACK] = "АТАКА", [SK_DEFENSE] = "ЗАЩИТА", [SK_DODGE] = "УВОРОТ",
@@ -38,15 +24,6 @@ const char *g_state_name[FS_COUNT] = {
     [FS_PICKUP] = "ПОДНИМАЕТ",
 };
 
-// Размер в клетках: оружие стоймя, длина по высоте
-static const u8 g_weapon_size[W_COUNT][2] = {
-    [W_RESSORA] = { 1, 3 }, [W_SEKACH] = { 1, 3 }, [W_ARMATURA] = { 1, 3 }, [W_BAGOR] = { 1, 5 }, [W_BALKA] = { 2, 4 },
-};
-static const u8 g_armor_size[A_COUNT][2] = {
-    [A_RAGS] = { 2, 2 }, [A_JACKET] = { 2, 3 }, [A_QUILT] = { 2, 2 }, [A_PLATE] = { 2, 3 }, [A_BUCKET] = { 2, 2 },
-    [A_GREAVES] = { 2, 2 },
-};
-
 const char *item_name(Item it)
 {
     switch (it.kind) {
@@ -59,9 +36,12 @@ const char *item_name(Item it)
 
 void item_size(Item it, u8 *w, u8 *h)
 {
-    const u8 *s = it.kind == IK_WEAPON ? g_weapon_size[it.id] : it.kind == IK_ARMOR ? g_armor_size[it.id] : NULL;
-    *w = s ? s[0] : g_goods[it.id].w;
-    *h = s ? s[1] : g_goods[it.id].h;
+    // Оружие стоймя, длина по высоте
+    switch (it.kind) {
+    case IK_WEAPON: *w = g_weapons[it.id].size_w, *h = g_weapons[it.id].size_h; break;
+    case IK_ARMOR: *w = g_armors[it.id].size_w, *h = g_armors[it.id].size_h; break;
+    default: *w = g_goods[it.id].w, *h = g_goods[it.id].h; break;
+    }
 }
 
 f32 item_weight(Item it)

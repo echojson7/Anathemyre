@@ -79,7 +79,7 @@ bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const
             for (u32 l = 0; l + 1 < CHAR_LODS; l++) (l ? &gl[l - 1] : gm)->lod_px = g_char_lod_px[l] * ratio;
         }
     }
-    for (u32 k = 0; k < W_COUNT; k++) {
+    for (u32 k = 0; k < g_weapon_count; k++) {
         mb_init(mb, perm, 4000, 12000);
         weapon_build(mb, (u8)k);
         gpu_mesh_upload_pooled(&m->weapon[k], mb);
@@ -292,7 +292,8 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
             j->p = (CharPose){
                 .pos = b->pos, .heading = b->heading, .phase = b->phase, .walk = b->walk, .run = b->run,
                 .speed = b->speed, .stride = player_stride(b), .time = v->time, .seed = p->seed[i],
-                .lean_fwd = b->lean_fwd, .lean_side = b->lean_side, .look = b->look, .idle = b->idle,
+                .lean_fwd = b->lean_fwd, .lean_side = b->lean_side, .look = b->look,
+                .rest = b->rest, .rest_ph = b->rest_ph, .rest_t = b->rest_t,
                 .height = p->height[i], .width = p->width[i], .joints = g_body_joints[kind],
                 .weapon = armed ? (u8)(wid + 1) : 0, .torch = lit,
             };

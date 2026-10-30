@@ -12,6 +12,7 @@
 #include "core/log.h"
 #include "core/math3d.h"
 #include "core/prof.h"
+#include "defs/defs.h"
 #include "game/anim.h"
 #include "game/arena.h"
 #include "game/battle.h"
@@ -24,11 +25,13 @@
 #include "game/hud.h"
 #include "game/humans_row.h"
 #include "game/look.h"
+#include "game/showhall.h"
 #include "game/stand.h"
 #include "game/sfx.h"
 #include "game/testroom.h"
 #include "game/world.h"
 #include "platform/platform.h"
+#include "render/rb.h"
 #include "render/render.h"
 #include "render/ui.h"
 #include "world/map.h"
@@ -51,6 +54,7 @@ typedef struct Options {
     f32         warp;        // для снимков: прогнать столько секунд мира до первого кадра
     const char *save_path;   // записать мир после прогона (--warp)
     const char *load_path;   // прочитать мир до прогона
+    const char *defs_dir, *mods_dir;  // описания вещей и моды вместо data/defs и mods
     f32         sum_after;   // проверка сохранений: ещё столько секунд мира, сумма мира в консоль и выход
     bool        sum_set;
     u32         arena_bench; // прогнать N боёв арены без окна
@@ -80,9 +84,11 @@ typedef struct Options {
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
     i32         stand;       // стенд фигур сразу при старте: ряд + 1 (0 — нет)
+    f32         hall_t;      // сдвиг часов Мерильни, с (--hall-t): кадр нужной фазы
     bool        valley;      // начать в долине (иначе пешком или переход из меню НАСТРОЙКИ)
     bool        mute;        // без звука
     const char *sound_demo;  // сценка звука в WAV без окна
+    i32         api;         // рендер: -1 — из anathemyre.cfg, иначе RbApi (--gl, --vk)
 } Options;
 
 // Замер кадра (меню НАСТРОЙКИ или --bench): камера у арены вплотную, утро, сутки стоят, vsync выкл.
@@ -113,9 +119,10 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N]");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N] [--hall-t S]");
     puts("anathemyre [--light 0..2] [--light-parts МАТЕРИАЛЫ КРИВАЯ ЭКСПОЗИЦИЯ СВЕЧЕНИЕ ОТРАЖЁННЫЙ]   свет на старте: набор ПРЕЖНИЙ/БЫСТРЫЙ/РЕАЛИСТИЧНЫЙ или части (docs/lighting.md)");
     puts("anathemyre [--load file.sav] [--warp S] [--save file.sav] [--sum-after S]   сохранение без меню: прочитать, прогнать, записать; сумма мира через S секунд и выход");
+    puts("anathemyre [--defs DIR] [--mods DIR]   описания вещей и моды из других папок (по умолчанию data/defs и mods, docs/content.md)");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
@@ -143,6 +150,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--warp") && i + 1 < argc) o->warp = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--save") && i + 1 < argc) o->save_path = argv[++i];
         else if (!strcmp(a, "--load") && i + 1 < argc) o->load_path = argv[++i];
+        else if (!strcmp(a, "--defs") && i + 1 < argc) o->defs_dir = argv[++i];
+        else if (!strcmp(a, "--mods") && i + 1 < argc) o->mods_dir = argv[++i];
         else if (!strcmp(a, "--sum-after") && i + 1 < argc) {
             o->sum_after = strtof(argv[++i], NULL);
             o->sum_set = true;
@@ -152,11 +161,14 @@ static bool parse_args(int argc, char **argv, Options *o)
             if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
         } else if (!strcmp(a, "--humans")) o->humans = true;
         else if (!strcmp(a, "--stand") && i + 1 < argc) o->stand = atoi(argv[++i]) + 1;
+        else if (!strcmp(a, "--hall-t") && i + 1 < argc) o->hall_t = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--no-pixel")) o->no_pixel = true;
         else if (!strcmp(a, "--valley")) o->valley = true;
         else if (!strcmp(a, "--mute")) o->mute = true;
         else if (!strcmp(a, "--sound-demo") && i + 1 < argc) o->sound_demo = argv[++i];
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
+        else if (!strcmp(a, "--gl")) o->api = RB_API_GL;
+        else if (!strcmp(a, "--vk")) o->api = RB_API_VULKAN;
         else if (!strcmp(a, "--ao-half")) o->ao_half = true;
         else if (!strcmp(a, "--hash-noise")) o->noise_tex = false;
         else if (!strcmp(a, "--no-mdi")) o->no_mdi = true;
@@ -221,6 +233,63 @@ static bool find_data_dir(char *out, size_t size)
     return false;
 }
 
+// Настройки между запусками: anathemyre.cfg рядом с папкой data, строки «ключ значение».
+// Пока одна: render gl|vulkan (НАСТРОЙКИ → РЕНДЕР, после перезапуска)
+static void cfg_path(char *out, size_t size, const char *data_dir) { snprintf(out, size, "%s/../anathemyre.cfg", data_dir); }
+
+static RbApi cfg_api(const char *data_dir)
+{
+    char path[600], line[128];
+    cfg_path(path, sizeof path, data_dir);
+    FILE *f = fopen(path, "r");
+    RbApi api = RB_API_GL;
+    if (!f) return api;
+    while (fgets(line, sizeof line, f))
+        if (!strncmp(line, "render ", 7)) api = !strncmp(line + 7, "vulkan", 6) ? RB_API_VULKAN : RB_API_GL;
+    fclose(f);
+    return api;
+}
+
+static void cfg_save_api(const char *data_dir, RbApi api)
+{
+    char path[600];
+    cfg_path(path, sizeof path, data_dir);
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        log_error("НАСТРОЙКИ: не записан %s", path);
+        return;
+    }
+    fprintf(f, "render %s\n", api == RB_API_VULKAN ? "vulkan" : "gl");
+    fclose(f);
+    log_info("РЕНДЕР: со следующего запуска %s", api == RB_API_VULKAN ? "VULKAN" : "GL");
+}
+
+// Окно и рендер. Vulkan не поднялся (нет драйвера, устройства, шейдера) — всё заново на GL
+static bool gfx_start(RbApi api, const Options *o, Arena *scratch, const char *data_dir)
+{
+#ifdef NDEBUG
+    const bool gl_debug = false;
+#else
+    const bool gl_debug = true;
+#endif
+    for (;;) {
+        platform_use_vulkan(api == RB_API_VULKAN);
+        rb_select(api);
+        bool win = platform_init("ANATHEMYRE", o->width, o->height, gl_debug);
+        if (win && render_init(scratch, data_dir) && ui_init()) {
+            log_info("РЕНДЕР: %s", api == RB_API_VULKAN ? "VULKAN" : "GL");
+            return true;
+        }
+        if (win) {
+            ui_shutdown();
+            render_shutdown();
+            platform_shutdown();
+        }
+        if (api == RB_API_GL) return false;
+        log_error("РЕНДЕР: Vulkan не запустился, кадр рисует GL");
+        api = RB_API_GL;
+    }
+}
 
 // Портреты: миниатюры отряда и крупно выбранный (свой, чужой на поле или боец арены)
 static void draw_portraits(Figures *fig, const FrameView *fv, const CharMeshes *cm, const World *w, const Hud *hud)
@@ -251,15 +320,26 @@ int main(int argc, char **argv)
     Options opt = {
         .tod = 0.31f, .shot_frames = 90, .stage = STAGE_FULL, .bands_hours = 1.0f, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
         .light = { -1, -1, -1, -1, -1 },
-        .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
+        .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f }, .api = -1,
     };
     if (!parse_args(argc, argv, &opt)) return 1;
-    // Скелет и капсулы тела нужны и бенчам боя
+
     char data_dir[512];
     if (!find_data_dir(data_dir, sizeof data_dir)) {
         log_error("ДАННЫЕ: папка data/shaders не найдена");
         return 1;
     }
+    // Описания вещей — до всего, что берёт оружие и вещи, и до замеров без окна. Моды — рядом с data
+    static Arena defs_mem;
+    char defs_dir[600], mods_dir[600];
+    snprintf(defs_dir, sizeof defs_dir, "%s/defs", data_dir);
+    snprintf(mods_dir, sizeof mods_dir, "%s/../mods", data_dir);
+    if (!arena_init(&defs_mem, DEFS_MEM) ||
+        !defs_load(&defs_mem, opt.defs_dir ? opt.defs_dir : defs_dir, opt.mods_dir ? opt.mods_dir : mods_dir)) {
+        log_error("ОПИСАНИЯ: не прочитаны, игра не запускается");
+        return 1;
+    }
+    // Скелет и капсулы тела — после описаний (стойка берёт оружие) и тоже до замеров боя
     if (!look_load_skeletons(data_dir)) return 1;
     body_hit_build();
     anim_bake_hit_guard();
@@ -274,7 +354,6 @@ int main(int argc, char **argv)
     log_set_echo(false);
     log_info("АНАТЕМАЙР. ЭТАП 0. ЗЕРНО МИРА %llu", (unsigned long long)opt.seed);
 
-
     // Вся память выделяется здесь, один раз
     Arena perm, scratch;
     // Карта ~18 МБ, долина ~70 МБ при старте (экземпляры растений и временные массивы)
@@ -283,20 +362,9 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (!platform_init("ANATHEMYRE", opt.width, opt.height,
-#ifdef NDEBUG
-                       false
-#else
-                       true
-#endif
-                       )) {
-        return 1;
-    }
-    if (!render_init(&scratch, data_dir) || !ui_init()) {
-        platform_shutdown();
-        return 1;
-    }
-    platform_set_vsync(!opt.no_vsync && opt.shot_path == NULL);
+    RbApi api_want = opt.api >= 0 ? (RbApi)opt.api : cfg_api(data_dir);
+    if (!gfx_start(api_want, &opt, &scratch, data_dir)) return 1;
+    render_set_vsync(!opt.no_vsync && opt.shot_path == NULL);
     // Пул потоков: позы людей и бой на поле
     if (!jobs_init(opt.threads)) log_error("ПОТОКИ: пул не запущен, всё в главном потоке");
     log_info("ПОТОКИ: %u", jobs_threads());
@@ -314,6 +382,7 @@ int main(int argc, char **argv)
     Figures *fig = ARENA_PUSH_ARRAY(&perm, Figures, 1);
     HumansRow *humans = ARENA_PUSH_ARRAY(&perm, HumansRow, 1);
     Stand *stand = ARENA_PUSH_ARRAY(&perm, Stand, 1);
+    ShowHall *hall = ARENA_PUSH_ARRAY(&perm, ShowHall, 1);
     if (!world_init(world, &perm, &mb, opt.seed, opt.tod, !opt.day_stop) || !figures_init(fig, cm, &mb, &perm, data_dir)) {
         jobs_shutdown();
         render_shutdown();
@@ -323,6 +392,8 @@ int main(int argc, char **argv)
     figures_view(fig, world->people, world->field, world->alpha, world_ground);
     humans_row_init(humans, &perm, world_ground);
     stand_init(stand, &perm);
+    showhall_init(hall, &mb, &perm);
+    hall->t_off = opt.hall_t;
     // Рельеф карты и растения долины — на весь сеанс
     render_set_terrain(map_fill, NULL);
     render_set_groups(world->valley->groups, world->valley->clusters, world->valley->cluster_count);
@@ -342,7 +413,7 @@ int main(int argc, char **argv)
         .swap_late = true, .follow = opt.follow, .ui_user = 1.0f, .ui_user_text = 1.0f,
         .sound_vol = 0.8f, .music_vol = 0.7f, .music_on = true, .travel = opt.valley,
         .stand = opt.stand > 0, .stand_moved = opt.stand > 0, .stand_row = opt.stand > 0 ? (u32)(opt.stand - 1) : 0,
-        .stage = opt.stage, .bench_stages = opt.bench_stages,
+        .stage = opt.stage, .bench_stages = opt.bench_stages, .render_vk = api_want == RB_API_VULKAN,
     };
     light_preset_apply(&set.rs, (LightPreset)opt.light_preset);
     if (opt.light[0] >= 0) set.rs.light_mat = (u8)(opt.light[0] % LIGHT_MAT_COUNT);
@@ -483,7 +554,7 @@ int main(int argc, char **argv)
             cam_y = world_ground(cam.target.x, cam.target.z);
             world->tod = BENCH_TOD;
             world->day_run = set.follow = set.vsync = false;
-            platform_set_vsync(false);
+            render_set_vsync(false);
             if (stage_sweep) bench_begin(&bench, time_now(), BENCH_STAGE_WARMUP_S, BENCH_STAGE_S);
             else bench_begin(&bench, time_now(), BENCH_WARMUP_S, BENCH_S);
         }
@@ -528,6 +599,7 @@ int main(int argc, char **argv)
         FrameView fv;
         fv.cam_pos = camera_eye(&cam);
         fv.cam_pos.y = fmaxf(fv.cam_pos.y, world_ground(fv.cam_pos.x, fv.cam_pos.z) + 1.5f);
+        fv.cam_pos = showhall_clamp_eye(cam.target, fv.cam_pos);
         fv.view = m4_look_at(fv.cam_pos, v3_add(cam.target, v3(0, 1.0f, 0)), v3(0, 1, 0));
         fv.proj = m4_perspective(CAM_FOV, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
 
@@ -539,6 +611,10 @@ int main(int argc, char **argv)
         humans_flip |= set.humans;
         bench_request |= set.bench;
         if (set.bands_test) world_bands_test(world);
+        if (set.render_save) {
+            set.render_save = false;
+            cfg_save_api(data_dir, set.render_vk ? RB_API_VULKAN : RB_API_GL);
+        }
         if (set.save) {
             if (!save_dir) log_error("СОХРАНЕНИЕ: папка для %s не создана", save_path);
             else world_save(world, save_path);
@@ -604,6 +680,10 @@ int main(int argc, char **argv)
         items[n++] = (DrawItem){ .mesh = &world->far, .no_shadow = true };
         items[n++] = (DrawItem){ .mesh = &world->town_mesh };
         items[n++] = (DrawItem){ .mesh = &world->ostov };
+        // Мерильня: лампы горят всегда, фигуры — когда камера рядом
+        nl += showhall_lights(wtime, lights + nl, TORCH_LIGHTS_MAX - nl);
+        if (st_people) n += showhall_draw(hall, cm, fv.cam_pos, wtime, st_live ? dt : 0.0f, items + n);
+        else items[n++] = (DrawItem){ .mesh = &hall->mesh };
         n += valley_view_draw(valley, fv.cam_pos, items + n);
         prof_zone(PZ_FIGURES);
         if (st_people) {
@@ -644,6 +724,7 @@ int main(int argc, char **argv)
         fv.zenith = sky.zenith;
         fv.shadow_center = cam.target;
         fv.lights = lights;
+        showhall_room(&fv.room);
         fv.light_count = nl;
         fv.time = wtime;
         fv.frame = frame;
@@ -655,7 +736,10 @@ int main(int argc, char **argv)
         ui_set_time(real_time);
         hud.dbg.fps = stats.fps;
         hud.dbg.fps_ms = stats.fps_ms;
-        if (st_full) hud_draw(&hud, &hin, &hw);
+        if (st_full) {
+            showhall_labels(hall, hw.view_proj, fv.cam_pos);
+            hud_draw(&hud, &hin, &hw);
+        }
         ui_end();
         render_frame_end();
         swap_pending = true;
@@ -693,7 +777,7 @@ int main(int argc, char **argv)
                 world->day_run = restore.day_run;
                 set.follow = restore.follow;
                 set.vsync = restore.vsync;
-                platform_set_vsync(set.vsync);
+                render_set_vsync(set.vsync);
                 stats_reset(&stats, time_now());
             }
             continue;

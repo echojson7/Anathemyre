@@ -1,4 +1,4 @@
-// Таблицы оружия и брони. Все числа баланса здесь, не в коде боя.
+// Таблицы оружия и брони. Числа баланса — в data/defs (docs/content.md), читаются при старте, не в коде боя.
 #ifndef ANA_ITEMS_H
 #define ANA_ITEMS_H
 
@@ -8,6 +8,7 @@ typedef enum WeaponClass { WC_BLADE, WC_CLEAVER, WC_BLUNT, WC_POLEARM, WC_HEAVY,
 typedef enum AttackKind { ATK_OVERHEAD, ATK_SWING, ATK_THRUST, ATK_COUNT } AttackKind;
 
 typedef struct WeaponDef {
+    const char *id;   // имя в описаниях: по нему моды правят запись, сохранение сверяет номера
     const char *name;
     u8  wclass;
     u8  attacks;      // маска (1 << AttackKind)
@@ -19,21 +20,39 @@ typedef struct WeaponDef {
     f32 arc_deg;      // дуга размаха
     f32 knock;        // сила сбивания
     f32 pen;          // пробой брони уколом, 0..1
+    u8  size_w, size_h;  // клетки инвентаря
+    u8  voice, voice_strike;  // голос железа (SFX_WPN_* по порядку): закрылся им и ударил им
+    u16 part, parts;  // форма: части в g_weapon_parts
 } WeaponDef;
 
-enum { W_RESSORA, W_SEKACH, W_ARMATURA, W_BAGOR, W_BALKA, W_COUNT };
+// Часть формы оружия в своей системе: рукоять в начале координат, острие по +Y, лезвие по +Z
+typedef enum WeaponPartKind { WP_ROD, WP_BOX } WeaponPartKind;
+typedef struct WeaponPart {
+    u8  kind, mat;
+    f32 color[3];
+    f32 v[6];  // стержень: от, до, радиус, сдвиг; брусок: от, до, ширина, толщина, сдвиг, наклон
+} WeaponPart;
+
+#define WEAPON_CAP 64  // сеток оружия на GPU
 
 typedef struct ArmorDef {
+    const char *id;
     const char *name;
     u8  slot;
     f32 cover[PART_COUNT];
     f32 res_cut, res_blunt, res_pierce;
     f32 weight;
     f32 dodge_pen;
+    u8  size_w, size_h;
+    u8  look;   // сетка одежды (GEAR_*), GEAR_NONE — не видна
+    bool metal; // удар по ней звенит железом
+    u32 hides;  // какие сетки под ней не рисуются: биты GEAR_*, GEAR_HIDES_HAIR — причёска
 } ArmorDef;
 
-enum { A_RAGS, A_JACKET, A_QUILT, A_PLATE, A_BUCKET, A_GREAVES, A_PANTS, A_COUNT };
 #define ARMOR_NONE 255
+#define GEAR_NONE 255
+#define GEAR_HIDES_HAIR (1u << 31)
+#define WEAPON_PARTS 24  // частей формы на оружие
 
 // Качество: множитель урона оружия и сопротивлений брони
 enum { Q_JUNK, Q_WORN, Q_SOUND, Q_MASTER, Q_ANCIENT, Q_COUNT };
@@ -47,12 +66,16 @@ typedef struct AttackDef {
 
 #define ARM_REACH 0.7f
 
-extern const WeaponDef g_weapons[W_COUNT];
-extern const ArmorDef  g_armors[A_COUNT];
-extern const AttackDef g_attacks[ATK_COUNT];
-extern const f32       g_quality_mul[Q_COUNT];
-extern const char     *g_quality_name[Q_COUNT];
-extern const char     *g_attack_name[ATK_COUNT];
-extern const u8        g_armor_layer_order[5];  // слоты снаружи внутрь
+// Заполняет defs_load при старте
+extern const WeaponDef  *g_weapons;
+extern u32               g_weapon_count;
+extern const WeaponPart *g_weapon_parts;
+extern const ArmorDef   *g_armors;
+extern u32               g_armor_count;
+extern AttackDef         g_attacks[ATK_COUNT];
+extern f32               g_quality_mul[Q_COUNT];
+extern const char       *g_quality_name[Q_COUNT];
+extern const char       *g_attack_name[ATK_COUNT];
+extern const u8          g_armor_layer_order[5];  // слоты снаружи внутрь
 
 #endif

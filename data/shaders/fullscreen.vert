@@ -1,5 +1,5 @@
 // Один треугольник на весь экран
-out vec2 v_uv;
+layout(location = 0) out vec2 v_uv;
 void main()
 {
     vec2 p = vec2((RB_VERTEX_ID << 1) & 2, RB_VERTEX_ID & 2);

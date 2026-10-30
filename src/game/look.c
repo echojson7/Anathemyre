@@ -32,29 +32,26 @@ const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX] = {
     [BODY_THIN] = HAIR_MH_MALE,
 };
 
+u32 g_gear_hides[GEAR_COUNT];
+
 u32 look_hair(const CharLook *l, u8 *gear, u32 n)
 {
     if (!l->cut) return 0;
     for (u32 i = 0; i < n; i++)
-        if (gear[i] == GEAR_BUCKET) return 0;
+        if (gear[i] < GEAR_COUNT && (g_gear_hides[gear[i]] & GEAR_HIDES_HAIR)) return 0;
     gear[n] = (u8)(GEAR_COUNT + l->cut - 1);
     return 1;
 }
 
-static const u8 g_armor_gear[A_COUNT] = {
-    [A_RAGS] = GEAR_RAGS, [A_JACKET] = GEAR_JACKET, [A_QUILT] = GEAR_QUILT,
-    [A_PLATE] = GEAR_PLATE, [A_BUCKET] = GEAR_BUCKET, [A_GREAVES] = GEAR_GREAVES, [A_PANTS] = GEAR_PANTS,
-};
-
-// Штаны под комбинезоном не рисуются: их закрывает его штанина
+// Закрытое другой вещью не рисуется: штаны под штаниной комбинезона
 static u32 drop_hidden(u8 *out, u32 n)
 {
-    bool quilt = false;
-    for (u32 i = 0; i < n; i++) quilt |= out[i] == GEAR_QUILT;
-    if (!quilt) return n;
+    u32 hidden = 0;
+    for (u32 i = 0; i < n; i++) hidden |= g_gear_hides[out[i]];
+    if (!(hidden & ((1u << GEAR_COUNT) - 1u))) return n;
     u32 m = 0;
     for (u32 i = 0; i < n; i++)
-        if (out[i] != GEAR_PANTS) out[m++] = out[i];
+        if (!(hidden & (1u << out[i]))) out[m++] = out[i];
     return m;
 }
 
@@ -62,7 +59,7 @@ u32 gear_from_armor(const u8 *armor, u8 *out)
 {
     u32 n = 0;
     for (u32 s = 0; s < SLOT_COUNT; s++)
-        if (armor[s] < A_COUNT) out[n++] = g_armor_gear[armor[s]];
+        if (armor[s] < g_armor_count && g_armors[armor[s]].look < GEAR_COUNT) out[n++] = g_armors[armor[s]].look;
     return drop_hidden(out, n);
 }
 
@@ -71,8 +68,8 @@ u32 gear_from_sheet(const CharSheet *cs, u8 *out)
     u32 n = 0;
     for (u32 s = 0; s < SLOT_COUNT; s++) {
         const Item *it = &cs->equip[s];
-        if (it->kind == IK_ARMOR && it->id < A_COUNT) out[n++] = g_armor_gear[it->id];
-        else if (it->kind == IK_GOODS && it->id >= G_WRAP && it->id <= G_BELT) out[n++] = (u8)(GEAR_WRAP + (it->id - G_WRAP));
+        u8 g = it->kind == IK_ARMOR ? g_armors[it->id].look : it->kind == IK_GOODS ? g_goods[it->id].look : GEAR_NONE;
+        if (g < GEAR_COUNT) out[n++] = g;
     }
     return drop_hidden(out, n);
 }
@@ -89,7 +86,7 @@ u32 gear_random(u32 seed, u8 *out)
     if (hash01(&s) < 0.25f) out[n++] = GEAR_PACK;
     if (hash01(&s) < 0.4f) out[n++] = GEAR_BELT;
     // Штаны почти у всех; под комбинезоном их не видно
-    if (hash01(&s) < 0.85f && out[0] != GEAR_QUILT) out[n++] = GEAR_PANTS;
+    if (hash01(&s) < 0.85f && !(g_gear_hides[out[0]] & (1u << GEAR_PANTS))) out[n++] = GEAR_PANTS;
     return n;
 }
 
@@ -176,4 +173,3 @@ M4 look_matrix(const CharLook *l, u32 body)
     return m;
 }
 _Static_assert(LOOK_MORPHS <= MESH_MAX_MORPHS && MESH_MAX_MORPHS <= 10, "морфы внешности не влезают в матрицу");
-_Static_assert(GEAR_BELT - GEAR_WRAP == G_BELT - G_WRAP, "вещи G_WRAP..G_BELT идут подряд, как GEAR_WRAP..GEAR_BELT");

@@ -40,7 +40,7 @@ void         platform_window_size(i32 *w, i32 *h);
 PlatformProc platform_gl_proc(const char *name);
 
 // Vulkan: до platform_init — окно без GL-контекста; swap и vsync тогда делает rb_vk.c
-void         platform_use_vulkan(void);
+void         platform_use_vulkan(bool on);
 // Хэндлы окна для поверхности: Display* и Window на X11, HINSTANCE и HWND на Windows
 typedef struct PlatformNative { void *display; u64 window; } PlatformNative;
 PlatformNative platform_native(void);
@@ -50,6 +50,9 @@ PlatformProc platform_vk_loader(void);
 bool         platform_exe_dir(char *buf, size_t size);
 // Создать папку (одну, без родителей); true — есть или создана
 bool         platform_make_dir(const char *path);
+// Обойти папку: имена без "." и "..", dir — подпапка. Порядок любой. false — папки нет
+typedef void (*PlatformDirFn)(const char *name, bool dir, void *user);
+bool         platform_list_dir(const char *path, PlatformDirFn fn, void *user);
 
 // Потоки и семафор для рабочих потоков. Создаются один раз при старте
 typedef struct PlatformThread PlatformThread;

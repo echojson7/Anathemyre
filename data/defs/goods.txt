@@ -1,0 +1,108 @@
+# Вещи: еда, хлам, снаряжение без брони. Ключи и слова — docs/content.md
+#
+# size: клетки инвентаря. stack: сколько в одной клетке. weight: кг за штуку.
+# slot: куда надевается (без slot — только в мешок). carry: сколько кг добавляет к переносимому.
+# look: сетка на теле. desc: строка в осмотре
+
+goods water
+    name "ФЛЯГА ВОДЫ"
+    size 1 2
+    stack 1
+    weight 1.0
+    desc "Вода с привкусом ржавчины."
+
+goods rusk
+    name "СУХАРИ"
+    size 1 1
+    stack 10
+    weight 0.2
+    desc "Твёрдые, как бетон. Едят."
+
+goods meat
+    name "ВЯЛЕНОЕ МЯСО"
+    size 1 1
+    stack 10
+    weight 0.3
+    desc "Чьё мясо, лучше не спрашивать."
+
+goods bandage
+    name "БИНТЫ"
+    size 1 1
+    stack 10
+    weight 0.1
+    desc "Серые тряпки. Останавливают кровь."
+
+goods scrap
+    name "МЕТАЛЛОЛОМ"
+    size 2 2
+    stack 5
+    weight 4.0
+    desc "Ржавое железо. Берут кузнецы."
+
+goods part
+    name "ДЕТАЛЬ МАШИНЫ"
+    size 2 1
+    stack 1
+    weight 2.5
+    desc "Назначение неизвестно. Покупают."
+
+goods fuel
+    name "ТОПЛИВО"
+    size 1 2
+    stack 1
+    weight 3.0
+    desc "Канистра. Пахнет старым миром."
+
+goods token
+    name "ЖЕТОН СО ЗНАКАМИ"
+    size 1 1
+    stack 1
+    weight 0.05
+    desc "Знаки никто не читает."
+
+goods wrap
+    name "РЕСПИРАТОР"
+    size 1 1
+    stack 1
+    slot face
+    weight 0.1
+    look wrap
+    desc "Резина и банка фильтра. Пыль держит."
+
+goods boots
+    name "РАБОЧИЕ БОТИНКИ"
+    size 1 2
+    stack 1
+    slot feet
+    weight 0.6
+    look boots
+    desc "Окованный носок. Подошва из старой резины."
+
+goods mitts
+    name "КРАГИ"
+    size 1 1
+    stack 1
+    slot hands
+    weight 0.3
+    look mitts
+    desc "Резина с раструбом. Рукоять не скользит."
+
+goods pack
+    name "РАНЕЦ"
+    size 2 2
+    stack 1
+    slot back
+    weight 1.0
+    carry 15
+    look pack
+    desc "Рама из труб, ящик и баллон. Что в баллоне, никто не знает."
+
+goods belt
+    name "ПОЯС И ПОДСУМКИ"
+    size 2 1
+    stack 1
+    slot belt
+    weight 0.5
+    carry 4
+    look belt
+    desc "Подсумки и шланг. Мелочь под рукой."

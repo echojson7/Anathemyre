@@ -4,6 +4,7 @@
 #include "platform.h"
 
 #include <windows.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "../core/log.h"
@@ -166,9 +167,9 @@ void platform_preinit(void)
     SetConsoleOutputCP(CP_UTF8);
 }
 
-void platform_use_vulkan(void)
+void platform_use_vulkan(bool on)
 {
-    g_w.vulkan = true;
+    g_w.vulkan = on;
 }
 
 bool platform_init(const char *title, i32 width, i32 height, bool gl_debug)
@@ -383,6 +384,21 @@ bool platform_exe_dir(char *buf, size_t size)
 bool platform_make_dir(const char *path)
 {
     return CreateDirectoryA(path, NULL) || GetLastError() == ERROR_ALREADY_EXISTS;
+}
+
+bool platform_list_dir(const char *path, PlatformDirFn fn, void *user)
+{
+    char mask[1024];
+    snprintf(mask, sizeof mask, "%s\\*", path);
+    WIN32_FIND_DATAA e;
+    HANDLE h = FindFirstFileA(mask, &e);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    do {
+        if (!strcmp(e.cFileName, ".") || !strcmp(e.cFileName, "..")) continue;
+        fn(e.cFileName, (e.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0, user);
+    } while (FindNextFileA(h, &e));
+    FindClose(h);
+    return true;
 }
 
 // ---------------------------------------------------------------- потоки

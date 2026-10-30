@@ -82,6 +82,10 @@ bool save_read(const char *path, SaveInfo *info, SerFn fn, void *user, char *poo
     Ser s = { .mode = SER_LOAD, .f = f, .hash = SER_HASH_START, .pool = pool, .pool_cap = pool_cap };
     fn(&s, user);
     fclose(f);
+    if (s.refused) {
+        log_error("СОХРАНЕНИЕ: %s не подходит к нынешним описаниям вещей, мир не тронут", path);
+        return false;
+    }
     if (s.bad || s.bytes != h.bytes) {
         log_error("СОХРАНЕНИЕ: %s прочитан не до конца, мир испорчен", path);
         return false;

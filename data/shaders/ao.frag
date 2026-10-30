@@ -1,6 +1,6 @@
 // AO в половинном разрешении: R — затенение, G — дальность (для апскейла с учётом глубины)
 
-out vec2 o_ao;
+layout(location = 0) out vec2 o_ao;
 
 void main()
 {

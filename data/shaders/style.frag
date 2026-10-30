@@ -1,6 +1,6 @@
 // Пиксельность по глубине и фильтр кадра: цвет без грейда, сверху виньетка, зерно, сканлайны и аберрация к краям
 
-in vec2 v_uv;
+layout(location = 0) in vec2 v_uv;
 
 layout(binding = 8) uniform sampler2D u_src;
 layout(binding = 11) uniform usampler2D u_src_map;  // откуда пиксель берёт цвет, src_map.frag
@@ -8,7 +8,7 @@ layout(binding = 11) uniform usampler2D u_src_map;  // откуда пиксел
 layout(binding = 30) uniform sampler2D u_bloom;     // свечение: сумма ступеней, bloom_up.frag
 layout(std430, binding = 27) readonly buffer Expo { float u_expo, u_expo_lum, u_expo_init, u_expo_pad; };  // expo.comp
 
-out vec4 o_color;
+layout(location = 0) out vec4 o_color;
 
 vec3 aces(vec3 x)
 {

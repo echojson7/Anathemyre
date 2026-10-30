@@ -1,4 +1,5 @@
 #include "testroom.h"
+#include "../defs/defs.h"
 
 #include <string.h>
 
@@ -7,6 +8,7 @@
 #include "look.h"
 #include "names.h"
 #include "ostov.h"
+#include "showhall.h"
 #include "squad.h"
 #include "town.h"
 #include "../world/map.h"
@@ -197,7 +199,7 @@ f32 testroom_ground(f32 x, f32 z)
 {
     // Плита пола зала: верх на 0.1
     if (fabsf(x) <= 32.0f && z >= -28.0f && z <= 24.0f) return 0.1f;
-    f32 h = ostov_ground(x, z, town_ground(x, z, map_height(x, z)));
+    f32 h = showhall_ground(x, z, ostov_ground(x, z, town_ground(x, z, map_height(x, z))));
     // Плита арены
     f32 dx = x - ARENA_CENTER.x, dz = z - ARENA_CENTER.z;
     if (dx * dx + dz * dz < 8.5f * 8.5f) h = fmaxf(h, 0.125f);
@@ -221,7 +223,7 @@ void crowd_add(People *p, Rng *rng, u32 count)
         // Свой поток случайных чисел: расстановка фигур та же, что без листов
         Rng sr;
         rng_seed(&sr, 0xC0DEu + k, 91);
-        sheet_random(&p->sheet[i], &sr, g_crowd_names[k], k % 4 == 1 ? 1 : 0, (u8)(k % W_COUNT));
+        sheet_random(&p->sheet[i], &sr, g_crowd_names[k], k % 4 == 1 ? 1 : 0, (u8)(k % g_weapon_count));
         p->body[i].phase = rng_f32(rng);
         p->body[i].gait = GAIT_WALK;
         p->wait[i] = rng_range(rng, 0.0f, 3.0f);
@@ -229,7 +231,7 @@ void crowd_add(People *p, Rng *rng, u32 count)
         p->variant[i] = (u8)(k % 4 % BODY_KIND_COUNT);
         p->stand[i] = k % 4 == 3;
         // Факел — у кого вторая рука свободна
-        u8 wc = g_weapons[k % W_COUNT].wclass;
+        u8 wc = g_weapons[k % g_weapon_count].wclass;
         p->torch[i] = k % 3 == 1 && wc != WC_POLEARM && wc != WC_HEAVY;
         people_look_random(p, i, k * 7919u + 101u, k * 131u + 9u);
     }
@@ -254,7 +256,7 @@ void watchers_add(People *p, const V3 *pos, const f32 *heading, const f32 *seed,
         Rng sr;
         rng_seed(&sr, 0x5EE0u + k, 92);
         bool armed = k % 3 == 0;
-        u8 weapon = k % 2 ? W_ARMATURA : W_RESSORA;
+        u8 weapon = def_weapon(k % 2 ? "armatura" : "ressora");
         sheet_random(&p->sheet[i], &sr, name_next(p->variant[i] == BODY_FEMALE), k % 5 == 2 ? 1 : 0, weapon);
         if (!armed) {
             Item old;
@@ -312,18 +314,19 @@ static const V2 g_route[MOB_ROUTE] = {
     { -36.0f, -33.0f }, { 0.0f, -36.0f }, { 37.0f, -32.0f }, { 38.0f, 30.0f }, { 14.0f, 50.0f }, { -37.0f, 32.0f },
 };
 
+// Оружие и броня — имена описаний (data/defs), NULL — конец
 typedef struct MobDef {
     const char *name;
-    u8 tier, weapon, gait;
-    u8 armor[3];
+    u8 tier, gait;
+    const char *weapon, *armor[3];
 } MobDef;
 
 static const MobDef g_mob_defs[] = {
-    { "ВЫШАТА", 1, W_RESSORA, GAIT_WALK, { A_RAGS, A_JACKET, ARMOR_NONE } },
-    { "ФЕОКТИСТ", 1, W_BAGOR, GAIT_JOG, { A_QUILT, ARMOR_NONE, ARMOR_NONE } },
-    { "ГОРДИАН", 2, W_BALKA, GAIT_WALK, { A_QUILT, A_PLATE, A_BUCKET } },
-    { "МИЛОНЕГ", 0, W_ARMATURA, GAIT_RUN, { A_RAGS, ARMOR_NONE, ARMOR_NONE } },
-    { "КАССИЙ", 1, W_SEKACH, GAIT_JOG, { A_JACKET, A_GREAVES, ARMOR_NONE } },
+    { "ВЫШАТА", 1, GAIT_WALK, "ressora", { "rags", "jacket" } },
+    { "ФЕОКТИСТ", 1, GAIT_JOG, "bagor", { "quilt" } },
+    { "ГОРДИАН", 2, GAIT_WALK, "balka", { "quilt", "plate", "bucket" } },
+    { "МИЛОНЕГ", 0, GAIT_RUN, "armatura", { "rags" } },
+    { "КАССИЙ", 1, GAIT_JOG, "sekach", { "jacket", "greaves" } },
 };
 
 void mobs_add(People *p, Rng *rng)
@@ -340,14 +343,14 @@ void mobs_add(People *p, Rng *rng)
         for (u32 q = 0; q < PART_COUNT; q++) c.d.hp[q] = g_part_hp[q];
         c.d.blood = 100.0f * c.d.mass / 75.0f;
         Item old;
-        c.d.weapon = d->weapon;
-        sheet_equip(&c, SLOT_WEAPON, item_make(IK_WEAPON, d->weapon, Q_WORN, 1), &old);
-        for (u32 a = 0; a < 3 && d->armor[a] != ARMOR_NONE; a++) {
-            Item it = item_make(IK_ARMOR, d->armor[a], Q_WORN, 1);
+        c.d.weapon = def_weapon(d->weapon);
+        sheet_equip(&c, SLOT_WEAPON, item_make(IK_WEAPON, c.d.weapon, Q_WORN, 1), &old);
+        for (u32 a = 0; a < 3 && d->armor[a]; a++) {
+            Item it = item_make(IK_ARMOR, def_armor(d->armor[a]), Q_WORN, 1);
             sheet_equip(&c, item_slot(it), it, &old);
         }
-        sheet_equip(&c, SLOT_BACK, item_make(IK_GOODS, G_PACK, Q_WORN, 1), &old);
-        sheet_equip(&c, SLOT_PANTS, item_make(IK_ARMOR, A_PANTS, Q_WORN, 1), &old);
+        sheet_equip(&c, SLOT_BACK, item_make(IK_GOODS, def_goods("pack"), Q_WORN, 1), &old);
+        sheet_equip(&c, SLOT_PANTS, item_make(IK_ARMOR, def_armor("pants"), Q_WORN, 1), &old);
         // Разнесены по кругу, у каждого своя точка старта. Одна шайка: вступаются друг за друга
         u32 at = (k * 7u + 1u) % MOB_ROUTE;
         V2 a = g_route[at], b = g_route[(at + 1) % MOB_ROUTE];

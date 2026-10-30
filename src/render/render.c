@@ -7,7 +7,9 @@
 
 #include "../core/clock.h"
 #include "../core/log.h"
+#include "../platform/platform.h"
 #include "rb.h"
+#include "rb_vk.h"
 #include "terrain.h"
 
 #define SHADOW_SIZE 2048
@@ -125,8 +127,9 @@ typedef struct GpuFrame {
     i32 tile[4];
     i32 light[4];
     f32 lightf[4];
+    f32 room_lo[4], room_hi[4], room_door[4], room_fill[4];
 } GpuFrame;
-_Static_assert(sizeof(GpuFrame) == 320, "GpuFrame — как блок Frame в frame.glsl");
+_Static_assert(sizeof(GpuFrame) == 384, "GpuFrame — как блок Frame в frame.glsl");
 // Блоков кадра в кольце на кадр: сам кадр и портреты (у каждого своя камера)
 #define FRAME_BLOCKS (1 + RENDER_PORTRAIT_SLOTS)
 
@@ -546,7 +549,10 @@ void render_shutdown(void)
                       &R.sky_buf[0], &R.sky_buf[1] };
     for (u32 i = 0; i < ARRAY_COUNT(bufs); i++) rb_buf_free(bufs[i]);
     pipes_free();
+    bool vk = rb_api() == RB_API_VULKAN;
     rb_shutdown();
+    // Ошибки validation (отладочная сборка или ANA_VK_VALIDATION=1): в CI должно быть 0
+    if (vk && rb_vk_validation_errors()) log_error("Vulkan: ошибок validation %u", rb_vk_validation_errors());
     memset(&R, 0, sizeof R);
 }
 
@@ -1579,6 +1585,13 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     R.light_t = now;
     f->lightf[1] = BLOOM_MIX / BLOOM_LEVELS;
     f->lightf[2] = BLOOM_LEVELS;
+    if (fv->room.on) {
+        const RoomDark *rm = &fv->room;
+        memcpy(f->room_lo, (f32[4]){ rm->lo.x, rm->lo.y, rm->lo.z, 1.0f }, sizeof f->room_lo);
+        memcpy(f->room_hi, (f32[4]){ rm->hi.x, rm->hi.y, rm->hi.z, rm->door_reach }, sizeof f->room_hi);
+        memcpy(f->room_door, (f32[4]){ rm->door.x, rm->door.y, rm->door.z, 0.0f }, sizeof f->room_door);
+        memcpy(f->room_fill, (f32[4]){ rm->fill.x, rm->fill.y, rm->fill.z, 0.0f }, sizeof f->room_fill);
+    }
     f->lightf[3] = rs->light_gi == LIGHT_GI_SKY ? 1.0f : 0.0f;
     frame_write(0, f);
     R.stat_prep += time_now() - t_prep;
@@ -1725,6 +1738,14 @@ void render_frame_end(void)
 }
 
 void render_read_pixels(u8 *rgb, i32 w, i32 h) { rb_read_window(rgb, w, h); }
+
+const char *render_api_name(void) { return rb_api() == RB_API_VULKAN ? "VULKAN" : "GL"; }
+
+void render_set_vsync(bool on)
+{
+    if (rb_api() == RB_API_VULKAN) rb_vk_set_present(on ? RB_PRESENT_FIFO : RB_PRESENT_IMMEDIATE);
+    else platform_set_vsync(on);
+}
 
 void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, const DrawItem *items, u32 count)
 {

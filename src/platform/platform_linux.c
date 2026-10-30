@@ -85,9 +85,9 @@ void platform_preinit(void)
 {
 }
 
-void platform_use_vulkan(void)
+void platform_use_vulkan(bool on)
 {
-    g_x.vulkan = true;
+    g_x.vulkan = on;
 }
 
 static bool init_window(const char *title, i32 width, i32 height, Visual *visual, int depth)
@@ -387,6 +387,26 @@ bool platform_exe_dir(char *buf, size_t size)
 #include <sys/stat.h>
 
 bool platform_make_dir(const char *path) { return mkdir(path, 0755) == 0 || errno == EEXIST; }
+
+#include <dirent.h>
+#include <stdio.h>
+
+bool platform_list_dir(const char *path, PlatformDirFn fn, void *user)
+{
+    DIR *d = opendir(path);
+    if (!d) return false;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char full[1024];
+        struct stat st;
+        snprintf(full, sizeof full, "%s/%s", path, e->d_name);
+        bool dir = stat(full, &st) == 0 && S_ISDIR(st.st_mode);
+        fn(e->d_name, dir, user);
+    }
+    closedir(d);
+    return true;
+}
 
 // ---------------------------------------------------------------- потоки
 

@@ -60,6 +60,8 @@ _Static_assert(sizeof(void *) == 8, "vk.h: только 64-битные цели
 #define VK_EXT_DEBUG_UTILS_SPEC_VERSION 2
 #define VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME "VK_EXT_depth_clip_control"
 #define VK_EXT_DEPTH_CLIP_CONTROL_SPEC_VERSION 1
+#define VK_EXT_ROBUSTNESS_2_EXTENSION_NAME "VK_EXT_robustness2"
+#define VK_EXT_ROBUSTNESS_2_SPEC_VERSION 1
 #define VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME "VK_KHR_fragment_shading_rate"
 #define VK_KHR_FRAGMENT_SHADING_RATE_SPEC_VERSION 2
 #define VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME "VK_KHR_push_descriptor"
@@ -2874,6 +2876,7 @@ typedef struct VkPhysicalDevicePushDescriptorPropertiesKHR VkPhysicalDevicePushD
 typedef struct VkPipelineRenderingCreateInfo VkPipelineRenderingCreateInfo;
 typedef struct VkPhysicalDeviceDepthClipControlFeaturesEXT VkPhysicalDeviceDepthClipControlFeaturesEXT;
 typedef struct VkPipelineViewportDepthClipControlCreateInfoEXT VkPipelineViewportDepthClipControlCreateInfoEXT;
+typedef struct VkPhysicalDeviceRobustness2FeaturesEXT VkPhysicalDeviceRobustness2FeaturesEXT;
 typedef struct VkPhysicalDeviceFragmentShadingRateFeaturesKHR VkPhysicalDeviceFragmentShadingRateFeaturesKHR;
 typedef struct VkPhysicalDeviceFragmentShadingRatePropertiesKHR VkPhysicalDeviceFragmentShadingRatePropertiesKHR;
 typedef struct VkRenderingFragmentShadingRateAttachmentInfoKHR VkRenderingFragmentShadingRateAttachmentInfoKHR;
@@ -3834,6 +3837,13 @@ struct VkPipelineViewportDepthClipControlCreateInfoEXT {
     const void* pNext;
     VkBool32 negativeOneToOne;
 };
+struct VkPhysicalDeviceRobustness2FeaturesEXT {
+    VkStructureType sType;
+    void* pNext;
+    VkBool32 robustBufferAccess2;
+    VkBool32 robustImageAccess2;
+    VkBool32 nullDescriptor;
+};
 struct VkPhysicalDeviceFragmentShadingRateFeaturesKHR {
     VkStructureType sType;
     void* pNext;
@@ -4101,12 +4111,15 @@ typedef void (VKAPI_PTR *PFN_vkCmdBeginRendering)(VkCommandBuffer commandBuffer,
 typedef void (VKAPI_PTR *PFN_vkCmdEndRendering)(VkCommandBuffer commandBuffer);
 typedef void (VKAPI_PTR *PFN_vkCmdBindPipeline)(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint, VkPipeline pipeline);
 typedef void (VKAPI_PTR *PFN_vkCmdBindVertexBuffers)(VkCommandBuffer commandBuffer, uint32_t firstBinding, uint32_t bindingCount, const VkBuffer* pBuffers, const VkDeviceSize* pOffsets);
+typedef void (VKAPI_PTR *PFN_vkCmdBindVertexBuffers2)(VkCommandBuffer commandBuffer, uint32_t firstBinding, uint32_t bindingCount, const VkBuffer* pBuffers, const VkDeviceSize* pOffsets, const VkDeviceSize* pSizes, const VkDeviceSize* pStrides);
 typedef void (VKAPI_PTR *PFN_vkCmdBindIndexBuffer)(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkIndexType indexType);
 typedef void (VKAPI_PTR *PFN_vkCmdPushConstants)(VkCommandBuffer commandBuffer, VkPipelineLayout layout, VkShaderStageFlags stageFlags, uint32_t offset, uint32_t size, const void* pValues);
 typedef void (VKAPI_PTR *PFN_vkCmdSetViewport)(VkCommandBuffer commandBuffer, uint32_t firstViewport, uint32_t viewportCount, const VkViewport* pViewports);
 typedef void (VKAPI_PTR *PFN_vkCmdSetScissor)(VkCommandBuffer commandBuffer, uint32_t firstScissor, uint32_t scissorCount, const VkRect2D* pScissors);
 typedef void (VKAPI_PTR *PFN_vkCmdClearAttachments)(VkCommandBuffer commandBuffer, uint32_t attachmentCount, const VkClearAttachment* pAttachments, uint32_t rectCount, const VkClearRect* pRects);
 typedef void (VKAPI_PTR *PFN_vkCmdClearColorImage)(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout imageLayout, const VkClearColorValue* pColor, uint32_t rangeCount, const VkImageSubresourceRange* pRanges);
+typedef void (VKAPI_PTR *PFN_vkCmdClearDepthStencilImage)(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout imageLayout, const VkClearDepthStencilValue* pDepthStencil, uint32_t rangeCount, const VkImageSubresourceRange* pRanges);
+typedef void (VKAPI_PTR *PFN_vkCmdFillBuffer)(VkCommandBuffer commandBuffer, VkBuffer dstBuffer, VkDeviceSize dstOffset, VkDeviceSize size, uint32_t data);
 typedef void (VKAPI_PTR *PFN_vkCmdDraw)(VkCommandBuffer commandBuffer, uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance);
 typedef void (VKAPI_PTR *PFN_vkCmdDrawIndexed)(VkCommandBuffer commandBuffer, uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance);
 typedef void (VKAPI_PTR *PFN_vkCmdDrawIndexedIndirect)(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t stride);
@@ -4209,12 +4222,15 @@ typedef void (VKAPI_PTR *PFN_vkCmdSetFragmentShadingRateKHR)(VkCommandBuffer com
     X(vkCmdEndRendering) \
     X(vkCmdBindPipeline) \
     X(vkCmdBindVertexBuffers) \
+    X(vkCmdBindVertexBuffers2) \
     X(vkCmdBindIndexBuffer) \
     X(vkCmdPushConstants) \
     X(vkCmdSetViewport) \
     X(vkCmdSetScissor) \
     X(vkCmdClearAttachments) \
     X(vkCmdClearColorImage) \
+    X(vkCmdClearDepthStencilImage) \
+    X(vkCmdFillBuffer) \
     X(vkCmdDraw) \
     X(vkCmdDrawIndexed) \
     X(vkCmdDrawIndexedIndirect) \
