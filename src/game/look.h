@@ -13,9 +13,11 @@
 // Сетки тел (data/meshes, tools/humanconv)
 typedef enum BodyKind { BODY_MALE, BODY_FEMALE, BODY_THIN, BODY_KIND_COUNT } BodyKind;
 extern const char *const g_body_file[BODY_KIND_COUNT];
-// Суставы каждого тела в позе привязки (печатает tools/humanconv): по ним вращаются кости, иначе
-// у женщины бёдра и плечи крутились бы вокруг мужских суставов
-extern const V3 g_body_joints[BODY_KIND_COUNT][BONE_COUNT];
+// Суставы каждого тела в позе привязки: по ним вращаются кости, иначе у женщины бёдра и плечи
+// крутились бы вокруг мужских суставов. Читаются из data/meshes/<тело>.skel (пишет tools/humanconv)
+extern V3 g_body_joints[BODY_KIND_COUNT][BONE_COUNT];
+// Читает скелеты всех тел и ставит мужской общим (g_body_bones). Вызывать до первого кадра
+bool look_load_skeletons(const char *data_dir);
 
 // Морфы, порядок как MORPHS в tools/humanconv. Лицо — только местные морфы: нос, разрез глаз, челюсть, губы
 enum { LOOK_FAT, LOOK_LEAN, LOOK_STRONG, LOOK_OLD, LOOK_NOSE, LOOK_EYES, LOOK_JAW, LOOK_LIPS, LOOK_MORPHS };

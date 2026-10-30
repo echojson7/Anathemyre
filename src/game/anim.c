@@ -2591,3 +2591,22 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         for (int k = 0; k < 3; k++) out[limb_bones[part][k]] = xf_m4(&w);
     }
 }
+
+// Капсулы стойки — с той же позы, что рисуется: правка стойки сразу меняет, куда приходят удары.
+// Округление до миллиметра — чтобы бой не зависел от последних битов sinf разных libm
+void anim_bake_hit_guard(void)
+{
+    u32 w = 0;
+    while (w + 1 < g_weapon_count && (g_weapons[w].wclass == WC_POLEARM || g_weapons[w].wclass == WC_HEAVY)) w++;
+    CharPose p = { .calm = true, .weapon = (u8)(w + 1) };
+    CharAction a = { .guard = 1.0f, .wield = 1.0f };
+    M4 bones[CHAR_BONES];
+    character_pose(&p, &a, bones);
+    for (u32 c = 0; c < g_body_hit_count; c++) {
+        HitCapsule h = g_body_hit[c];
+        V3 pa = m4_point(bones[h.bone], h.a), pb = m4_point(bones[h.bone], h.b);
+        h.a = v3(roundf(pa.x * 1000.0f) / 1000.0f, roundf(pa.y * 1000.0f) / 1000.0f, roundf(pa.z * 1000.0f) / 1000.0f);
+        h.b = v3(roundf(pb.x * 1000.0f) / 1000.0f, roundf(pb.y * 1000.0f) / 1000.0f, roundf(pb.z * 1000.0f) / 1000.0f);
+        g_body_hit_guard[c] = h;
+    }
+}

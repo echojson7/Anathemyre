@@ -13,6 +13,7 @@
 #include "core/math3d.h"
 #include "core/prof.h"
 #include "defs/defs.h"
+#include "game/anim.h"
 #include "game/arena.h"
 #include "game/battle.h"
 #include "game/bench.h"
@@ -23,6 +24,7 @@
 #include "game/figures.h"
 #include "game/hud.h"
 #include "game/humans_row.h"
+#include "game/look.h"
 #include "game/showhall.h"
 #include "game/stand.h"
 #include "game/sfx.h"
@@ -337,6 +339,10 @@ int main(int argc, char **argv)
         log_error("ОПИСАНИЯ: не прочитаны, игра не запускается");
         return 1;
     }
+    // Скелет и капсулы тела — после описаний (стойка берёт оружие) и тоже до замеров боя
+    if (!look_load_skeletons(data_dir)) return 1;
+    body_hit_build();
+    anim_bake_hit_guard();
     if (opt.move_bench) return player_bench(opt.move_trace);
     if (opt.field_bench) return field_bench(opt.field_bench - 1, opt.seed);
     if (opt.sound_demo) return audio_demo(opt.sound_demo);
