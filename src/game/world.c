@@ -111,6 +111,17 @@ bool world_init(World *w, Arena *perm, MeshBuilder *mb, u64 seed, f32 tod, bool 
     w->bands->chron = w->field->chron = w->chron;
     w->strings = ARENA_PUSH_ARRAY(perm, char, WORLD_STRINGS);
     w->focus = squad_home();
+    // Физика: лом расставлен в долине над землёй и ждёт, когда туда придут (до того висит, где поставлен)
+    w->phys = ARENA_PUSH_ARRAY(perm, Phys, 1);
+    phys_init(w->phys, perm);
+    scrap_view_init(&w->scrap, mb, perm);
+    Rng pr;
+    rng_seed(&pr, seed, 13);
+    V3 vs = w->valley->spawn;
+    f32 vh = w->valley->spawn_heading;
+    V3 sp = v3(vs.x + sinf(vh) * 9.0f, 0.0f, vs.z + cosf(vh) * 9.0f);
+    scrap_place(w->phys, &pr, sp, 14, world_ground);
+    log_stat("ФИЗИКА: лом в долине у %.0f %.0f ждёт прихода", (f64)sp.x, (f64)sp.z);
     return true;
 }
 
@@ -129,6 +140,17 @@ static void world_tick(World *w)
     prof_zone(PZ_FIELD);
     field_tick(w->field, world_ground);
     bands_tick(w->bands);
+    // Физика вокруг своих и точки взгляда камеры. Лом по кнопке — тоже здесь: мир меняется только в шаге
+    prof_zone(PZ_PHYS);
+    if (w->phys_drop) {
+        Rng r;
+        rng_seed(&r, w->seed ^ w->tick, 17);
+        scrap_drop(w->phys, &r, v3(w->focus.x, world_ground(w->focus.x, w->focus.z), w->focus.z), w->phys_drop);
+        w->phys_drop = 0;
+    }
+    V3 zone[2] = { w->focus, squad_body(&w->squad, (u32)MAX(0, squad_primary(&w->squad)))->pos };
+    phys_zone(w->phys, zone, 2);
+    phys_tick(w->phys, TICK_DT, world_ground);
     if (w->day_run) {
         // Время суток — целое число шагов от полуночи: сутки ровно DAY_TICKS, ошибка f32 не копится.
         // Ползунок может поставить любое время — оно встаёт на ближайший шаг
@@ -186,6 +208,8 @@ void world_bands_test(World *w)
     log_info("ОТРЯДЫ: два пробных отряда, у Скудели и в долине, идут навстречу");
 }
 
+void world_phys_drop(World *w) { w->phys_drop = 24; }
+
 bool world_squad_fighting(const World *w)
 {
     bool fighting = false;
@@ -228,7 +252,8 @@ static u64 world_layout(void)
     const u64 v[] = { SAVE_VERSION, sizeof(People), sizeof(Player), sizeof(CharSheet), sizeof(FighterDesc),
                       sizeof(CombatEvent), sizeof(Bands), sizeof(NearBands), sizeof(ArenaSession),
                       sizeof(ArenaView), sizeof(Squad), sizeof(Field), sizeof(Chronicle), PEOPLE_MAX, FIELD_MAX, BANDS_MAX,
-                      CHRON_CAP, PART_COUNT, SK_COUNT, SLOT_COUNT, COMBAT_MAX_TEAMS, TICK_HZ };
+                      CHRON_CAP, PART_COUNT, SK_COUNT, SLOT_COUNT, COMBAT_MAX_TEAMS, TICK_HZ,
+                      PHYS_MAX, PHYS_SPHERES };
     return ser_fnv(SER_HASH_START, v, sizeof v);
 }
 
@@ -257,6 +282,7 @@ static void world_ser(Ser *s, void *user)
     arena_view_ser(s, &w->aview);
     bands_ser(s, w->bands);
     near_ser(s, w->near, w->bands->count);
+    phys_ser(s, w->phys);
     // Описания с тех пор поменяли порядок (мод, правка файлов): номера вещей — под нынешние
     if (s->mode == SER_LOAD && !map.same && !s->bad) {
         for (u32 i = 0; i < w->people->count; i++) defs_remap_sheet(&w->people->sheet[i], &map);

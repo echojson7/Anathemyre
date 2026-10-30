@@ -16,6 +16,7 @@
 #include "bands_near.h"
 #include "field.h"
 #include "people.h"
+#include "scrap.h"
 #include "squad.h"
 #include "town.h"
 #include "valley_view.h"
@@ -44,6 +45,9 @@ typedef struct World {
     Bands        *bands;         // отряды вдали; в мире их нет, пробные — кнопкой в НАСТРОЙКАХ
     NearBands    *near;          // отряды вдали рядом: тела
     Chronicle    *chron;         // журнал событий мира
+    Phys         *phys;          // вещи с физикой: лом, потом оружие на земле и тела (docs/physics.md)
+    ScrapView     scrap;
+    u32           phys_drop;     // просьба меню: бросить столько лома у точки взгляда на следующем шаге
     char         *strings;       // пул строк сохранения: имена и роли после загрузки
     V3            focus;         // точка взгляда камеры: рядом с ней отряды становятся телами
     GpuMesh       hall, far, town_mesh, ostov;  // статика лагеря: зал и обломки, мегаструктуры, посёлок, руина Остов
@@ -71,6 +75,8 @@ f32  world_ground(f32 x, f32 z);
 bool world_squad_in_valley(const World *w);
 // Перенести отряд из лагеря в долину или обратно (отладка: пешком ~1.6 км). false — отряд в бою
 bool world_travel(World *w);
+// Бросить кучу лома у точки взгляда (отладка, кнопка в НАСТРОЙКАХ): падает на следующем шаге мира
+void world_phys_drop(World *w);
 // Отряд дерётся
 bool world_squad_fighting(const World *w);
 // Пробные отряды вдали (отладка): по одному у Скудели и в долине, враждуют и идут навстречу по одной дороге

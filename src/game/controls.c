@@ -152,6 +152,14 @@ static void menu_debug(Hud *h, Settings *s, World *w, RtsCamera *cam, bool human
     if (hud_debug_button(h, "КАМЕРА: В ОСТОВ")) *cam = OSTOV_CAM;
     if (hud_debug_button(h, "КАМЕРА: В МЕРИЛЬНЮ")) *cam = SHOWHALL_CAM;
     if (hud_debug_button(h, "ОТРЯДЫ ВДАЛИ: ПУСТИТЬ ПРОБНЫЕ")) s->bands_test = true;
+    // Физика вещей (docs/physics.md): выключатель, куча лома у точки взгляда, сколько тел в каком состоянии
+    if (hud_debug_check(h, "ФИЗИКА", &w->phys->on)) log_info("ФИЗИКА: %s", w->phys->on ? "вкл" : "выкл");
+    if (hud_debug_button(h, "ФИЗИКА: БРОСИТЬ ЛОМ")) world_phys_drop(w);
+    const PhysStats *ps = &w->phys->st;
+    snprintf(val, sizeof val, "%u / %u / %u", ps->active, ps->asleep, ps->frozen);
+    hud_debug_text(h, "ФИЗИКА: СЧИТ / СПИТ / ЗАСТЫЛО", val);
+    snprintf(val, sizeof val, "%.3f МС, ПАР %u", (f64)ps->ms, ps->pairs);
+    hud_debug_text(h, "ФИЗИКА: ШАГ", val);
     if (hud_debug_button(h, "МИР: СОХРАНИТЬ")) s->save = true;
     if (hud_debug_button(h, "МИР: ЗАГРУЗИТЬ")) s->load = true;
     snprintf(val, sizeof val, "%llu", (unsigned long long)w->chron->total);
