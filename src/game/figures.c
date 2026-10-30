@@ -285,7 +285,7 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
             PoseJob *j = &f->job[f->jobs++];
             j->p = (CharPose){
                 .pos = b->pos, .heading = b->heading, .phase = b->phase, .walk = b->walk, .run = b->run,
-                .speed = b->speed, .time = v->time, .seed = p->seed[i],
+                .speed = b->speed, .stride = player_stride(b), .time = v->time, .seed = p->seed[i],
                 .lean_fwd = b->lean_fwd, .lean_side = b->lean_side, .look = b->look, .idle = b->idle,
                 .height = p->height[i], .width = p->width[i], .joints = g_body_joints[kind],
                 .weapon = armed ? (u8)(wid + 1) : 0, .torch = lit,

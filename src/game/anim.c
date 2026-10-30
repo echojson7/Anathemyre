@@ -323,7 +323,8 @@ static void locomotion(const CharPose *p, Pose *o, Loco *lo)
     const f32 tau = 2.0f * PI_F;
     // Бег по механике включается уже на трусце: пружинит, а не перекатывается
     f32 bounce = ramp(run, 0.05f, 0.4f);
-    f32 v = p->speed > 0.0f ? p->speed : lerpf(1.2f, 4.8f, run);
+    // Скорость — фактическая и на остановке (walk ещё гаснет): подмена при нуле давала рывок стоп в последнем кадре
+    f32 v = fmaxf(p->speed, 0.0f);
     // Размах шага: медленно — всё мельче, к быстрому шагу — шире
     f32 sf = clampf(0.4f + 0.375f * v, 0.4f, 1.2f);
     // Модель растянута вдоль в sw раз (рост на ширину): шаг в модели короче, чтобы стопа не ехала
@@ -332,7 +333,7 @@ static void locomotion(const CharPose *p, Pose *o, Loco *lo)
     // Доля опоры: медленный шаг 0.63, быстрый 0.59, трусца 0.40, бег 0.29
     f32 duty_walk = clampf(0.66f - 0.045f * v, 0.59f, 0.64f);
     g.duty = run < 0.5f ? lerpf(duty_walk, 0.40f, run * 2.0f) : lerpf(0.40f, 0.29f, (run - 0.5f) * 2.0f);
-    f32 L_ = char_stride(v) / sw;
+    f32 L_ = char_stride_run(v, run) * (p->stride > 0.0f ? p->stride : 1.0f) / sw;
     f32 travel = g.duty * L_;
     f32 land_frac = lerpf(0.35f, 0.27f, bounce);
     g.land = land_frac * travel;
@@ -401,7 +402,8 @@ static void locomotion(const CharPose *p, Pose *o, Loco *lo)
         V3 aj = joint(side == L ? BONE_FOOT_L : BONE_FOOT_R);
         // Ширина шага: шагом лодыжки на 13 см врозь, на бегу ставятся почти на одну линию (6 см).
         // В переносе стопа чуть огибает опорную ногу снаружи
-        f32 sx = (side == L ? 1.0f : -1.0f) * lerpf(0.065f, 0.03f, bounce);
+        // На малом ходу — почти как стоя (10.5 см): встаёт и трогается без сдвига стоп вбок
+        f32 sx = (side == L ? 1.0f : -1.0f) * lerpf(lerpf(0.105f, 0.065f, smooth01(v / 1.4f)), 0.03f, bounce);
         if (q >= g.duty) sx *= 1.0f + 0.5f * fsin(PI_F * (q - g.duty) / (1.0f - g.duty));
         V3 walkp = v3(sx + md_s * z, aj.y + lift, md_c * z);
         o->foot[side] = v3_lerp(base, walkp, w);
