@@ -76,8 +76,9 @@ static void report(Bench *b, f64 seconds, i32 ww, i32 wh, bool swap_late)
     b->last = (BenchResult){
         .frame_ms = sum / n, .fps = n / seconds, .gpu_ms = st.samples && st.gpu_total_ms > 0.0 ? st.gpu_total_ms : -1.0,
         .logic_ms = (z[PZ_INPUT] + z[PZ_PEOPLE] + z[PZ_ARENA] + z[PZ_FIELD] + z[PZ_SOUND] + z[PZ_FIGURES] + z[PZ_POSES] + z[PZ_SCENE]) * k,
-        .submit_ms = (z[PZ_SUBMIT] + z[PZ_UI]) * k, .swap_ms = z[PZ_SWAP] * k,
+        .submit_ms = (z[PZ_SUBMIT] + z[PZ_UI]) * k, .swap_ms = z[PZ_SWAP] * k, .gap_ms = st.gap_ms,
     };
+    for (u32 p = 0; p < PASS_COUNT; p++) b->last.pass_ms[p] = st.gpu_ms[p];
     log_stat("ЗАМЕР: окно %dx%d, %u кадров за %.1f с | кадр: среднее %.3f мс (%.0f к/с), медиана %.3f, худший 1%% %.3f",
              ww, wh, n, seconds, sum / n, n / seconds, b->frame_ms[n / 2], b->frame_ms[MIN(n - 1, n * 99 / 100)]);
     char gpu[256], cpu[256], zones[512];
@@ -110,19 +111,33 @@ bool bench_frame(Bench *b, f64 now, u32 posed, i32 ww, i32 wh, bool swap_late)
     return true;
 }
 
+// Имя этапа, добитое пробелами до 12 букв (printf считает байты, а буква кириллицы — два)
+static void stage_name(char *out, size_t size, const char *name)
+{
+    u32 len = 0;
+    for (const char *c = name; *c; c++) len += ((u8)*c & 0xC0) != 0x80;
+    snprintf(out, size, "%s%*s", name, (int)(len < 12 ? 12 - len : 0), "");
+}
+
 void bench_stages_report(const BenchResult *r, u32 n, const char *const *names)
 {
+    char name[64];
     log_stat("ЭТАПЫ: этап | кадр мс | к/с | +к кадру | GPU мс | логика | отправка | swap");
     for (u32 i = 0; i < n; i++) {
         char gpu[16] = "—";
         if (r[i].gpu_ms >= 0.0) snprintf(gpu, sizeof gpu, "%.3f", r[i].gpu_ms);
-        // Имя добить пробелами до 12 букв (printf считает байты, а буква кириллицы — два)
-        char name[64];
-        u32 len = 0;
-        for (const char *c = names[i]; *c; c++) len += ((u8)*c & 0xC0) != 0x80;
-        snprintf(name, sizeof name, "%s%*s", names[i], (int)(len < 12 ? 12 - len : 0), "");
+        stage_name(name, sizeof name, names[i]);
         log_stat("ЭТАПЫ: %2u %s | %.3f | %5.0f | %+.3f | %s | %.3f | %.3f | %.3f", i, name, r[i].frame_ms, r[i].fps,
                  i ? r[i].frame_ms - r[i - 1].frame_ms : 0.0, gpu, r[i].logic_ms, r[i].submit_ms, r[i].swap_ms);
+    }
+    // GPU по проходам: где именно прибавилось на каждом этапе
+    if (r[n - 1].gpu_ms < 0.0) return;
+    log_stat("ЭТАПЫ GPU, мс: этап | тени | глубина | сцена | атмосфера | стиль | интерфейс | между кадрами");
+    for (u32 i = 0; i < n; i++) {
+        const f64 *p = r[i].pass_ms;
+        stage_name(name, sizeof name, names[i]);
+        log_stat("ЭТАПЫ GPU: %2u %s | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f", i, name, p[PASS_SHADOW], p[PASS_DEPTH],
+                 p[PASS_SCENE], p[PASS_ATMOS], p[PASS_STYLE], p[PASS_UI], r[i].gap_ms);
     }
 }
 
