@@ -39,6 +39,20 @@ float seam_line(float u, float p, float h, float t)
     return 1.0 - smoothstep(0.0, h, abs(fract(u / p + 0.5) - 0.5) * p);
 }
 
+// Блик GGX с учётом угла к свету (уже умножен на N·L): распределение, видимость Смита, Френель Шлика
+vec3 ggx_spec(vec3 N, vec3 V, vec3 L, float a2, vec3 F0)
+{
+    float nl = dot(N, L);
+    if (nl <= 0.0) return vec3(0.0);
+    vec3 H = normalize(L + V);
+    float nv = max(dot(N, V), 1e-3), nh = max(dot(N, H), 0.0), vh = max(dot(V, H), 0.0);
+    float dd = nh * nh * (a2 - 1.0) + 1.0;
+    float D = a2 / (3.14159265 * dd * dd);
+    float vis = 0.5 / (nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2));
+    vec3 F = F0 + (1.0 - F0) * pow(1.0 - vh, 5.0);
+    return D * vis * F * nl;
+}
+
 float sun_shadow(vec3 p, vec3 n)
 {
     vec3 off = p + n * 0.06 + u_sun_dir * 0.03;
@@ -280,10 +294,32 @@ void main()
     float bounce = max(dot(N, -Lflat), 0.0) * 0.08 + max(-N.y, 0.0) * 0.05;
     ambient += u_ground_amb * 1.5 * bounce;
 
-    vec3 H = normalize(L + V);
-    float sp = spec * pow(max(dot(N, H), 0.0), gloss) * sh;
-
-    vec3 col = albedo * (u_sun_color * ndl * sh + ambient * ao) + u_sun_color * sp + emissive;
+    vec3 col;
+    bool ggx = u_light.x == 1;
+    // GGX (СВЕТ: МАТЕРИАЛЫ GGX): шероховатость из прежней остроты блика, у матовых 0.9; металл без своего рассеяния
+    float a2 = 0.0;
+    vec3 F0 = vec3(0.04);
+    if (ggx) {
+        float rough = spec > 0.0 ? sqrt(sqrt(2.0 / (gloss + 2.0))) : 0.9;
+        if (v_mat == MAT_WATER) F0 = vec3(0.02);
+        if (v_mat == MAT_METAL) {
+            F0 = mix(F0, albedo * 1.6, 0.7);
+            albedo *= 0.3;
+        }
+        float a = rough * rough;
+        a2 = a * a;
+        float nv = max(dot(N, V), 1e-3);
+        // Небо в отражении: по направлению отражённого луча, Френель с поправкой на шероховатость
+        vec3 Rv = reflect(-V, N);
+        vec3 Fr = F0 + (max(vec3(1.0 - rough), F0) - F0) * pow(1.0 - nv, 5.0);
+        vec3 env = mix(u_ground_amb, u_sky_amb, Rv.y * 0.5 + 0.5) * 0.6;
+        col = albedo * (1.0 - Fr) * (u_sun_color * ndl * sh + ambient * ao) + env * Fr * ao + emissive;
+        col += ggx_spec(N, V, L, a2, F0) * u_sun_color * sh;
+    } else {
+        vec3 H = normalize(L + V);
+        float sp = spec * pow(max(dot(N, H), 0.0), gloss) * sh;
+        col = albedo * (u_sun_color * ndl * sh + ambient * ao) + u_sun_color * sp + emissive;
+    }
     // Факелы и фонари: свет без теней, считается в том же квадрате TEXEL
     for (int i = 0; i < l_count.x; i++) {
         vec3 d = l_pos[i].xyz - W;
@@ -293,11 +329,13 @@ void main()
         vec3 Ld = d * inversesqrt(d2);
         float nl = dot(N, Ld);
         float k = foliage ? 0.3 + 0.7 * abs(nl) : max(nl, 0.0);
-        float c = l_col[i].a;
-        if (c > -1.0) k *= smoothstep(c, c + (1.0 - c) * 0.2, dot(-Ld, l_dir[i].xyz));
+        float c = l_col[i].a, cone = 1.0;
+        if (c > -1.0) cone = smoothstep(c, c + (1.0 - c) * 0.2, dot(-Ld, l_dir[i].xyz));
+        k *= cone;
         if (k <= 0.0) continue;
         vec3 li = l_col[i].rgb * (k * light_falloff(d2, r));
-        col += albedo * li + li * spec * pow(max(dot(N, normalize(Ld + V)), 0.0), gloss);
+        if (ggx) col += albedo * li + l_col[i].rgb * (cone * light_falloff(d2, r)) * ggx_spec(N, V, Ld, a2, F0);
+        else col += albedo * li + li * spec * pow(max(dot(N, normalize(Ld + V)), 0.0), gloss);
     }
     // Контровой свет от дымки: фигуры читаются силуэтом
     if (bones) {
