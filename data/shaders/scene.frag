@@ -341,9 +341,19 @@ void main()
     // Разброс яркости от квадрата к квадрату: поверхность читается как текстура низкого разрешения
     if (snap) albedo *= 0.95 + 0.10 * hash13(floor(P / base) + float(texel_mat) * 17.0);
 
+#ifdef VOXEL_PASS
+    // ЗОНДЫ: в клетку пишется цвет поверхности (корнем), признак «занято» — старший байт
+    ivec3 vc = vox_cell(v_world - N * 0.05);
+    if (vox_inside(vc)) {
+        uvec3 q = uvec3(sqrt(clamp(albedo, 0.0, 1.0)) * 255.0 + 0.5);
+        atomicMax(g_vox[vox_index(vc)], q.r | (q.g << 8u) | (q.b << 16u) | 0xff000000u);
+    }
+    o_color = vec4(0.0);
+    return;
+#endif
     // Листва и трава просвечивают: свет заходит и на обратную сторону
     float ndl = foliage ? 0.25 + 0.5 * max(dot(N, L), 0.0) + 0.25 * abs(dot(N, L)) : max(dot(N, L), 0.0);
-    float sh = ndl > 0.0 ? (u_shadow_on != 0 ? sun_light(W, N) * contact_shadow() : 1.0) : 0.0;
+    float sh = ndl > 0.0 ? (u_shadow_on != 0 ? sun_light(W, N) * contact_shadow(ivec2(gl_FragCoord.xy)) : 1.0) : 0.0;
 
     // Небо и отражённый от песка свет (0.6 — тени темнее, решение пользователя 2026-10-29)
     vec3 ambient = mix(u_ground_amb, u_sky_amb, N.y * 0.5 + 0.5) * 0.6;
@@ -359,6 +369,13 @@ void main()
         skyv = multibounce(skyv, albedo);
         vec3 sky_part = u_sky_amb * (N.y * 0.5 + 0.5) * 0.6;
         ambient = sky_part * skyv + (ambient - sky_part) * mix(skyv, 1.0, 0.4);
+    }
+    // ЗОНДЫ: свет от земли и отражённый — из зондов, небо — по сетке неба. Зонды не дошли — как без них
+    if (u_probe.x != 0 && u_unlit == 0) {
+        float pw;
+        vec3 pl = probe_light(W, N, true, pw);
+        vec3 sky_part = u_sky_amb * (N.y * 0.5 + 0.5) * 0.6 * skyv;
+        ambient = mix(ambient, sky_part + pl, clamp(pw * 4.0, 0.0, 1.0));
     }
     // В помещении без неба небо светит только от входа, остальное — рассеянный свет ламп
     float sky_k = 1.0, inside = u_unlit == 0 ? room_inside(W) : 0.0;

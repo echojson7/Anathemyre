@@ -1,0 +1,9 @@
+// ЗОНДЫ: перед новой сеткой клетки пустеют, зонды становятся негодными (копят свет заново)
+layout(local_size_x = 64) in;
+
+void main()
+{
+    int i = int(gl_GlobalInvocationID.x);
+    if (i < VOX_N.x * VOX_N.y * VOX_N.z) g_vox[i] = 0u;
+    if (i < PROBE_N.x * PROBE_N.y * PROBE_N.z * PROBE_VEC) g_probe[i] = vec4(0.0);
+}
