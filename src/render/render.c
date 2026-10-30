@@ -14,7 +14,7 @@
 #define SHADOW_EXTENT 45.0f   // полуразмер области теней, м
 // Размер пикселя по глубине (pixel.glsl): k = PIXEL_K * s^PIXEL_P, s — пикселей кадра на метр в точке.
 // Шаг 0.5 пикселя, ниже 2 — 0.25; ближе ~6 м рост вдвое медленнее, ближе ~5 м ещё медленнее (pixel.glsl PIXEL_KNEE, PIXEL_KNEE2).
-// При 1080p: 1 м — 4.5, 2 м — 3, 3 м — 2.5, 4–6 м — 2, 7 м — 1.75, 8 м — 1.5, с 9 м — 1.25 и дальше не меняется
+// При 1080p: 1 м — 4, 1.5 м — 3, 2–3.4 м — 2.5, 3.5–6.4 м — 2, 7 м — 1.75, 8 м — 1.5, с 9 м — 1.25 и дальше не меняется
 #define PIXEL_K 0.00728f
 #define PIXEL_P 1.1f
 
@@ -25,6 +25,7 @@ enum {
     U_FADE = 29,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39, U_A_AO_HALF = 47, U_NOISE_TEX = 48,
+    U_SHADOW_ON = 51, U_A_PARTS = 52,
     U_S_POST = 41, U_S_FRAME = 42, U_S_PIX = 44, U_V_TILE = 45,
 };
 
@@ -1120,12 +1121,13 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     // Рельеф: кольца за камерой, новые полосы — у источника
     terrain_update(fv->cam_pos, fv->shadow_center);
     stream_lights(fv, &scene_view.fr);
-    u32 n_shadow = gather(items, count, &shadow_view, true, g_inst[0]);
+    u32 n_shadow = rs->shadows ? gather(items, count, &shadow_view, true, g_inst[0]) : 0;
     u32 n_scene = gather(items, count, &scene_view, false, g_inst[1]);
     u32 base_shadow = stream_insts(g_inst[0], &n_shadow);
     u32 base_scene = stream_insts(g_inst[1], &n_scene);
-    u32 ng_shadow = gather_groups(&shadow_view, true, g_idraw[0]);
-    u32 ng_scene = gather_groups(&scene_view, false, g_idraw[1]);
+    u32 ng_shadow = rs->shadows && rs->flora ? gather_groups(&shadow_view, true, g_idraw[0]) : 0;
+    u32 ng_scene = rs->flora ? gather_groups(&scene_view, false, g_idraw[1]) : 0;
+    bool atmos = rs->atmos, rays = atmos && rs->rays && rs->shadows, ao = atmos && rs->ao;
     R.stat_prep += time_now() - t_prep;
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_BONES, R.bone_buf[R.stream]);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_INST, R.inst_buf[R.stream]);
@@ -1134,33 +1136,37 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     R.stat_items = count;
 
     // 1. Тени
-    glBindFramebuffer(GL_FRAMEBUFFER, R.shadow_fbo);
-    glViewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(1.5f, 2.0f);
-    // Что ближе к солнцу, чем ближняя плоскость, всё равно отбрасывает тень (а не режется срезом)
-    glEnable(GL_DEPTH_CLAMP);
-    glClear(GL_DEPTH_BUFFER_BIT);
+    // Ветер и прореживание в вершинном шейдере: те же значения во всех проходах (и в проходе глубины)
     glUseProgram(R.prog_shadow);
-    glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, light_vp.m);
-    // Ветер и прореживание в вершинном шейдере: те же значения во всех проходах
     glUniform3f(U_CAM_POS, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
     glUniform1f(U_TIME, fv->time);
-    draw_insts(g_inst[0], n_shadow, base_shadow, 0);
-    draw_groups(g_idraw[0], ng_shadow, 0);
-    draw_terrain(&shadow_view, 0);
-    glDisable(GL_POLYGON_OFFSET_FILL);
-    glDisable(GL_DEPTH_CLAMP);
+    if (rs->shadows) {
+        glBindFramebuffer(GL_FRAMEBUFFER, R.shadow_fbo);
+        glViewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(1.5f, 2.0f);
+        // Что ближе к солнцу, чем ближняя плоскость, всё равно отбрасывает тень (а не режется срезом)
+        glEnable(GL_DEPTH_CLAMP);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, light_vp.m);
+        draw_insts(g_inst[0], n_shadow, base_shadow, 0);
+        draw_groups(g_idraw[0], ng_shadow, 0);
+        draw_terrain(&shadow_view, 0);
+        glDisable(GL_POLYGON_OFFSET_FILL);
+        glDisable(GL_DEPTH_CLAMP);
+    }
     if (timing) mark(1);
 
     // 2. Сцена в низком разрешении
     glBindFramebuffer(GL_FRAMEBUFFER, R.scene.fbo);
     glViewport(0, 0, iw, ih);
-    glClearColor(0, 0, 0, 1);
+    // Без атмосферы небо не рисуется: на его месте цвет дымки
+    if (atmos) glClearColor(0, 0, 0, 1);
+    else glClearColor(fv->haze.x * 1.25f, fv->haze.y * 1.25f, fv->haze.z * 1.25f, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     // Сначала только глубина: тяжёлый шейдер материалов затем считает каждый пиксель один раз
     glUseProgram(R.prog_shadow);
@@ -1177,25 +1183,28 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     bool vrs = R.vrs && rs->vrs && rs->pixel;
     R.stat_vrs = vrs;
     // По готовой глубине: размер пикселя в каждой точке и его максимум по блокам 8x8,
-    // затем откуда каждый пиксель берёт цвет, раз за кадр (фильтр и карта частоты)
+    // затем откуда каждый пиксель берёт цвет, раз за кадр (фильтр и карта частоты).
+    // Без пиксельности каждый пиксель берёт свой цвет: карты не нужны
     glDisable(GL_DEPTH_TEST);
     glBindVertexArray(R.empty_vao);
     glBindTextureUnit(1, R.scene.depth);
-    glBindFramebuffer(GL_FRAMEBUFFER, R.level.fbo);
-    glUseProgram(R.prog_level);
-    glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glBindFramebuffer(GL_FRAMEBUFFER, R.level_max.fbo);
-    glViewport(0, 0, R.level_max.w, R.level_max.h);
-    glUseProgram(R.prog_level_max);
-    glBindTextureUnit(4, R.level.color);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glBindFramebuffer(GL_FRAMEBUFFER, R.src_map.fbo);
-    glViewport(0, 0, iw, ih);
-    glUseProgram(R.prog_src_map);
-    glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
-    glBindTextureUnit(5, R.level_max.color);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
+    if (rs->pixel) {
+        glBindFramebuffer(GL_FRAMEBUFFER, R.level.fbo);
+        glUseProgram(R.prog_level);
+        glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindFramebuffer(GL_FRAMEBUFFER, R.level_max.fbo);
+        glViewport(0, 0, R.level_max.w, R.level_max.h);
+        glUseProgram(R.prog_level_max);
+        glBindTextureUnit(4, R.level.color);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindFramebuffer(GL_FRAMEBUFFER, R.src_map.fbo);
+        glViewport(0, 0, iw, ih);
+        glUseProgram(R.prog_src_map);
+        glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
+        glBindTextureUnit(5, R.level_max.color);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
     if (vrs) {
         // Где фильтр сольёт пиксели в блоки, материалы и атмосфера считаются раз на блок
         glBindFramebuffer(GL_FRAMEBUFFER, R.block.fbo);
@@ -1230,6 +1239,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform3f(U_SKY_AMB, fv->sky_amb.x, fv->sky_amb.y, fv->sky_amb.z);
     glUniform3f(U_GROUND_AMB, fv->ground_amb.x, fv->ground_amb.y, fv->ground_amb.z);
     glUniform1f(U_TEXEL, rs->pixel ? 1.0f : 0.0f);
+    glUniform1i(U_SHADOW_ON, rs->shadows ? 1 : 0);
     glBindTextureUnit(0, R.shadow_tex);
     draw_insts(g_inst[1], n_scene, base_scene, 1);
     draw_groups(g_idraw[1], ng_scene, 1);
@@ -1245,49 +1255,56 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glDisable(GL_CULL_FACE);
     glBindVertexArray(R.empty_vao);
     M4 inv_vp = m4_inverse(vp);
-    glBindFramebuffer(GL_FRAMEBUFFER, R.rays.fbo);
-    glViewport(0, 0, R.rays.w, R.rays.h);
-    glUseProgram(R.prog_rays);
-    glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
-    glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
-    glUniformMatrix4fv(U_A_LIGHT_VP, 1, GL_FALSE, light_vp.m);
-    glUniform1f(U_A_TIME, fv->time);
-    glUniform1i(U_A_FRAME, (GLint)fv->frame);
-    glBindTextureUnit(1, R.scene.depth);
-    glBindTextureUnit(2, R.shadow_tex);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    if (rs->ao_half) {
+    if (rays) {
+        glBindFramebuffer(GL_FRAMEBUFFER, R.rays.fbo);
+        glViewport(0, 0, R.rays.w, R.rays.h);
+        glUseProgram(R.prog_rays);
+        glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
+        glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
+        glUniformMatrix4fv(U_A_LIGHT_VP, 1, GL_FALSE, light_vp.m);
+        glUniform1f(U_A_TIME, fv->time);
+        glUniform1i(U_A_FRAME, (GLint)fv->frame);
+        glBindTextureUnit(1, R.scene.depth);
+        glBindTextureUnit(2, R.shadow_tex);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+    if (ao && rs->ao_half) {
         // AO в половинном разрешении
         glBindFramebuffer(GL_FRAMEBUFFER, R.ao.fbo);
+        glViewport(0, 0, R.ao.w, R.ao.h);
         glUseProgram(R.prog_ao);
         glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
         glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
         glUniform1i(U_A_FRAME, (GLint)fv->frame);
         glUniform1f(U_A_PROJ_SCALE, fv->proj.m[5] * 0.5f * (f32)ih);
+        glBindTextureUnit(1, R.scene.depth);
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
 
-    if (vrs) glEnable(GL_SHADING_RATE_IMAGE_NV);
-    glBindFramebuffer(GL_FRAMEBUFFER, R.atmos.fbo);
-    glViewport(0, 0, iw, ih);
-    glUseProgram(R.prog_atmos);
-    glUniform1i(U_NOISE_TEX, rs->noise_tex ? 1 : 0);
-    glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
-    glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
-    glUniform3f(U_A_SUN_DIR, L.x, L.y, L.z);
-    glUniform3f(U_A_SUN_COLOR, fv->sun_color.x, fv->sun_color.y, fv->sun_color.z);
-    glUniform1f(U_A_TIME, fv->time);
-    glUniform1i(U_A_FRAME, (GLint)fv->frame);
-    glUniform1f(U_A_PROJ_SCALE, fv->proj.m[5] * 0.5f * (f32)ih);
-    glUniform3f(U_A_HAZE, fv->haze.x, fv->haze.y, fv->haze.z);
-    glUniform3f(U_A_ZENITH, fv->zenith.x, fv->zenith.y, fv->zenith.z);
-    glBindTextureUnit(0, R.scene.color);
-    glBindTextureUnit(1, R.scene.depth);
-    glUniform1i(U_A_AO_HALF, rs->ao_half ? 1 : 0);
-    glBindTextureUnit(3, R.rays.color);
-    glBindTextureUnit(4, R.ao.color);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
+    if (atmos) {
+        if (vrs) glEnable(GL_SHADING_RATE_IMAGE_NV);
+        glBindFramebuffer(GL_FRAMEBUFFER, R.atmos.fbo);
+        glViewport(0, 0, iw, ih);
+        glUseProgram(R.prog_atmos);
+        glUniform1i(U_NOISE_TEX, rs->noise_tex ? 1 : 0);
+        glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
+        glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
+        glUniform3f(U_A_SUN_DIR, L.x, L.y, L.z);
+        glUniform3f(U_A_SUN_COLOR, fv->sun_color.x, fv->sun_color.y, fv->sun_color.z);
+        glUniform1f(U_A_TIME, fv->time);
+        glUniform1i(U_A_FRAME, (GLint)fv->frame);
+        glUniform1f(U_A_PROJ_SCALE, fv->proj.m[5] * 0.5f * (f32)ih);
+        glUniform3f(U_A_HAZE, fv->haze.x, fv->haze.y, fv->haze.z);
+        glUniform3f(U_A_ZENITH, fv->zenith.x, fv->zenith.y, fv->zenith.z);
+        glBindTextureUnit(0, R.scene.color);
+        glBindTextureUnit(1, R.scene.depth);
+        glUniform1i(U_A_AO_HALF, rs->ao_half ? 1 : 0);
+        glUniform1i(U_A_PARTS, (rays ? 1 : 0) | (ao ? 2 : 0));
+        glBindTextureUnit(3, R.rays.color);
+        glBindTextureUnit(4, R.ao.color);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
+    }
     if (timing) mark(4);
 
     // 4. Фильтр: виньетка, зерно, сканлайны, аберрация; сразу в окно
@@ -1296,7 +1313,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glUniform1i(U_S_POST, rs->post ? 1 : 0);
     glUniform1i(U_S_FRAME, (GLint)fv->frame);
     glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
-    glBindTextureUnit(0, R.atmos.color);
+    glBindTextureUnit(0, atmos ? R.atmos.color : R.scene.color);
     glBindTextureUnit(1, R.scene.depth);
     glBindTextureUnit(2, R.src_map.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);

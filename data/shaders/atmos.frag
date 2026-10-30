@@ -11,6 +11,7 @@ layout(binding = 0) uniform sampler2D u_color;
 layout(binding = 3) uniform sampler2D u_rays;   // rays.frag, половинное разрешение
 layout(binding = 4) uniform sampler2D u_ao;     // ao.frag, половинное разрешение
 layout(location = 47) uniform int u_ao_half;    // 1 — AO из половинного разрешения
+layout(location = 52) uniform int u_parts;      // бит 0 — объёмные лучи, бит 1 — AO (ЭТАП СЦЕНЫ)
 
 out vec4 o_color;
 
@@ -102,7 +103,7 @@ void main()
         col = sky(dir);
     } else {
         col = texture(u_color, uv).rgb;
-        col *= u_ao_half != 0 ? ao_at(uv, dist) : ambient_occlusion(uv, P, dist);
+        if ((u_parts & 2) != 0) col *= u_ao_half != 0 ? ao_at(uv, dist) : ambient_occlusion(uv, P, dist);
     }
 
     // Высотный туман: плотнее у земли
@@ -119,11 +120,13 @@ void main()
     else col = mix(col, fog_col, clamp(1.0 - T, 0.0, 0.6) * smoothstep(0.3, 0.0, dir.y));
 
     // Объёмный свет
-    float lit = rays_at(uv, min(dist, 110.0));
-    float mu = dot(dir, u_sun_dir);
-    float g = 0.55;
-    float phase = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5) * 0.08;
-    col += u_sun_color * lit * 0.004 * (phase + 0.02);
+    if ((u_parts & 1) != 0) {
+        float lit = rays_at(uv, min(dist, 110.0));
+        float mu = dot(dir, u_sun_dir);
+        float g = 0.55;
+        float phase = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5) * 0.08;
+        col += u_sun_color * lit * 0.004 * (phase + 0.02);
+    }
     if (l_count.x > 0) col += light_glow(dir, min(dist, 300.0));
 
     o_color = vec4(col, 1.0);

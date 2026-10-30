@@ -62,6 +62,8 @@ typedef struct Options {
     bool        battle_verify;
     u32         threads;     // потоков вместе с главным (позы людей, бой); 0 — по числу ядер
     bool        bench;       // замер кадра сразу после старта, затем выход
+    bool        bench_stages; // замер по этапам сцены сразу после старта, затем выход
+    u32         stage;       // этап сцены на старте (SceneStage), по умолчанию полная
     bool        move_bench;  // проверка разворотов без окна
     const char *move_trace;
     bool        no_pixel;    // кадр без пиксельности (сравнение моделей)
@@ -105,7 +107,7 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N]");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N]");
     puts("anathemyre [--load file.sav] [--warp S] [--save file.sav] [--sum-after S]   сохранение без меню: прочитать, прогнать, записать; сумма мира через S секунд и выход");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
@@ -123,6 +125,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--frames") && i + 1 < argc) o->shot_frames = atoi(argv[++i]);
         else if (!strcmp(a, "--novsync")) o->no_vsync = true;
         else if (!strcmp(a, "--bench")) o->bench = true;
+        else if (!strcmp(a, "--bench-stages")) o->bench = o->bench_stages = true;
+        else if (!strcmp(a, "--stage") && i + 1 < argc) o->stage = (u32)atoi(argv[++i]) % STAGE_COUNT;
         else if (!strcmp(a, "--follow")) o->follow = true;
         else if (!strcmp(a, "--tod") && i + 1 < argc) o->tod = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--inspect")) o->inspect = true;
@@ -233,7 +237,7 @@ int main(int argc, char **argv)
     platform_preinit();
     time_init();
     Options opt = {
-        .tod = 0.31f, .shot_frames = 90, .bands_hours = 1.0f, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
+        .tod = 0.31f, .shot_frames = 90, .stage = STAGE_FULL, .bands_hours = 1.0f, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
@@ -321,6 +325,7 @@ int main(int argc, char **argv)
         .swap_late = true, .follow = opt.follow, .ui_user = 1.0f, .ui_user_text = 1.0f,
         .sound_vol = 0.8f, .music_vol = 0.7f, .music_on = true, .travel = opt.valley,
         .stand = opt.stand > 0, .stand_moved = opt.stand > 0, .stand_row = opt.stand > 0 ? (u32)(opt.stand - 1) : 0,
+        .stage = opt.stage, .bench_stages = opt.bench_stages,
     };
     // Звук: слушатель у камеры, шаги, бой поля и арены. Без звука снимки кадров и --mute.
     // Банк собирается в своём потоке при старте; устройство открывается, только если звук включён
@@ -395,6 +400,11 @@ int main(int argc, char **argv)
     bench_init(&bench, &perm);
     BenchRestore restore = { 0 };
     bool bench_request = opt.bench && !opt.shot_path;
+    // Замер по этапам: от ПУСТО до ПОЛНОЙ подряд, итог таблицей, затем прежний этап
+    bool stage_sweep = false;
+    u32 stage_before = set.stage;
+    BenchResult stage_res[STAGE_COUNT];
+    bool stage_sound = set.stage >= STAGE_FULL;
 
     log_info("УПРАВЛЕНИЕ: WASD — сдвиг, колесо — дистанция, ЛКМ — выбор и рамка, ПКМ — идти, I — инвентарь, P — персонаж, пробел — пауза, средняя кнопка и Q/E — поворот, F — следовать; остальное — в меню НАСТРОЙКИ слева вверху");
 
@@ -435,6 +445,14 @@ int main(int argc, char **argv)
                 if (hud.look_kind != LOOK_SQUAD) hud_look(&hud, LOOK_SQUAD, 0);
             }
         }
+        if (set.bench_stages && !bench.on && !opt.shot_path) {
+            set.bench_stages = false;
+            stage_sweep = bench_request = true;
+            stage_before = set.stage;
+            set.stage = STAGE_EMPTY;
+            log_stat("ЗАМЕР ПО ЭТАПАМ: %u этапов по %.0f с; этап 0 %s", STAGE_COUNT, BENCH_STAGE_WARMUP_S + BENCH_STAGE_S,
+                     g_stage_name[STAGE_EMPTY]);
+        }
         if (bench_request && !bench.on) {
             bench_request = false;
             restore = (BenchRestore){ cam, world->tod, world->day_run, set.vsync, set.follow };
@@ -443,8 +461,17 @@ int main(int argc, char **argv)
             world->tod = BENCH_TOD;
             world->day_run = set.follow = set.vsync = false;
             platform_set_vsync(false);
-            bench_begin(&bench, time_now());
+            if (stage_sweep) bench_begin(&bench, time_now(), BENCH_STAGE_WARMUP_S, BENCH_STAGE_S);
+            else bench_begin(&bench, time_now(), BENCH_WARMUP_S, BENCH_S);
         }
+        // Звук только на полной сцене: на других этапах устройство и микшер остановлены
+        if (stage_sound != (set.stage >= STAGE_FULL) && set.sound_ok) {
+            stage_sound = set.stage >= STAGE_FULL;
+            if (!stage_sound) audio_stop();
+            else if (set.sound_on) audio_start();
+        }
+        const bool st_live = set.stage >= STAGE_WORLD, st_people = set.stage >= STAGE_PEOPLE,
+                   st_day = set.stage >= STAGE_DAY, st_full = set.stage >= STAGE_FULL;
 
         f64 now = time_now();
         f32 dt = opt.shot_path ? 1.0f / 60.0f : (f32)fmin(now - last, 0.05);
@@ -519,17 +546,25 @@ int main(int argc, char **argv)
         orders_input(&hud, &in, &hin, &hw, ui_busy, fv.cam_pos, ww, wh, world);
 
         world->focus = cam.target;
-        world_update(world, dt);
+        // До этапа ШАГ МИРА мир стоит, до СУТОК — стоят сутки
+        if (st_live) {
+            bool day_run = world->day_run;
+            world->day_run &= st_day;
+            world_update(world, dt);
+            world->day_run = day_run;
+        }
         // Отряд вдали ушёл: его человека больше нет на месте, на которое смотрели
         if (hud.look_kind == LOOK_FIELD && hud.look < field->w.count && (field->flags[hud.look] & FF_ABSENT))
             hud_look(&hud, LOOK_NONE, 0);
         // Вид мира для кадра: бой между шагами, люди между двумя последними шагами
         prof_zone(PZ_FIGURES);
-        world_present(world, dt);
-        figures_view(fig, world->people, field, world->alpha, world_ground);
+        if (st_live) {
+            world_present(world, dt);
+            figures_view(fig, world->people, field, world->alpha, world_ground);
+        }
         f32 wtime = world_time(world);
         prof_zone(PZ_SOUND);
-        if (set.sound_on) {
+        if (set.sound_on && st_full) {
             sfx_listener(wsound, fv.cam_pos, cam.target, cam.yaw);
             sfx_field(wsound, field, fig->view);
             sfx_arena(wsound, &world->aview, world->arena);
@@ -538,7 +573,8 @@ int main(int argc, char **argv)
         // Список кадра: статика, люди и бойцы арены, метки, ряд людей; свет — фонари арены и факелы
         prof_zone(PZ_SCENE);
         Sky sky;
-        sky_at(world_tod(world), &sky);
+        // До этапа СУТКИ свет утра, как при замере кадра
+        sky_at(st_day ? world_tod(world) : BENCH_TOD, &sky);
         u32 nl = arena_view_lights(&world->aview, sky.night, wtime, lights);
         u32 n = 0;
         items[n++] = (DrawItem){ .mesh = &world->hall };
@@ -546,18 +582,24 @@ int main(int argc, char **argv)
         items[n++] = (DrawItem){ .mesh = &world->town_mesh };
         n += valley_view_draw(valley, fv.cam_pos, items + n);
         prof_zone(PZ_FIGURES);
-        people_dress_live(world->people);
-        FigureView fview = { .view_proj = hw.view_proj, .eye = fv.cam_pos, .light_dir = sky.light_dir, .dt = real_dt,
-                             .time = wtime, .night = sky.night };
-        n += figures_draw(fig, cm, world->people, field, &world->aview, world->arena, &fview, items + n, lights, &nl);
+        if (st_people) {
+            people_dress_live(world->people);
+            FigureView fview = { .view_proj = hw.view_proj, .eye = fv.cam_pos, .light_dir = sky.light_dir, .dt = real_dt,
+                                 .time = wtime, .night = sky.night };
+            n += figures_draw(fig, cm, world->people, field, &world->aview, world->arena, &fview, items + n, lights, &nl);
+        }
+        if (!st_day) nl = 0;
+        u32 posed = st_people ? fig->jobs : 0;
         prof_zone(PZ_SCENE);
         V3 look_pos;
         bool look_field = hud.look_kind == LOOK_FIELD && hud.look < field->w.count;
         if (look_field) look_pos = fig->view[hud.look].pos;  // слот поля = номер в таблице
         bool look_ring = look_field || (hud.look_kind == LOOK_ARENA && hud_arena_pos(&world->aview, world->arena, hud.look, &look_pos));
-        n += figures_marks(fig, cm, squad, field, look_ring ? &look_pos : NULL, items + n);
-        n += humans_row_draw(humans, cm, items + n);
-        n += stand_draw(stand, cm, items + n);
+        if (st_people) {
+            n += figures_marks(fig, cm, squad, field, look_ring ? &look_pos : NULL, items + n);
+            n += humans_row_draw(humans, cm, items + n);
+            n += stand_draw(stand, cm, items + n);
+        }
 
         // Показать прошлый кадр: GPU рисовал его, пока шла логика этого
         bool swap_first = set.swap_late && !set.vsync && !opt.shot_path;
@@ -581,14 +623,15 @@ int main(int argc, char **argv)
         fv.light_count = nl;
         fv.time = wtime;
         fv.frame = frame;
-        render_frame(&fv, items, n, &set.rs, ww, wh);
+        RenderSettings rs = stage_render(&set);
+        render_frame(&fv, items, n, &rs, ww, wh);
         prof_zone(PZ_UI);
-        draw_portraits(fig, &fv, cm, world, &hud);
+        if (st_full) draw_portraits(fig, &fv, cm, world, &hud);
         ui_set_image(render_portrait_texture());
         ui_set_time(real_time);
         hud.dbg.fps = stats.fps;
         hud.dbg.fps_ms = stats.fps_ms;
-        hud_draw(&hud, &hin, &hw);
+        if (st_full) hud_draw(&hud, &hin, &hw);
         ui_end();
         render_frame_end();
         swap_pending = true;
@@ -607,7 +650,19 @@ int main(int argc, char **argv)
         }
 
         if (bench.on && now >= bench.measure_from) {
-            if (bench_frame(&bench, now, fig->jobs, ww, wh, set.swap_late)) {
+            if (bench_frame(&bench, now, posed, ww, wh, set.swap_late)) {
+                if (stage_sweep) {
+                    stage_res[set.stage] = bench.last;
+                    if (set.stage < STAGE_FULL) {
+                        set.stage++;
+                        log_stat("ЗАМЕР ПО ЭТАПАМ: этап %u %s", set.stage, g_stage_name[set.stage]);
+                        bench_begin(&bench, time_now(), BENCH_STAGE_WARMUP_S, BENCH_STAGE_S);
+                        continue;
+                    }
+                    bench_stages_report(stage_res, STAGE_COUNT, g_stage_name);
+                    stage_sweep = false;
+                    set.stage = stage_before;
+                }
                 if (opt.bench) break;
                 cam = restore.cam;
                 world->tod = restore.tod;
@@ -619,7 +674,7 @@ int main(int argc, char **argv)
             }
             continue;
         }
-        stats_frame(&stats, now, fig->jobs, set.swap_late && !set.vsync);
+        stats_frame(&stats, now, posed, set.swap_late && !set.vsync);
     }
 
     audio_stop();

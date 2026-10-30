@@ -9,12 +9,37 @@
 #include "../world/map.h"
 #include "figures.h"
 
+const char *const g_stage_name[STAGE_COUNT] = {
+    "ПУСТО", "ТЕНИ", "НЕБО И ТУМАН", "ЛУЧИ", "AO", "ПИКСЕЛЬНОСТЬ", "ФИЛЬТР", "РАСТЕНИЯ", "ШАГ МИРА", "ЛЮДИ", "СУТКИ И ОГНИ", "ПОЛНАЯ",
+};
+
+RenderSettings stage_render(const Settings *s)
+{
+    RenderSettings rs = s->rs;
+    rs.shadows = s->stage >= STAGE_SHADOWS;
+    rs.atmos = s->stage >= STAGE_SKY;
+    rs.rays = s->stage >= STAGE_RAYS;
+    rs.ao = s->stage >= STAGE_AO;
+    rs.pixel &= s->stage >= STAGE_PIXEL;
+    rs.post &= s->stage >= STAGE_POST;
+    rs.flora = s->stage >= STAGE_FLORA;
+    return rs;
+}
+
 void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool humans_on, const FrameStats *st)
 {
     Input raw = *in;
     if (hud_debug_begin(h, &raw)) {
         char val[32];
         RenderSettings *rs = &s->rs;
+        // Этап сцены: < назад, > вперёд, от ПУСТО до ПОЛНОЙ (docs/performance-stages.md)
+        snprintf(val, sizeof val, "%u %s", s->stage, g_stage_name[s->stage]);
+        i32 st_step = hud_form_step(&h->dbg.f, "ЭТАП СЦЕНЫ", val);
+        if (st_step) {
+            s->stage = (s->stage + STAGE_COUNT + (u32)st_step) % STAGE_COUNT;
+            log_info("ЭТАП СЦЕНЫ: %u %s", s->stage, g_stage_name[s->stage]);
+        }
+        if (hud_debug_button(h, "ЗАМЕР ПО ЭТАПАМ")) s->bench_stages = true;
         hud_debug_check(h, "ФИЛЬТР КАДРА", &rs->post);
         hud_debug_check(h, "ПИКСЕЛЬНОСТЬ", &rs->pixel);
         hud_debug_check(h, "ШЕЙДИНГ БЛОКАМИ", &rs->vrs);

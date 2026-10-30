@@ -34,9 +34,9 @@ const char *const g_gear_file[GEAR_COUNT] = {
 
 // Порядок как HAIR_FEMALE и HAIR_MALE в tools/humanconv
 const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX] = {
-    [BODY_MALE] = { "crop", "shag", "tied" },
-    [BODY_FEMALE] = { "tail", "bun", "braid", "crop" },
-    [BODY_THIN] = { "crop", "shag", "tied" },
+    [BODY_MALE] = { "crop", "shag", "tied", "buzz", "slick", "long" },
+    [BODY_FEMALE] = { "tail", "bun", "braid", "crop", "bob", "loose", "side" },
+    [BODY_THIN] = { "crop", "shag", "tied", "buzz", "slick", "long" },
 };
 
 u32 look_hair(const CharLook *l, u8 *gear, u32 n)
