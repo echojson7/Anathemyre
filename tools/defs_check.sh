@@ -7,6 +7,8 @@
 #   4) ошибка в файле мода: файл и строка в журнале, игра не стартует
 # ./tools/defs_check.sh [бинарник] [папка], на Linux без экрана — под xvfb-run
 set -e
+# Упало — последние строки журнала того прогона
+trap 'st=$?; [ $st -ne 0 ] && for f in "$DIR"/defs[0-9].txt; do echo "== $f"; tail -15 "$f"; done; exit $st' EXIT
 BIN=${1:-./build/anathemyre}
 DIR=${2:-build}
 DEFS=data/defs
