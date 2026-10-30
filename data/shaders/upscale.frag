@@ -3,8 +3,8 @@
 
 in vec2 v_uv;
 
-layout(location = 43) uniform vec2 u_out;  // размер окна
-layout(binding = 0) uniform sampler2D u_src;
+#define u_out uintBitsToFloat(u_push[0].xy)  // размер окна
+layout(binding = 20) uniform sampler2D u_src;
 
 out vec4 o_color;
 

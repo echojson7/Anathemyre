@@ -7,7 +7,7 @@
 
 #include "../core/clock.h"
 #include "../core/log.h"
-#include "gl.h"
+#include "rb.h"
 #include "terrain.h"
 
 #define SHADOW_SIZE 2048
@@ -18,21 +18,13 @@
 #define PIXEL_K 0.00728f
 #define PIXEL_P 1.1f
 
-// Расположения uniform задаются явно в GLSL (layout(location = N))
+// Привязки шейдеров (layout(binding = N)): номера сквозные для всех типов, как в наборе Vulkan
 enum {
-    U_VIEW_PROJ = 0, U_SKINNED = 17, U_LIGHT_VP = 18, U_INST_BASE = 19,
-    U_CAM_POS = 20, U_SUN_DIR = 21, U_SUN_COLOR = 22, U_TIME = 23, U_SKY_AMB = 24, U_GROUND_AMB = 25, U_UNLIT = 26, U_TEXEL = 27, U_MORPHS = 28,
-    U_FADE = 29,
-    U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
-    U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39, U_A_AO_HALF = 47, U_NOISE_TEX = 48,
-    U_SHADOW_ON = 51, U_A_PARTS = 52,
-    U_S_POST = 41, U_S_FRAME = 42, U_S_PIX = 44, U_V_TILE = 45,
+    B_LIGHTS = 0, B_FRAME = 1,                                          // UBO
+    B_BONES = 2, B_INST = 3, B_MORPH = 4, B_STATIC_INST = 5,            // SSBO
+    B_SHADOW = 6, B_DEPTH = 7, B_COLOR = 8, B_RAYS = 9, B_AO = 10,      // текстуры
+    B_SRC_MAP = 11, B_LEVEL = 12, B_LEVEL_MAX = 13, B_BLOCK = 14, B_NOISE = 15,
 };
-
-// Буферы хранения (layout(binding = N) в scene.vert)
-enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2, SB_STATIC_INST = 3 };
-// Буфер констант со светом кадра (common.glsl, блок Lights)
-#define UB_LIGHTS 0
 #define SKIN_STATIC 0
 #define SKIN_BONES 1
 #define SKIN_INSTANCED 2
@@ -43,7 +35,7 @@ enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2, SB_STATIC_INST = 3 };
 #define INST_FAR 1200.0f
 
 // Кости и списки экземпляров пишутся каждый кадр; кольцо буферов, чтобы не ждать GPU с прошлым кадром
-#define STREAM_FRAMES 3
+#define STREAM_FRAMES RB_FRAMES
 #define NO_POSE 0xFFFFFFFFu
 
 // Общий буфер сеток (gpu_mesh_upload_pooled): люди, их вещи и причёски всех уровней детализации (~450 тыс. вершин,
@@ -59,7 +51,7 @@ typedef struct PoolRec {
     u32 pose, morphs, vbase, moff;
 } PoolRec;
 
-// Команда glMultiDrawElementsIndirect
+// Команда косвенного вызова (rb_draw_indexed_indirect)
 typedef struct PoolCmd {
     u32 count, instances, first_index;
     i32 base_vertex;
@@ -95,18 +87,60 @@ typedef struct PassView {
 #define TIMER_FRAMES 4
 #define TIMER_MARKS (PASS_COUNT + 1)
 
+// Константы кадра в раскладке std140 (frame.glsl, блок Frame)
+typedef struct GpuFrame {
+    f32 light_vp[16];
+    f32 inv_vp[16];
+    f32 cam_pos[3], time;
+    f32 sun_dir[3], texel_on;
+    f32 sun_color[3], proj_scale;
+    f32 sky_amb[3];
+    i32 frame;
+    f32 ground_amb[3];
+    i32 noise_tex;
+    f32 haze[3];
+    i32 shadow_on;
+    f32 zenith[3];
+    i32 unlit;
+    f32 pix[4];
+    i32 post, ao_half, parts, pad;
+    i32 tile[4];
+} GpuFrame;
+_Static_assert(sizeof(GpuFrame) == 288, "GpuFrame — как блок Frame в frame.glsl");
+// Блоков кадра в кольце на кадр: сам кадр и портреты (у каждого своя камера)
+#define FRAME_BLOCKS (1 + RENDER_PORTRAIT_SLOTS)
+
+// Константы вызова сцены и теней (frame.glsl: u_push)
+typedef struct ScenePush {
+    f32 view_proj[16];
+    i32 skinned, inst_base, morphs, pad0;
+    f32 fade[2], pad1[2];
+    i32 terr_grid[4];
+    f32 terr_view[4];
+} ScenePush;
+_Static_assert(sizeof(ScenePush) == RB_PUSH_BYTES, "ScenePush — весь u_push");
+#define PUSH_DRAW 64   // смещение skinned, inst_base, morphs
+#define PUSH_FADE 80
+
+// Цель: цвет и глубина (по желанию) одного размера
 typedef struct Target {
-    u32 fbo, color, depth;
-    i32 w, h;
+    RbTex color, depth;
+    i32   w, h;
 } Target;
+
+// Раскладки вершин сеток: обычная (вершины и веса костей), общий буфер (и запись экземпляра), без вершин (рельеф)
+enum { LAY_MESH, LAY_POOL, LAY_NONE, LAYS };
+// Наборы конвейеров сеток по проходам
+enum { PS_SHADOW, PS_DEPTH, PS_SCENE, PS_PORTRAIT, PSETS };
 
 static struct {
     Arena *scratch;
-    char   data_dir[512];
-    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_src_map, prog_vrs_block, prog_vrs, prog_level, prog_level_max, prog_ao;
-    u32    noise_tex;  // значения hash13 в узлах решётки NOISE_N³: noise3 одной выборкой (common.glsl)
-    u32    empty_vao;
-    u32    shadow_fbo, shadow_tex;
+    // Конвейеры сеток: [проход][раскладка][0 — с отсечением задних граней, 1 — без]
+    RbPipe mesh_pipe[PSETS][LAYS][2];
+    RbPipe pipe_rays, pipe_atmos, pipe_ao, pipe_style, pipe_src_map, pipe_vrs_block, pipe_vrs, pipe_level, pipe_level_max;
+    u32    pset;      // набор текущего прохода
+    RbTex  noise_tex; // значения hash13 в узлах решётки NOISE_N³: noise3 одной выборкой (common.glsl)
+    RbTex  shadow_tex;
     Target scene, rays, atmos;
     Target ao;        // AO в половинном разрешении (RG16F), ao.frag
     Target level;     // размер пикселя каждой точки (R8UI), level.frag
@@ -114,10 +148,9 @@ static struct {
     Target src_map;   // откуда каждый пиксель берёт цвет (RG16UI), src_map.frag
     Target block;     // частота шейдинга блоков 4x4 (R8UI)
     Target rate;      // карта частоты шейдинга (R8UI), клетка vrs_tile пикселей
-    bool   vrs;       // есть GL_NV_shading_rate_image
+    bool   vrs;       // есть карта частоты шейдинга
     i32    vrs_tile[2];
     Target portrait;  // атлас портретов: ячейки RENDER_PORTRAIT_PX в ряд, HDR
-    u32    timer[TIMER_FRAMES][TIMER_MARKS];
     bool   timer_pending[TIMER_FRAMES];
     u32    timer_slot;
     bool   timing;    // текущий кадр пишет метки времени
@@ -128,15 +161,18 @@ static struct {
     u32    stat_gaps;
     f64    stat_ms[PASS_COUNT];
     u32    stat_samples;
-    u32    bone_buf[STREAM_FRAMES], inst_buf[STREAM_FRAMES];
-    u32    light_buf[STREAM_FRAMES];
+    RbBuf  bone_buf[STREAM_FRAMES], inst_buf[STREAM_FRAMES];
+    RbBuf  light_buf[STREAM_FRAMES];
+    RbBuf  frame_buf;                // блоки кадра: STREAM_FRAMES × FRAME_BLOCKS по frame_step
+    u32    frame_step;
+    GpuFrame frame;                  // константы последнего кадра
     u32    stream;
     u32    used_poses, used_insts;   // занято в буферах текущего кадра (кадр, затем портреты)
     f64    stat_draws[2], stat_tris[2], stat_visible[2], stat_prep, stat_poses;
     bool   stat_vrs;
     u32    stat_frames, stat_items;
     bool   warned_items, warned_poses, warned_inst;
-    u32    static_inst_buf;          // постоянный буфер RInst
+    RbBuf  static_inst_buf;          // постоянный буфер RInst
     const RInst *inst_cpu;           // его копия для отсечения
     u32    inst_total;
     const InstGroup *groups;
@@ -144,7 +180,8 @@ static struct {
     u32    cluster_count;
     V3     cam_eye;                  // для прореживания по дальности во всех проходах
     // Общий буфер сеток и записи экземпляров с командами (кольцо кадров по POOL_RECS)
-    u32    pool_vao, pool_vbo, pool_skin, pool_ibo, pool_morph, pool_rec, pool_cmd;
+    RbBuf  pool_vbo, pool_skin, pool_ibo, pool_morph, pool_rec, pool_cmd;
+    bool   pool_on;
     u32    pool_verts, pool_indices;
     size_t pool_words;
     u32    used_recs, used_cmds;     // занято в кольце текущего кадра
@@ -173,177 +210,183 @@ typedef struct GpuLights {
 } GpuLights;
 static GpuLights g_lights;
 
-static char *read_file(const char *path)
+// Раскладки вершин: Vertex и VertexSkin (mesh.h), запись экземпляра PoolRec
+static const RbLayout g_layout[LAYS] = {
+    [LAY_MESH] = {
+        .attr = { { 0, 0, RB_ATTR_F32x3, offsetof(Vertex, pos) }, { 1, 0, RB_ATTR_F32x3, offsetof(Vertex, nrm) },
+                  { 2, 0, RB_ATTR_UN8x4, offsetof(Vertex, color) }, { 3, 0, RB_ATTR_U8x4, offsetof(Vertex, mat) },
+                  { 4, 1, RB_ATTR_U8x4, offsetof(VertexSkin, bone) }, { 5, 1, RB_ATTR_UN8x4, offsetof(VertexSkin, weight) } },
+        .attrs = 6, .stride = { sizeof(Vertex), sizeof(VertexSkin) },
+    },
+    [LAY_POOL] = {
+        .attr = { { 0, 0, RB_ATTR_F32x3, offsetof(Vertex, pos) }, { 1, 0, RB_ATTR_F32x3, offsetof(Vertex, nrm) },
+                  { 2, 0, RB_ATTR_UN8x4, offsetof(Vertex, color) }, { 3, 0, RB_ATTR_U8x4, offsetof(Vertex, mat) },
+                  { 4, 1, RB_ATTR_U8x4, offsetof(VertexSkin, bone) }, { 5, 1, RB_ATTR_UN8x4, offsetof(VertexSkin, weight) },
+                  { 6, 2, RB_ATTR_U32x4, 0 } },
+        .attrs = 7, .stride = { sizeof(Vertex), sizeof(VertexSkin), sizeof(PoolRec) }, .per_instance = { false, false, true },
+    },
+};
+
+// vrs — рисуется по карте частоты шейдинга (атмосфера)
+static RbPipe pipe_full(const char *name, const char *const *fs, RbFmt fmt, const char *defines, bool vrs)
 {
-    FILE *f = fopen(path, "rb");
-    if (!f) {
-        log_error("ШЕЙДЕР: не открыт %s", path);
-        return NULL;
-    }
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *buf = arena_push(R.scratch, (size_t)n + 1, 1);
-    if (!buf || fread(buf, 1, (size_t)n, f) != (size_t)n) {
-        fclose(f);
-        return NULL;
-    }
-    buf[n] = 0;
-    fclose(f);
-    return buf;
+    RbPipeDesc d = { .vs = { "fullscreen.vert" }, .name = name, .defines = defines, .color = { fmt }, .vrs = vrs };
+    memcpy(d.fs, fs, sizeof d.fs);
+    return rb_pipe_make(&d);
 }
 
-static u32 compile(GLenum type, const char *defines, const char *const *files, u32 nfiles)
+// Конвейер сетки: проход задаёт шейдер и состояние, раскладка — вершины
+static RbPipe pipe_mesh(u32 set, u32 lay, bool two_sided)
 {
-    const char *src[8];
-    u32 n = 0;
-    src[n++] = "#version 450 core\n";
-    src[n++] = defines ? defines : "";
-    for (u32 i = 0; i < nfiles && n < ARRAY_COUNT(src); i++) {
-        char path[640];
-        snprintf(path, sizeof path, "%s/shaders/%s", R.data_dir, files[i]);
-        src[n] = read_file(path);
-        if (!src[n]) return 0;
-        n++;
+    RbPipeDesc d = {
+        .vs = { "frame.glsl", "scene.vert" }, .name = "сетка", .layout = g_layout[lay],
+        .cull = two_sided ? RB_CULL_NONE : RB_CULL_BACK,
+        .depth = set == PS_SCENE ? RB_DEPTH_LEQUAL : RB_DEPTH_LESS, .depth_write = set != PS_SCENE,
+        .color = { RB_FMT_RGBA16F }, .depth_fmt = RB_FMT_D32F,
+    };
+    if (set == PS_SHADOW || set == PS_DEPTH) {
+        d.fs[0] = "shadow.frag";
+        d.defines = "#define SHADOW_PASS\n";
+    } else {
+        d.fs[0] = "frame.glsl";
+        d.fs[1] = "common.glsl";
+        d.fs[2] = "scene.frag";
+        // Портрет — та же программа, только без карты частоты: размер блока там 1
+        d.frag_size = R.vrs;
+        d.vrs = R.vrs && set == PS_SCENE;
     }
-    u32 sh = glCreateShader(type);
-    glShaderSource(sh, (GLsizei)n, src, NULL);
-    glCompileShader(sh);
-    GLint ok = 0;
-    glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
-    if (!ok) {
-        char log[4096];
-        glGetShaderInfoLog(sh, sizeof log, NULL, log);
-        log_error("ШЕЙДЕР %s: %s", files[nfiles - 1], log);
-        glDeleteShader(sh);
-        return 0;
+    if (set == PS_SHADOW) {
+        // Что ближе к солнцу, чем ближняя плоскость, всё равно отбрасывает тень (а не режется срезом)
+        d.depth_clamp = true;
+        d.bias_slope = 1.5f;
+        d.bias_const = 2.0f;
+        d.color[0] = RB_FMT_NONE;
+        d.depth_fmt = RB_FMT_D24;
     }
-    return sh;
+    d.no_color = set == PS_DEPTH;
+    return rb_pipe_make(&d);
 }
 
-static u32 link(u32 vs, u32 fs)
+static void pipes_free(void)
 {
-    if (!vs || !fs) {
-        if (vs) glDeleteShader(vs);
-        if (fs) glDeleteShader(fs);
-        return 0;
+    for (u32 s = 0; s < PSETS; s++)
+        for (u32 l = 0; l < LAYS; l++)
+            for (u32 c = 0; c < 2; c++) rb_pipe_free(&R.mesh_pipe[s][l][c]);
+    RbPipe *full[] = { &R.pipe_rays, &R.pipe_atmos, &R.pipe_ao, &R.pipe_style, &R.pipe_src_map,
+                       &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max };
+    for (u32 i = 0; i < ARRAY_COUNT(full); i++) rb_pipe_free(full[i]);
+}
+
+// Все конвейеры кадра; false — что-то не собралось (и ничего не собрано)
+static bool pipes_make(void)
+{
+    for (u32 s = 0; s < PSETS; s++)
+        for (u32 l = 0; l < LAYS; l++) {
+            // Без отсечения задних граней рисуются только экземпляры (листья, трава) и не в портрете
+            u32 variants = l == LAY_MESH && s != PS_PORTRAIT ? 2 : 1;
+            if (s == PS_PORTRAIT && l == LAY_NONE) continue;
+            for (u32 c = 0; c < variants; c++)
+                if (!(R.mesh_pipe[s][l][c] = pipe_mesh(s, l, c == 1))) {
+                    pipes_free();
+                    return false;
+                }
+        }
+    const char *rays_fs[] = { "frame.glsl", "common.glsl", "rays.frag" };
+    const char *atmos_fs[] = { "frame.glsl", "common.glsl", "ao.glsl", "atmos.frag" };
+    const char *ao_fs[] = { "frame.glsl", "common.glsl", "ao.glsl", "ao.frag" };
+    const char *style_fs[] = { "frame.glsl", "common.glsl", "pixel.glsl", "style.frag", NULL, NULL };
+    const char *src_map_fs[] = { "frame.glsl", "pixel.glsl", "src_map.frag", NULL, NULL, NULL };
+    const char *vrs_block_fs[] = { "vrs_block.frag", NULL, NULL, NULL, NULL, NULL };
+    const char *level_fs[] = { "frame.glsl", "pixel.glsl", "level.frag", NULL, NULL, NULL };
+    const char *level_max_fs[] = { "level_max.frag", NULL, NULL, NULL, NULL, NULL };
+    const char *vrs_fs[] = { "frame.glsl", "vrs.frag", NULL, NULL, NULL, NULL };
+    const char *rays6[RB_SHADER_FILES] = { 0 }, *atmos6[RB_SHADER_FILES] = { 0 }, *ao6[RB_SHADER_FILES] = { 0 };
+    memcpy(rays6, rays_fs, sizeof rays_fs);
+    memcpy(atmos6, atmos_fs, sizeof atmos_fs);
+    memcpy(ao6, ao_fs, sizeof ao_fs);
+    // Лучи всегда считали шум хешем: выбор текстурного шума до них не доходил
+    R.pipe_rays = pipe_full("лучи", rays6, RB_FMT_RG16F, "#define NOISE_HASH\n", false);
+    R.pipe_atmos = pipe_full("атмосфера", atmos6, RB_FMT_RGBA16F, NULL, R.vrs);
+    R.pipe_ao = pipe_full("AO", ao6, RB_FMT_RG16F, NULL, false);
+    R.pipe_style = pipe_full("фильтр", style_fs, RB_FMT_NONE, NULL, false);
+    R.pipe_src_map = pipe_full("источники", src_map_fs, RB_FMT_RG16UI, NULL, false);
+    R.pipe_vrs_block = pipe_full("блоки", vrs_block_fs, RB_FMT_R8UI, NULL, false);
+    R.pipe_vrs = pipe_full("частота", vrs_fs, RB_FMT_R8UI, NULL, false);
+    R.pipe_level = pipe_full("размер пикселя", level_fs, RB_FMT_R8UI, NULL, false);
+    R.pipe_level_max = pipe_full("размер в блоке", level_max_fs, RB_FMT_R8UI, NULL, false);
+    if (!R.pipe_rays || !R.pipe_atmos || !R.pipe_ao || !R.pipe_style || !R.pipe_src_map || !R.pipe_vrs_block ||
+        !R.pipe_vrs || !R.pipe_level || !R.pipe_level_max) {
+        pipes_free();
+        return false;
     }
-    u32 p = glCreateProgram();
-    glAttachShader(p, vs);
-    glAttachShader(p, fs);
-    glLinkProgram(p);
-    glDeleteShader(vs);
-    glDeleteShader(fs);
-    GLint ok = 0;
-    glGetProgramiv(p, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        char log[4096];
-        glGetProgramInfoLog(p, sizeof log, NULL, log);
-        log_error("ПРОГРАММА: %s", log);
-        glDeleteProgram(p);
-        return 0;
-    }
-    return p;
+    return true;
 }
 
 bool render_reload_shaders(void)
 {
-    size_t mark = R.scratch->used;
-    const char *scene_vs[] = { "scene.vert" };
-    const char *scene_fs[] = { "common.glsl", "scene.frag" };
-    const char *shadow_fs[] = { "shadow.frag" };
-    const char *full_vs[] = { "fullscreen.vert" };
-    const char *rays_fs[] = { "common.glsl", "rays.frag" };
-    const char *atmos_fs[] = { "common.glsl", "ao.glsl", "atmos.frag" };
-    const char *ao_fs[] = { "common.glsl", "ao.glsl", "ao.frag" };
-    const char *style_fs[] = { "common.glsl", "pixel.glsl", "style.frag" };
-    const char *src_map_fs[] = { "pixel.glsl", "src_map.frag" };
-    const char *vrs_block_fs[] = { "vrs_block.frag" };
-    const char *level_fs[] = { "pixel.glsl", "level.frag" };
-    const char *level_max_fs[] = { "level_max.frag" };
-    const char *vrs_fs[] = { "vrs.frag" };
-
-    const char *vrs_def = R.vrs ? "#extension GL_NV_shading_rate_image : require\n#define VRS\n" : NULL;
-    u32 scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, vrs_def, scene_fs, 2));
-    if (!scene && R.vrs) {
-        // Драйвер заявил расширение, но шейдер с ним не собрался: считаем каждый пиксель
+    // Старые конвейеры живут, пока новые не собраны целиком
+    RbPipe *full[] = { &R.pipe_rays, &R.pipe_atmos, &R.pipe_ao, &R.pipe_style, &R.pipe_src_map,
+                       &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max };
+    RbPipe old_mesh[PSETS][LAYS][2], old_full[ARRAY_COUNT(full)];
+    memcpy(old_mesh, R.mesh_pipe, sizeof old_mesh);
+    memset(R.mesh_pipe, 0, sizeof R.mesh_pipe);
+    for (u32 i = 0; i < ARRAY_COUNT(full); i++) {
+        old_full[i] = *full[i];
+        *full[i] = 0;
+    }
+    rb_shaders_changed();
+    bool ok = pipes_make();
+    if (!ok && R.vrs) {
+        // Драйвер заявил карту частоты, но шейдер с ней не собрался: считаем каждый пиксель
         log_error("РЕНДЕР: шейдинг блоками отключён, шейдер сцены без него");
         R.vrs = false;
-        scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, scene_fs, 2));
+        ok = pipes_make();
     }
-    u32 shadow = link(compile(GL_VERTEX_SHADER, "#define SHADOW_PASS\n", scene_vs, 1),
-                      compile(GL_FRAGMENT_SHADER, NULL, shadow_fs, 1));
-    u32 rays = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, rays_fs, 2));
-    u32 atmos = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, atmos_fs, 3));
-    u32 ao = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, ao_fs, 3));
-    u32 style = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, style_fs, 3));
-    u32 src_map = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, src_map_fs, 2));
-    u32 level = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, level_fs, 2));
-    u32 level_max = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, level_max_fs, 1));
-    u32 vrs_block = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_block_fs, 1));
-    u32 vrs = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_fs, 1));
-    R.scratch->used = mark;
-
-    u32 progs[] = { scene, shadow, rays, atmos, style, src_map, vrs_block, vrs, level, level_max, ao };
-    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style,
-                     &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs, &R.prog_level, &R.prog_level_max, &R.prog_ao };
-    bool ok = true;
-    for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
-    for (u32 i = 0; i < ARRAY_COUNT(progs); i++) {
-        u32 *old = ok ? slots[i] : &progs[i];
-        if (*old) glDeleteProgram(*old);
-        if (ok) *slots[i] = progs[i];
+    if (!ok) {
+        memcpy(R.mesh_pipe, old_mesh, sizeof old_mesh);
+        for (u32 i = 0; i < ARRAY_COUNT(full); i++) *full[i] = old_full[i];
+        return false;
     }
-    if (!ok) return false;
+    for (u32 s = 0; s < PSETS; s++)
+        for (u32 l = 0; l < LAYS; l++)
+            for (u32 c = 0; c < 2; c++) rb_pipe_free(&old_mesh[s][l][c]);
+    for (u32 i = 0; i < ARRAY_COUNT(old_full); i++) rb_pipe_free(&old_full[i]);
     log_info("ШЕЙДЕРЫ: загружены");
     return true;
 }
 
-static void GLAPIENTRY gl_debug_cb(GLenum source, GLenum type, GLuint id, GLenum severity,
-                                   GLsizei length, const GLchar *message, const void *user)
-{
-    (void)source; (void)type; (void)id; (void)length; (void)user;
-    if (severity == GL_DEBUG_SEVERITY_NOTIFICATION) return;
-    log_error("GL: %s", message);
-}
-
-static u32 make_tex(GLenum fmt, i32 w, i32 h, GLenum filter)
-{
-    u32 t;
-    glCreateTextures(GL_TEXTURE_2D, 1, &t);
-    glTextureStorage2D(t, 1, fmt, w, h);
-    glTextureParameteri(t, GL_TEXTURE_MIN_FILTER, (GLint)filter);
-    glTextureParameteri(t, GL_TEXTURE_MAG_FILTER, (GLint)filter);
-    glTextureParameteri(t, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTextureParameteri(t, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    return t;
-}
-
 static void target_free(Target *t)
 {
-    if (t->fbo) glDeleteFramebuffers(1, &t->fbo);
-    if (t->color) glDeleteTextures(1, &t->color);
-    if (t->depth) glDeleteTextures(1, &t->depth);
+    rb_tex_free(&t->color);
+    rb_tex_free(&t->depth);
     memset(t, 0, sizeof *t);
 }
 
-static bool target_make(Target *t, i32 w, i32 h, GLenum color_fmt, bool depth)
+static bool target_make(Target *t, i32 w, i32 h, RbFmt color_fmt, bool depth)
 {
     target_free(t);
     t->w = w;
     t->h = h;
-    glCreateFramebuffers(1, &t->fbo);
-    t->color = make_tex(color_fmt, w, h, GL_NEAREST);
-    glNamedFramebufferTexture(t->fbo, GL_COLOR_ATTACHMENT0, t->color, 0);
-    if (depth) {
-        t->depth = make_tex(GL_DEPTH_COMPONENT32F, w, h, GL_NEAREST);
-        glNamedFramebufferTexture(t->fbo, GL_DEPTH_ATTACHMENT, t->depth, 0);
-    }
-    if (glCheckNamedFramebufferStatus(t->fbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        log_error("FBO: неполный %dx%d", w, h);
-        return false;
-    }
-    return true;
+    t->color = rb_tex_make(&(RbTexDesc){ .fmt = color_fmt, .w = w, .h = h, .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
+    if (depth) t->depth = rb_tex_make(&(RbTexDesc){ .fmt = RB_FMT_D32F, .w = w, .h = h, .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
+    return t->color && (!depth || t->depth);
+}
+
+// Проход в цель t
+static void pass_to(const Target *t, bool clear, const f32 *color, RbTex rate)
+{
+    RbPass p = { .color = { { .tex = t->color } }, .depth = { .tex = t->depth }, .clear_color = clear, .clear_depth = clear && t->depth, .rate = rate };
+    if (color) memcpy(p.clear, color, sizeof p.clear);
+    rb_pass_begin(&p);
+}
+
+// Полноэкранный треугольник в цель t
+static void draw_full(const Target *t, RbPipe pipe, RbTex rate)
+{
+    pass_to(t, false, NULL, rate);
+    rb_bind_pipe(pipe);
+    rb_draw(3, 0, 1);
+    rb_pass_end();
 }
 
 // hash13 из common.glsl теми же операциями: узлы решётки для шума одной выборкой
@@ -360,75 +403,44 @@ static f32 hash13_c(f32 x, f32 y, f32 z)
 static void noise_make(void)
 {
     static u16 slice[NOISE_N * NOISE_N];
-    glCreateTextures(GL_TEXTURE_3D, 1, &R.noise_tex);
-    glTextureStorage3D(R.noise_tex, 1, GL_R16, NOISE_N, NOISE_N, NOISE_N);
+    R.noise_tex = rb_tex_make(&(RbTexDesc){ .kind = RB_TEX_3D, .fmt = RB_FMT_R16, .w = NOISE_N, .h = NOISE_N, .d = NOISE_N,
+                                            .usage = RB_TEX_SAMPLED });
     for (u32 z = 0; z < NOISE_N; z++) {
         for (u32 y = 0; y < NOISE_N; y++)
             for (u32 x = 0; x < NOISE_N; x++)
                 slice[y * NOISE_N + x] = (u16)(hash13_c((f32)x, (f32)y, (f32)z) * 65535.0f + 0.5f);
-        glTextureSubImage3D(R.noise_tex, 0, 0, 0, (GLint)z, NOISE_N, NOISE_N, 1, GL_RED, GL_UNSIGNED_SHORT, slice);
+        rb_tex_write(R.noise_tex, 0, 0, 0, (i32)z, NOISE_N, NOISE_N, 1, slice, 0);
     }
-    glTextureParameteri(R.noise_tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTextureParameteri(R.noise_tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTextureParameteri(R.noise_tex, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTextureParameteri(R.noise_tex, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTextureParameteri(R.noise_tex, GL_TEXTURE_WRAP_R, GL_REPEAT);
-    glBindTextureUnit(7, R.noise_tex);  // блок 7 больше никто не занимает
+    rb_bind_tex(B_NOISE, R.noise_tex, RB_SMP_LINEAR_REPEAT);  // привязка больше никем не занята
 }
 
 bool render_init(Arena *scratch, const char *data_dir)
 {
     R.scratch = scratch;
-    snprintf(R.data_dir, sizeof R.data_dir, "%s", data_dir);
-    if (!gl_load()) return false;
-    log_info("GL: %s | %s", (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VERSION));
-#ifndef NDEBUG
-    glEnable(GL_DEBUG_OUTPUT);
-    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-    glDebugMessageCallback(gl_debug_cb, NULL);
-#else
-    (void)gl_debug_cb;
-#endif
-    // Частота шейдинга по блокам: вблизи фильтр всё равно сливает пиксели в блоки 2x2 и 4x4
-    R.vrs = gl_has_extension("GL_NV_shading_rate_image") && glBindShadingRateImageNV &&
-            glShadingRateImagePaletteNV && glShadingRateImageBarrierNV;
-    if (R.vrs) {
-        glGetIntegerv(GL_SHADING_RATE_IMAGE_TEXEL_WIDTH_NV, &R.vrs_tile[0]);
-        glGetIntegerv(GL_SHADING_RATE_IMAGE_TEXEL_HEIGHT_NV, &R.vrs_tile[1]);
-        // Клетка карты должна вмещать целые ячейки 4x4
-        R.vrs = R.vrs_tile[0] >= 4 && R.vrs_tile[1] >= 4 && R.vrs_tile[0] % 4 == 0 && R.vrs_tile[1] % 4 == 0;
-    }
-    if (R.vrs) {
-        const GLenum rates[3] = { GL_SHADING_RATE_1_INVOCATION_PER_PIXEL_NV, GL_SHADING_RATE_1_INVOCATION_PER_2X2_PIXELS_NV,
-                                  GL_SHADING_RATE_1_INVOCATION_PER_4X4_PIXELS_NV };
-        glShadingRateImagePaletteNV(0, 0, 3, rates);
-    }
+    if (!rb_init(scratch, data_dir)) return false;
+    // Частота шейдинга по блокам: вблизи фильтр всё равно сливает пиксели в блоки 2x2 и 4x4.
+    // Клетка карты должна вмещать целые ячейки 4x4
+    const RbCaps *caps = rb_caps();
+    R.vrs = caps->vrs && caps->vrs_tile[0] >= 4 && caps->vrs_tile[1] >= 4 && caps->vrs_tile[0] % 4 == 0 &&
+            caps->vrs_tile[1] % 4 == 0;
+    if (R.vrs) memcpy(R.vrs_tile, caps->vrs_tile, sizeof R.vrs_tile);
     log_info("РЕНДЕР: частота шейдинга по блокам %s", R.vrs ? "есть" : "нет (каждый пиксель)");
     if (!render_reload_shaders() || !terrain_init(scratch)) return false;
 
-    glCreateVertexArrays(1, &R.empty_vao);
     noise_make();
     for (u32 i = 0; i < STREAM_FRAMES; i++) {
-        glCreateBuffers(1, &R.bone_buf[i]);
-        glNamedBufferStorage(R.bone_buf[i], (GLsizeiptr)sizeof g_bones, NULL, GL_DYNAMIC_STORAGE_BIT);
-        glCreateBuffers(1, &R.inst_buf[i]);
-        glNamedBufferStorage(R.inst_buf[i], (GLsizeiptr)sizeof g_inst_pose, NULL, GL_DYNAMIC_STORAGE_BIT);
-        glCreateBuffers(1, &R.light_buf[i]);
-        glNamedBufferStorage(R.light_buf[i], (GLsizeiptr)sizeof g_lights, NULL, GL_DYNAMIC_STORAGE_BIT);
+        R.bone_buf[i] = rb_buf_make(sizeof g_bones, RB_BUF_STORAGE | RB_BUF_DYNAMIC, NULL);
+        R.inst_buf[i] = rb_buf_make(sizeof g_inst_pose, RB_BUF_STORAGE | RB_BUF_DYNAMIC, NULL);
+        R.light_buf[i] = rb_buf_make(sizeof g_lights, RB_BUF_UNIFORM | RB_BUF_DYNAMIC, NULL);
     }
-    for (u32 i = 0; i < TIMER_FRAMES; i++) glCreateQueries(GL_TIMESTAMP, TIMER_MARKS, R.timer[i]);
+    R.frame_step = (u32)((sizeof(GpuFrame) + caps->ubo_align - 1) / caps->ubo_align * caps->ubo_align);
+    R.frame_buf = rb_buf_make((size_t)R.frame_step * FRAME_BLOCKS * STREAM_FRAMES, RB_BUF_UNIFORM | RB_BUF_DYNAMIC, NULL);
+    if (!rb_timer_init(TIMER_FRAMES, TIMER_MARKS)) return false;
 
-    R.shadow_tex = make_tex(GL_DEPTH_COMPONENT24, SHADOW_SIZE, SHADOW_SIZE, GL_LINEAR);
-    glTextureParameteri(R.shadow_tex, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
-    glTextureParameteri(R.shadow_tex, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
-    glCreateFramebuffers(1, &R.shadow_fbo);
-    glNamedFramebufferTexture(R.shadow_fbo, GL_DEPTH_ATTACHMENT, R.shadow_tex, 0);
-    glNamedFramebufferDrawBuffer(R.shadow_fbo, GL_NONE);
-    if (glCheckNamedFramebufferStatus(R.shadow_fbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        log_error("FBO: теневая карта неполна");
-        return false;
-    }
-    return target_make(&R.portrait, RENDER_PORTRAIT_PX * RENDER_PORTRAIT_SLOTS, RENDER_PORTRAIT_PX, GL_RGBA16F, true);
+    R.shadow_tex = rb_tex_make(&(RbTexDesc){ .fmt = RB_FMT_D24, .w = SHADOW_SIZE, .h = SHADOW_SIZE,
+                                             .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
+    if (!R.shadow_tex || !R.frame_buf) return false;
+    return target_make(&R.portrait, RENDER_PORTRAIT_PX * RENDER_PORTRAIT_SLOTS, RENDER_PORTRAIT_PX, RB_FMT_RGBA16F, true);
 }
 
 void render_set_terrain(TerrainFill fill, void *user) { terrain_source(fill, user); }
@@ -436,37 +448,19 @@ void render_set_terrain(TerrainFill fill, void *user) { terrain_source(fill, use
 void render_shutdown(void)
 {
     terrain_shutdown();
-    target_free(&R.scene);
-    target_free(&R.rays);
-    target_free(&R.ao);
-    if (R.noise_tex) glDeleteTextures(1, &R.noise_tex);
-    target_free(&R.atmos);
-    target_free(&R.src_map);
-    target_free(&R.level);
-    target_free(&R.level_max);
-    target_free(&R.block);
-    target_free(&R.rate);
-    target_free(&R.portrait);
-    if (R.shadow_fbo) glDeleteFramebuffers(1, &R.shadow_fbo);
-    if (R.shadow_tex) glDeleteTextures(1, &R.shadow_tex);
-    if (R.empty_vao) glDeleteVertexArrays(1, &R.empty_vao);
+    Target *t[] = { &R.scene, &R.rays, &R.ao, &R.atmos, &R.src_map, &R.level, &R.level_max, &R.block, &R.rate, &R.portrait };
+    for (u32 i = 0; i < ARRAY_COUNT(t); i++) target_free(t[i]);
+    rb_tex_free(&R.noise_tex);
+    rb_tex_free(&R.shadow_tex);
     for (u32 i = 0; i < STREAM_FRAMES; i++) {
-        if (R.bone_buf[i]) glDeleteBuffers(1, &R.bone_buf[i]);
-        if (R.inst_buf[i]) glDeleteBuffers(1, &R.inst_buf[i]);
-        if (R.light_buf[i]) glDeleteBuffers(1, &R.light_buf[i]);
+        rb_buf_free(&R.bone_buf[i]);
+        rb_buf_free(&R.inst_buf[i]);
+        rb_buf_free(&R.light_buf[i]);
     }
-    if (R.static_inst_buf) glDeleteBuffers(1, &R.static_inst_buf);
-    if (R.pool_vao) {
-        glDeleteVertexArrays(1, &R.pool_vao);
-        u32 bufs[] = { R.pool_vbo, R.pool_skin, R.pool_ibo, R.pool_morph, R.pool_rec, R.pool_cmd };
-        glDeleteBuffers(ARRAY_COUNT(bufs), bufs);
-    }
-    for (u32 i = 0; i < TIMER_FRAMES; i++)
-        if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
-    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style,
-                    R.prog_src_map, R.prog_vrs_block, R.prog_vrs, R.prog_level, R.prog_level_max, R.prog_ao };
-    for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
-        if (progs[i]) glDeleteProgram(progs[i]);
+    RbBuf *bufs[] = { &R.frame_buf, &R.static_inst_buf, &R.pool_vbo, &R.pool_skin, &R.pool_ibo, &R.pool_morph, &R.pool_rec, &R.pool_cmd };
+    for (u32 i = 0; i < ARRAY_COUNT(bufs); i++) rb_buf_free(bufs[i]);
+    pipes_free();
+    rb_shutdown();
     memset(&R, 0, sizeof R);
 }
 
@@ -489,83 +483,31 @@ static void mesh_finish(GpuMesh *gm, const MeshBuilder *mb);
 bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
 {
     gm->pooled = false;
-    glCreateBuffers(1, &gm->vbo);
-    glCreateBuffers(1, &gm->ibo);
-    glNamedBufferStorage(gm->vbo, (GLsizeiptr)(mb->vcount * sizeof(Vertex)), mb->v, 0);
-    glNamedBufferStorage(gm->ibo, (GLsizeiptr)(mb->icount * sizeof(u32)), mb->idx, 0);
-    glCreateVertexArrays(1, &gm->vao);
-    glVertexArrayVertexBuffer(gm->vao, 0, gm->vbo, 0, sizeof(Vertex));
-    glVertexArrayElementBuffer(gm->vao, gm->ibo);
-    glEnableVertexArrayAttrib(gm->vao, 0);
-    glEnableVertexArrayAttrib(gm->vao, 1);
-    glEnableVertexArrayAttrib(gm->vao, 2);
-    glEnableVertexArrayAttrib(gm->vao, 3);
-    glVertexArrayAttribFormat(gm->vao, 0, 3, GL_FLOAT, GL_FALSE, offsetof(Vertex, pos));
-    glVertexArrayAttribFormat(gm->vao, 1, 3, GL_FLOAT, GL_FALSE, offsetof(Vertex, nrm));
-    glVertexArrayAttribFormat(gm->vao, 2, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(Vertex, color));
-    glVertexArrayAttribIFormat(gm->vao, 3, 4, GL_UNSIGNED_BYTE, offsetof(Vertex, mat));
-    for (u32 i = 0; i < 4; i++) glVertexArrayAttribBinding(gm->vao, i, 0);
-    gm->skin_vbo = 0;
-    if (mb->skin) {
-        // Без этого потока вес первой кости в шейдере 0 (значение атрибута по умолчанию) — жёсткий скиннинг
-        glCreateBuffers(1, &gm->skin_vbo);
-        glNamedBufferStorage(gm->skin_vbo, (GLsizeiptr)(mb->vcount * sizeof(VertexSkin)), mb->skin, 0);
-        glVertexArrayVertexBuffer(gm->vao, 1, gm->skin_vbo, 0, sizeof(VertexSkin));
-        glEnableVertexArrayAttrib(gm->vao, 4);
-        glEnableVertexArrayAttrib(gm->vao, 5);
-        glVertexArrayAttribIFormat(gm->vao, 4, 4, GL_UNSIGNED_BYTE, offsetof(VertexSkin, bone));
-        glVertexArrayAttribFormat(gm->vao, 5, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(VertexSkin, weight));
-        glVertexArrayAttribBinding(gm->vao, 4, 1);
-        glVertexArrayAttribBinding(gm->vao, 5, 1);
-    }
+    gm->vbo = rb_buf_make(mb->vcount * sizeof(Vertex), RB_BUF_VERTEX, mb->v);
+    gm->ibo = rb_buf_make(mb->icount * sizeof(u32), RB_BUF_INDEX, mb->idx);
+    // Без весов костей сетка рисуется с потоком нулей: вес первой кости 0 — жёсткий скиннинг
+    gm->skin_vbo = mb->skin ? rb_buf_make(mb->vcount * sizeof(VertexSkin), RB_BUF_VERTEX, mb->skin) : 0;
     gm->morph_buf = 0;
     gm->morph_count = mb->morph ? mb->morph_count : 0;
-    if (gm->morph_count) {
-        glCreateBuffers(1, &gm->morph_buf);
-        glNamedBufferStorage(gm->morph_buf, (GLsizeiptr)((size_t)mb->vcount * gm->morph_count * 3 * sizeof(u32)), mb->morph, 0);
-    }
+    if (gm->morph_count)
+        gm->morph_buf = rb_buf_make((size_t)mb->vcount * gm->morph_count * 3 * sizeof(u32), RB_BUF_STORAGE, mb->morph);
     mesh_finish(gm, mb);
-    return true;
+    return gm->vbo && gm->ibo;
 }
 
-// Общий буфер заводится при первой сетке. Записи экземпляров — вершинный атрибут 6 с делителем 1:
-// baseInstance команды указывает на первую запись её экземпляров
+// Общий буфер заводится при первой сетке. Записи экземпляров — поток 2 по экземплярам:
+// первый экземпляр команды указывает на первую запись её экземпляров
 static bool pool_init(void)
 {
-    if (R.pool_vao) return true;
-    glCreateBuffers(1, &R.pool_vbo);
-    glCreateBuffers(1, &R.pool_skin);
-    glCreateBuffers(1, &R.pool_ibo);
-    glCreateBuffers(1, &R.pool_morph);
-    glCreateBuffers(1, &R.pool_rec);
-    glCreateBuffers(1, &R.pool_cmd);
-    glNamedBufferStorage(R.pool_vbo, (GLsizeiptr)(POOL_VERTS * sizeof(Vertex)), NULL, GL_DYNAMIC_STORAGE_BIT);
-    glNamedBufferStorage(R.pool_skin, (GLsizeiptr)(POOL_VERTS * sizeof(VertexSkin)), NULL, GL_DYNAMIC_STORAGE_BIT);
-    glNamedBufferStorage(R.pool_ibo, (GLsizeiptr)(POOL_INDICES * sizeof(u32)), NULL, GL_DYNAMIC_STORAGE_BIT);
-    glNamedBufferStorage(R.pool_morph, (GLsizeiptr)(POOL_MORPH * sizeof(u32)), NULL, GL_DYNAMIC_STORAGE_BIT);
-    glNamedBufferStorage(R.pool_rec, (GLsizeiptr)(STREAM_FRAMES * POOL_RECS * sizeof(PoolRec)), NULL, GL_DYNAMIC_STORAGE_BIT);
-    glNamedBufferStorage(R.pool_cmd, (GLsizeiptr)(STREAM_FRAMES * POOL_RECS * sizeof(PoolCmd)), NULL, GL_DYNAMIC_STORAGE_BIT);
-    u32 vao;
-    glCreateVertexArrays(1, &vao);
-    glVertexArrayVertexBuffer(vao, 0, R.pool_vbo, 0, sizeof(Vertex));
-    glVertexArrayVertexBuffer(vao, 1, R.pool_skin, 0, sizeof(VertexSkin));
-    glVertexArrayVertexBuffer(vao, 2, R.pool_rec, 0, sizeof(PoolRec));
-    glVertexArrayBindingDivisor(vao, 2, 1);
-    glVertexArrayElementBuffer(vao, R.pool_ibo);
-    for (u32 i = 0; i <= 6; i++) glEnableVertexArrayAttrib(vao, i);
-    glVertexArrayAttribFormat(vao, 0, 3, GL_FLOAT, GL_FALSE, offsetof(Vertex, pos));
-    glVertexArrayAttribFormat(vao, 1, 3, GL_FLOAT, GL_FALSE, offsetof(Vertex, nrm));
-    glVertexArrayAttribFormat(vao, 2, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(Vertex, color));
-    glVertexArrayAttribIFormat(vao, 3, 4, GL_UNSIGNED_BYTE, offsetof(Vertex, mat));
-    glVertexArrayAttribIFormat(vao, 4, 4, GL_UNSIGNED_BYTE, offsetof(VertexSkin, bone));
-    glVertexArrayAttribFormat(vao, 5, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(VertexSkin, weight));
-    glVertexArrayAttribIFormat(vao, 6, 4, GL_UNSIGNED_INT, 0);
-    for (u32 i = 0; i < 4; i++) glVertexArrayAttribBinding(vao, i, 0);
-    glVertexArrayAttribBinding(vao, 4, 1);
-    glVertexArrayAttribBinding(vao, 5, 1);
-    glVertexArrayAttribBinding(vao, 6, 2);
-    R.pool_vao = vao;
-    return true;
+    if (R.pool_on) return true;
+    R.pool_vbo = rb_buf_make(POOL_VERTS * sizeof(Vertex), RB_BUF_VERTEX, NULL);
+    R.pool_skin = rb_buf_make(POOL_VERTS * sizeof(VertexSkin), RB_BUF_VERTEX, NULL);
+    R.pool_ibo = rb_buf_make(POOL_INDICES * sizeof(u32), RB_BUF_INDEX, NULL);
+    R.pool_morph = rb_buf_make(POOL_MORPH * sizeof(u32), RB_BUF_STORAGE, NULL);
+    R.pool_rec = rb_buf_make(STREAM_FRAMES * POOL_RECS * sizeof(PoolRec), RB_BUF_VERTEX | RB_BUF_DYNAMIC, NULL);
+    R.pool_cmd = rb_buf_make(STREAM_FRAMES * POOL_RECS * sizeof(PoolCmd), RB_BUF_INDIRECT | RB_BUF_DYNAMIC, NULL);
+    R.pool_on = R.pool_vbo && R.pool_skin && R.pool_ibo && R.pool_morph && R.pool_rec && R.pool_cmd;
+    return R.pool_on;
 }
 
 bool gpu_mesh_upload_pooled(GpuMesh *gm, const MeshBuilder *mb)
@@ -583,17 +525,15 @@ bool gpu_mesh_upload_pooled(GpuMesh *gm, const MeshBuilder *mb)
     gm->pool_vbase = R.pool_verts;
     gm->pool_ibase = R.pool_indices;
     gm->pool_moff = (u32)R.pool_words;
-    glNamedBufferSubData(R.pool_vbo, (GLintptr)(R.pool_verts * sizeof(Vertex)), (GLsizeiptr)(mb->vcount * sizeof(Vertex)), mb->v);
+    rb_buf_write(R.pool_vbo, R.pool_verts * sizeof(Vertex), mb->vcount * sizeof(Vertex), mb->v);
     // Жёстким сеткам — нулевые веса: в шейдере это жёсткий скиннинг, как без потока весов
     static const VertexSkin zero[1024];
     for (u32 i = 0; i < mb->vcount; i += ARRAY_COUNT(zero)) {
         u32 k = MIN(mb->vcount - i, (u32)ARRAY_COUNT(zero));
-        glNamedBufferSubData(R.pool_skin, (GLintptr)((R.pool_verts + i) * sizeof(VertexSkin)), (GLsizeiptr)(k * sizeof(VertexSkin)),
-                             mb->skin ? mb->skin + i : zero);
+        rb_buf_write(R.pool_skin, (R.pool_verts + i) * sizeof(VertexSkin), k * sizeof(VertexSkin), mb->skin ? mb->skin + i : zero);
     }
-    glNamedBufferSubData(R.pool_ibo, (GLintptr)(R.pool_indices * sizeof(u32)), (GLsizeiptr)(mb->icount * sizeof(u32)), mb->idx);
-    if (mwords)
-        glNamedBufferSubData(R.pool_morph, (GLintptr)(R.pool_words * sizeof(u32)), (GLsizeiptr)(mwords * sizeof(u32)), mb->morph);
+    rb_buf_write(R.pool_ibo, R.pool_indices * sizeof(u32), mb->icount * sizeof(u32), mb->idx);
+    if (mwords) rb_buf_write(R.pool_morph, R.pool_words * sizeof(u32), mwords * sizeof(u32), mb->morph);
     R.pool_verts += mb->vcount;
     R.pool_indices += mb->icount;
     R.pool_words += mwords;
@@ -667,17 +607,15 @@ _Static_assert(sizeof(RInst) == 32, "RInst — 32 байта, как InstRec в 
 
 bool render_upload_instances(const RInst *inst, u32 count)
 {
-    if (R.static_inst_buf) glDeleteBuffers(1, &R.static_inst_buf);
-    R.static_inst_buf = 0;
+    rb_buf_free(&R.static_inst_buf);
     R.inst_cpu = inst;
     R.inst_total = count;
     R.groups = NULL;
     R.clusters = NULL;
     R.cluster_count = 0;
     if (!count) return true;
-    glCreateBuffers(1, &R.static_inst_buf);
-    glNamedBufferStorage(R.static_inst_buf, (GLsizeiptr)(sizeof(RInst) * count), inst, 0);
-    return true;
+    R.static_inst_buf = rb_buf_make(sizeof(RInst) * count, RB_BUF_STORAGE, inst);
+    return R.static_inst_buf != 0;
 }
 
 void render_set_groups(const InstGroup *groups, const InstCluster *clusters, u32 cluster_count)
@@ -687,15 +625,13 @@ void render_set_groups(const InstGroup *groups, const InstCluster *clusters, u32
     R.cluster_count = groups && clusters && R.inst_cpu ? cluster_count : 0;
 }
 
+
 // Забирает результаты самого старого кадра в кольце, если GPU их уже посчитал
 static void timer_collect(u32 slot)
 {
-    if (!R.timer_pending[slot]) return;
-    GLuint ready = 0;
-    glGetQueryObjectuiv(R.timer[slot][TIMER_MARKS - 1], GL_QUERY_RESULT_AVAILABLE, &ready);
-    if (!ready) return;
-    GLuint64 t[TIMER_MARKS];
-    for (u32 i = 0; i < TIMER_MARKS; i++) glGetQueryObjectui64v(R.timer[slot][i], GL_QUERY_RESULT, &t[i]);
+    if (!R.timer_pending[slot] || !rb_timer_ready(slot, TIMER_MARKS - 1)) return;
+    u64 t[TIMER_MARKS];
+    for (u32 i = 0; i < TIMER_MARKS; i++) t[i] = rb_timer_get(slot, i);
     for (u32 p = 0; p < PASS_COUNT; p++) R.stat_ms[p] += (f64)(t[p + 1] - t[p]) * 1e-6;
     R.stat_samples++;
     // Между концом прошлого кадра и началом этого: простой GPU или работа вне проходов
@@ -708,10 +644,7 @@ static void timer_collect(u32 slot)
     R.timer_pending[slot] = false;
 }
 
-static void mark(u32 i)
-{
-    glQueryCounter(R.timer[R.timer_slot][i], GL_TIMESTAMP);
-}
+static void mark(u32 i) { rb_timer_mark(R.timer_slot, i); }
 
 // Время CPU в той же метке: сколько отправка вызовов прохода заняла у процессора
 static void pass_mark(u32 i)
@@ -920,13 +853,44 @@ static u32 gather(const DrawItem *items, u32 count, const PassView *pv, bool sha
     return n;
 }
 
+// Конвейер сеток текущего прохода для раскладки; без отсечения граней — только у обычных сеток
+static void use_pipe(u32 lay, bool two_sided)
+{
+    rb_bind_pipe(R.mesh_pipe[R.pset][lay][two_sided && lay == LAY_MESH ? 1 : 0]);
+}
+
+static void push_draw(i32 skinned, i32 inst_base, i32 morphs)
+{
+    i32 v[4] = { skinned, inst_base, morphs, 0 };
+    rb_push(PUSH_DRAW, sizeof v, v);
+}
+
+// Сетка из своих буферов; поток весов 0 — поток нулей
+static void bind_mesh(const GpuMesh *m, bool two_sided)
+{
+    use_pipe(LAY_MESH, two_sided);
+    rb_bind_vertex(0, m->vbo, 0);
+    rb_bind_vertex(1, m->skin_vbo, 0);
+    rb_bind_index(m->ibo, 0, false);
+}
+
+// Общий буфер сеток: записи экземпляров — часть кольца текущего кадра
+static void bind_pool(void)
+{
+    use_pipe(LAY_POOL, false);
+    rb_bind_vertex(0, R.pool_vbo, 0);
+    rb_bind_vertex(1, R.pool_skin, 0);
+    rb_bind_vertex(2, R.pool_rec, (size_t)R.stream * POOL_RECS * sizeof(PoolRec));
+    rb_bind_index(R.pool_ibo, 0, false);
+}
+
 // Подряд идущие экземпляры одной сетки: статика по одному, скелетные — все сразу
 typedef struct InstRun {
     u32 first, end;
     i32 cmd;   // команда общего буфера, -1 — свой вызов
 } InstRun;
 
-// Сетки из общего буфера с костями — команды одного glMultiDrawElementsIndirect (порядок вызовов прежний:
+// Сетки из общего буфера с костями — команды одного косвенного вызова (порядок вызовов прежний:
 // при равной глубине в проходе сцены побеждает последний). Остальное — по вызову на сетку,
 // скелетные — один вызов на все экземпляры одной сетки
 static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
@@ -959,15 +923,15 @@ static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
     size_t ring = (size_t)R.stream * POOL_RECS;
     u32 cmd0 = R.used_cmds;
     if (nc) {
-        glNamedBufferSubData(R.pool_rec, (GLintptr)((ring + R.used_recs) * sizeof(PoolRec)), (GLsizeiptr)(nr * sizeof(PoolRec)), rec);
-        glNamedBufferSubData(R.pool_cmd, (GLintptr)((ring + cmd0) * sizeof(PoolCmd)), (GLsizeiptr)(nc * sizeof(PoolCmd)), cmd);
+        rb_buf_write(R.pool_rec, (ring + R.used_recs) * sizeof(PoolRec), nr * sizeof(PoolRec), rec);
+        rb_buf_write(R.pool_cmd, (ring + cmd0) * sizeof(PoolCmd), nc * sizeof(PoolCmd), cmd);
         R.used_recs += nr;
         R.used_cmds += nc;
     }
 
     u32 draws = 0;
     f64 tris = 0;
-    bool pool_on = false;   // привязаны VAO и морфы общего буфера
+    bool pool_on = false;   // привязаны общий буфер и его морфы
     for (u32 q = 0; q < nrun;) {
         const InstRun *r = &run[q];
         const GpuMesh *m = in[r->first].mesh;
@@ -975,21 +939,18 @@ static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
             u32 q2 = q + 1;
             while (q2 < nrun && run[q2].cmd >= 0) q2++;
             if (!pool_on) {
-                glBindVertexArray(R.pool_vao);
-                glUniform1i(U_SKINNED, SKIN_POOL);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_MORPH, R.pool_morph);
+                bind_pool();
+                push_draw(SKIN_POOL, 0, 0);
+                rb_bind_ssbo(B_MORPH, R.pool_morph, 0, 0);
                 pool_on = true;
             }
             u32 c0 = (u32)r->cmd, c1 = (u32)run[q2 - 1].cmd + 1;
             if (R.mdi) {
-                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, (const void *)((ring + cmd0 + c0) * sizeof(PoolCmd)),
-                                            (GLsizei)(c1 - c0), 0);
+                rb_draw_indexed_indirect(R.pool_cmd, (ring + cmd0 + c0) * sizeof(PoolCmd), c1 - c0);
                 draws++;
             } else {
                 for (u32 c = c0; c < c1; c++)
-                    glDrawElementsInstancedBaseVertexBaseInstance(GL_TRIANGLES, (GLsizei)cmd[c].count, GL_UNSIGNED_INT,
-                                                                  (const void *)((size_t)cmd[c].first_index * sizeof(u32)),
-                                                                  (GLsizei)cmd[c].instances, cmd[c].base_vertex, cmd[c].base_instance);
+                    rb_draw_indexed(cmd[c].count, cmd[c].first_index, cmd[c].base_vertex, cmd[c].instances, cmd[c].base_instance);
                 draws += c1 - c0;
             }
             for (u32 c = c0; c < c1; c++) tris += (f64)(cmd[c].count / 3) * cmd[c].instances;
@@ -998,20 +959,16 @@ static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
         }
         u32 i = r->first, j = r->end;
         pool_on = false;
-        glBindVertexArray(m->pooled ? R.pool_vao : m->vao);
+        if (m->pooled) bind_pool();
+        else bind_mesh(m, false);
         if (in[i].pose == NO_POSE) {
-            glUniform1i(U_SKINNED, SKIN_STATIC);
-            if (m->pooled)
-                glDrawElementsBaseVertex(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT,
-                                         (const void *)((size_t)m->pool_ibase * sizeof(u32)), (GLint)m->pool_vbase);
-            else
-                glDrawElements(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT, NULL);
+            push_draw(SKIN_STATIC, 0, 0);
+            if (m->pooled) rb_draw_indexed(m->index_count, m->pool_ibase, (i32)m->pool_vbase, 1, 0);
+            else rb_draw_indexed(m->index_count, 0, 0, 1, 0);
         } else {
-            glUniform1i(U_SKINNED, SKIN_BONES);
-            glUniform1i(U_INST_BASE, (GLint)(base + i));
-            glUniform1i(U_MORPHS, (GLint)m->morph_count);
-            if (m->morph_count) glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_MORPH, m->morph_buf);
-            glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT, NULL, (GLsizei)(j - i));
+            push_draw(SKIN_BONES, (i32)(base + i), (i32)m->morph_count);
+            if (m->morph_count) rb_bind_ssbo(B_MORPH, m->morph_buf, 0, 0);
+            rb_draw_indexed(m->index_count, 0, 0, j - i, 0);
         }
         draws++;
         tris += (f64)(m->index_count / 3) * (f64)(j - i);
@@ -1148,8 +1105,7 @@ static u32 gather_groups(const PassView *pv, bool shadow, InstDraw *draws)
         g_inst_pose[d->base + d->count++] = g_vis_id[i];
     }
     if (nv)
-        glNamedBufferSubData(R.inst_buf[R.stream], (GLintptr)(sizeof(u32) * base), (GLsizeiptr)(sizeof(u32) * nv),
-                             &g_inst_pose[base]);
+        rb_buf_write(R.inst_buf[R.stream], sizeof(u32) * base, sizeof(u32) * nv, &g_inst_pose[base]);
     R.used_insts += nv;
     return ga.nb;
 }
@@ -1157,18 +1113,16 @@ static u32 gather_groups(const PassView *pv, bool shadow, InstDraw *draws)
 static void draw_groups(const InstDraw *draws, u32 n, u32 pass)
 {
     if (!n) return;
-    glUniform1i(U_SKINNED, SKIN_INSTANCED);
     f64 tris = 0, vis = 0;
     for (u32 i = 0; i < n; i++) {
         const InstDraw *d = &draws[i];
         if (!d->count) continue;
         const GpuMesh *m = d->mesh;
-        glBindVertexArray(m->vao);
-        if (m->two_sided) glDisable(GL_CULL_FACE);
-        glUniform1i(U_INST_BASE, (GLint)d->base);
-        glUniform2f(U_FADE, m->fade[0], m->fade[1]);
-        glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT, NULL, (GLsizei)d->count);
-        if (m->two_sided) glEnable(GL_CULL_FACE);
+        bind_mesh(m, m->two_sided);
+        push_draw(SKIN_INSTANCED, (i32)d->base, 0);
+        f32 fade[4] = { m->fade[0], m->fade[1], 0.0f, 0.0f };
+        rb_push(PUSH_FADE, sizeof fade, fade);
+        rb_draw_indexed(m->index_count, 0, 0, d->count, 0);
         tris += (f64)(m->index_count / 3) * d->count;
         vis += d->count;
     }
@@ -1184,6 +1138,7 @@ static void draw_terrain(const PassView *pv, u32 pass)
 {
     u32 draws = 0;
     f64 tris = 0;
+    use_pipe(LAY_NONE, false);
     terrain_draw(pv->fr.p, pass == 0 ? 1 : TERRAIN_LEVELS, pass == 0 ? 0.25f : -1.0f, &draws, &tris);
     if (pass >= 2) return;
     R.stat_draws[pass] += draws;
@@ -1210,9 +1165,8 @@ static void stream_poses(const DrawItem *items, u32 count)
         }
     }
     if (poses > first)
-        glNamedBufferSubData(R.bone_buf[R.stream], (GLintptr)(sizeof(M4) * RENDER_MAX_BONES * first),
-                             (GLsizeiptr)(sizeof(M4) * RENDER_MAX_BONES * (poses - first)),
-                             &g_bones[(size_t)first * RENDER_MAX_BONES]);
+        rb_buf_write(R.bone_buf[R.stream], sizeof(M4) * RENDER_MAX_BONES * first, sizeof(M4) * RENDER_MAX_BONES * (poses - first),
+                     &g_bones[(size_t)first * RENDER_MAX_BONES]);
     R.used_poses = poses;
 }
 
@@ -1223,8 +1177,7 @@ static u32 stream_insts(const Inst *in, u32 *n)
     *n = MIN(*n, (u32)ARRAY_COUNT(g_inst_pose) - base);
     for (u32 i = 0; i < *n; i++) g_inst_pose[base + i] = in[i].pose;
     if (*n)
-        glNamedBufferSubData(R.inst_buf[R.stream], (GLintptr)(sizeof(u32) * base), (GLsizeiptr)(sizeof(u32) * *n),
-                             &g_inst_pose[base]);
+        rb_buf_write(R.inst_buf[R.stream], sizeof(u32) * base, sizeof(u32) * *n, &g_inst_pose[base]);
     R.used_insts += *n;
     return base;
 }
@@ -1243,7 +1196,6 @@ static M4 light_matrix(const FrameView *fv)
                      -c.z - 250.0f, -c.z + 250.0f);
     return m4_mul(lp, lv);
 }
-
 // Свет кадра: видимые источники, ближайшие к камере (по краю сферы), не больше RENDER_MAX_LIGHTS
 static void stream_lights(const FrameView *fv, const Frustum *fr)
 {
@@ -1271,25 +1223,43 @@ static void stream_lights(const FrameView *fv, const Frustum *fr)
         memcpy(g_lights.col[i], (f32[4]){ l->color.x, l->color.y, l->color.z, l->cone }, sizeof g_lights.col[i]);
         memcpy(g_lights.dir[i], (f32[4]){ d.x, d.y, d.z, l->glow }, sizeof g_lights.dir[i]);
     }
-    glNamedBufferSubData(R.light_buf[R.stream], 0, (GLsizeiptr)sizeof g_lights, &g_lights);
-    glBindBufferBase(GL_UNIFORM_BUFFER, UB_LIGHTS, R.light_buf[R.stream]);
+    rb_buf_write(R.light_buf[R.stream], 0, sizeof g_lights, &g_lights);
+    rb_bind_ubo(B_LIGHTS, R.light_buf[R.stream], 0, 0);
+}
+
+// Блок констант кадра: block 0 — сам кадр, 1 + слот — портрет
+static void frame_write(u32 block, const GpuFrame *f)
+{
+    size_t off = ((size_t)R.stream * FRAME_BLOCKS + block) * R.frame_step;
+    rb_buf_write(R.frame_buf, off, sizeof *f, f);
+    rb_bind_ubo(B_FRAME, R.frame_buf, off, sizeof *f);
+}
+
+static void push_view_proj(M4 m) { rb_push(0, sizeof m.m, m.m); }
+
+static void v3_to(f32 *out, V3 v)
+{
+    out[0] = v.x;
+    out[1] = v.y;
+    out[2] = v.z;
 }
 
 void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const RenderSettings *rs, i32 win_w, i32 win_h)
 {
-    if (win_w <= 0 || win_h <= 0 || !R.prog_scene) return;
+    rb_frame_begin(win_w, win_h);
+    if (win_w <= 0 || win_h <= 0 || !R.mesh_pipe[PS_SCENE][LAY_MESH][0]) return;
     i32 iw = win_w, ih = win_h;
     if (R.scene.w != iw || R.scene.h != ih) {
-        target_make(&R.scene, iw, ih, GL_RGBA16F, true);
-        target_make(&R.rays, (iw + 1) / 2, (ih + 1) / 2, GL_RG16F, false);
-        target_make(&R.ao, (iw + 1) / 2, (ih + 1) / 2, GL_RG16F, false);
-        target_make(&R.atmos, iw, ih, GL_RGBA16F, false);
-        target_make(&R.src_map, iw, ih, GL_RG16UI, false);
-        target_make(&R.level, iw, ih, GL_R8UI, false);
-        target_make(&R.level_max, (iw + 7) / 8, (ih + 7) / 8, GL_R8UI, false);
-        if (R.vrs && !(target_make(&R.block, (iw + 3) / 4, (ih + 3) / 4, GL_R8UI, false) &&
+        target_make(&R.scene, iw, ih, RB_FMT_RGBA16F, true);
+        target_make(&R.rays, (iw + 1) / 2, (ih + 1) / 2, RB_FMT_RG16F, false);
+        target_make(&R.ao, (iw + 1) / 2, (ih + 1) / 2, RB_FMT_RG16F, false);
+        target_make(&R.atmos, iw, ih, RB_FMT_RGBA16F, false);
+        target_make(&R.src_map, iw, ih, RB_FMT_RG16UI, false);
+        target_make(&R.level, iw, ih, RB_FMT_R8UI, false);
+        target_make(&R.level_max, (iw + 7) / 8, (ih + 7) / 8, RB_FMT_R8UI, false);
+        if (R.vrs && !(target_make(&R.block, (iw + 3) / 4, (ih + 3) / 4, RB_FMT_R8UI, false) &&
                        target_make(&R.rate, (iw + R.vrs_tile[0] - 1) / R.vrs_tile[0], (ih + R.vrs_tile[1] - 1) / R.vrs_tile[1],
-                                   GL_R8UI, false)))
+                                   RB_FMT_R8UI, false)))
             R.vrs = false;
         log_info("РЕНДЕР: кадр %dx%d", iw, ih);
     }
@@ -1310,7 +1280,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         count = RENDER_MAX_ITEMS;
     }
     f64 t_prep = time_now();
-    R.stream = (R.stream + 1) % STREAM_FRAMES;
+    R.stream = rb_frame_slot();
     R.used_poses = R.used_insts = R.used_recs = R.used_cmds = 0;
     R.mdi = rs->mdi;
     stream_poses(items, count);
@@ -1333,205 +1303,119 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     u32 ng_shadow = rs->shadows && rs->flora ? gather_groups(&shadow_view, true, g_idraw[0]) : 0;
     u32 ng_scene = rs->flora ? gather_groups(&scene_view, false, g_idraw[1]) : 0;
     bool atmos = rs->atmos, rays = atmos && rs->rays && rs->shadows, ao = atmos && rs->ao;
-    R.stat_prep += time_now() - t_prep;
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_BONES, R.bone_buf[R.stream]);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_INST, R.inst_buf[R.stream]);
-    if (R.static_inst_buf) glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_STATIC_INST, R.static_inst_buf);
-    if (R.pool_vao) {
-        // Записи экземпляров и команды кадра — его часть кольца
-        glVertexArrayVertexBuffer(R.pool_vao, 2, R.pool_rec, (GLintptr)((size_t)R.stream * POOL_RECS * sizeof(PoolRec)), sizeof(PoolRec));
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, R.pool_cmd);
-    }
-    R.stat_frames++;
-    pass_mark(0);
-    R.stat_items = count;
-
-    // 1. Тени
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-    // Ветер и прореживание в вершинном шейдере: те же значения во всех проходах (и в проходе глубины)
-    glUseProgram(R.prog_shadow);
-    glUniform3f(U_CAM_POS, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
-    glUniform1f(U_TIME, fv->time);
-    if (rs->shadows) {
-        glBindFramebuffer(GL_FRAMEBUFFER, R.shadow_fbo);
-        glViewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
-        glEnable(GL_POLYGON_OFFSET_FILL);
-        glPolygonOffset(1.5f, 2.0f);
-        // Что ближе к солнцу, чем ближняя плоскость, всё равно отбрасывает тень (а не режется срезом)
-        glEnable(GL_DEPTH_CLAMP);
-        glClear(GL_DEPTH_BUFFER_BIT);
-        glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, light_vp.m);
-        draw_insts(g_inst[0], n_shadow, base_shadow, 0);
-        draw_groups(g_idraw[0], ng_shadow, 0);
-        draw_terrain(&shadow_view, 0);
-        glDisable(GL_POLYGON_OFFSET_FILL);
-        glDisable(GL_DEPTH_CLAMP);
-    }
-    pass_mark(1);
-    if (timing) mark(1);
-
-    // 2. Сцена в низком разрешении
-    glBindFramebuffer(GL_FRAMEBUFFER, R.scene.fbo);
-    glViewport(0, 0, iw, ih);
-    // Без атмосферы небо не рисуется: на его месте цвет дымки
-    if (atmos) glClearColor(0, 0, 0, 1);
-    else glClearColor(fv->haze.x * 1.25f, fv->haze.y * 1.25f, fv->haze.z * 1.25f, 1);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    // Сначала только глубина: тяжёлый шейдер материалов затем считает каждый пиксель один раз
-    glUseProgram(R.prog_shadow);
-    glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, vp.m);
-    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-    draw_insts(g_inst[1], n_scene, base_scene, 2);
-    draw_groups(g_idraw[1], ng_scene, 2);
-    draw_terrain(&scene_view, 2);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    glDepthFunc(GL_LEQUAL);
-    glDepthMask(GL_FALSE);
     // Размер пикселя на дальности 1 м; s^P = (px_m / d)^P = PIXEL_K * px_m^P * (1/d)^P
     f32 px_k = rs->pixel ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
     bool vrs = R.vrs && rs->vrs && rs->pixel;
     R.stat_vrs = vrs;
+
+    // Константы кадра: одни на все проходы
+    GpuFrame *f = &R.frame;
+    memset(f, 0, sizeof *f);
+    memcpy(f->light_vp, light_vp.m, sizeof f->light_vp);
+    M4 inv_vp = m4_inverse(vp);
+    memcpy(f->inv_vp, inv_vp.m, sizeof f->inv_vp);
+    v3_to(f->cam_pos, fv->cam_pos);
+    f->time = fv->time;
+    v3_to(f->sun_dir, L);
+    f->texel_on = rs->pixel ? 1.0f : 0.0f;
+    v3_to(f->sun_color, fv->sun_color);
+    f->proj_scale = fv->proj.m[5] * 0.5f * (f32)ih;
+    v3_to(f->sky_amb, fv->sky_amb);
+    f->frame = (i32)fv->frame;
+    v3_to(f->ground_amb, fv->ground_amb);
+    f->noise_tex = rs->noise_tex ? 1 : 0;
+    v3_to(f->haze, fv->haze);
+    f->shadow_on = rs->shadows ? 1 : 0;
+    v3_to(f->zenith, fv->zenith);
+    memcpy(f->pix, (f32[4]){ px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14] }, sizeof f->pix);
+    f->post = rs->post ? 1 : 0;
+    f->ao_half = rs->ao_half ? 1 : 0;
+    f->parts = (rays ? 1 : 0) | (ao ? 2 : 0);
+    f->tile[0] = R.vrs_tile[0] / 4;
+    f->tile[1] = R.vrs_tile[1] / 4;
+    frame_write(0, f);
+    R.stat_prep += time_now() - t_prep;
+    rb_bind_ssbo(B_BONES, R.bone_buf[R.stream], 0, 0);
+    rb_bind_ssbo(B_INST, R.inst_buf[R.stream], 0, 0);
+    if (R.static_inst_buf) rb_bind_ssbo(B_STATIC_INST, R.static_inst_buf, 0, 0);
+    R.stat_frames++;
+    pass_mark(0);
+    R.stat_items = count;
+
+    // 1. Тени. Ветер и прореживание в вершинном шейдере: те же значения во всех проходах (и в проходе глубины)
+    if (rs->shadows) {
+        rb_pass_begin(&(RbPass){ .depth = { .tex = R.shadow_tex }, .clear_depth = true });
+        R.pset = PS_SHADOW;
+        push_view_proj(light_vp);
+        draw_insts(g_inst[0], n_shadow, base_shadow, 0);
+        draw_groups(g_idraw[0], ng_shadow, 0);
+        draw_terrain(&shadow_view, 0);
+        rb_pass_end();
+    }
+    pass_mark(1);
+    if (timing) mark(1);
+
+    // 2. Сцена. Без атмосферы небо не рисуется: на его месте цвет дымки.
+    // Сначала только глубина: тяжёлый шейдер материалов затем считает каждый пиксель один раз
+    f32 clear[4] = { 0, 0, 0, 1 };
+    if (!atmos) memcpy(clear, (f32[4]){ fv->haze.x * 1.25f, fv->haze.y * 1.25f, fv->haze.z * 1.25f, 1 }, sizeof clear);
+    pass_to(&R.scene, true, clear, 0);
+    R.pset = PS_DEPTH;
+    push_view_proj(vp);
+    draw_insts(g_inst[1], n_scene, base_scene, 2);
+    draw_groups(g_idraw[1], ng_scene, 2);
+    draw_terrain(&scene_view, 2);
+    rb_pass_end();
     // По готовой глубине: размер пикселя в каждой точке и его максимум по блокам 8x8,
     // затем откуда каждый пиксель берёт цвет, раз за кадр (фильтр и карта частоты).
     // Без пиксельности каждый пиксель берёт свой цвет: карты не нужны
-    glDisable(GL_DEPTH_TEST);
-    glBindVertexArray(R.empty_vao);
-    glBindTextureUnit(1, R.scene.depth);
+    rb_bind_tex(B_DEPTH, R.scene.depth, RB_SMP_NEAREST);
     if (rs->pixel) {
-        glBindFramebuffer(GL_FRAMEBUFFER, R.level.fbo);
-        glUseProgram(R.prog_level);
-        glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        glBindFramebuffer(GL_FRAMEBUFFER, R.level_max.fbo);
-        glViewport(0, 0, R.level_max.w, R.level_max.h);
-        glUseProgram(R.prog_level_max);
-        glBindTextureUnit(4, R.level.color);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        glBindFramebuffer(GL_FRAMEBUFFER, R.src_map.fbo);
-        glViewport(0, 0, iw, ih);
-        glUseProgram(R.prog_src_map);
-        glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
-        glBindTextureUnit(5, R.level_max.color);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        draw_full(&R.level, R.pipe_level, 0);
+        rb_bind_tex(B_LEVEL, R.level.color, RB_SMP_NEAREST);
+        draw_full(&R.level_max, R.pipe_level_max, 0);
+        rb_bind_tex(B_LEVEL_MAX, R.level_max.color, RB_SMP_NEAREST);
+        draw_full(&R.src_map, R.pipe_src_map, 0);
     }
+    rb_bind_tex(B_SRC_MAP, R.src_map.color, RB_SMP_NEAREST);
     if (vrs) {
         // Где фильтр сольёт пиксели в блоки, материалы и атмосфера считаются раз на блок
-        glBindFramebuffer(GL_FRAMEBUFFER, R.block.fbo);
-        glViewport(0, 0, R.block.w, R.block.h);
-        glUseProgram(R.prog_vrs_block);
-        glBindTextureUnit(2, R.src_map.color);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        glBindFramebuffer(GL_FRAMEBUFFER, R.rate.fbo);
-        glViewport(0, 0, R.rate.w, R.rate.h);
-        glUseProgram(R.prog_vrs);
-        glUniform2i(U_V_TILE, R.vrs_tile[0] / 4, R.vrs_tile[1] / 4);
-        glBindTextureUnit(3, R.block.color);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        glShadingRateImageBarrierNV(GL_TRUE);
+        draw_full(&R.block, R.pipe_vrs_block, 0);
+        rb_bind_tex(B_BLOCK, R.block.color, RB_SMP_NEAREST);
+        draw_full(&R.rate, R.pipe_vrs, 0);
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, R.scene.fbo);
-    glViewport(0, 0, iw, ih);
-    glEnable(GL_DEPTH_TEST);
-    if (vrs) {
-        glBindShadingRateImageNV(R.rate.color);
-        glEnable(GL_SHADING_RATE_IMAGE_NV);
-    }
+    RbTex rate = vrs ? R.rate.color : 0;
     pass_mark(2);
     if (timing) mark(2);
-    glUseProgram(R.prog_scene);
-    glUniform1i(U_NOISE_TEX, rs->noise_tex ? 1 : 0);
-    glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, vp.m);
-    glUniformMatrix4fv(U_LIGHT_VP, 1, GL_FALSE, light_vp.m);
-    glUniform3f(U_CAM_POS, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
-    glUniform3f(U_SUN_DIR, L.x, L.y, L.z);
-    glUniform3f(U_SUN_COLOR, fv->sun_color.x, fv->sun_color.y, fv->sun_color.z);
-    glUniform1f(U_TIME, fv->time);
-    glUniform3f(U_SKY_AMB, fv->sky_amb.x, fv->sky_amb.y, fv->sky_amb.z);
-    glUniform3f(U_GROUND_AMB, fv->ground_amb.x, fv->ground_amb.y, fv->ground_amb.z);
-    glUniform1f(U_TEXEL, rs->pixel ? 1.0f : 0.0f);
-    glUniform1i(U_SHADOW_ON, rs->shadows ? 1 : 0);
-    glBindTextureUnit(0, R.shadow_tex);
+    pass_to(&R.scene, false, NULL, rate);
+    R.pset = PS_SCENE;
+    rb_bind_tex(B_SHADOW, R.shadow_tex, RB_SMP_SHADOW);
     draw_insts(g_inst[1], n_scene, base_scene, 1);
     draw_groups(g_idraw[1], ng_scene, 1);
     draw_terrain(&scene_view, 1);
-    glDepthMask(GL_TRUE);
-    glDepthFunc(GL_LESS);
+    rb_pass_end();
     pass_mark(3);
     if (timing) mark(3);
 
-    // 3. Атмосфера. Сначала объёмный свет в половинном разрешении, затем небо, туман и AO.
+    // 3. Атмосфера. Сначала объёмный свет и AO в половинном разрешении, затем небо, туман и AO.
     // Карта блоков — в пикселях кадра, к целям половинного разрешения она не относится
-    if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glBindVertexArray(R.empty_vao);
-    M4 inv_vp = m4_inverse(vp);
-    if (rays) {
-        glBindFramebuffer(GL_FRAMEBUFFER, R.rays.fbo);
-        glViewport(0, 0, R.rays.w, R.rays.h);
-        glUseProgram(R.prog_rays);
-        glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
-        glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
-        glUniformMatrix4fv(U_A_LIGHT_VP, 1, GL_FALSE, light_vp.m);
-        glUniform1f(U_A_TIME, fv->time);
-        glUniform1i(U_A_FRAME, (GLint)fv->frame);
-        glBindTextureUnit(1, R.scene.depth);
-        glBindTextureUnit(2, R.shadow_tex);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-    }
-    if (ao && rs->ao_half) {
-        // AO в половинном разрешении
-        glBindFramebuffer(GL_FRAMEBUFFER, R.ao.fbo);
-        glViewport(0, 0, R.ao.w, R.ao.h);
-        glUseProgram(R.prog_ao);
-        glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
-        glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
-        glUniform1i(U_A_FRAME, (GLint)fv->frame);
-        glUniform1f(U_A_PROJ_SCALE, fv->proj.m[5] * 0.5f * (f32)ih);
-        glBindTextureUnit(1, R.scene.depth);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-    }
-
+    if (rays) draw_full(&R.rays, R.pipe_rays, 0);
+    if (ao && rs->ao_half) draw_full(&R.ao, R.pipe_ao, 0);
     if (atmos) {
-        if (vrs) glEnable(GL_SHADING_RATE_IMAGE_NV);
-        glBindFramebuffer(GL_FRAMEBUFFER, R.atmos.fbo);
-        glViewport(0, 0, iw, ih);
-        glUseProgram(R.prog_atmos);
-        glUniform1i(U_NOISE_TEX, rs->noise_tex ? 1 : 0);
-        glUniformMatrix4fv(U_A_INV_VP, 1, GL_FALSE, inv_vp.m);
-        glUniform3f(U_A_CAM, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
-        glUniform3f(U_A_SUN_DIR, L.x, L.y, L.z);
-        glUniform3f(U_A_SUN_COLOR, fv->sun_color.x, fv->sun_color.y, fv->sun_color.z);
-        glUniform1f(U_A_TIME, fv->time);
-        glUniform1i(U_A_FRAME, (GLint)fv->frame);
-        glUniform1f(U_A_PROJ_SCALE, fv->proj.m[5] * 0.5f * (f32)ih);
-        glUniform3f(U_A_HAZE, fv->haze.x, fv->haze.y, fv->haze.z);
-        glUniform3f(U_A_ZENITH, fv->zenith.x, fv->zenith.y, fv->zenith.z);
-        glBindTextureUnit(0, R.scene.color);
-        glBindTextureUnit(1, R.scene.depth);
-        glUniform1i(U_A_AO_HALF, rs->ao_half ? 1 : 0);
-        glUniform1i(U_A_PARTS, (rays ? 1 : 0) | (ao ? 2 : 0));
-        glBindTextureUnit(3, R.rays.color);
-        glBindTextureUnit(4, R.ao.color);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
+        rb_bind_tex(B_COLOR, R.scene.color, RB_SMP_NEAREST);
+        rb_bind_tex(B_RAYS, R.rays.color, RB_SMP_NEAREST);
+        rb_bind_tex(B_AO, R.ao.color, RB_SMP_NEAREST);
+        draw_full(&R.atmos, R.pipe_atmos, rate);
     }
     pass_mark(4);
     if (timing) mark(4);
 
     // 4. Фильтр: виньетка, зерно, сканлайны, аберрация; сразу в окно
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glUseProgram(R.prog_style);
-    glUniform1i(U_S_POST, rs->post ? 1 : 0);
-    glUniform1i(U_S_FRAME, (GLint)fv->frame);
-    glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
-    glBindTextureUnit(0, atmos ? R.atmos.color : R.scene.color);
-    glBindTextureUnit(1, R.scene.depth);
-    glBindTextureUnit(2, R.src_map.color);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
+    rb_bind_tex(B_COLOR, atmos ? R.atmos.color : R.scene.color, RB_SMP_NEAREST);
+    rb_pass_begin(&(RbPass){ 0 });
+    rb_bind_pipe(R.pipe_style);
+    rb_draw(3, 0, 1);
+    rb_pass_end();
     pass_mark(5);
     if (timing) mark(5);
 }
@@ -1552,58 +1436,38 @@ void render_frame_end(void)
     R.frame_no++;
     R.timer_slot = (R.timer_slot + 1) % TIMER_FRAMES;
     // Кадр уходит на GPU сразу: при swap после логики GPU рисует, пока CPU считает следующий
-    glFlush();
+    rb_frame_end();
     // Старые кадры, до которых очередь дойдёт не скоро, забираем сразу
     // по порядку от самого старого, чтобы соседние кадры шли подряд
     for (u32 i = 0; i < TIMER_FRAMES; i++) timer_collect((R.timer_slot + i) % TIMER_FRAMES);
 }
 
-void render_read_pixels(u8 *rgb, i32 w, i32 h)
-{
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, rgb);
-}
-
-u32 render_program(const char *vs_file, const char *fs_file)
-{
-    size_t mark = R.scratch->used;
-    u32 p = link(compile(GL_VERTEX_SHADER, NULL, &vs_file, 1), compile(GL_FRAGMENT_SHADER, NULL, &fs_file, 1));
-    R.scratch->used = mark;
-    return p;
-}
+void render_read_pixels(u8 *rgb, i32 w, i32 h) { rb_read_window(rgb, w, h); }
 
 void render_portrait(u32 slot, i32 size, const FrameView *fv, M4 view_proj, const DrawItem *items, u32 count)
 {
-    if (slot >= RENDER_PORTRAIT_SLOTS || !R.prog_scene) return;
+    if (slot >= RENDER_PORTRAIT_SLOTS || !R.mesh_pipe[PS_PORTRAIT][LAY_MESH][0]) return;
     size = CLAMP(size, 8, RENDER_PORTRAIT_PX);
-    // Шейдер сцены со своим неподвижным светом, без солнца и теней мира
+    // Шейдер сцены со своим неподвижным светом, без солнца и теней мира; остальное — как в последнем кадре
+    GpuFrame f = R.frame;
+    v3_to(f.cam_pos, fv->cam_pos);
+    f.time = fv->time;
+    f.unlit = 1;
+    frame_write(1 + slot, &f);
     i32 x = (i32)slot * RENDER_PORTRAIT_PX;
-    glBindFramebuffer(GL_FRAMEBUFFER, R.portrait.fbo);
-    glViewport(x, 0, size, size);
-    glEnable(GL_SCISSOR_TEST);
-    glScissor(x, 0, size, size);
-    glClearColor(0, 0, 0, 0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-    glUseProgram(R.prog_scene);  // шум материалов — как в последнем кадре (U_NOISE_TEX хранится в программе)
-    glUniformMatrix4fv(U_VIEW_PROJ, 1, GL_FALSE, view_proj.m);
-    glUniform3f(U_CAM_POS, fv->cam_pos.x, fv->cam_pos.y, fv->cam_pos.z);
-    glUniform1f(U_TIME, fv->time);
-    glUniform1i(U_UNLIT, 1);
+    pass_to(&R.portrait, false, NULL, 0);
+    rb_viewport(x, 0, size, size);
+    rb_scissor(x, 0, size, size);
+    rb_clear_rect(x, 0, size, size, (f32[4]){ 0, 0, 0, 0 }, true);
+    R.pset = PS_PORTRAIT;
+    push_view_proj(view_proj);
     count = MIN(count, (u32)RENDER_MAX_ITEMS);
     stream_poses(items, count);
     PassView pv = { .fr = frustum_from(view_proj), .full = true };
     u32 n = gather(items, count, &pv, false, g_inst[0]);
     u32 base = stream_insts(g_inst[0], &n);
     draw_insts(g_inst[0], n, base, 2);
-    glUniform1i(U_UNLIT, 0);
-    glDisable(GL_SCISSOR_TEST);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
+    rb_pass_end();
 }
 
-u32 render_portrait_texture(void) { return R.portrait.color; }
+RbTex render_portrait_texture(void) { return R.portrait.color; }

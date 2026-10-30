@@ -45,7 +45,7 @@ void ui_rect_grad(f32 x, f32 y, f32 w, f32 h, u32 top, u32 bottom);
 void ui_panel_fill(f32 x, f32 y, f32 w, f32 h, u32 top, u32 bottom);
 // Картинка из текстуры ui_set_image (HDR: тонмаппинг и зерно в шейдере), uv в долях текстуры
 void ui_image(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 tint);
-void ui_set_image(u32 tex);
+void ui_set_image(u32 tex);   // RbTex (render/rb.h)
 void ui_set_time(f32 t);
 // Мелкие цифры 3x5 (и / - . % + :)
 f32  ui_num(f32 x, f32 y, u32 color, const char *s);

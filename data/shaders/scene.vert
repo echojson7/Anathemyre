@@ -8,28 +8,19 @@ layout(location = 5) in vec4 a_weights;
 // Сетка из общего буфера (u_skinned 4): набор костей, морфов у сетки, её первая вершина, начало её морфов
 layout(location = 6) in uvec4 a_rec;
 
-layout(location = 0) uniform mat4 u_view_proj;
-layout(location = 17) uniform int u_skinned;   // 0 — статика, 1 — кости, 2 — экземпляры статики, 3 — рельеф, 4 — кости из общего буфера
-layout(location = 19) uniform int u_inst_base;
-layout(location = 20) uniform vec3 u_cam_pos;
-layout(location = 23) uniform float u_time;
-layout(location = 28) uniform int u_morphs;   // число морфов сетки
-layout(location = 29) uniform vec2 u_fade;     // экземпляры редеют с дальности x и пропадают к y (0 — нет)
 
 // Наборы костей кадра по 24 матрицы; экземпляр берёт номер своего набора из списка прохода
-layout(std430, binding = 0) readonly buffer BoneBuf { mat4 bones[]; };
-layout(std430, binding = 1) readonly buffer InstBuf { uint inst_pose[]; };
+layout(std430, binding = 2) readonly buffer BoneBuf { mat4 bones[]; };
+layout(std430, binding = 3) readonly buffer InstBuf { uint inst_pose[]; };
 // Сдвиги морфов: на вершину и морф три uint — snorm16 пары (dx dy) (dz nx) (ny nz)
-layout(std430, binding = 2) readonly buffer MorphBuf { uint morph[]; };
+layout(std430, binding = 4) readonly buffer MorphBuf { uint morph[]; };
 const float MORPH_POS = 0.25, MORPH_NRM = 2.0;  // как в tools/humanconv
 // Экземпляры статики (RInst): a — положение и поворот, b — ширина, высота, наклон; оттенок RGBA8
 struct InstRec { vec4 a; vec3 b; uint tint; };
-layout(std430, binding = 3) readonly buffer StaticInstBuf { InstRec insts[]; };
+layout(std430, binding = 5) readonly buffer StaticInstBuf { InstRec insts[]; };
 // Рельеф кольцами (render/terrain.c): уровень — слой; узел g лежит в (g & 255) текстур уровня
-layout(location = 49) uniform ivec4 u_terr_grid;  // xy — узел (0,0) уровня в узлах уровня, z — уровень
-layout(location = 50) uniform vec4 u_terr_view;   // x — шаг узлов, м; yz — центр колец
-layout(binding = 8) uniform sampler2DArray u_terr_h;  // высота, м
-layout(binding = 9) uniform sampler2DArray u_terr_c;  // альбедо; вид в альфе: 0 — песок, 1 — земля долины
+layout(binding = 16) uniform sampler2DArray u_terr_h;  // высота, м
+layout(binding = 17) uniform sampler2DArray u_terr_c;  // альбедо; вид в альфе: 0 — песок, 1 — земля долины
 const int TERR_G = 129, TERR_MASK = 255;  // узлов на сторону уровня (TERRAIN_CELLS + 1), сторона текстур − 1
 // От центра колец: с 46 до 62 клеток уровня высота переходит к уровню крупнее, к краю (не ближе 62) — целиком
 const float TERR_MORPH0 = 46.0, TERR_MORPH_W = 16.0;
@@ -66,11 +57,11 @@ void main()
     v_local = a_pos;
     v_tint = vec3(1.0);
     if (u_skinned == 1 || u_skinned == 4) {
-        // В общем буфере всё о сетке — в записи экземпляра, gl_VertexID считается от начала буфера
+        // В общем буфере всё о сетке — в записи экземпляра, RB_VERTEX_ID считается от начала буфера
         bool pool = u_skinned == 4;
-        uint base = (pool ? a_rec.x : inst_pose[u_inst_base + gl_InstanceID]) * 24u;
+        uint base = (pool ? a_rec.x : inst_pose[u_inst_base + RB_INSTANCE_ID]) * 24u;
         int morphs = pool ? int(a_rec.y) : u_morphs;
-        uint vid = pool ? uint(gl_VertexID) - a_rec.z : uint(gl_VertexID);
+        uint vid = pool ? uint(RB_VERTEX_ID) - a_rec.z : uint(RB_VERTEX_ID);
         uint moff = pool ? a_rec.w : 0u;
         // Внешность экземпляра: последний слот набора костей (render.h, RENDER_LOOK_SLOT)
         mat4 look = bones[base + 23u];
@@ -98,7 +89,7 @@ void main()
         p = b * p;
         n = mat3(b) * n;
     } else if (u_skinned == 2) {
-        InstRec r = insts[inst_pose[u_inst_base + gl_InstanceID]];
+        InstRec r = insts[inst_pose[u_inst_base + RB_INSTANCE_ID]];
         float cy = cos(r.a.w), sy = sin(r.a.w), cl = cos(r.b.z), sl = sin(r.b.z);
         mat3 rot = mat3(cy, 0.0, -sy, 0.0, 1.0, 0.0, sy, 0.0, cy) * mat3(cl, -sl, 0.0, sl, cl, 0.0, 0.0, 0.0, 1.0);
         vec3 s = vec3(r.b.x, r.b.y, r.b.x);
@@ -128,7 +119,7 @@ void main()
     } else if (u_skinned == 3) {
         // Рельеф: узел сетки уровня из номера вершины, высота и цвет из текстур уровня. К краю уровня
         // высота уходит к уровню крупнее (у нечётных узлов — середина соседей, как на его треугольниках)
-        ivec2 g = u_terr_grid.xy + ivec2(gl_VertexID % TERR_G, gl_VertexID / TERR_G);
+        ivec2 g = u_terr_grid.xy + ivec2(RB_VERTEX_ID % TERR_G, RB_VERTEX_ID / TERR_G);
         float s = u_terr_view.x;
         vec2 xz = vec2(g) * s;
         vec2 dc = abs(xz - u_terr_view.yz) / s;
