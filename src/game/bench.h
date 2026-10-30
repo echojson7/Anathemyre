@@ -5,6 +5,7 @@
 
 #include "../core/arena.h"
 #include "../core/prof.h"
+#include "../render/render.h"
 
 // BENCH_WARMUP_S на прогрев, затем BENCH_S секунд замера и итог в лог; в замере по этапам — короче на каждый этап
 #define BENCH_WARMUP_S 2.0
@@ -16,6 +17,7 @@
 // Итог замера, мс на кадр (GPU < 0 — драйвер не отдаёт метки времени)
 typedef struct BenchResult {
     f64 frame_ms, fps, gpu_ms, logic_ms, submit_ms, swap_ms;
+    f64 pass_ms[PASS_COUNT], gap_ms;   // GPU по проходам и между кадрами
 } BenchResult;
 
 typedef struct Bench {
