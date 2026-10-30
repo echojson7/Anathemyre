@@ -42,6 +42,9 @@ PlatformProc platform_gl_proc(const char *name);
 bool         platform_exe_dir(char *buf, size_t size);
 // Создать папку (одну, без родителей); true — есть или создана
 bool         platform_make_dir(const char *path);
+// Обойти папку: имена без "." и "..", dir — подпапка. Порядок любой. false — папки нет
+typedef void (*PlatformDirFn)(const char *name, bool dir, void *user);
+bool         platform_list_dir(const char *path, PlatformDirFn fn, void *user);
 
 // Потоки и семафор для рабочих потоков. Создаются один раз при старте
 typedef struct PlatformThread PlatformThread;

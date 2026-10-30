@@ -4,6 +4,7 @@
 #include "platform.h"
 
 #include <windows.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "../core/log.h"
@@ -348,6 +349,21 @@ bool platform_exe_dir(char *buf, size_t size)
 bool platform_make_dir(const char *path)
 {
     return CreateDirectoryA(path, NULL) || GetLastError() == ERROR_ALREADY_EXISTS;
+}
+
+bool platform_list_dir(const char *path, PlatformDirFn fn, void *user)
+{
+    char mask[1024];
+    snprintf(mask, sizeof mask, "%s\\*", path);
+    WIN32_FIND_DATAA e;
+    HANDLE h = FindFirstFileA(mask, &e);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    do {
+        if (!strcmp(e.cFileName, ".") || !strcmp(e.cFileName, "..")) continue;
+        fn(e.cFileName, (e.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0, user);
+    } while (FindNextFileA(h, &e));
+    FindClose(h);
+    return true;
 }
 
 // ---------------------------------------------------------------- потоки

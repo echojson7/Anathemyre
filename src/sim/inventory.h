@@ -12,6 +12,7 @@ typedef struct Item {
 } Item;
 
 typedef struct GoodsDef {
+    const char *id;
     const char *name;
     u8  w, h;
     u8  stack;    // сколько в одной ячейке
@@ -19,13 +20,10 @@ typedef struct GoodsDef {
     f32 weight;   // кг за штуку
     f32 carry;    // сколько кг добавляет к переносимому
     const char *desc;
+    u8  look;     // сетка одежды (GEAR_*), LOOK_NONE — не видна на теле
 } GoodsDef;
 
-enum {
-    G_WATER, G_RUSK, G_MEAT, G_BANDAGE, G_SCRAP, G_PART, G_FUEL, G_TOKEN,
-    G_WRAP, G_BOOTS, G_MITTS, G_PACK, G_BELT,
-    G_COUNT
-};
+#define LOOK_NONE 255
 
 #define SLOT_NONE 255
 #define SLOT_WEAPON SLOT_COUNT  // оружие в руках: отдельно от слотов одежды
@@ -49,7 +47,8 @@ typedef struct CharSheet {
     Inventory inv;
 } CharSheet;
 
-extern const GoodsDef g_goods[G_COUNT];
+extern const GoodsDef *g_goods;  // заполняет defs_load
+extern u32             g_goods_count;
 extern const char    *g_skill_name[SK_COUNT];
 extern const char    *g_slot_name[SLOT_COUNT + 1];
 extern const char    *g_state_name[FS_COUNT];
