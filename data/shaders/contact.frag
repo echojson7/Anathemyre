@@ -1,6 +1,6 @@
 // Контактные тени (СВЕТ: КОНТАКТНЫЕ ТЕНИ): от точки к солнцу 12 шагов по глубине кадра на 0.8 м.
 // Карта теней в 4 см на тексель не видит щель под камнем, складку ткани, ступню на полу; экран видит
-in vec2 v_uv;
+layout(location = 0) in vec2 v_uv;
 
 layout(binding = 7) uniform sampler2D u_depth;
 layout(std140, binding = 33) uniform Shade {

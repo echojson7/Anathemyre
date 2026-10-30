@@ -1,16 +1,16 @@
 // Освещение и процедурные материалы. Выход в линейном HDR
 
-in vec3 v_world;
-in vec3 v_nrm;
-in vec4 v_color;   // a — параметр материала (1 по умолчанию): мох на бетоне, светлая кора, глубина листвы
-flat in uint v_mat;
-in vec3 v_local;
-flat in mat3 v_rot;
-flat in vec3 v_tint;
+layout(location = 0) in vec3 v_world;
+layout(location = 1) in vec3 v_nrm;
+layout(location = 2) in vec4 v_color;   // a — параметр материала (1 по умолчанию): мох на бетоне, светлая кора, глубина листвы
+layout(location = 3) flat in uint v_mat;
+layout(location = 4) in vec3 v_local;
+layout(location = 5) flat in mat3 v_rot;
+layout(location = 8) flat in vec3 v_tint;
 
 layout(std430, binding = 31) readonly buffer SkyGrid { vec4 g_sky_origin; uint g_sky[]; };
 
-out vec4 o_color;
+layout(location = 0) out vec4 o_color;
 
 const uint MAT_CONCRETE = 0u, MAT_RUST = 1u, MAT_SAND = 2u, MAT_CLOTH = 3u, MAT_LEATHER = 4u,
            MAT_GLYPH = 5u, MAT_EMISSIVE = 6u, MAT_SKIN = 7u, MAT_METAL = 8u,

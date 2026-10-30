@@ -1,11 +1,17 @@
 // Бэкенд слоя rb на OpenGL 4.5 core. Состояние GL кешируется: лишние вызовы не уходят в драйвер
-#include "rb.h"
+#include "rb_backend.h"
 
 #include <stdio.h>
 #include <string.h>
 
 #include "../core/log.h"
 #include "gl.h"
+
+#define R(ret, name, params, args) static ret glb_##name params;
+#define V(name, params, args) static void glb_##name params;
+RB_FUNCS(R, V)
+#undef R
+#undef V
 
 #define MAX_BUFS 4096
 #define MAX_TEXS 256
@@ -167,7 +173,7 @@ static void bind_fbo(u32 fbo)
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 }
 
-void rb_viewport(i32 x, i32 y, i32 w, i32 h)
+static void glb_viewport(i32 x, i32 y, i32 w, i32 h)
 {
     i32 v[4] = { x, y, w, h };
     if (!memcmp(v, G.vp, sizeof v)) return;
@@ -175,7 +181,7 @@ void rb_viewport(i32 x, i32 y, i32 w, i32 h)
     glViewport(x, y, w, h);
 }
 
-void rb_scissor(i32 x, i32 y, i32 w, i32 h)
+static void glb_scissor(i32 x, i32 y, i32 w, i32 h)
 {
     set_cap(&G.scissor_on, GL_SCISSOR_TEST, true);
     i32 s[4] = { x, y, w, h };
@@ -184,9 +190,9 @@ void rb_scissor(i32 x, i32 y, i32 w, i32 h)
     glScissor(x, y, w, h);
 }
 
-void rb_scissor_off(void) { set_cap(&G.scissor_on, GL_SCISSOR_TEST, false); }
+static void glb_scissor_off(void) { set_cap(&G.scissor_on, GL_SCISSOR_TEST, false); }
 
-bool rb_init(Arena *scratch, const char *data_dir)
+static bool glb_init(Arena *scratch, const char *data_dir)
 {
     G.scratch = scratch;
     snprintf(G.data_dir, sizeof G.data_dir, "%s", data_dir);
@@ -245,19 +251,19 @@ bool rb_init(Arena *scratch, const char *data_dir)
     return true;
 }
 
-const RbCaps *rb_caps(void) { return &G.caps; }
+static const RbCaps *glb_caps(void) { return &G.caps; }
 
-void rb_shaders_changed(void) { G.prog_gen++; }
+static void glb_shaders_changed(void) { G.prog_gen++; }
 
-void rb_frame_begin(i32 win_w, i32 win_h)
+static void glb_frame_begin(i32 win_w, i32 win_h)
 {
     G.win_w = win_w;
     G.win_h = win_h;
 }
 
-u32 rb_frame_slot(void) { return G.frame % RB_FRAMES; }
+static u32 glb_frame_slot(void) { return G.frame % RB_FRAMES; }
 
-void rb_frame_end(void)
+static void glb_frame_end(void)
 {
     glFlush();
     G.frame++;
@@ -265,7 +271,7 @@ void rb_frame_end(void)
 
 // --- Буферы
 
-RbBuf rb_buf_make(size_t size, u32 usage, const void *data)
+static RbBuf glb_buf_make(size_t size, u32 usage, const void *data)
 {
     for (u32 i = 1; i < MAX_BUFS; i++) {
         if (G.buf[i].name) continue;
@@ -280,12 +286,12 @@ RbBuf rb_buf_make(size_t size, u32 usage, const void *data)
     return 0;
 }
 
-void rb_buf_write(RbBuf b, size_t offset, size_t size, const void *data)
+static void glb_buf_write(RbBuf b, size_t offset, size_t size, const void *data)
 {
     if (b && size) glNamedBufferSubData(G.buf[b].name, (GLintptr)offset, (GLsizeiptr)size, data);
 }
 
-void rb_buf_free(RbBuf *b)
+static void glb_buf_free(RbBuf *b)
 {
     if (!*b) return;
     u32 name = G.buf[*b].name;
@@ -309,7 +315,7 @@ void rb_buf_free(RbBuf *b)
 
 // --- Текстуры
 
-RbTex rb_tex_make(const RbTexDesc *d)
+static RbTex glb_tex_make(const RbTexDesc *d)
 {
     for (u32 i = 1; i < MAX_TEXS; i++) {
         if (G.tex[i].name) continue;
@@ -327,7 +333,7 @@ RbTex rb_tex_make(const RbTexDesc *d)
     return 0;
 }
 
-void rb_tex_write(RbTex t, u32 mip, i32 x, i32 y, i32 z, i32 w, i32 h, i32 d, const void *data, u32 row_len)
+static void glb_tex_write(RbTex t, u32 mip, i32 x, i32 y, i32 z, i32 w, i32 h, i32 d, const void *data, u32 row_len)
 {
     if (!t) return;
     const GlTex *tx = &G.tex[t];
@@ -338,13 +344,13 @@ void rb_tex_write(RbTex t, u32 mip, i32 x, i32 y, i32 z, i32 w, i32 h, i32 d, co
     if (row_len && (i32)row_len != w) glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 }
 
-void rb_tex_size(RbTex t, i32 *w, i32 *h)
+static void glb_tex_size(RbTex t, i32 *w, i32 *h)
 {
     *w = t ? G.tex[t].d.w : G.win_w;
     *h = t ? G.tex[t].d.h : G.win_h;
 }
 
-void rb_tex_free(RbTex *t)
+static void glb_tex_free(RbTex *t)
 {
     if (!*t) return;
     u32 name = G.tex[*t].name;
@@ -583,7 +589,7 @@ static void layout_release(u32 i)
     memset(g, 0, sizeof *g);
 }
 
-RbPipe rb_pipe_make(const RbPipeDesc *d)
+static RbPipe glb_pipe_make(const RbPipeDesc *d)
 {
     u32 slot = 0;
     for (u32 i = 1; i < MAX_PIPES && !slot; i++)
@@ -604,7 +610,7 @@ RbPipe rb_pipe_make(const RbPipeDesc *d)
     return slot;
 }
 
-void rb_pipe_free(RbPipe *pp)
+static void glb_pipe_free(RbPipe *pp)
 {
     if (!*pp) return;
     GlPipe *p = &G.pipe[*pp];
@@ -615,7 +621,7 @@ void rb_pipe_free(RbPipe *pp)
     *pp = 0;
 }
 
-void rb_bind_pipe(RbPipe pp)
+static void glb_bind_pipe(RbPipe pp)
 {
     G.cur_pipe = pp;
     const GlPipe *p = &G.pipe[pp];
@@ -711,7 +717,7 @@ static u32 fbo_get(const RbPass *p)
     return f->name;
 }
 
-void rb_pass_begin(const RbPass *p)
+static void glb_pass_begin(const RbPass *p)
 {
     bool window = !p->color[0].tex && !p->depth.tex;
     bind_fbo(window ? 0 : fbo_get(p));
@@ -723,8 +729,8 @@ void rb_pass_begin(const RbPass *p)
         G.pass_w = MAX(G.tex[a->tex].d.w >> a->mip, 1);
         G.pass_h = MAX(G.tex[a->tex].d.h >> a->mip, 1);
     }
-    rb_viewport(0, 0, G.pass_w, G.pass_h);
-    rb_scissor_off();
+    glb_viewport(0, 0, G.pass_w, G.pass_h);
+    glb_scissor_off();
     if (p->clear_color || p->clear_depth) {
         GLbitfield mask = 0;
         if (p->clear_color) {
@@ -753,7 +759,7 @@ void rb_pass_begin(const RbPass *p)
     G.pass_images = false;
 }
 
-void rb_pass_end(void)
+static void glb_pass_end(void)
 {
     if (G.rate_on) {
         glDisable(GL_SHADING_RATE_IMAGE_NV);
@@ -764,13 +770,13 @@ void rb_pass_end(void)
     G.pass_images = false;
 }
 
-void rb_clear_rect(i32 x, i32 y, i32 w, i32 h, const f32 *color, bool depth)
+static void glb_clear_rect(i32 x, i32 y, i32 w, i32 h, const f32 *color, bool depth)
 {
     if (w <= 0 || h <= 0 || (!color && !depth)) return;
     // Ножницы прохода восстанавливаются после очистки
     i32 sc_on = G.scissor_on, sc[4];
     memcpy(sc, G.sc, sizeof sc);
-    rb_scissor(x, y, w, h);
+    glb_scissor(x, y, w, h);
     GLbitfield mask = 0;
     if (color) {
         set_color_mask(true);
@@ -782,19 +788,19 @@ void rb_clear_rect(i32 x, i32 y, i32 w, i32 h, const f32 *color, bool depth)
         mask |= GL_DEPTH_BUFFER_BIT;
     }
     glClear(mask);
-    if (sc_on == 1) rb_scissor(sc[0], sc[1], sc[2], sc[3]);
-    else rb_scissor_off();
+    if (sc_on == 1) glb_scissor(sc[0], sc[1], sc[2], sc[3]);
+    else glb_scissor_off();
 }
 
 // --- Привязки
 
-void rb_bind_vertex(u32 stream, RbBuf b, size_t offset)
+static void glb_bind_vertex(u32 stream, RbBuf b, size_t offset)
 {
     G.vb[stream] = b;
     G.vb_off[stream] = offset;
 }
 
-void rb_bind_index(RbBuf b, size_t offset, bool idx16)
+static void glb_bind_index(RbBuf b, size_t offset, bool idx16)
 {
     G.ib = b;
     G.ib_off = offset;
@@ -813,17 +819,17 @@ static void bind_range(GLenum target, u32 *cache, size_t *coff, size_t *csize, u
     else glBindBufferRange(target, binding, name, (GLintptr)offset, (GLsizeiptr)size);
 }
 
-void rb_bind_ubo(u32 binding, RbBuf b, size_t offset, size_t size)
+static void glb_bind_ubo(u32 binding, RbBuf b, size_t offset, size_t size)
 {
     bind_range(GL_UNIFORM_BUFFER, G.ubo, G.ubo_off, G.ubo_size, binding, b, offset, size);
 }
 
-void rb_bind_ssbo(u32 binding, RbBuf b, size_t offset, size_t size)
+static void glb_bind_ssbo(u32 binding, RbBuf b, size_t offset, size_t size)
 {
     bind_range(GL_SHADER_STORAGE_BUFFER, G.ssbo, G.ssbo_off, G.ssbo_size, binding, b, offset, size);
 }
 
-void rb_bind_tex(u32 binding, RbTex t, RbSampler s)
+static void glb_bind_tex(u32 binding, RbTex t, RbSampler s)
 {
     u32 name = G.tex[t].name;
     if (G.unit_tex[binding] != name) {
@@ -836,14 +842,14 @@ void rb_bind_tex(u32 binding, RbTex t, RbSampler s)
     }
 }
 
-void rb_bind_image(u32 binding, RbTex t, u32 mip)
+static void glb_bind_image(u32 binding, RbTex t, u32 mip)
 {
     const GlTex *tx = &G.tex[t];
     glBindImageTexture(binding, tx->name, (GLint)mip, tx->d.kind != RB_TEX_2D, 0, GL_READ_WRITE, g_fmt[tx->d.fmt].ifmt);
     G.pass_images = true;
 }
 
-void rb_push(u32 offset, u32 size, const void *data)
+static void glb_push(u32 offset, u32 size, const void *data)
 {
     memcpy((u8 *)G.push + offset, data, size);
 }
@@ -887,7 +893,7 @@ static void draw_prep(void)
 
 // --- Вызовы
 
-void rb_draw(u32 verts, u32 first, u32 instances)
+static void glb_draw(u32 verts, u32 first, u32 instances)
 {
     draw_prep();
     if (instances == 1) glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
@@ -899,7 +905,7 @@ static const void *index_ptr(u32 first)
     return (const void *)(G.ib_off + (size_t)first * (G.ib16 ? 2u : 4u));
 }
 
-void rb_draw_indexed(u32 count, u32 first_index, i32 base_vertex, u32 instances, u32 base_instance)
+static void glb_draw_indexed(u32 count, u32 first_index, i32 base_vertex, u32 instances, u32 base_instance)
 {
     draw_prep();
     GLenum type = G.ib16 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT;
@@ -914,7 +920,7 @@ void rb_draw_indexed(u32 count, u32 first_index, i32 base_vertex, u32 instances,
     }
 }
 
-void rb_draw_indexed_multi(const u32 *counts, const u32 *first_indices, u32 n)
+static void glb_draw_indexed_multi(const u32 *counts, const u32 *first_indices, u32 n)
 {
     if (!n) return;
     draw_prep();
@@ -931,14 +937,14 @@ void rb_draw_indexed_multi(const u32 *counts, const u32 *first_indices, u32 n)
     }
 }
 
-void rb_draw_indexed_indirect(RbBuf b, size_t offset, u32 n)
+static void glb_draw_indexed_indirect(RbBuf b, size_t offset, u32 n)
 {
     draw_prep();
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, G.buf[b].name);
     glMultiDrawElementsIndirect(GL_TRIANGLES, G.ib16 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, (const void *)offset, (GLsizei)n, 0);
 }
 
-void rb_dispatch(u32 x, u32 y, u32 z)
+static void glb_dispatch(u32 x, u32 y, u32 z)
 {
     draw_prep();
     glDispatchCompute(x, y, z);
@@ -946,7 +952,7 @@ void rb_dispatch(u32 x, u32 y, u32 z)
     glMemoryBarrier(GL_ALL_BARRIER_BITS);
 }
 
-void rb_dispatch_indirect(RbBuf b, size_t offset)
+static void glb_dispatch_indirect(RbBuf b, size_t offset)
 {
     draw_prep();
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, G.buf[b].name);
@@ -956,7 +962,7 @@ void rb_dispatch_indirect(RbBuf b, size_t offset)
 
 // --- Метки времени
 
-bool rb_timer_init(u32 sets, u32 marks)
+static bool glb_timer_init(u32 sets, u32 marks)
 {
     if (sets * marks > ARRAY_COUNT(timers_store)) return false;
     G.timer = timers_store;
@@ -966,45 +972,45 @@ bool rb_timer_init(u32 sets, u32 marks)
     return true;
 }
 
-void rb_timer_mark(u32 set, u32 mark) { glQueryCounter(G.timer[set * G.timer_marks + mark], GL_TIMESTAMP); }
+static void glb_timer_mark(u32 set, u32 mark) { glQueryCounter(G.timer[set * G.timer_marks + mark], GL_TIMESTAMP); }
 
-bool rb_timer_ready(u32 set, u32 mark)
+static bool glb_timer_ready(u32 set, u32 mark)
 {
     GLuint ready = 0;
     glGetQueryObjectuiv(G.timer[set * G.timer_marks + mark], GL_QUERY_RESULT_AVAILABLE, &ready);
     return ready != 0;
 }
 
-u64 rb_timer_get(u32 set, u32 mark)
+static u64 glb_timer_get(u32 set, u32 mark)
 {
     GLuint64 t = 0;
     glGetQueryObjectui64v(G.timer[set * G.timer_marks + mark], GL_QUERY_RESULT, &t);
     return t;
 }
 
-void rb_read_window(u8 *rgb, i32 w, i32 h)
+static void glb_read_window(u8 *rgb, i32 w, i32 h)
 {
     bind_fbo(0);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, rgb);
 }
 
-void rb_shutdown(void)
+static void glb_shutdown(void)
 {
     for (u32 i = 1; i < MAX_PIPES; i++)
         if (G.pipe[i].used) {
             RbPipe p = i;
-            rb_pipe_free(&p);
+            glb_pipe_free(&p);
         }
     for (u32 i = 1; i < MAX_TEXS; i++)
         if (G.tex[i].name) {
             RbTex t = i;
-            rb_tex_free(&t);
+            glb_tex_free(&t);
         }
     for (u32 i = 1; i < MAX_BUFS; i++)
         if (G.buf[i].name) {
             RbBuf b = i;
-            rb_buf_free(&b);
+            glb_buf_free(&b);
         }
     for (u32 i = 0; i < MAX_FBOS; i++)
         if (G.fbo[i].name) glDeleteFramebuffers(1, &G.fbo[i].name);
@@ -1013,3 +1019,11 @@ void rb_shutdown(void)
     if (G.zero_buf) glDeleteBuffers(1, &G.zero_buf);
     memset(&G, 0, sizeof G);
 }
+
+const RbBackend rb_gl_backend = {
+#define R(ret, name, params, args) .name = glb_##name,
+#define V(name, params, args) .name = glb_##name,
+    RB_FUNCS(R, V)
+#undef R
+#undef V
+};
