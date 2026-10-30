@@ -6,6 +6,7 @@
 #include "anim.h"
 #include "look.h"
 #include "names.h"
+#include "ostov.h"
 #include "squad.h"
 #include "town.h"
 #include "../world/map.h"
@@ -205,7 +206,7 @@ f32 testroom_ground(f32 x, f32 z)
 {
     // Плита пола зала: верх на 0.1
     if (fabsf(x) <= 32.0f && z >= -28.0f && z <= 24.0f) return 0.1f;
-    f32 h = town_ground(x, z, map_height(x, z));
+    f32 h = ostov_ground(x, z, town_ground(x, z, map_height(x, z)));
     // Плита арены
     f32 dx = x - ARENA_CENTER.x, dz = z - ARENA_CENTER.z;
     if (dx * dx + dz * dz < 8.5f * 8.5f) h = fmaxf(h, 0.125f);

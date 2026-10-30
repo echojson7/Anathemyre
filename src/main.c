@@ -580,6 +580,7 @@ int main(int argc, char **argv)
         items[n++] = (DrawItem){ .mesh = &world->hall };
         items[n++] = (DrawItem){ .mesh = &world->far, .no_shadow = true };
         items[n++] = (DrawItem){ .mesh = &world->town_mesh };
+        items[n++] = (DrawItem){ .mesh = &world->ostov };
         n += valley_view_draw(valley, fv.cam_pos, items + n);
         prof_zone(PZ_FIGURES);
         if (st_people) {
