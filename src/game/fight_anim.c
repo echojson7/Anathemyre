@@ -2,23 +2,12 @@
 
 #include <string.h>
 
+#include "../core/hash.h"
+
 #define COLLAPSE_S 0.9f   // оседает на землю без сознания
 #define KNEEL_S 1.1f      // опускается на колени
 #define DRAW_S 0.85f      // достать или убрать оружие
 #define SHEATHE_AFTER 2.5f  // бой стоит столько, прежде чем убирают оружие
-
-static f32 hashf(u32 x)
-{
-    x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
-    return (f32)(x & 0xFFFFFF) / 16777215.0f;
-}
-
-static f32 wrap_angle(f32 a)
-{
-    while (a > PI_F) a -= 2.0f * PI_F;
-    while (a < -PI_F) a += 2.0f * PI_F;
-    return a;
-}
 
 static f32 approach(f32 x, f32 target, f32 rate, f32 dt) { return x + (target - x) * fminf(1.0f, rate * dt); }
 
@@ -208,7 +197,7 @@ bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha,
             a->clip_t = f->vt / COLLAPSE_S;
         } else {
             a->clip = CLIP_CRAWL;
-            a->clip_t = f->phase * 2.6f + time * 0.0f + f->vt;
+            a->clip_t = f->phase * 2.6f + f->vt;
         }
         break;
     case FS_SURRENDER:

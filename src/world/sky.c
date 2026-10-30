@@ -4,12 +4,6 @@
 
 #define ORBIT_TILT 0.70f  // наклон пути солнца к югу (-Z), рад
 
-static f32 smooth(f32 a, f32 b, f32 x)
-{
-    f32 t = clampf((x - a) / (b - a), 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
-}
-
 void sky_at(f32 tod, Sky *out)
 {
     f32 a = (tod - 0.25f) * 2.0f * PI_F;
@@ -21,16 +15,16 @@ void sky_at(f32 tod, Sky *out)
     if (e >= 0.0f) {
         V3 low = v3(1.7f, 0.75f, 0.30f), high = v3(2.05f, 1.88f, 1.58f);
         out->light_dir = sun;
-        out->light_color = v3_mul(v3_lerp(low, high, smooth(0.0f, 0.6f, e)), smooth(0.0f, 0.10f, e));
+        out->light_color = v3_mul(v3_lerp(low, high, smoothstepf(0.0f, 0.6f, e)), smoothstepf(0.0f, 0.10f, e));
     } else {
         out->light_dir = v3_mul(sun, -1.0f);
         // Луна вдвое слабее прежнего: ночью светят фонари и факелы
-        out->light_color = v3_mul(v3(0.08f, 0.105f, 0.16f), smooth(0.0f, 0.12f, -e));
+        out->light_color = v3_mul(v3(0.08f, 0.105f, 0.16f), smoothstepf(0.0f, 0.12f, -e));
     }
 
-    f32 day = smooth(-0.22f, 0.12f, e);
-    out->night = 1.0f - smooth(-0.12f, 0.05f, e);
-    f32 dusk = 1.0f - smooth(0.0f, 0.28f, fabsf(e + 0.03f));  // сумерки: тёплая дымка у горизонта
+    f32 day = smoothstepf(-0.22f, 0.12f, e);
+    out->night = 1.0f - smoothstepf(-0.12f, 0.05f, e);
+    f32 dusk = 1.0f - smoothstepf(0.0f, 0.28f, fabsf(e + 0.03f));  // сумерки: тёплая дымка у горизонта
     V3 warm = v3(1.30f, 0.90f, 0.62f);
     V3 one = v3(1, 1, 1);
     V3 tint = v3_lerp(one, warm, dusk * 0.6f);

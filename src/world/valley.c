@@ -36,12 +36,6 @@ f32 valley_fbm(f32 x, f32 z, int octaves)
     return s / norm;
 }
 
-static f32 smooth(f32 a, f32 b, f32 x)
-{
-    f32 t = clampf((x - a) / (b - a), 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
-}
-
 f32 valley_river_x(f32 z)
 {
     return 48.0f * sinf(z * 0.0105f + 0.6f) + 20.0f * sinf(z * 0.027f + 2.1f) + 7.0f * sinf(z * 0.061f + 0.3f);
@@ -56,7 +50,7 @@ static f32 river_slope(f32 z)
 // Броды: река шире и мельче
 static f32 ford(f32 z)
 {
-    return smooth(0.75f, 0.95f, sinf(z * 0.021f + 0.4f));
+    return smoothstepf(0.75f, 0.95f, sinf(z * 0.021f + 0.4f));
 }
 
 f32 valley_river_w(f32 z)
@@ -85,17 +79,17 @@ V3 valley_spawn(void)
 f32 valley_forest(f32 x, f32 z)
 {
     // Рощи пятнами; у воды полоса прибрежных деревьев; у места появления отряда поляна
-    f32 f = smooth(0.48f, 0.72f, valley_fbm(x * 0.009f + 40.0f, z * 0.009f - 13.0f, 4));
+    f32 f = smoothstepf(0.48f, 0.72f, valley_fbm(x * 0.009f + 40.0f, z * 0.009f - 13.0f, 4));
     f32 d = valley_river_dist(x, z) - valley_river_w(z);
-    f32 bank = smooth(2.0f, 6.0f, d) * smooth(26.0f, 10.0f, d) * 0.55f;
+    f32 bank = smoothstepf(2.0f, 6.0f, d) * smoothstepf(26.0f, 10.0f, d) * 0.55f;
     f = clampf(fmaxf(f, bank * valley_fbm(x * 0.04f, z * 0.04f, 2) * 1.6f), 0.0f, 1.0f);
     f32 sx = valley_river_x(30.0f) + valley_river_w(30.0f) + 14.0f - x, sz = 30.0f - z;
-    return f * smooth(16.0f, 45.0f, sqrtf(sx * sx + sz * sz));
+    return f * smoothstepf(16.0f, 45.0f, sqrtf(sx * sx + sz * sz));
 }
 
 f32 valley_dry(f32 x, f32 z)
 {
-    return smooth(0.55f, 0.78f, valley_fbm(x * 0.014f - 70.0f, z * 0.014f + 5.0f, 4));
+    return smoothstepf(0.55f, 0.78f, valley_fbm(x * 0.014f - 70.0f, z * 0.014f + 5.0f, 4));
 }
 
 f32 valley_height_raw(f32 x, f32 z)
@@ -111,13 +105,13 @@ f32 valley_height_raw(f32 x, f32 z)
     hill *= 0.55f + 0.9f * n2;
     // Уступы: где обрывы, где пологие террасы; на высоких горах не нужны
     // Высота ступени и её край гуляют, чтобы уступы не шли ровными горизонталями
-    f32 m = smooth(0.45f, 0.62f, valley_fbm(x * 0.011f + 50.0f, z * 0.011f - 20.0f, 3));
+    f32 m = smoothstepf(0.45f, 0.62f, valley_fbm(x * 0.011f + 50.0f, z * 0.011f - 20.0f, 3));
     f32 step = 4.0f + 5.0f * valley_fbm(x * 0.004f - 11.0f, z * 0.004f + 3.0f, 2);
     f32 warp = (valley_fbm(x * 0.02f + 5.0f, z * 0.02f + 9.0f, 2) - 0.5f) * step * 1.6f;
     f32 t = (hill + warp) / step, fl = floorf(t);
     f32 e = lerpf(0.45f, 0.07f, m);
-    f32 terr = (fl + smooth(0.5f - e, 0.5f + e, t - fl)) * step - warp;
-    hill = lerpf(hill, terr, (0.1f + 0.9f * m) * smooth(90.0f, 50.0f, hill));
+    f32 terr = (fl + smoothstepf(0.5f - e, 0.5f + e, t - fl)) * step - warp;
+    hill = lerpf(hill, terr, (0.1f + 0.9f * m) * smoothstepf(90.0f, 50.0f, hill));
     f32 bumps = (valley_fbm(x * 0.08f, z * 0.08f, 2) - 0.5f) * 0.7f;
     f32 h = wy + 1.4f + (n2 - 0.5f) * 1.2f * clampf(d / 25.0f, 0.0f, 1.0f) + bumps * 0.8f + hill;
     // Русло и берег
@@ -125,7 +119,7 @@ f32 valley_height_raw(f32 x, f32 z)
     if (d < bank) {
         f32 depth = lerpf(1.4f, 0.35f, ford(z));
         f32 bed = wy - 0.15f - depth * (1.0f - (d / w) * (d / w));
-        h = d < w ? bed : lerpf(wy - 0.15f, h, smooth(0.0f, 1.0f, (d - w) / (bank - w)));
+        h = d < w ? bed : lerpf(wy - 0.15f, h, smoothstepf(0.0f, 1.0f, (d - w) / (bank - w)));
     }
     return h;
 }
@@ -196,7 +190,7 @@ V3 valley_normal(f32 x, f32 z)
 f32 valley_ground_dry(f32 x, f32 z, f32 h)
 {
     f32 wy = valley_water_y(z), d = valley_river_dist(x, z);
-    return clampf(valley_dry(x, z) + smooth(25.0f, 80.0f, h - wy) * 0.25f - smooth(30.0f, 8.0f, d) * 0.3f, 0.0f, 1.0f);
+    return clampf(valley_dry(x, z) + smoothstepf(25.0f, 80.0f, h - wy) * 0.25f - smoothstepf(30.0f, 8.0f, d) * 0.3f, 0.0f, 1.0f);
 }
 
 // Земля: сочная трава у воды, сухая на возвышенностях, подстилка в рощах, проплешины, ил и галька у реки.
@@ -207,11 +201,11 @@ V3 valley_color(f32 x, f32 z, f32 h, V3 n)
     f32 wy = valley_water_y(z), d = valley_river_dist(x, z), w = valley_river_w(z);
     f32 dry = valley_ground_dry(x, z, h);
     V3 c = v3_lerp(C_LUSH, v3(0.15f, 0.13f, 0.06f), dry);
-    c = v3_lerp(c, far ? v3(0.035f, 0.05f, 0.028f) : v3(0.085f, 0.07f, 0.04f), smooth(0.45f, 0.85f, valley_forest(x, z)) * (far ? 0.9f : 0.75f));
-    f32 bare = smooth(0.68f, 0.8f, valley_fbm(x * 0.05f + 9.0f, z * 0.05f - 4.0f, 3));
+    c = v3_lerp(c, far ? v3(0.035f, 0.05f, 0.028f) : v3(0.085f, 0.07f, 0.04f), smoothstepf(0.45f, 0.85f, valley_forest(x, z)) * (far ? 0.9f : 0.75f));
+    f32 bare = smoothstepf(0.68f, 0.8f, valley_fbm(x * 0.05f + 9.0f, z * 0.05f - 4.0f, 3));
     c = v3_lerp(c, v3(0.15f, 0.115f, 0.075f), bare * 0.7f);
-    f32 gravel = smooth(0.5f, 0.62f, valley_fbm(x * 0.09f - 3.0f, z * 0.09f + 8.0f, 2));
-    c = v3_lerp(c, v3_lerp(v3(0.09f, 0.075f, 0.055f), v3(0.26f, 0.24f, 0.20f), gravel), smooth(w + 4.0f, w + 0.5f, d));
+    f32 gravel = smoothstepf(0.5f, 0.62f, valley_fbm(x * 0.09f - 3.0f, z * 0.09f + 8.0f, 2));
+    c = v3_lerp(c, v3_lerp(v3(0.09f, 0.075f, 0.055f), v3(0.26f, 0.24f, 0.20f), gravel), smoothstepf(w + 4.0f, w + 0.5f, d));
     if (h < wy - 0.1f && d < w + 2.0f) c = v3(0.10f, 0.09f, 0.07f);
-    return v3_lerp(c, v3(0.15f, 0.115f, 0.08f), smooth(0.85f, 0.7f, n.y) * 0.6f);
+    return v3_lerp(c, v3(0.15f, 0.115f, 0.08f), smoothstepf(0.85f, 0.7f, n.y) * 0.6f);
 }
