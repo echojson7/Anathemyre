@@ -124,10 +124,13 @@ typedef struct RenderSettings {
     u8   light_curve;   // LIGHT_CURVE_*: тонмаппинг
     bool light_expo;    // автоэкспозиция: глаз привыкает к темноте и к яркому свету
     bool light_bloom;   // слабое свечение ярких мест, как в объективе
+    u8   light_gi;      // LIGHT_GI_*: отражённый свет (рассеянный свет неба и земли)
 } RenderSettings;
 
 enum { LIGHT_MAT_OLD, LIGHT_MAT_GGX, LIGHT_MAT_COUNT };
 enum { LIGHT_CURVE_ACES, LIGHT_CURVE_AGX, LIGHT_CURVE_NEUTRAL, LIGHT_CURVE_COUNT };
+// ПРОСТОЙ — небо сверху, земля снизу всюду одинаково; НЕБО ПО СЕТКЕ — по доле видимого неба (запекается)
+enum { LIGHT_GI_SIMPLE, LIGHT_GI_SKY, LIGHT_GI_COUNT };
 
 // Время проходов на GPU, мс, среднее с прошлого render_take_stats
 // глубина — проход глубины и карты пикселей; интерфейс — портреты и HUD после render_frame
@@ -159,6 +162,8 @@ void render_set_terrain(TerrainFill fill, void *user);
 void render_take_stats(RenderStats *out);
 void render_shutdown(void);
 bool render_reload_shaders(void);
+// Сетка неба: сколько направлений запечено из скольких; true — есть готовая
+bool render_sky_progress(u32 *done, u32 *total);
 bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb);
 // То же в общий буфер сеток: такие сетки с костями рисуются одним вызовом на проход (люди, их вещи, оружие).
 // Если буфер полон — обычная загрузка

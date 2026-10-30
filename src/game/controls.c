@@ -17,11 +17,11 @@ const char *const g_stage_name[STAGE_COUNT] = {
 
 const char *const g_light_preset_name[LIGHT_PRESET_COUNT] = { "ПРЕЖНИЙ", "БЫСТРЫЙ", "РЕАЛИСТИЧНЫЙ" };
 
-// Части СВЕТА в наборе: материалы, кривая, автоэкспозиция, свечение
-static const u8 light_preset_parts[LIGHT_PRESET_COUNT][4] = {
-    { LIGHT_MAT_OLD, LIGHT_CURVE_ACES, 0, 0 },
-    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 0, 0 },
-    { LIGHT_MAT_GGX, LIGHT_CURVE_AGX, 1, 1 },
+// Части СВЕТА в наборе: материалы, кривая, автоэкспозиция, свечение, отражённый свет
+static const u8 light_preset_parts[LIGHT_PRESET_COUNT][5] = {
+    { LIGHT_MAT_OLD, LIGHT_CURVE_ACES, 0, 0, LIGHT_GI_SIMPLE },
+    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 0, 0, LIGHT_GI_SKY },
+    { LIGHT_MAT_GGX, LIGHT_CURVE_AGX, 1, 1, LIGHT_GI_SKY },
 };
 
 void light_preset_apply(RenderSettings *rs, LightPreset p)
@@ -31,13 +31,15 @@ void light_preset_apply(RenderSettings *rs, LightPreset p)
     rs->light_curve = v[1];
     rs->light_expo = v[2];
     rs->light_bloom = v[3];
+    rs->light_gi = v[4];
 }
 
 LightPreset light_preset_of(const RenderSettings *rs)
 {
     for (u32 p = 0; p < LIGHT_PRESET_COUNT; p++) {
         const u8 *v = light_preset_parts[p];
-        if (rs->light_mat == v[0] && rs->light_curve == v[1] && rs->light_expo == v[2] && rs->light_bloom == v[3])
+        if (rs->light_mat == v[0] && rs->light_curve == v[1] && rs->light_expo == v[2] && rs->light_bloom == v[3] &&
+            rs->light_gi == v[4])
             return (LightPreset)p;
     }
     return LIGHT_PRESET_COUNT;
@@ -59,6 +61,18 @@ static void menu_light(Hud *h, Settings *s, World *w, RtsCamera *cam, const Fram
         p = (LightPreset)((cur + LIGHT_PRESET_COUNT + (u32)d) % LIGHT_PRESET_COUNT);
         light_preset_apply(rs, p);
         log_info("СВЕТ: набор %s", g_light_preset_name[p]);
+    }
+    hud_form_head(f, "ОТРАЖЁННЫЙ СВЕТ");
+    static const char *gi_name[LIGHT_GI_COUNT] = { "ПРОСТОЙ", "НЕБО ПО СЕТКЕ" };
+    if ((d = hud_form_step(f, "СПОСОБ", gi_name[rs->light_gi])))
+        rs->light_gi = (u8)((rs->light_gi + LIGHT_GI_COUNT + (u32)d) % LIGHT_GI_COUNT);
+    if (rs->light_gi == LIGHT_GI_SKY) {
+        u32 done, total;
+        char sv[64];
+        bool ready = render_sky_progress(&done, &total);
+        if (done < total) snprintf(sv, sizeof sv, "ЗАПЕКАЕТСЯ %u/%u", done, total);
+        else snprintf(sv, sizeof sv, "%s", ready ? "ГОТОВА" : "НЕТ");
+        hud_form_text(f, "СЕТКА НЕБА", sv);
     }
     hud_form_head(f, "ПОВЕРХНОСТИ");
     if ((d = hud_form_step(f, "МАТЕРИАЛЫ", mat_name[rs->light_mat])))

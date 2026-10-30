@@ -17,7 +17,7 @@ layout(std140, binding = 1) uniform Frame {
     ivec4 u_tile;       // xy — клетка карты частоты в блоках 4x4 (vrs.frag)
     ivec4 u_light;      // группа СВЕТ: x — материалы (0 старые, 1 GGX), y — кривая (0 ACES, 1 AgX, 2 PBR Neutral),
                         // z — автоэкспозиция, w — bloom (docs/lighting.md)
-    vec4  u_lightf;     // x — секунд с прошлого кадра (привыкание глаза)
+    vec4  u_lightf;     // x — секунд с прошлого кадра (привыкание глаза), yz — свечение, w — 1: небо по сетке (sky.glsl)
     // Помещение без неба (render.h, RoomDark): внутри коробки lo..hi нет света неба и дымки, кроме как от входа
     vec4  u_room_lo;    // w > 0.5 — помещение есть
     vec4  u_room_hi;    // w — как далеко от входа доходит свет неба, м

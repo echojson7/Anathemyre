@@ -132,6 +132,7 @@ typedef struct CombatWorld {
     f32 *hp[PART_COUNT];
     f32 *blood, *blood_max, *bleed, *shock, *morale, *morale_base, *mass, *height;
     u8  *fracture, *severed, *disarmed;
+    u8  *prone;      // лежит ничком, иначе на спине: от этого, где лежит тело
 
     // Навыки и снаряжение
     f32 *skill[SK_COUNT];
