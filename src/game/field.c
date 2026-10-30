@@ -481,7 +481,7 @@ static int bench_scene(Arena *mem, u64 seed)
         V3 p = k < 3 ? v3((f32)k * 1.5f - 1.5f, 0, 18.0f) : v3(7.0f + (f32)k, 0, 9.0f);
         player_init(&npc[k], p, PI_F);
         npc[k].gait = GAIT_WALK;
-        sheet_random(&sheet[k], &rng, names[k], k == 0 ? 1 : 0, (u8)(k % g_weapon_count));
+        sheet_random(&sheet[k], &rng, names[k], k == 0 ? 1 : 0, g_weapon_pool[k % g_weapon_pool_count]);
         field_add(f, &npc[k], &sheet[k], k < 3 ? 1 : (u8)(k - 1), k < 3 ? FF_ASSIST : 0);
     }
     printf("СЦЕНКА: ОТРЯД (4) АТАКУЕТ %s; С НИМ ДВОЕ СВОИХ, РЯДОМ ДВОЕ ПРОХОЖИХ\n", names[0]);
@@ -528,7 +528,7 @@ static int bench_scale(Arena *mem, u32 n, u64 seed)
         player_init(&b[i], v3(x, 0, z), side ? PI_F : 0.0f);
         b[i].gait = GAIT_RUN;
         f32 roll = rng_f32(&rng);
-        sheet_random(&sh[i], &rng, side ? "ЧУЖОЙ" : "СВОЙ", roll < 0.5f ? 0 : (roll < 0.85f ? 1 : 2), (u8)rng_range(&rng, 0, (f32)g_weapon_count - 0.01f));
+        sheet_random(&sh[i], &rng, side ? "ЧУЖОЙ" : "СВОЙ", roll < 0.5f ? 0 : (roll < 0.85f ? 1 : 2), g_weapon_pool[(u32)rng_range(&rng, 0, (f32)g_weapon_pool_count - 0.01f)]);
         field_add(f, &b[i], &sh[i], side, side ? (FF_ASSIST | FF_AGGRO) : (FF_ASSIST | FF_PLAYER));
     }
     log_set_echo(false);

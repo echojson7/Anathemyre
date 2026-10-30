@@ -3,6 +3,9 @@
 const WeaponDef  *g_weapons;
 u32               g_weapon_count;
 const WeaponPart *g_weapon_parts;
+const f32        *g_weapon_pts;
+u8                g_weapon_pool[WEAPON_CAP];
+u32               g_weapon_pool_count;
 const ArmorDef   *g_armors;
 u32               g_armor_count;
 AttackDef         g_attacks[ATK_COUNT];

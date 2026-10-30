@@ -483,6 +483,8 @@ int main(int argc, char **argv)
     if (opt.shot_path) shot_buf = arena_push(&perm, (size_t)opt.width * (size_t)opt.height * 3, 1);
 
     RtsCamera cam = opt.cam;
+    // Снимок вблизи (--cam с дистанцией меньше 4 м): камера как у стенда, кружит над точкой взгляда
+    if (opt.cam_set && opt.cam.dist < 4.0f) camera_close(true);
     // Точка взгляда идёт по земле (сглаженно); --cam-y — подъём над ней
     f32 cam_lift = opt.cam.target.y, cam_y = world_ground(cam.target.x, cam.target.z);
     Input in;
@@ -686,6 +688,7 @@ int main(int argc, char **argv)
         items[n++] = (DrawItem){ .mesh = &world->ostov };
         // Мерильня: лампы горят всегда, фигуры — когда камера рядом
         nl += showhall_lights(wtime, lights + nl, TORCH_LIGHTS_MAX - nl);
+        nl += testroom_lights(lights + nl, TORCH_LIGHTS_MAX - nl);
         if (st_people) n += showhall_draw(hall, cm, fv.cam_pos, wtime, st_live ? dt : 0.0f, items + n);
         else items[n++] = (DrawItem){ .mesh = &hall->mesh };
         n += valley_view_draw(valley, fv.cam_pos, items + n);
