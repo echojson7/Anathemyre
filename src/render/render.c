@@ -25,7 +25,7 @@ enum {
     U_FADE = 29,
     U_A_INV_VP = 30, U_A_CAM = 31, U_A_SUN_DIR = 32, U_A_SUN_COLOR = 33,
     U_A_LIGHT_VP = 34, U_A_TIME = 35, U_A_FRAME = 36, U_A_PROJ_SCALE = 37, U_A_HAZE = 38, U_A_ZENITH = 39, U_A_AO_HALF = 47, U_NOISE_TEX = 48,
-    U_S_POST = 41, U_S_FRAME = 42, U_U_OUT = 43, U_S_PIX = 44, U_V_TILE = 45, U_S_PIX_INT = 46,
+    U_S_POST = 41, U_S_FRAME = 42, U_S_PIX = 44, U_V_TILE = 45,
 };
 
 // Буферы хранения (layout(binding = N) в scene.vert)
@@ -81,11 +81,11 @@ typedef struct Target {
 static struct {
     Arena *scratch;
     char   data_dir[512];
-    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_upscale, prog_src_map, prog_vrs_block, prog_vrs, prog_level, prog_level_max, prog_ao;
+    u32    prog_scene, prog_shadow, prog_rays, prog_atmos, prog_style, prog_src_map, prog_vrs_block, prog_vrs, prog_level, prog_level_max, prog_ao;
     u32    noise_tex;  // значения hash13 в узлах решётки NOISE_N³: noise3 одной выборкой (common.glsl)
     u32    empty_vao;
     u32    shadow_fbo, shadow_tex;
-    Target scene, rays, atmos, ldr;
+    Target scene, rays, atmos;
     Target ao;        // AO в половинном разрешении (RG16F), ao.frag
     Target level;     // размер пикселя каждой точки (R8UI), level.frag
     Target level_max; // самый крупный размер в блоке 8x8 (R8UI), level_max.frag
@@ -231,7 +231,6 @@ bool render_reload_shaders(void)
     const char *level_fs[] = { "pixel.glsl", "level.frag" };
     const char *level_max_fs[] = { "level_max.frag" };
     const char *vrs_fs[] = { "vrs.frag" };
-    const char *upscale_fs[] = { "upscale.frag" };
 
     const char *vrs_def = R.vrs ? "#extension GL_NV_shading_rate_image : require\n#define VRS\n" : NULL;
     u32 scene = link(compile(GL_VERTEX_SHADER, NULL, scene_vs, 1), compile(GL_FRAGMENT_SHADER, vrs_def, scene_fs, 2));
@@ -252,11 +251,10 @@ bool render_reload_shaders(void)
     u32 level_max = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, level_max_fs, 1));
     u32 vrs_block = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_block_fs, 1));
     u32 vrs = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, vrs_fs, 1));
-    u32 upscale = link(compile(GL_VERTEX_SHADER, NULL, full_vs, 1), compile(GL_FRAGMENT_SHADER, NULL, upscale_fs, 1));
     R.scratch->used = mark;
 
-    u32 progs[] = { scene, shadow, rays, atmos, style, upscale, src_map, vrs_block, vrs, level, level_max, ao };
-    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style, &R.prog_upscale,
+    u32 progs[] = { scene, shadow, rays, atmos, style, src_map, vrs_block, vrs, level, level_max, ao };
+    u32 *slots[] = { &R.prog_scene, &R.prog_shadow, &R.prog_rays, &R.prog_atmos, &R.prog_style,
                      &R.prog_src_map, &R.prog_vrs_block, &R.prog_vrs, &R.prog_level, &R.prog_level_max, &R.prog_ao };
     bool ok = true;
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++) ok = ok && progs[i];
@@ -412,7 +410,6 @@ void render_shutdown(void)
     target_free(&R.ao);
     if (R.noise_tex) glDeleteTextures(1, &R.noise_tex);
     target_free(&R.atmos);
-    target_free(&R.ldr);
     target_free(&R.src_map);
     target_free(&R.level);
     target_free(&R.level_max);
@@ -430,7 +427,7 @@ void render_shutdown(void)
     if (R.static_inst_buf) glDeleteBuffers(1, &R.static_inst_buf);
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
-    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style, R.prog_upscale,
+    u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style,
                     R.prog_src_map, R.prog_vrs_block, R.prog_vrs, R.prog_level, R.prog_level_max, R.prog_ao };
     for (u32 i = 0; i < ARRAY_COUNT(progs); i++)
         if (progs[i]) glDeleteProgram(progs[i]);
@@ -1076,16 +1073,12 @@ static void stream_lights(const FrameView *fv, const Frustum *fr)
 void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const RenderSettings *rs, i32 win_w, i32 win_h)
 {
     if (win_w <= 0 || win_h <= 0 || !R.prog_scene) return;
-    i32 ih = CLAMP(rs->internal_h, 120, win_h);
-    i32 iw = (i32)((f32)ih * (f32)win_w / (f32)win_h + 0.5f);
+    i32 iw = win_w, ih = win_h;
     if (R.scene.w != iw || R.scene.h != ih) {
         target_make(&R.scene, iw, ih, GL_RGBA16F, true);
         target_make(&R.rays, (iw + 1) / 2, (ih + 1) / 2, GL_RG16F, false);
         target_make(&R.ao, (iw + 1) / 2, (ih + 1) / 2, GL_RG16F, false);
         target_make(&R.atmos, iw, ih, GL_RGBA16F, false);
-        target_make(&R.ldr, iw, ih, GL_RGBA8, false);
-        glTextureParameteri(R.ldr.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTextureParameteri(R.ldr.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         target_make(&R.src_map, iw, ih, GL_RG16UI, false);
         target_make(&R.level, iw, ih, GL_R8UI, false);
         target_make(&R.level_max, (iw + 7) / 8, (ih + 7) / 8, GL_R8UI, false);
@@ -1093,7 +1086,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
                        target_make(&R.rate, (iw + R.vrs_tile[0] - 1) / R.vrs_tile[0], (ih + R.vrs_tile[1] - 1) / R.vrs_tile[1],
                                    GL_R8UI, false)))
             R.vrs = false;
-        log_info("РЕНДЕР: внутреннее разрешение %dx%d -> окно %dx%d", iw, ih, win_w, win_h);
+        log_info("РЕНДЕР: кадр %dx%d", iw, ih);
     }
 
     // Слот занят непрочитанным кадром: забираем или пропускаем замер
@@ -1180,7 +1173,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);
     // Размер пикселя на дальности 1 м; s^P = (px_m / d)^P = PIXEL_K * px_m^P * (1/d)^P
-    f32 px_k = rs->pixel && rs->pixel_div <= 1 ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
+    f32 px_k = rs->pixel ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
     bool vrs = R.vrs && rs->vrs && rs->pixel;
     R.stat_vrs = vrs;
     // По готовой глубине: размер пикселя в каждой точке и его максимум по блокам 8x8,
@@ -1191,7 +1184,6 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindFramebuffer(GL_FRAMEBUFFER, R.level.fbo);
     glUseProgram(R.prog_level);
     glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
-    glUniform1i(U_S_PIX_INT, rs->pixel_int ? 1 : 0);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindFramebuffer(GL_FRAMEBUFFER, R.level_max.fbo);
     glViewport(0, 0, R.level_max.w, R.level_max.h);
@@ -1202,7 +1194,6 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glViewport(0, 0, iw, ih);
     glUseProgram(R.prog_src_map);
     glUniform4f(U_S_PIX, px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14]);
-    glUniform1i(U_S_PIX_INT, rs->pixel_int ? 1 : 0);
     glBindTextureUnit(5, R.level_max.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (vrs) {
@@ -1299,8 +1290,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
     if (timing) mark(4);
 
-    // 4. Фильтр: виньетка, зерно, сканлайны, аберрация
-    glBindFramebuffer(GL_FRAMEBUFFER, R.ldr.fbo);
+    // 4. Фильтр: виньетка, зерно, сканлайны, аберрация; сразу в окно
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glUseProgram(R.prog_style);
     glUniform1i(U_S_POST, rs->post ? 1 : 0);
     glUniform1i(U_S_FRAME, (GLint)fv->frame);
@@ -1310,21 +1301,12 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindTextureUnit(2, R.src_map.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (timing) mark(5);
-
-    // 5. Апскейл до окна: крупный ровный пиксель
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, win_w, win_h);
-    glUseProgram(R.prog_upscale);
-    glUniform2f(U_U_OUT, (f32)win_w, (f32)win_h);
-    glBindTextureUnit(0, R.ldr.color);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    if (timing) mark(6);
 }
 
 void render_frame_end(void)
 {
     if (R.timing) {
-        mark(7);
+        mark(6);
         R.timer_pending[R.timer_slot] = true;
         R.timer_frame[R.timer_slot] = R.frame_no;
         R.timing = false;

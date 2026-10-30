@@ -3,7 +3,6 @@
 // и строится карта частоты шейдинга (vrs_block.frag)
 
 layout(location = 44) uniform vec4 u_pix;   // размер пикселя k = x * (1/d)^y; m10, m14 проекции
-layout(location = 46) uniform int u_pix_int;  // 1 — только целые вложенные размеры 1, 2, 4, 8 (сравнение)
 layout(binding = 1) uniform sampler2D u_depth;
 layout(binding = 4) uniform usampler2D u_level_map;  // level_at каждого пикселя, level.frag
 layout(binding = 5) uniform usampler2D u_level_max;  // самый крупный level в блоке 8x8, level_max.frag
@@ -25,7 +24,6 @@ int level_at(ivec2 t)
     // Самый близкий порог на шаг мельче: при 1080p 4 м — 2 вместо 2.5, 3 м — 2.5 вместо 3, с 5 м как было
     k = k > PIXEL_KNEE2 ? PIXEL_KNEE2 + (k - PIXEL_KNEE2) * 0.4 : k;
     float q = k >= 2.0 ? 2.0 * floor(2.0 * k + 0.5) : floor(4.0 * k + 0.5);
-    if (u_pix_int != 0) return u_pix.x > 0.0 ? 4 << clamp(int(floor(log2(max(k, 1e-6)) + 0.5)), 0, 3) : 4;
     float lo = u_pix.x > 0.0 ? float(PIXEL_MIN_Q) : 4.0;
     return int(clamp(q, lo, float(PIXEL_MAX_Q)));
 }
@@ -50,13 +48,6 @@ int pixel_q(ivec2 p)
     uint m = max(max(texelFetch(u_level_max, b0, 0).r, texelFetch(u_level_max, ivec2(b1.x, b0.y), 0).r),
                  max(texelFetch(u_level_max, ivec2(b0.x, b1.y), 0).r, texelFetch(u_level_max, b1, 0).r));
     int q0 = min(int(m), PIXEL_MAX_Q);
-    if (u_pix_int != 0) {
-        for (int q = q0; q >= 8; q /= 2) {
-            ivec2 cx = cell_axis(p.x, q), cy = cell_axis(p.y, q);
-            if (int(texelFetch(u_level_map, min(ivec2(cx.x + cx.y / 2, cy.x + cy.y / 2), size), 0).r) >= q) return q;
-        }
-        return 4;
-    }
     for (int q = q0 > 8 ? q0 & ~1 : q0; q >= PIXEL_MIN_Q; q -= q > 8 ? 2 : 1) {
         ivec2 cx = cell_axis(p.x, q), cy = cell_axis(p.y, q);
         if (int(texelFetch(u_level_map, min(ivec2(cx.x + cx.y / 2, cy.x + cy.y / 2), size), 0).r) >= q) return q;
