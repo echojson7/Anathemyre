@@ -13,8 +13,8 @@
 #define MAX_PROGS 64
 #define MAX_LAYOUTS 16
 #define MAX_FBOS 64
-#define MAX_UNITS 32
-#define MAX_BINDS 32
+#define MAX_UNITS 64
+#define MAX_BINDS 64
 #define PUSH_VEC4 (RB_PUSH_BYTES / 16)
 
 typedef struct GlBuf {

@@ -29,6 +29,8 @@ enum {
     // Свет кадра (docs/lighting.md): экспозиция (SSBO), источник ступени свечения, кадр для замера яркости, свечение
     B_EXPO = 27, B_BLOOM_SRC = 28, B_EXPO_SRC = 29, B_BLOOM = 30,
     B_SKY = 31,       // сетка неба (sky.glsl); глубина запекания — на 29 (B_EXPO_SRC до экспозиции свободна)
+    // Тени СВЕТА (shadow_sun.glsl): каскады, блок Shade, контактные тени, карта каскада 0 без сравнения
+    B_CASC = 32, B_SHADE = 33, B_CONTACT = 34, B_SHADOW_RAW = 35,
 };
 #define SKIN_STATIC 0
 #define SKIN_BONES 1
@@ -160,6 +162,18 @@ _Static_assert(sizeof(ScenePush) == RB_PUSH_BYTES, "ScenePush — весь u_pus
 #define SKY_R 92.0f
 #define SKY_UP 300.0f
 
+// Каскады теней 1 и 2 (каскад 0 — прежняя карта ±SHADOW_EXTENT): полуразмеры, м
+static const f32 g_casc_ext[2] = { 180.0f, 700.0f };
+
+// Блок Shade (shadow_sun.glsl) в std140
+typedef struct GpuShade {
+    f32 casc_vp[2][16];
+    f32 scene_vp[16];
+    f32 ext[4];
+    i32 shade[4];
+} GpuShade;
+_Static_assert(sizeof(GpuShade) == 224, "GpuShade — как блок Shade в shadow_sun.glsl");
+
 // Цель: цвет и глубина (по желанию) одного размера
 typedef struct Target {
     RbTex color, depth;
@@ -187,6 +201,13 @@ static struct {
     i32    sky_cur;       // готовая сетка, -1 — ещё нет
     u32    sky_acc, sky_dir;  // запекаемая и сколько направлений в неё уже легло (SKY_DIRS — не запекается)
     u32    sky_key;       // отпечаток постоянной части сцены: сменилась — запекается заново
+    RbPipe pipe_contact;
+    RbTex  casc_tex;      // каскады 1 и 2: слои массива глубины
+    M4     casc_vp[2];    // матрицы, с которыми слои нарисованы (обновляются по очереди)
+    u32    casc_ready;    // биты: слой нарисован
+    RbBuf  shade_buf;     // блоки Shade: кольцо кадров
+    u32    shade_step;
+    Target contact;       // контактные тени (R8), contact.frag
     u32    pset;      // набор текущего прохода
     RbTex  noise_tex; // значения hash13 в узлах решётки NOISE_N³: noise3 одной выборкой (common.glsl)
     RbTex  shadow_tex;
@@ -248,10 +269,10 @@ static struct {
 // Данные кадра на CPU: размер постоянный, выделяются один раз
 static V4   g_sphere[RENDER_MAX_ITEMS];
 static u32  g_pose[RENDER_MAX_ITEMS];
-// Списки проходов: тени, сцена, запекание неба
-static Inst g_inst[3][RENDER_MAX_ITEMS];
-static u32  g_inst_pose[3 * RENDER_MAX_ITEMS + 3 * RENDER_MAX_VIS_INST];
-static InstDraw g_idraw[3][MAX_INST_MESHES];
+// Списки проходов: тени, сцена, запекание неба, каскад
+static Inst g_inst[4][RENDER_MAX_ITEMS];
+static u32  g_inst_pose[4 * RENDER_MAX_ITEMS + 4 * RENDER_MAX_VIS_INST];
+static InstDraw g_idraw[4][MAX_INST_MESHES];
 static V3   g_sky_dir[SKY_DIRS];  // направления на небо, по косинусу: каждое весит одинаково
 static u32  g_vis_id[RENDER_MAX_VIS_INST];
 static u16  g_vis_bucket[RENDER_MAX_VIS_INST];
@@ -307,7 +328,8 @@ static RbPipe pipe_mesh(u32 set, u32 lay, bool two_sided)
         d.fs[0] = "frame.glsl";
         d.fs[1] = "common.glsl";
         d.fs[2] = "sky.glsl";
-        d.fs[3] = "scene.frag";
+        d.fs[3] = "shadow_sun.glsl";
+        d.fs[4] = "scene.frag";
         // Портрет — та же программа, только без карты частоты: размер блока там 1
         d.frag_size = R.vrs;
         d.vrs = R.vrs && set == PS_SCENE;
@@ -331,7 +353,7 @@ static void pipes_free(void)
             for (u32 c = 0; c < 2; c++) rb_pipe_free(&R.mesh_pipe[s][l][c]);
     RbPipe *full[] = { &R.pipe_rays, &R.pipe_atmos, &R.pipe_ao, &R.pipe_style, &R.pipe_src_map,
                        &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max, &R.pipe_skin,
-                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky };
+                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky, &R.pipe_contact };
     for (u32 i = 0; i < ARRAY_COUNT(full); i++) rb_pipe_free(full[i]);
 }
 
@@ -379,9 +401,11 @@ static bool pipes_make(void)
     R.pipe_bloom_up = rb_pipe_make(&(RbPipeDesc){ .vs = { "fullscreen.vert" }, .fs = { "bloom_up.frag" }, .name = "свечение вверх",
                                                   .color = { RB_FMT_RGBA16F }, .blend = RB_BLEND_ADD });
     R.pipe_sky = rb_pipe_make(&(RbPipeDesc){ .cs = { "sky.glsl", "sky_bake.comp" }, .name = "сетка неба" });
+    const char *contact_fs[RB_SHADER_FILES] = { "frame.glsl", "common.glsl", "contact.frag" };
+    R.pipe_contact = pipe_full("контактные тени", contact_fs, RB_FMT_R8, NULL, false);
     if (!R.pipe_rays || !R.pipe_atmos || !R.pipe_ao || !R.pipe_style || !R.pipe_src_map || !R.pipe_vrs_block ||
         !R.pipe_vrs || !R.pipe_level || !R.pipe_level_max || !R.pipe_skin || !R.pipe_expo || !R.pipe_bloom_down ||
-        !R.pipe_bloom_up || !R.pipe_sky) {
+        !R.pipe_bloom_up || !R.pipe_sky || !R.pipe_contact) {
         pipes_free();
         return false;
     }
@@ -393,7 +417,7 @@ bool render_reload_shaders(void)
     // Старые конвейеры живут, пока новые не собраны целиком
     RbPipe *full[] = { &R.pipe_rays, &R.pipe_atmos, &R.pipe_ao, &R.pipe_style, &R.pipe_src_map,
                        &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max, &R.pipe_skin,
-                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky };
+                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky, &R.pipe_contact };
     RbPipe old_mesh[PSETS][LAYS][2], old_full[ARRAY_COUNT(full)];
     memcpy(old_mesh, R.mesh_pipe, sizeof old_mesh);
     memset(R.mesh_pipe, 0, sizeof R.mesh_pipe);
@@ -521,7 +545,13 @@ bool render_init(Arena *scratch, const char *data_dir)
         f32 u = ((f32)i + 0.5f) / SKY_DIRS, r = sqrtf(u), a = (f32)i * 2.39996323f;
         g_sky_dir[i] = v3(r * cosf(a), sqrtf(1.0f - u), r * sinf(a));
     }
-    if (!R.shadow_tex || !R.frame_buf || !R.expo_buf || !R.sky_depth || !R.sky_buf[0] || !R.sky_buf[1]) return false;
+    R.casc_tex = rb_tex_make(&(RbTexDesc){ .kind = RB_TEX_2D_ARRAY, .fmt = RB_FMT_D24, .w = SHADOW_SIZE, .h = SHADOW_SIZE, .d = 2,
+                                           .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
+    R.shade_step = (u32)((sizeof(GpuShade) + caps->ubo_align - 1) / caps->ubo_align * caps->ubo_align);
+    R.shade_buf = rb_buf_make((size_t)R.shade_step * STREAM_FRAMES, RB_BUF_UNIFORM | RB_BUF_DYNAMIC, NULL);
+    if (!R.shadow_tex || !R.frame_buf || !R.expo_buf || !R.sky_depth || !R.sky_buf[0] || !R.sky_buf[1] || !R.casc_tex ||
+        !R.shade_buf)
+        return false;
     return target_make(&R.portrait, RENDER_PORTRAIT_PX * RENDER_PORTRAIT_SLOTS, RENDER_PORTRAIT_PX, RB_FMT_RGBA16F, true);
 }
 
@@ -536,6 +566,8 @@ void render_shutdown(void)
     rb_tex_free(&R.noise_tex);
     rb_tex_free(&R.shadow_tex);
     rb_tex_free(&R.sky_depth);
+    rb_tex_free(&R.casc_tex);
+    target_free(&R.contact);
     for (u32 i = 0; i < STREAM_FRAMES; i++) {
         rb_buf_free(&R.bone_buf[i]);
         rb_buf_free(&R.inst_buf[i]);
@@ -543,7 +575,7 @@ void render_shutdown(void)
     }
     RbBuf *bufs[] = { &R.frame_buf, &R.static_inst_buf, &R.pool_vbo, &R.pool_skin, &R.pool_ibo, &R.pool_morph, &R.pool_rec, &R.pool_cmd,
                       &R.skin_out, &R.skin_job, &R.skin_group, &R.expo_buf,
-                      &R.sky_buf[0], &R.sky_buf[1] };
+                      &R.sky_buf[0], &R.sky_buf[1], &R.shade_buf };
     for (u32 i = 0; i < ARRAY_COUNT(bufs); i++) rb_buf_free(bufs[i]);
     pipes_free();
     rb_shutdown();
@@ -1349,6 +1381,20 @@ static M4 light_matrix(const FrameView *fv)
                      -c.z - 250.0f, -c.z + 250.0f);
     return m4_mul(lp, lv);
 }
+// Матрица каскада: как light_matrix, полуразмер ext, глубина не меньше ±250 м
+static M4 casc_matrix(const FrameView *fv, f32 ext)
+{
+    V3 L = v3_norm(fv->sun_dir);
+    V3 up = fabsf(L.y) > 0.95f ? v3(0, 0, 1) : v3(0, 1, 0);
+    M4 lv = m4_look_at(v3(0, 0, 0), v3_mul(L, -1.0f), up);
+    V3 c = m4_point(lv, fv->shadow_center);
+    f32 texel = 2.0f * ext / SHADOW_SIZE, depth = MAX(250.0f, ext);
+    c.x = floorf(c.x / texel) * texel;
+    c.y = floorf(c.y / texel) * texel;
+    M4 lp = m4_ortho(c.x - ext, c.x + ext, c.y - ext, c.y + ext, -c.z - depth, -c.z + depth);
+    return m4_mul(lp, lv);
+}
+
 // Свет кадра: видимые источники, ближайшие к камере (по краю сферы), не больше RENDER_MAX_LIGHTS
 static void stream_lights(const FrameView *fv, const Frustum *fr)
 {
@@ -1489,6 +1535,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         target_make(&R.src_map, iw, ih, RB_FMT_RG16UI, false);
         target_make(&R.level, iw, ih, RB_FMT_R8UI, false);
         target_make(&R.level_max, (iw + 7) / 8, (ih + 7) / 8, RB_FMT_R8UI, false);
+        target_make(&R.contact, iw, ih, RB_FMT_R8, false);
         for (i32 i = 0, bw = iw, bh = ih; i < BLOOM_LEVELS; i++) {
             bw = MAX((bw + 1) / 2, 1);
             bh = MAX((bh + 1) / 2, 1);
@@ -1610,6 +1657,49 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         draw_terrain(&shadow_view, 0);
         rb_pass_end();
     }
+    // Каскады 1 и 2 (СВЕТ: КАСКАДЫ): по одному за кадр, пока оба не нарисованы — оба. Люди в дальних
+    // каскадах не нужны: их тень вблизи даёт каскад 0
+    if (rs->shadows && rs->light_casc) {
+        for (u32 c = 0; c < 2; c++) {
+            if ((R.casc_ready & 3u) == 3u && c != (u32)(R.frame_no & 1u)) continue;
+            M4 cvp = casc_matrix(fv, g_casc_ext[c]);
+            PassView cv = { .fr = frustum_from(cvp), .px_k = SHADOW_SIZE / (2.0f * g_casc_ext[c]), .inst_lod_k = 0.3f };
+            u32 n = gather(items, count, &cv, true, g_inst[3]), ns = 0;
+            for (u32 i = 0; i < n; i++)
+                if (g_inst[3][i].pose == NO_POSE) g_inst[3][ns++] = g_inst[3][i];
+            u32 base = stream_insts(g_inst[3], &ns);
+            u32 ng = c == 0 && rs->flora ? gather_groups(&cv, true, g_idraw[3]) : 0;
+            rb_pass_begin(&(RbPass){ .depth = { .tex = R.casc_tex, .layer = (u16)c }, .clear_depth = true });
+            R.pset = PS_SHADOW;
+            push_view_proj(cvp);
+            draw_insts(g_inst[3], ns, base, 2);
+            draw_groups(g_idraw[3], ng, 2);
+            u32 draws = 0;
+            f64 tris = 0;
+            use_pipe(LAY_NONE, false);
+            terrain_draw(cv.fr.p, TERRAIN_LEVELS, 0.25f, &draws, &tris);
+            rb_pass_end();
+            R.casc_vp[c] = cvp;
+            R.casc_ready |= 1u << c;
+        }
+    } else {
+        R.casc_ready = 0;
+    }
+    {
+        GpuShade sd;
+        memset(&sd, 0, sizeof sd);
+        for (u32 c = 0; c < 2; c++) memcpy(sd.casc_vp[c], R.casc_vp[c].m, sizeof sd.casc_vp[c]);
+        memcpy(sd.scene_vp, vp.m, sizeof sd.scene_vp);
+        memcpy(sd.ext, (f32[4]){ SHADOW_EXTENT, g_casc_ext[0], g_casc_ext[1], 500.0f }, sizeof sd.ext);
+        sd.shade[0] = rs->shadows && rs->light_casc && (R.casc_ready & 3u) == 3u;
+        sd.shade[1] = rs->light_soft;
+        sd.shade[2] = rs->shadows && rs->light_contact;
+        size_t off = (size_t)R.stream * R.shade_step;
+        rb_buf_write(R.shade_buf, off, sizeof sd, &sd);
+        rb_bind_ubo(B_SHADE, R.shade_buf, off, sizeof sd);
+    }
+    rb_bind_tex(B_CASC, R.casc_tex, RB_SMP_SHADOW);
+    rb_bind_tex(B_SHADOW_RAW, R.shadow_tex, RB_SMP_NEAREST);
     pass_mark(1);
     if (timing) mark(1);
 
@@ -1643,6 +1733,9 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         draw_full(&R.rate, R.pipe_vrs, 0);
     }
     RbTex rate = vrs ? R.rate.color : 0;
+    // Контактные тени по готовой глубине (время — в столбце глубина)
+    if (rs->shadows && rs->light_contact) draw_full(&R.contact, R.pipe_contact, 0);
+    rb_bind_tex(B_CONTACT, R.contact.color, RB_SMP_NEAREST);
     pass_mark(2);
     if (timing) mark(2);
     pass_to(&R.scene, false, NULL, rate);
