@@ -5,21 +5,22 @@
 
 #include "../core/arena.h"
 #include "../core/ser.h"
+#include "../sim/combat.h"
 #include "../sim/inventory.h"
 
 typedef enum DefKind { DK_WEAPON, DK_ARMOR, DK_GOODS, DK_COUNT } DefKind;
 
-#define DEFS_MEM MB(2)  // тексты, таблицы и строки описаний
+#define DEFS_MEM MB(2)  // тексты файлов и строки описаний
 
 // Прочитать при старте, до всего, что берёт оружие или вещи. false — ошибка в журнале, игра не запускается
 bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir);
-// Номер описания по имени. Имена, которые код ставит сам, проверены при загрузке
+// Номер описания по имени. Имена, которые ставит сам код, проверены при загрузке
 u8 def_weapon(const char *id);
 u8 def_armor(const char *id);
 u8 def_goods(const char *id);
 
 // Сохранение пишет имена описаний; при чтении — какой номер у того же имени теперь.
-// Имени больше нет — отказ до чтения мира (мир не тронут)
+// Имени больше нет — Ser.refused, мир не читается
 typedef struct DefMap {
     bool same;
     u8   to[DK_COUNT][256];

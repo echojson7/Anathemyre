@@ -20,10 +20,9 @@ typedef struct GoodsDef {
     f32 weight;   // кг за штуку
     f32 carry;    // сколько кг добавляет к переносимому
     const char *desc;
-    u8  look;     // сетка одежды (GEAR_*), LOOK_NONE — не видна на теле
+    u8  look;     // сетка одежды (GEAR_*), GEAR_NONE — не видна на теле
+    u32 hides;    // как у брони (items.h)
 } GoodsDef;
-
-#define LOOK_NONE 255
 
 #define SLOT_NONE 255
 #define SLOT_WEAPON SLOT_COUNT  // оружие в руках: отдельно от слотов одежды

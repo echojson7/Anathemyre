@@ -79,7 +79,7 @@ bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const
             for (u32 l = 0; l + 1 < CHAR_LODS; l++) (l ? &gl[l - 1] : gm)->lod_px = g_char_lod_px[l] * ratio;
         }
     }
-    for (u32 k = 0; k < W_COUNT; k++) {
+    for (u32 k = 0; k < g_weapon_count; k++) {
         mb_init(mb, perm, 4000, 12000);
         weapon_build(mb, (u8)k);
         gpu_mesh_upload_pooled(&m->weapon[k], mb);

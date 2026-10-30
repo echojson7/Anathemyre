@@ -44,11 +44,15 @@ typedef struct ArmorDef {
     f32 weight;
     f32 dodge_pen;
     u8  size_w, size_h;
-    u8  look;   // сетка одежды (GEAR_*)
+    u8  look;   // сетка одежды (GEAR_*), GEAR_NONE — не видна
     bool metal; // удар по ней звенит железом
+    u32 hides;  // какие сетки под ней не рисуются: биты GEAR_*, GEAR_HIDES_HAIR — причёска
 } ArmorDef;
 
 #define ARMOR_NONE 255
+#define GEAR_NONE 255
+#define GEAR_HIDES_HAIR (1u << 31)
+#define WEAPON_PARTS 24  // частей формы на оружие
 
 // Качество: множитель урона оружия и сопротивлений брони
 enum { Q_JUNK, Q_WORN, Q_SOUND, Q_MASTER, Q_ANCIENT, Q_COUNT };

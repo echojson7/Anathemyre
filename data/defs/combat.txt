@@ -1,0 +1,45 @@
+# Удары и качество вещей. Набор постоянный: моды правят числа и названия, новых не добавляют
+#
+# attack: damage — множитель урона, windup — множитель замаха, reach — прибавка к досягаемости, м,
+# arc — дуга, градусы (0 — дуга оружия). quality: mul — множитель урона оружия и сопротивлений брони
+
+attack overhead
+    name "УДАР СВЕРХУ"
+    damage 1.15
+    windup 1.00
+    reach 0
+    arc 40
+
+attack swing
+    name "РАЗМАХ"
+    damage 1.00
+    windup 1.00
+    reach 0
+    arc 0
+
+attack thrust
+    name "УКОЛ"
+    damage 1.00
+    windup 0.85
+    reach 0.3
+    arc 30
+
+quality junk
+    name "ХЛАМ"
+    mul 0.6
+
+quality worn
+    name "ХОДОВОЕ"
+    mul 0.8
+
+quality sound
+    name "ДОБРОТНОЕ"
+    mul 1.0
+
+quality master
+    name "МАСТЕРСКОЕ"
+    mul 1.15
+
+quality ancient
+    name "ДРЕВНЕЕ"
+    mul 1.3

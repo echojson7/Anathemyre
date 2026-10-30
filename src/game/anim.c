@@ -1811,7 +1811,7 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     static const CharAction none = { 0 };
     const CharAction *a = act ? act : &none;
     g_joints = p->joints;
-    const bool armed = p->weapon > 0 && p->weapon <= W_COUNT;
+    const bool armed = p->weapon > 0 && p->weapon <= g_weapon_count;
     const u8 wpn = armed ? (u8)(p->weapon - 1) : 0;
     f32 guard = clampf(a->guard, 0.0f, 1.0f);
     f32 walk = clampf(p->walk, 0.0f, 1.0f);

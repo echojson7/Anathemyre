@@ -25,7 +25,7 @@ WARN    += -Werror
 endif
 
 # rb_vk.c пока только в vkcheck: в игру войдёт вместе с переключателем РЕНДЕР: GL / VULKAN
-SRC_COMMON := $(filter-out src/render/rb_vk.c,$(wildcard src/*.c src/core/*.c src/render/*.c src/game/*.c src/sim/*.c src/ai/*.c src/world/*.c src/audio/*.c src/io/*.c))
+SRC_COMMON := $(filter-out src/render/rb_vk.c,$(wildcard src/*.c src/core/*.c src/render/*.c src/game/*.c src/sim/*.c src/ai/*.c src/world/*.c src/audio/*.c src/io/*.c src/defs/*.c))
 
 ifeq ($(TARGET_OS),windows)
 EXE      := .exe

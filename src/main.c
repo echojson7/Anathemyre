@@ -12,6 +12,7 @@
 #include "core/log.h"
 #include "core/math3d.h"
 #include "core/prof.h"
+#include "defs/defs.h"
 #include "game/arena.h"
 #include "game/battle.h"
 #include "game/bench.h"
@@ -49,6 +50,7 @@ typedef struct Options {
     f32         warp;        // для снимков: прогнать столько секунд мира до первого кадра
     const char *save_path;   // записать мир после прогона (--warp)
     const char *load_path;   // прочитать мир до прогона
+    const char *defs_dir, *mods_dir;  // описания вещей и моды вместо data/defs и mods
     f32         sum_after;   // проверка сохранений: ещё столько секунд мира, сумма мира в консоль и выход
     bool        sum_set;
     u32         arena_bench; // прогнать N боёв арены без окна
@@ -114,6 +116,7 @@ static void usage(void)
     puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N]");
     puts("anathemyre [--light 0..2] [--light-parts МАТЕРИАЛЫ КРИВАЯ ЭКСПОЗИЦИЯ СВЕЧЕНИЕ ОТРАЖЁННЫЙ]   свет на старте: набор ПРЕЖНИЙ/БЫСТРЫЙ/РЕАЛИСТИЧНЫЙ или части (docs/lighting.md)");
     puts("anathemyre [--load file.sav] [--warp S] [--save file.sav] [--sum-after S]   сохранение без меню: прочитать, прогнать, записать; сумма мира через S секунд и выход");
+    puts("anathemyre [--defs DIR] [--mods DIR]   описания вещей и моды из других папок (по умолчанию data/defs и mods, docs/content.md)");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
@@ -141,6 +144,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--warp") && i + 1 < argc) o->warp = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--save") && i + 1 < argc) o->save_path = argv[++i];
         else if (!strcmp(a, "--load") && i + 1 < argc) o->load_path = argv[++i];
+        else if (!strcmp(a, "--defs") && i + 1 < argc) o->defs_dir = argv[++i];
+        else if (!strcmp(a, "--mods") && i + 1 < argc) o->mods_dir = argv[++i];
         else if (!strcmp(a, "--sum-after") && i + 1 < argc) {
             o->sum_after = strtof(argv[++i], NULL);
             o->sum_set = true;
@@ -252,6 +257,22 @@ int main(int argc, char **argv)
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
+
+    char data_dir[512];
+    if (!find_data_dir(data_dir, sizeof data_dir)) {
+        log_error("ДАННЫЕ: папка data/shaders не найдена");
+        return 1;
+    }
+    // Описания вещей — до всего, что берёт оружие и вещи, и до замеров без окна. Моды — рядом с data
+    static Arena defs_mem;
+    char defs_dir[600], mods_dir[600];
+    snprintf(defs_dir, sizeof defs_dir, "%s/defs", data_dir);
+    snprintf(mods_dir, sizeof mods_dir, "%s/../mods", data_dir);
+    if (!arena_init(&defs_mem, DEFS_MEM) ||
+        !defs_load(&defs_mem, opt.defs_dir ? opt.defs_dir : defs_dir, opt.mods_dir ? opt.mods_dir : mods_dir)) {
+        log_error("ОПИСАНИЯ: не прочитаны, игра не запускается");
+        return 1;
+    }
     if (opt.move_bench) return player_bench(opt.move_trace);
     if (opt.field_bench) return field_bench(opt.field_bench - 1, opt.seed);
     if (opt.sound_demo) return audio_demo(opt.sound_demo);
@@ -262,12 +283,6 @@ int main(int argc, char **argv)
     // Дальше в консоль — только к/с, замеры и сбои; остальное в журнал на экране
     log_set_echo(false);
     log_info("АНАТЕМАЙР. ЭТАП 0. ЗЕРНО МИРА %llu", (unsigned long long)opt.seed);
-
-    char data_dir[512];
-    if (!find_data_dir(data_dir, sizeof data_dir)) {
-        log_error("ДАННЫЕ: папка data/shaders не найдена");
-        return 1;
-    }
 
     // Вся память выделяется здесь, один раз
     Arena perm, scratch;

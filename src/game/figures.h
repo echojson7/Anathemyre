@@ -24,7 +24,7 @@ typedef struct CharMeshes {
     GpuMesh  body_lod[BODY_KIND_COUNT][CHAR_LODS - 1];
     GpuMesh *gear;       // CHAR_GEAR_MESHES; выделяет вызывающий: место в памяти задаёт порядок отрисовки
     GpuMesh *gear_lod;   // по CHAR_LODS - 1 на вещь
-    GpuMesh  weapon[W_COUNT];
+    GpuMesh  weapon[WEAPON_CAP];  // внутри: рендер раскладывает по адресам сеток
     GpuMesh  torch[2];   // древко, пламя
     GpuMesh  marker;
     GpuMesh  ring[3];
