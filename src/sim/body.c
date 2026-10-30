@@ -5,8 +5,6 @@
 
 #include "../core/log.h"
 
-#define HX BODY_HIP_X
-
 // Стандартный скелет гуманоида: родители костей. Суставы — мужское тело MakeHuman, читаются при старте
 // из data/meshes/mh_male.skel (look_load_skeletons)
 BoneDef g_body_bones[BONE_COUNT] = {
@@ -93,36 +91,33 @@ const BodyClass g_body_classes[BODY_CLASS_COUNT] = {
     [BODY_H] = { 1.68f, 1.92f, 55.0f, 95.0f, 1.0f, 0.30f, 1.15f, 1.0f },
 };
 
-const HitCapsule g_body_hit[BODY_MAX_HIT_CAPSULES] = {
-    { PART_HEAD, BONE_HEAD, { 0.0f, 1.69f, 0.03f }, { 0.0f, 1.69f, 0.03f }, 0.11f },
-    { PART_CHEST, BONE_CHEST, { 0.0f, 1.25f, 0.0f }, { 0.0f, 1.40f, 0.0f }, 0.16f },
-    { PART_STOMACH, BONE_SPINE, { 0.0f, 0.98f, 0.0f }, { 0.0f, 1.12f, 0.0f }, 0.15f },
-    { PART_ARM_L, BONE_UPPER_ARM_L, { 0.195f, 1.446f, 0.019f }, { 0.227f, 1.140f, 0.019f }, 0.06f },
-    { PART_ARM_L, BONE_FOREARM_L, { 0.227f, 1.140f, 0.019f }, { 0.243f, 0.80f, 0.04f }, 0.05f },
-    { PART_ARM_R, BONE_UPPER_ARM_R, { -0.195f, 1.446f, 0.019f }, { -0.227f, 1.140f, 0.019f }, 0.06f },
-    { PART_ARM_R, BONE_FOREARM_R, { -0.227f, 1.140f, 0.019f }, { -0.243f, 0.80f, 0.04f }, 0.05f },
-    { PART_LEG_L, BONE_THIGH_L, { HX, BODY_HIP_Y, -0.008f }, { 0.136f, BODY_KNEE_Y, 0.010f }, 0.08f },
-    { PART_LEG_L, BONE_SHIN_L, { 0.136f, BODY_KNEE_Y, 0.010f }, { 0.158f, BODY_ANKLE_Y, 0.04f }, 0.07f },
-    { PART_LEG_R, BONE_THIGH_R, { -HX, BODY_HIP_Y, -0.008f }, { -0.136f, BODY_KNEE_Y, 0.010f }, 0.08f },
-    { PART_LEG_R, BONE_SHIN_R, { -0.136f, BODY_KNEE_Y, 0.010f }, { -0.158f, BODY_ANKLE_Y, 0.04f }, 0.07f },
+// Шаблон капсул: сдвиги от суставов, у правой стороны x зеркальный
+const HitDef g_body_hit_def[BODY_MAX_HIT_CAPSULES] = {
+    { PART_HEAD, BONE_HEAD, BONE_HEAD, BONE_HEAD, { 0.0f, 0.029f, -0.023f }, { 0.0f, 0.029f, -0.023f }, 0.11f },
+    { PART_CHEST, BONE_CHEST, BONE_CHEST, BONE_CHEST, { 0.0f, 0.053f, 0.030f }, { 0.0f, 0.203f, 0.030f }, 0.16f },
+    { PART_STOMACH, BONE_SPINE, BONE_SPINE, BONE_SPINE, { 0.0f, -0.081f, 0.030f }, { 0.0f, 0.059f, 0.030f }, 0.15f },
+    { PART_ARM_L, BONE_UPPER_ARM_L, BONE_UPPER_ARM_L, BONE_FOREARM_L, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.06f },
+    { PART_ARM_L, BONE_FOREARM_L, BONE_FOREARM_L, BONE_HAND_L, { 0.0f, 0.0f, 0.0f }, { 0.003f, -0.081f, 0.009f }, 0.05f },
+    { PART_ARM_R, BONE_UPPER_ARM_R, BONE_UPPER_ARM_R, BONE_FOREARM_R, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.06f },
+    { PART_ARM_R, BONE_FOREARM_R, BONE_FOREARM_R, BONE_HAND_R, { 0.0f, 0.0f, 0.0f }, { -0.003f, -0.081f, 0.009f }, 0.05f },
+    { PART_LEG_L, BONE_THIGH_L, BONE_THIGH_L, BONE_SHIN_L, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.08f },
+    { PART_LEG_L, BONE_SHIN_L, BONE_SHIN_L, BONE_FOOT_L, { 0.0f, 0.0f, 0.0f }, { -0.001f, 0.0f, 0.011f }, 0.07f },
+    { PART_LEG_R, BONE_THIGH_R, BONE_THIGH_R, BONE_SHIN_R, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.08f },
+    { PART_LEG_R, BONE_SHIN_R, BONE_SHIN_R, BONE_FOOT_R, { 0.0f, 0.0f, 0.0f }, { 0.001f, 0.0f, 0.011f }, 0.07f },
 };
 const u32 g_body_hit_count = 11;
 
-// Те же капсулы в боевой стойке с одноручным (снято с позы character_pose, guard = 1):
-// руки вперёд, левая нога впереди. По ним считается, куда пришёлся удар по стоящему
-const HitCapsule g_body_hit_guard[BODY_MAX_HIT_CAPSULES] = {
-    { PART_HEAD, BONE_HEAD, { 0.003f, 1.607f, 0.160f }, { 0.003f, 1.607f, 0.160f }, 0.11f },
-    { PART_CHEST, BONE_CHEST, { 0.007f, 1.173f, 0.041f }, { 0.003f, 1.320f, 0.072f }, 0.16f },
-    { PART_STOMACH, BONE_SPINE, { 0.008f, 0.909f, -0.003f }, { 0.004f, 1.047f, 0.018f }, 0.15f },
-    { PART_ARM_L, BONE_UPPER_ARM_L, { 0.198f, 1.359f, 0.082f }, { 0.208f, 1.158f, 0.215f }, 0.06f },
-    { PART_ARM_L, BONE_FOREARM_L, { 0.208f, 1.158f, 0.215f }, { 0.121f, 1.344f, 0.482f }, 0.05f },
-    { PART_ARM_R, BONE_UPPER_ARM_R, { -0.184f, 1.339f, 0.135f }, { -0.161f, 1.118f, 0.227f }, 0.06f },
-    { PART_ARM_R, BONE_FOREARM_R, { -0.161f, 1.118f, 0.227f }, { 0.006f, 1.160f, 0.516f }, 0.05f },
-    { PART_LEG_L, BONE_THIGH_L, { 0.111f, 0.889f, 0.026f }, { 0.182f, 0.532f, 0.260f }, 0.08f },
-    { PART_LEG_L, BONE_SHIN_L, { 0.182f, 0.532f, 0.260f }, { 0.236f, 0.082f, 0.244f }, 0.07f },
-    { PART_LEG_R, BONE_THIGH_R, { -0.105f, 0.889f, -0.041f }, { -0.173f, 0.469f, 0.041f }, 0.08f },
-    { PART_LEG_R, BONE_SHIN_R, { -0.173f, 0.469f, 0.041f }, { -0.216f, 0.063f, -0.156f }, 0.07f },
-};
+HitCapsule g_body_hit[BODY_MAX_HIT_CAPSULES];
+HitCapsule g_body_hit_guard[BODY_MAX_HIT_CAPSULES];
+
+void body_hit_build(void)
+{
+    for (u32 c = 0; c < g_body_hit_count; c++) {
+        const HitDef *d = &g_body_hit_def[c];
+        g_body_hit[c] = (HitCapsule){ d->part, d->bone, v3_add(g_body_bones[d->from].joint, d->da),
+                                      v3_add(g_body_bones[d->to].joint, d->db), d->r };
+    }
+}
 
 const SocketDef g_body_sockets[SOCKET_COUNT] = {
     [SOCKET_HAND_R] = { BONE_HAND_R, { -0.258f, 0.792f, 0.05f } },

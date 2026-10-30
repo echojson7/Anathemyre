@@ -35,6 +35,14 @@ typedef struct HitCapsule {
     f32 r;
 } HitCapsule;
 
+// Капсула в шаблоне тела: концы — суставы костей from и to со сдвигом, м. Числа не зависят от
+// пропорций: другой скелет — капсулы на его суставах (как шаблоны тела Dwarf Fortress)
+typedef struct HitDef {
+    u8  part, bone, from, to;
+    V3  da, db;
+    f32 r;
+} HitDef;
+
 typedef enum EquipSlot {
     SLOT_HEAD, SLOT_FACE, SLOT_TORSO_UNDER, SLOT_TORSO_ARMOR, SLOT_LEGS,
     SLOT_FEET, SLOT_HANDS, SLOT_BACK, SLOT_BELT, SLOT_PANTS,
@@ -67,20 +75,18 @@ typedef struct BodyClass {
 
 // Поза привязки класса H, рост 1.80 м
 #define BODY_BASE_HEIGHT 1.80f
-#define BODY_HIP_Y   0.965f
-#define BODY_KNEE_Y  0.529f
-#define BODY_ANKLE_Y 0.075f
-#define BODY_HIP_X   0.113f  // у бедра; колено и лодыжка чуть шире (g_body_bones)
-
 #define BODY_MAX_HIT_CAPSULES 12
 
 // Родители — стандарт гуманоида; суставы — мужское тело, заполняются при старте (look_load_skeletons)
 extern BoneDef          g_body_bones[BONE_COUNT];
 extern const char *const g_bone_name[BONE_COUNT];
 extern const BodyClass  g_body_classes[BODY_CLASS_COUNT];
-extern const HitCapsule g_body_hit[BODY_MAX_HIT_CAPSULES];
-extern const HitCapsule g_body_hit_guard[BODY_MAX_HIT_CAPSULES];  // в боевой стойке
+extern const HitDef     g_body_hit_def[BODY_MAX_HIT_CAPSULES];
 extern const u32        g_body_hit_count;
+// Капсулы в позе привязки (body_hit_build) и в боевой стойке с одноручным (ставит вид при старте,
+// anim_bake_hit_guard). По стойке считается, куда пришёлся удар по стоящему
+extern HitCapsule       g_body_hit[BODY_MAX_HIT_CAPSULES];
+extern HitCapsule       g_body_hit_guard[BODY_MAX_HIT_CAPSULES];
 extern const SocketDef  g_body_sockets[SOCKET_COUNT];
 extern const f32        g_part_hp[PART_COUNT];      // HP класса H
 extern const f32        g_part_hit_share[PART_COUNT]; // доля попаданий без учёта вида удара
@@ -89,6 +95,8 @@ extern const char      *g_part_name[PART_COUNT];
 // Скелет из файла .skel (tools/humanconv): суставы в позе привязки по ролям BONE_*. Кости находят роль по имени,
 // родители сверяются со стандартом g_body_bones. false — файла нет или он не по стандарту
 bool body_skeleton_load(const char *path, V3 *joints);
+// Капсулы позы привязки из суставов g_body_bones: после загрузки скелета
+void body_hit_build(void);
 
 // Жизненная часть: при HP <= порога — нокаут, при <= -max — смерть
 static inline bool body_part_vital(BodyPart p) { return p <= PART_STOMACH; }

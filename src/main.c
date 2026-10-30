@@ -12,6 +12,7 @@
 #include "core/log.h"
 #include "core/math3d.h"
 #include "core/prof.h"
+#include "game/anim.h"
 #include "game/arena.h"
 #include "game/battle.h"
 #include "game/bench.h"
@@ -253,6 +254,15 @@ int main(int argc, char **argv)
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
+    // Скелет и капсулы тела нужны и бенчам боя
+    char data_dir[512];
+    if (!find_data_dir(data_dir, sizeof data_dir)) {
+        log_error("ДАННЫЕ: папка data/shaders не найдена");
+        return 1;
+    }
+    if (!look_load_skeletons(data_dir)) return 1;
+    body_hit_build();
+    anim_bake_hit_guard();
     if (opt.move_bench) return player_bench(opt.move_trace);
     if (opt.field_bench) return field_bench(opt.field_bench - 1, opt.seed);
     if (opt.sound_demo) return audio_demo(opt.sound_demo);
@@ -264,12 +274,6 @@ int main(int argc, char **argv)
     log_set_echo(false);
     log_info("АНАТЕМАЙР. ЭТАП 0. ЗЕРНО МИРА %llu", (unsigned long long)opt.seed);
 
-    char data_dir[512];
-    if (!find_data_dir(data_dir, sizeof data_dir)) {
-        log_error("ДАННЫЕ: папка data/shaders не найдена");
-        return 1;
-    }
-    if (!look_load_skeletons(data_dir)) return 1;
 
     // Вся память выделяется здесь, один раз
     Arena perm, scratch;
