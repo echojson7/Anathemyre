@@ -79,6 +79,26 @@ vec3 ggx_spec(vec3 N, vec3 V, vec3 L, float a2, vec3 F0)
     return D * vis * F * nl;
 }
 
+// УГЛЫ: GTAO из половинного разрешения (gtao.frag): из четырёх соседей — близкие по дальности, как AO атмосферы
+layout(binding = 36) uniform sampler2D u_gtao;
+float gtao_at(float dist)
+{
+    vec2 uv = gl_FragCoord.xy / (vec2(textureSize(u_gtao, 0)) * 2.0);
+    vec2 t = fract(uv * vec2(textureSize(u_gtao, 0)) - 0.5);
+    vec4 ao = textureGather(u_gtao, uv, 0), dd = textureGather(u_gtao, uv, 1);  // порядок: (0,1) (1,1) (1,0) (0,0)
+    vec4 wb = vec4((1.0 - t.x) * t.y, t.x * t.y, t.x * (1.0 - t.y), (1.0 - t.x) * (1.0 - t.y));
+    vec4 w = wb / (0.02 + abs(dd - dist) / dist);
+    return dot(ao, w) / max(dot(w, vec4(1.0)), 1e-6);
+}
+
+// Поправка на переотражения (Jimenez 2016): светлая поверхность в углу отдаёт часть света обратно
+float multibounce(float v, vec3 albedo)
+{
+    float alb = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+    float ka = 2.0404 * alb - 0.3324, kb = -4.7951 * alb + 0.6417, kc = 2.7552 * alb + 0.6903;
+    return max(v, ((v * ka + kb) * v + kc) * v);
+}
+
 float sun_shadow(vec3 p, vec3 n)
 {
     vec3 off = p + n * 0.06 + u_sun_dir * 0.03;
@@ -353,9 +373,7 @@ void main()
     // Свет от земли закрыт слабее: он идёт от освещённого солнцем песка у горизонта и в проёмах
     float skyv = sky_vis(W, N);
     if (skyv < 1.0) {
-        float alb = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
-        float ka = 2.0404 * alb - 0.3324, kb = -4.7951 * alb + 0.6417, kc = 2.7552 * alb + 0.6903;
-        skyv = max(skyv, ((skyv * ka + kb) * skyv + kc) * skyv);
+        skyv = multibounce(skyv, albedo);
         vec3 sky_part = u_sky_amb * (N.y * 0.5 + 0.5) * 0.6;
         ambient = sky_part * skyv + (ambient - sky_part) * mix(skyv, 1.0, 0.4);
     }
@@ -367,6 +385,9 @@ void main()
         sky_k = mix(1.0, 0.02 + 0.6 * door, inside);
         ambient = ambient * sky_k + u_room_fill.rgb * inside;
     }
+
+    // УГЛЫ: GTAO гасит только рассеянный свет и отражение неба, солнце и огни — нет (docs/lighting.md)
+    if (u_shade.w != 0 && u_unlit == 0) ao *= multibounce(gtao_at(length(W - u_cam_pos)), albedo);
 
     vec3 col;
     bool ggx = u_light.x == 1;
