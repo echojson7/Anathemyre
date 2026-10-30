@@ -13,12 +13,18 @@ typedef struct FightAnim {
     f32  guard, block, dodge, dodge_side, stagger, flinch, wield, limp;
     f32  calm;                        // сколько бой стоит (w->halted), с
     f32  vt;                          // время в текущем состоянии, с
+    f32  clock;                       // время жизни вида, с (дыхание лёжа)
     f32  seed;
     f32  hp_prev[PART_COUNT];
     u8   vst, dodge_kind, flinch_part;
-    bool prone, from_stand, dropped;
+    bool prone, from_stand, from_kneel, turn, dropped;
+    // Клип всем телом сейчас и до смены состояния: из прежнего в новый — плавно за fade_s
+    u8   clip, pclip;
+    f32  clip_t, pclip_t, fade, fade_s;
+    bool pprone;
+    i8   side, pside;
     V3   drop_pos;                    // в координатах боя
-    f32  drop_yaw;
+    f32  drop_yaw, drop_age;          // drop_age — с момента, как выпало: летит из руки на землю
     f32  lock_x, lock_z;              // где была цель в начале замаха: от уворота удар уходит в пустоту
 } FightAnim;
 
@@ -28,6 +34,8 @@ void fight_anim_reset(FightAnim *f, const CombatWorld *w, u32 i, f32 seed);
 void fight_anim_pre_tick(FightAnim *f, const CombatWorld *w, u32 i);
 // Раз в кадр; alpha — доля времени до следующего тика
 void fight_anim_update(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, f32 dt);
+// Через сколько секунд после события падения тело касается земли (звук удара о землю)
+f32  fight_anim_contact(const CombatWorld *w, u32 i, u8 ev_kind);
 // Поза в мире: origin — начало координат боя, floor_y — высота земли.
 // true — оружие выпало и лежит в drop_pos/drop_yaw (мир), в руке его нет
 bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, V3 origin, f32 floor_y, f32 time,

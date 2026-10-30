@@ -39,6 +39,7 @@ typedef struct CharPose {
     f32 idle;        // сколько стоит без движения, с: позы покоя только у давно стоящих
     u8  weapon;      // W_* + 1; 0 — без оружия
     f32 torch;       // 0 рука опущена .. 1 факел поднят перед собой (левая рука)
+    f32 slope_x, slope_z; // уклон земли в мире (dy/dx, dy/dz): лежащий и падающий ложатся по склону
     bool calm;       // без поз ожидания (портреты)
     const V3 *joints; // суставы этого тела в позе привязки, BONE_COUNT; NULL — g_body_bones
 } CharPose;
@@ -46,13 +47,21 @@ typedef struct CharPose {
 // Действие всем телом поверх походки и боя
 typedef enum CharClip {
     CLIP_NONE,
-    CLIP_FALL,       // сбит с ног: оступается, оседает, валится на спину (prone — ничком)
-    CLIP_COLLAPSE,   // теряет сознание или гибнет стоя: колени подламываются
-    CLIP_LIE,        // лежит
+    CLIP_FALL,       // сбит с ног: валится туда, куда толкнул удар (fall_dir), ловит себя руками
+    CLIP_COLLAPSE,   // теряет сознание стоя: колени подламываются, руками не ловит
+    CLIP_LIE,        // лежит (side — на боку)
     CLIP_GETUP,      // встаёт: со спины через бок и колено, ничком — через руки
     CLIP_KNEEL,      // опускается на колени, руки поднимает (сдался)
     CLIP_CRAWL,      // ползёт ничком на руках
+    CLIP_DIE,        // убит ударом стоя: обмякает и валится туда, куда толкнул удар
+    CLIP_BLEED,      // истёк кровью стоя: шатается, на колено, на бок
+    CLIP_SINK,       // ноги не держат: оседает в сознании, ловит себя руками, ложится ничком
+    CLIP_TURN,       // переворачивается со спины на живот (дальше ползёт)
+    CLIP_PICKUP,     // поднимает выроненное оружие
 } CharClip;
+
+// Куда валится тело, относительно взгляда (как FALL_* боя)
+enum { CHAR_FALL_BACK, CHAR_FALL_FRONT, CHAR_FALL_LEFT, CHAR_FALL_RIGHT };
 
 typedef enum DodgeKind { DODGE_BACK, DODGE_SIDE, DODGE_DUCK, DODGE_COUNT } DodgeKind;
 
@@ -76,7 +85,16 @@ typedef struct CharAction {
     u8   clip;       // CharClip
     f32  clip_t;     // доля клипа 0..1 (LIE, CRAWL — время, с)
     bool prone;      // лежит ничком
+    i8   side;       // лежит на боку: 1 — на левом, -1 — на правом
+    u8   fall_dir;   // CHAR_FALL_*: куда валит удар
     f32  limp;       // руки безвольно (без сознания, мёртв)
+    bool dead;       // мёртв: не дышит
+    f32  still;      // сколько мёртв, с: первые секунды — последние движения
+    u8   prev_clip;  // клип до смены: из него переход за fade
+    f32  prev_t;
+    bool prev_prone;
+    i8   prev_side;
+    f32  fade;       // 0 — ещё прежний клип .. 1 — уже новый
     u8   severed;    // маска BodyPart: отсечённые конечности
 } CharAction;
 
