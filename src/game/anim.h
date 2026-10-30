@@ -161,7 +161,13 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out_bones);
 void anim_bake_hit_guard(void);
 
 // Оружие отдельной сеткой; кости — слот CHAR_BONE_WEAPON, рукоять в начале координат, острие по +Y
-void weapon_build(MeshBuilder *mb, u8 weapon);
+// Вид оружия по качеству: хлам, ходовое, добротное и выше; уникальное всегда последнее
+#define WEAPON_LOOKS 3
+static inline u32 weapon_look(u8 quality) { return quality < WEAPON_LOOKS ? quality : WEAPON_LOOKS - 1; }
+static inline u32 weapon_mesh(u8 weapon, u8 quality) { return (u32)weapon * WEAPON_LOOKS + weapon_look(quality); }
+void weapon_build(MeshBuilder *mb, u8 weapon, u8 look, u8 bone);
+// То же неподвижной деталью сцены (стойки): сразу в мировых координатах, без кости
+void weapon_build_xf(MeshBuilder *mb, u8 weapon, u8 look, M4 xf);
 // Факел: древко с обмоткой (flame = false) или пламя отдельной сеткой; слот CHAR_BONE_TORCH
 void torch_build(MeshBuilder *mb, bool flame);
 // Где пламя факела в мире по костям позы

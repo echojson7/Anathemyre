@@ -40,7 +40,7 @@ u32 loot_draw(LootView *v, const Ground *g, const Phys *p, const GpuMesh *weapon
             m = m4_mul(m, m4_trs(v3(0, 0, 0), v3(s.x / 0.30f, s.y / 0.12f, s.z / 0.22f), 0, 0, 0));
         }
         b[wpn ? CHAR_BONE_WEAPON : 0] = m;
-        out[n++] = (DrawItem){ .mesh = wpn ? &weapon[it.id] : &v->bundle, .bones = b };
+        out[n++] = (DrawItem){ .mesh = wpn ? &weapon[weapon_mesh(it.id, it.quality)] : &v->bundle, .bones = b };
     }
     return n;
 }
@@ -210,10 +210,11 @@ void loot_drop_test(Ground *g, Phys *p, V3 at, u32 n, u64 seed)
 {
     Rng r;
     rng_seed(&r, seed, 23);
+    if (!g_weapon_pool_count && !g_goods_count) return;
     for (u32 i = 0; i < n; i++) {
-        Item it = g_goods_count && rng_below(&r, 3) == 0
+        Item it = g_goods_count && (!g_weapon_pool_count || rng_below(&r, 3) == 0)
                       ? item_make(IK_GOODS, (u8)rng_below(&r, g_goods_count), Q_WORN, 1)
-                      : item_make(IK_WEAPON, (u8)rng_below(&r, g_weapon_count), (u8)rng_below(&r, 3), 1);
+                      : item_make(IK_WEAPON, g_weapon_pool[rng_below(&r, g_weapon_pool_count)], (u8)rng_below(&r, 3), 1);
         V3 c = v3_add(at, v3(rng_range(&r, -1.5f, 1.5f), 1.2f + 0.3f * (f32)i, rng_range(&r, -1.5f, 1.5f)));
         M4 xf = m4_trs(c, v3(1, 1, 1), rng_range(&r, 0, 2 * PI_F), rng_range(&r, 0, 2 * PI_F), rng_range(&r, 0, 2 * PI_F));
         V3 w = v3(rng_range(&r, -3, 3), rng_range(&r, -3, 3), rng_range(&r, -3, 3));

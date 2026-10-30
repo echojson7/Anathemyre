@@ -38,7 +38,7 @@ void arena_random_fighter(FighterDesc *d, Rng *r, u32 tier)
     d->skill[SK_DEXTERITY] = jitter(r, b * 0.8f + 5.0f, 6.0f);
     d->skill[SK_TOUGHNESS] = jitter(r, b * 0.9f, 5.0f);
     d->skill[SK_ATHLETICS] = jitter(r, b * 0.7f + 5.0f, 5.0f);
-    d->weapon = (u8)rng_below(r, g_weapon_count);
+    d->weapon = g_weapon_pool[rng_below(r, g_weapon_pool_count)];
     // Балка только тем, кто её поднимет
     if (d->weapon == def_weapon("balka") && tier == 0) d->weapon = def_weapon("armatura");
     d->skill[SK_WEAPON + g_weapons[d->weapon].wclass] = jitter(r, b + 5.0f, 5.0f);
