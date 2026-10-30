@@ -192,7 +192,13 @@ void arena_view_tick(ArenaView *v, ArenaSession *s)
 void arena_view_ser(Ser *s, ArenaView *v)
 {
     SER(s, v->in_bout);
-    SER(s, v->fa);
+}
+
+void arena_view_restore(ArenaView *v, const ArenaSession *s)
+{
+    const CombatWorld *w = &s->w;
+    if (!v->in_bout) return;
+    for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) fight_anim_settle(&v->fa[i], w, i, (f32)s->idx[i] * 13.7f + 3.0f);
 }
 
 void arena_view_present(ArenaView *v, const ArenaSession *s, f32 alpha, f32 dt)

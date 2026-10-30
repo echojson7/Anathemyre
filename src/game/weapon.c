@@ -1,4 +1,4 @@
-// Сетки оружия арены: в своей системе — рукоять в начале координат, острие по +Y, лезвие по +Z
+// Сетки оружия по описаниям: в своей системе — рукоять в начале координат, острие по +Y, лезвие по +Z
 #include "anim.h"
 
 // Брусок вдоль оси от d0 до d1 (м от кулака); ширина к лезвию, толщина поперёк, сдвиг к лезвию,
@@ -24,62 +24,13 @@ static void wcyl(MeshBuilder *mb, f32 d0, f32 d1, f32 r, f32 off)
 
 void weapon_build(MeshBuilder *mb, u8 weapon)
 {
-    const u8 B = CHAR_BONE_WEAPON;
-    const V3 wrap = v3(0.30f, 0.26f, 0.20f), steel = v3(0.34f, 0.33f, 0.31f), dark = v3(0.13f, 0.13f, 0.14f);
-    const V3 rust = v3(0.42f, 0.24f, 0.13f), wood = v3(0.24f, 0.17f, 0.11f);
-    switch (weapon) {
-    case W_RESSORA:
-        // Лист рессоры: длинная пологая дуга, рукоять в тряпье
-        mb_set(mb, wrap, MAT_CLOTH, B);
-        wcyl(mb, -0.12f, 0.10f, 0.02f, 0.0f);
-        mb_set(mb, dark, MAT_METAL, B);
-        wbox(mb, 0.10f, 0.13f, 0.12f, 0.03f, 0.01f, 0.0f);
-        mb_set(mb, steel, MAT_METAL, B);
-        wbox(mb, 0.13f, 0.50f, 0.065f, 0.012f, 0.012f, 0.03f);
-        wbox(mb, 0.48f, 0.86f, 0.06f, 0.011f, 0.035f, 0.10f);
-        wbox(mb, 0.84f, 0.98f, 0.04f, 0.010f, 0.07f, 0.25f);
-        break;
-    case W_SEKACH:
-        // Тесак из обрезка листа: широкое тяжёлое лезвие, обух с зазубринами
-        mb_set(mb, wood, MAT_LEATHER, B);
-        wcyl(mb, -0.13f, 0.10f, 0.022f, 0.0f);
-        mb_set(mb, rust, MAT_RUST, B);
-        wbox(mb, 0.10f, 0.95f, 0.14f, 0.014f, 0.045f, 0.0f);
-        wbox(mb, 0.93f, 1.05f, 0.10f, 0.013f, 0.03f, 0.5f);
-        mb_set(mb, dark, MAT_METAL, B);
-        for (int i = 0; i < 4; i++) wbox(mb, 0.25f + 0.15f * (f32)i, 0.31f + 0.15f * (f32)i, 0.03f, 0.02f, -0.03f, 0.0f);
-        break;
-    case W_ARMATURA:
-        // Пук арматуры, на конце ком бетона
-        mb_set(mb, wrap, MAT_CLOTH, B);
-        wcyl(mb, -0.12f, 0.12f, 0.024f, 0.0f);
-        mb_set(mb, rust, MAT_RUST, B);
-        wcyl(mb, 0.0f, 0.90f, 0.014f, 0.012f);
-        wcyl(mb, 0.0f, 0.85f, 0.013f, -0.012f);
-        mb_set(mb, v3(0.38f, 0.36f, 0.33f), MAT_CONCRETE, B);
-        wbox(mb, 0.66f, 0.92f, 0.14f, 0.12f, 0.0f, 0.15f);
-        break;
-    case W_BAGOR:
-        // Багор: длинное древко, крюк и пика на конце; правая в 0.22 м от торца
-        mb_set(mb, wood, MAT_LEATHER, B);
-        wcyl(mb, -0.22f, 1.95f, 0.02f, 0.0f);
-        mb_set(mb, wrap, MAT_CLOTH, B);
-        wcyl(mb, -0.10f, 0.12f, 0.026f, 0.0f);
-        wcyl(mb, 0.55f, 0.75f, 0.026f, 0.0f);
-        mb_set(mb, rust, MAT_RUST, B);
-        wcyl(mb, 1.90f, 2.20f, 0.012f, 0.0f);
-        wbox(mb, 1.90f, 2.06f, 0.11f, 0.014f, 0.06f, -0.6f);
-        break;
-    case W_BALKA:
-    default:
-        // Обрезок двутавра: полки и стенка, рукоять обмотана
-        mb_set(mb, wrap, MAT_CLOTH, B);
-        wcyl(mb, -0.18f, 0.16f, 0.028f, 0.0f);
-        mb_set(mb, v3(0.30f, 0.20f, 0.13f), MAT_RUST, B);
-        wbox(mb, 0.15f, 1.40f, 0.16f, 0.012f, 0.0f, 0.0f);
-        wbox(mb, 0.15f, 1.40f, 0.014f, 0.11f, 0.08f, 0.0f);
-        wbox(mb, 0.15f, 1.40f, 0.014f, 0.11f, -0.08f, 0.0f);
-        break;
+    // Форма из описания (data/defs/weapons.txt): стержни и бруски по порядку
+    const WeaponDef *d = &g_weapons[weapon];
+    for (u32 k = 0; k < d->parts; k++) {
+        const WeaponPart *p = &g_weapon_parts[d->part + k];
+        mb_set(mb, v3(p->color[0], p->color[1], p->color[2]), (Material)p->mat, CHAR_BONE_WEAPON);
+        if (p->kind == WP_ROD) wcyl(mb, p->v[0], p->v[1], p->v[2], p->v[3]);
+        else wbox(mb, p->v[0], p->v[1], p->v[2], p->v[3], p->v[4], p->v[5]);
     }
 }
 

@@ -23,7 +23,7 @@ typedef struct Squad {
 static inline Player    *squad_body(const Squad *s, u32 i) { return &s->people->body[s->member[i]]; }
 static inline CharSheet *squad_sheet(const Squad *s, u32 i) { return &s->people->sheet[s->member[i]]; }
 
-// Лист чужого: случайный боец уровня tier (0 новичок .. 2 ветеран), оружие weapon (W_*), лохмотья
+// Лист чужого: случайный боец уровня tier (0 новичок .. 2 ветеран), оружие weapon (номер описания), лохмотья
 void sheet_random(CharSheet *c, Rng *rng, const char *name, u32 tier, u8 weapon);
 // Стартовый отряд из четырёх у точки origin: люди дописываются в таблицу p
 void squad_init(Squad *s, People *p, Rng *rng, V3 origin, f32 heading, GroundFn ground);
