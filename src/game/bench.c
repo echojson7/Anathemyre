@@ -41,13 +41,17 @@ static void gpu_line(char *out, size_t size, const RenderStats *st)
         snprintf(out, size, "GPU: драйвер не отдаёт метки времени");
 }
 
-// CPU одной строкой: логика (сим — ввод и мир, позы — люди и список кадра), отправка, swap; мс на кадр
+// CPU одной строкой: логика (сим — ввод и мир, позы — люди и список кадра), отправка (сбор и вызовы GL по проходам), swap; мс на кадр
 static void cpu_line(char *out, size_t size, const f64 *z, f64 k, const RenderStats *st, bool swap_late)
 {
     f64 sim = (z[PZ_INPUT] + z[PZ_PEOPLE] + z[PZ_ARENA] + z[PZ_FIELD] + z[PZ_SOUND]) * k;
     f64 pose = (z[PZ_FIGURES] + z[PZ_POSES] + z[PZ_SCENE]) * k;
-    snprintf(out, size, "логика %.3f (сим %.3f, позы %.3f: %.0f шт.), отправка %.3f (сбор %.3f), swap %.3f%s", sim + pose, sim,
-             pose, st->poses, (z[PZ_SUBMIT] + z[PZ_UI]) * k, st->prep_ms, z[PZ_SWAP] * k, swap_late ? " после логики" : "");
+    const f64 *c = st->cpu_ms;
+    snprintf(out, size,
+             "логика %.3f (сим %.3f, позы %.3f: %.0f шт.), отправка %.3f (сбор %.3f; тени %.3f, глубина %.3f, сцена %.3f, "
+             "атмосфера %.3f, стиль %.3f, интерфейс %.3f), swap %.3f%s",
+             sim + pose, sim, pose, st->poses, (z[PZ_SUBMIT] + z[PZ_UI]) * k, st->prep_ms, c[PASS_SHADOW], c[PASS_DEPTH],
+             c[PASS_SCENE], c[PASS_ATMOS], c[PASS_STYLE], c[PASS_UI], z[PZ_SWAP] * k, swap_late ? " после логики" : "");
 }
 
 // Все зоны подряд, мс на кадр
@@ -78,10 +82,14 @@ static void report(Bench *b, f64 seconds, i32 ww, i32 wh, bool swap_late)
         .logic_ms = (z[PZ_INPUT] + z[PZ_PEOPLE] + z[PZ_ARENA] + z[PZ_FIELD] + z[PZ_SOUND] + z[PZ_FIGURES] + z[PZ_POSES] + z[PZ_SCENE]) * k,
         .submit_ms = (z[PZ_SUBMIT] + z[PZ_UI]) * k, .swap_ms = z[PZ_SWAP] * k, .gap_ms = st.gap_ms,
     };
-    for (u32 p = 0; p < PASS_COUNT; p++) b->last.pass_ms[p] = st.gpu_ms[p];
+    for (u32 p = 0; p < PASS_COUNT; p++) {
+        b->last.pass_ms[p] = st.gpu_ms[p];
+        b->last.cpu_ms[p] = st.cpu_ms[p];
+    }
+    b->last.prep_ms = st.prep_ms;
     log_stat("ЗАМЕР: окно %dx%d, %u кадров за %.1f с | кадр: среднее %.3f мс (%.0f к/с), медиана %.3f, худший 1%% %.3f",
              ww, wh, n, seconds, sum / n, n / seconds, b->frame_ms[n / 2], b->frame_ms[MIN(n - 1, n * 99 / 100)]);
-    char gpu[256], cpu[256], zones[512];
+    char gpu[256], cpu[512], zones[512];
     gpu_line(gpu, sizeof gpu, &st);
     cpu_line(cpu, sizeof cpu, z, k, &st, swap_late);
     zones_line(zones, sizeof zones, z, k, b->posed / b->cpu_frames);
@@ -130,6 +138,14 @@ void bench_stages_report(const BenchResult *r, u32 n, const char *const *names)
         log_stat("ЭТАПЫ: %2u %s | %.3f | %5.0f | %+.3f | %s | %.3f | %.3f | %.3f", i, name, r[i].frame_ms, r[i].fps,
                  i ? r[i].frame_ms - r[i - 1].frame_ms : 0.0, gpu, r[i].logic_ms, r[i].submit_ms, r[i].swap_ms);
     }
+    // CPU по проходам: сбор и отправка вызовов GL каждого прохода
+    log_stat("ЭТАПЫ CPU, мс: этап | сбор | тени | глубина | сцена | атмосфера | стиль | интерфейс");
+    for (u32 i = 0; i < n; i++) {
+        const f64 *c = r[i].cpu_ms;
+        stage_name(name, sizeof name, names[i]);
+        log_stat("ЭТАПЫ CPU: %2u %s | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f", i, name, r[i].prep_ms, c[PASS_SHADOW],
+                 c[PASS_DEPTH], c[PASS_SCENE], c[PASS_ATMOS], c[PASS_STYLE], c[PASS_UI]);
+    }
     // GPU по проходам: где именно прибавилось на каждом этапе
     if (r[n - 1].gpu_ms < 0.0) return;
     log_stat("ЭТАПЫ GPU, мс: этап | тени | глубина | сцена | атмосфера | стиль | интерфейс | между кадрами");
@@ -167,7 +183,7 @@ void stats_frame(FrameStats *s, f64 now, u32 posed, bool swap_late)
     f64 z[PZ_COUNT];
     prof_take(z);
     f64 k = 1000.0 / s->frames;
-    char gpu[256], cpu[256];
+    char gpu[256], cpu[512];
     gpu_line(gpu, sizeof gpu, &st);
     cpu_line(cpu, sizeof cpu, z, k, &st, swap_late);
     log_stat("КАДР: %.2f мс, %.0f к/с | CPU: %s | %s", (now - s->t) * k, s->frames / (now - s->t), cpu, gpu);

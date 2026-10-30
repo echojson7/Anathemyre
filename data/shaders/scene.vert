@@ -5,9 +5,11 @@ layout(location = 2) in vec4 a_color;
 layout(location = 3) in uvec4 a_mat_bone;  // материал, кость, класс оттенка (1 кожа, 2 волосы)
 layout(location = 4) in uvec4 a_bones;    // до 4 костей; без потока скиннинга вес первой 0
 layout(location = 5) in vec4 a_weights;
+// Сетка из общего буфера (u_skinned 4): набор костей, морфов у сетки, её первая вершина, начало её морфов
+layout(location = 6) in uvec4 a_rec;
 
 layout(location = 0) uniform mat4 u_view_proj;
-layout(location = 17) uniform int u_skinned;   // 0 — статика, 1 — кости, 2 — экземпляры статики, 3 — рельеф
+layout(location = 17) uniform int u_skinned;   // 0 — статика, 1 — кости, 2 — экземпляры статики, 3 — рельеф, 4 — кости из общего буфера
 layout(location = 19) uniform int u_inst_base;
 layout(location = 20) uniform vec3 u_cam_pos;
 layout(location = 23) uniform float u_time;
@@ -63,14 +65,19 @@ void main()
     v_color = a_color;
     v_local = a_pos;
     v_tint = vec3(1.0);
-    if (u_skinned == 1) {
-        uint base = inst_pose[u_inst_base + gl_InstanceID] * 24u;
+    if (u_skinned == 1 || u_skinned == 4) {
+        // В общем буфере всё о сетке — в записи экземпляра, gl_VertexID считается от начала буфера
+        bool pool = u_skinned == 4;
+        uint base = (pool ? a_rec.x : inst_pose[u_inst_base + gl_InstanceID]) * 24u;
+        int morphs = pool ? int(a_rec.y) : u_morphs;
+        uint vid = pool ? uint(gl_VertexID) - a_rec.z : uint(gl_VertexID);
+        uint moff = pool ? a_rec.w : 0u;
         // Внешность экземпляра: последний слот набора костей (render.h, RENDER_LOOK_SLOT)
         mat4 look = bones[base + 23u];
-        for (int k = 0; k < u_morphs; k++) {
+        for (int k = 0; k < morphs; k++) {
             float w = k < 8 ? look[k >> 2][k & 3] : look[k - 6][3];  // 9-й и 10-й — в свободных look[2].w, look[3].w
             if (w == 0.0) continue;
-            uint o = (uint(gl_VertexID) * uint(u_morphs) + uint(k)) * 3u;
+            uint o = moff + (vid * uint(morphs) + uint(k)) * 3u;
             vec2 a = unpackSnorm2x16(morph[o]), b = unpackSnorm2x16(morph[o + 1u]), c = unpackSnorm2x16(morph[o + 2u]);
             p.xyz += w * MORPH_POS * vec3(a, b.x);
             n += w * MORPH_NRM * vec3(b.y, c);

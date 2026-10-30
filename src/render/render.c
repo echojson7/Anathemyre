@@ -36,6 +36,7 @@ enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2, SB_STATIC_INST = 3 };
 #define SKIN_STATIC 0
 #define SKIN_BONES 1
 #define SKIN_INSTANCED 2
+#define SKIN_POOL 4   // кости, сетка из общего буфера: набор костей и морфы — из записи экземпляра
 // Разных сеток среди экземпляров прохода (с учётом уровней детализации)
 #define MAX_INST_MESHES 256
 // Участки экземпляров (деревья, трава, камни) дальше этого от глаза не рисуются: их не видно в дымке
@@ -44,6 +45,26 @@ enum { SB_BONES = 0, SB_INST = 1, SB_MORPH = 2, SB_STATIC_INST = 3 };
 // Кости и списки экземпляров пишутся каждый кадр; кольцо буферов, чтобы не ждать GPU с прошлым кадром
 #define STREAM_FRAMES 3
 #define NO_POSE 0xFFFFFFFFu
+
+// Общий буфер сеток (gpu_mesh_upload_pooled): люди, их вещи и причёски всех уровней детализации (~450 тыс. вершин,
+// ~1.8 млн индексов, ~41 МБ морфов), оружие, факелы и метки
+#define POOL_VERTS (640u * 1024u)
+#define POOL_INDICES (2560u * 1024u)
+#define POOL_MORPH (12u * 1024u * 1024u)   // uint
+// Записей экземпляров и команд за кадр: тени, глубина, сцена и портреты
+#define POOL_RECS (4u * RENDER_MAX_ITEMS)
+
+// Запись экземпляра (атрибут a_rec в scene.vert): набор костей, морфов у сетки, её первая вершина и начало морфов
+typedef struct PoolRec {
+    u32 pose, morphs, vbase, moff;
+} PoolRec;
+
+// Команда glMultiDrawElementsIndirect
+typedef struct PoolCmd {
+    u32 count, instances, first_index;
+    i32 base_vertex;
+    u32 base_instance;
+} PoolCmd;
 
 // Экземпляр в проходе: сетка выбранного уровня детализации и набор костей
 typedef struct Inst {
@@ -122,6 +143,15 @@ static struct {
     const InstCluster *clusters;
     u32    cluster_count;
     V3     cam_eye;                  // для прореживания по дальности во всех проходах
+    // Общий буфер сеток и записи экземпляров с командами (кольцо кадров по POOL_RECS)
+    u32    pool_vao, pool_vbo, pool_skin, pool_ibo, pool_morph, pool_rec, pool_cmd;
+    u32    pool_verts, pool_indices;
+    size_t pool_words;
+    u32    used_recs, used_cmds;     // занято в кольце текущего кадра
+    bool   warned_pool, warned_recs;
+    bool   mdi;
+    f64    cpu_t[TIMER_MARKS];       // CPU в метках проходов
+    f64    stat_cpu[PASS_COUNT];
 } R;
 
 // Данные кадра на CPU: размер постоянный, выделяются один раз
@@ -426,6 +456,11 @@ void render_shutdown(void)
         if (R.light_buf[i]) glDeleteBuffers(1, &R.light_buf[i]);
     }
     if (R.static_inst_buf) glDeleteBuffers(1, &R.static_inst_buf);
+    if (R.pool_vao) {
+        glDeleteVertexArrays(1, &R.pool_vao);
+        u32 bufs[] = { R.pool_vbo, R.pool_skin, R.pool_ibo, R.pool_morph, R.pool_rec, R.pool_cmd };
+        glDeleteBuffers(ARRAY_COUNT(bufs), bufs);
+    }
     for (u32 i = 0; i < TIMER_FRAMES; i++)
         if (R.timer[i][0]) glDeleteQueries(TIMER_MARKS, R.timer[i]);
     u32 progs[] = { R.prog_scene, R.prog_shadow, R.prog_rays, R.prog_atmos, R.prog_style,
@@ -448,8 +483,12 @@ static u32 vertex_bones(const MeshBuilder *mb, u32 i, u32 *out)
     return n;
 }
 
+// Поля и границы сетки, общие для обычной загрузки и общего буфера
+static void mesh_finish(GpuMesh *gm, const MeshBuilder *mb);
+
 bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
 {
+    gm->pooled = false;
     glCreateBuffers(1, &gm->vbo);
     glCreateBuffers(1, &gm->ibo);
     glNamedBufferStorage(gm->vbo, (GLsizeiptr)(mb->vcount * sizeof(Vertex)), mb->v, 0);
@@ -485,6 +524,92 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
         glCreateBuffers(1, &gm->morph_buf);
         glNamedBufferStorage(gm->morph_buf, (GLsizeiptr)((size_t)mb->vcount * gm->morph_count * 3 * sizeof(u32)), mb->morph, 0);
     }
+    mesh_finish(gm, mb);
+    return true;
+}
+
+// Общий буфер заводится при первой сетке. Записи экземпляров — вершинный атрибут 6 с делителем 1:
+// baseInstance команды указывает на первую запись её экземпляров
+static bool pool_init(void)
+{
+    if (R.pool_vao) return true;
+    glCreateBuffers(1, &R.pool_vbo);
+    glCreateBuffers(1, &R.pool_skin);
+    glCreateBuffers(1, &R.pool_ibo);
+    glCreateBuffers(1, &R.pool_morph);
+    glCreateBuffers(1, &R.pool_rec);
+    glCreateBuffers(1, &R.pool_cmd);
+    glNamedBufferStorage(R.pool_vbo, (GLsizeiptr)(POOL_VERTS * sizeof(Vertex)), NULL, GL_DYNAMIC_STORAGE_BIT);
+    glNamedBufferStorage(R.pool_skin, (GLsizeiptr)(POOL_VERTS * sizeof(VertexSkin)), NULL, GL_DYNAMIC_STORAGE_BIT);
+    glNamedBufferStorage(R.pool_ibo, (GLsizeiptr)(POOL_INDICES * sizeof(u32)), NULL, GL_DYNAMIC_STORAGE_BIT);
+    glNamedBufferStorage(R.pool_morph, (GLsizeiptr)(POOL_MORPH * sizeof(u32)), NULL, GL_DYNAMIC_STORAGE_BIT);
+    glNamedBufferStorage(R.pool_rec, (GLsizeiptr)(STREAM_FRAMES * POOL_RECS * sizeof(PoolRec)), NULL, GL_DYNAMIC_STORAGE_BIT);
+    glNamedBufferStorage(R.pool_cmd, (GLsizeiptr)(STREAM_FRAMES * POOL_RECS * sizeof(PoolCmd)), NULL, GL_DYNAMIC_STORAGE_BIT);
+    u32 vao;
+    glCreateVertexArrays(1, &vao);
+    glVertexArrayVertexBuffer(vao, 0, R.pool_vbo, 0, sizeof(Vertex));
+    glVertexArrayVertexBuffer(vao, 1, R.pool_skin, 0, sizeof(VertexSkin));
+    glVertexArrayVertexBuffer(vao, 2, R.pool_rec, 0, sizeof(PoolRec));
+    glVertexArrayBindingDivisor(vao, 2, 1);
+    glVertexArrayElementBuffer(vao, R.pool_ibo);
+    for (u32 i = 0; i <= 6; i++) glEnableVertexArrayAttrib(vao, i);
+    glVertexArrayAttribFormat(vao, 0, 3, GL_FLOAT, GL_FALSE, offsetof(Vertex, pos));
+    glVertexArrayAttribFormat(vao, 1, 3, GL_FLOAT, GL_FALSE, offsetof(Vertex, nrm));
+    glVertexArrayAttribFormat(vao, 2, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(Vertex, color));
+    glVertexArrayAttribIFormat(vao, 3, 4, GL_UNSIGNED_BYTE, offsetof(Vertex, mat));
+    glVertexArrayAttribIFormat(vao, 4, 4, GL_UNSIGNED_BYTE, offsetof(VertexSkin, bone));
+    glVertexArrayAttribFormat(vao, 5, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(VertexSkin, weight));
+    glVertexArrayAttribIFormat(vao, 6, 4, GL_UNSIGNED_INT, 0);
+    for (u32 i = 0; i < 4; i++) glVertexArrayAttribBinding(vao, i, 0);
+    glVertexArrayAttribBinding(vao, 4, 1);
+    glVertexArrayAttribBinding(vao, 5, 1);
+    glVertexArrayAttribBinding(vao, 6, 2);
+    R.pool_vao = vao;
+    return true;
+}
+
+bool gpu_mesh_upload_pooled(GpuMesh *gm, const MeshBuilder *mb)
+{
+    u32 morphs = mb->morph ? mb->morph_count : 0;
+    size_t mwords = (size_t)mb->vcount * morphs * 3;
+    if (!pool_init() || R.pool_verts + mb->vcount > POOL_VERTS || R.pool_indices + mb->icount > POOL_INDICES ||
+        R.pool_words + mwords > POOL_MORPH) {
+        if (!R.warned_pool) log_error("РЕНДЕР: общий буфер сеток полон, дальше сетки по отдельности");
+        R.warned_pool = true;
+        return gpu_mesh_upload(gm, mb);
+    }
+    memset(gm, 0, sizeof *gm);
+    gm->pooled = true;
+    gm->pool_vbase = R.pool_verts;
+    gm->pool_ibase = R.pool_indices;
+    gm->pool_moff = (u32)R.pool_words;
+    glNamedBufferSubData(R.pool_vbo, (GLintptr)(R.pool_verts * sizeof(Vertex)), (GLsizeiptr)(mb->vcount * sizeof(Vertex)), mb->v);
+    // Жёстким сеткам — нулевые веса: в шейдере это жёсткий скиннинг, как без потока весов
+    static const VertexSkin zero[1024];
+    for (u32 i = 0; i < mb->vcount; i += ARRAY_COUNT(zero)) {
+        u32 k = MIN(mb->vcount - i, (u32)ARRAY_COUNT(zero));
+        glNamedBufferSubData(R.pool_skin, (GLintptr)((R.pool_verts + i) * sizeof(VertexSkin)), (GLsizeiptr)(k * sizeof(VertexSkin)),
+                             mb->skin ? mb->skin + i : zero);
+    }
+    glNamedBufferSubData(R.pool_ibo, (GLintptr)(R.pool_indices * sizeof(u32)), (GLsizeiptr)(mb->icount * sizeof(u32)), mb->idx);
+    if (mwords)
+        glNamedBufferSubData(R.pool_morph, (GLintptr)(R.pool_words * sizeof(u32)), (GLsizeiptr)(mwords * sizeof(u32)), mb->morph);
+    R.pool_verts += mb->vcount;
+    R.pool_indices += mb->icount;
+    R.pool_words += mwords;
+    gm->morph_count = morphs;
+    mesh_finish(gm, mb);
+    return true;
+}
+
+void render_pool_log(void)
+{
+    log_info("РЕНДЕР: общий буфер сеток: вершин %u из %u, индексов %u из %u, морфов %.1f из %.0f МБ", R.pool_verts, POOL_VERTS,
+             R.pool_indices, POOL_INDICES, (f64)R.pool_words * 4.0 / 1048576.0, (f64)POOL_MORPH * 4.0 / 1048576.0);
+}
+
+static void mesh_finish(GpuMesh *gm, const MeshBuilder *mb)
+{
     gm->index_count = mb->icount;
     gm->lod_next = NULL;
     gm->lod_px = 0.0f;
@@ -530,7 +655,6 @@ bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
     }
     memcpy(gm->bone_bound, sph, sizeof gm->bone_bound);
     gm->bound = sph[RENDER_MAX_BONES];
-    return true;
 }
 
 void gpu_mesh_set_lod(GpuMesh *fine, const GpuMesh *coarse, f32 min_px)
@@ -589,6 +713,12 @@ static void mark(u32 i)
     glQueryCounter(R.timer[R.timer_slot][i], GL_TIMESTAMP);
 }
 
+// Время CPU в той же метке: сколько отправка вызовов прохода заняла у процессора
+static void pass_mark(u32 i)
+{
+    R.cpu_t[i] = time_now();
+}
+
 void render_take_stats(RenderStats *out)
 {
     memset(out, 0, sizeof *out);
@@ -612,6 +742,8 @@ void render_take_stats(RenderStats *out)
     }
     out->items = R.stat_items;
     out->prep_ms = R.stat_prep * 1000.0 * k;
+    for (u32 p = 0; p < PASS_COUNT; p++) out->cpu_ms[p] = R.stat_cpu[p] * 1000.0 * k;
+    memset(R.stat_cpu, 0, sizeof R.stat_cpu);
     out->poses = R.stat_poses * k;
     R.stat_prep = R.stat_poses = 0;
     out->vrs = R.stat_vrs;
@@ -788,20 +920,92 @@ static u32 gather(const DrawItem *items, u32 count, const PassView *pv, bool sha
     return n;
 }
 
-// Статика — по вызову на сетку, скелетные — один вызов на все экземпляры одной сетки
+// Подряд идущие экземпляры одной сетки: статика по одному, скелетные — все сразу
+typedef struct InstRun {
+    u32 first, end;
+    i32 cmd;   // команда общего буфера, -1 — свой вызов
+} InstRun;
+
+// Сетки из общего буфера с костями — команды одного glMultiDrawElementsIndirect (порядок вызовов прежний:
+// при равной глубине в проходе сцены побеждает последний). Остальное — по вызову на сетку,
+// скелетные — один вызов на все экземпляры одной сетки
 static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
 {
-    u32 draws = 0;
-    f64 tris = 0;
+    static InstRun run[RENDER_MAX_ITEMS];
+    static PoolCmd cmd[RENDER_MAX_ITEMS];
+    static PoolRec rec[RENDER_MAX_ITEMS];
+    u32 nrun = 0, nc = 0, nr = 0;
     for (u32 i = 0; i < n;) {
         const GpuMesh *m = in[i].mesh;
         u32 j = i + 1;
         if (in[i].pose != NO_POSE)
             while (j < n && in[j].mesh == m && in[j].pose != NO_POSE) j++;
-        glBindVertexArray(m->vao);
+        InstRun *r = &run[nrun++];
+        *r = (InstRun){ i, j, -1 };
+        if (m->pooled && in[i].pose != NO_POSE) {
+            if (R.used_recs + nr + (j - i) <= POOL_RECS) {
+                r->cmd = (i32)nc;
+                cmd[nc++] = (PoolCmd){ m->index_count, j - i, m->pool_ibase, (i32)m->pool_vbase, R.used_recs + nr };
+                for (u32 k = i; k < j; k++) rec[nr++] = (PoolRec){ in[k].pose, m->morph_count, m->pool_vbase, m->pool_moff };
+            } else {
+                if (!R.warned_recs) log_error("РЕНДЕР: записей экземпляров больше %u за кадр, лишние не рисуются", POOL_RECS);
+                R.warned_recs = true;
+                nrun--;
+            }
+        }
+        i = j;
+    }
+    // Записи и команды прохода — в кольцо кадра одним куском
+    size_t ring = (size_t)R.stream * POOL_RECS;
+    u32 cmd0 = R.used_cmds;
+    if (nc) {
+        glNamedBufferSubData(R.pool_rec, (GLintptr)((ring + R.used_recs) * sizeof(PoolRec)), (GLsizeiptr)(nr * sizeof(PoolRec)), rec);
+        glNamedBufferSubData(R.pool_cmd, (GLintptr)((ring + cmd0) * sizeof(PoolCmd)), (GLsizeiptr)(nc * sizeof(PoolCmd)), cmd);
+        R.used_recs += nr;
+        R.used_cmds += nc;
+    }
+
+    u32 draws = 0;
+    f64 tris = 0;
+    bool pool_on = false;   // привязаны VAO и морфы общего буфера
+    for (u32 q = 0; q < nrun;) {
+        const InstRun *r = &run[q];
+        const GpuMesh *m = in[r->first].mesh;
+        if (r->cmd >= 0) {
+            u32 q2 = q + 1;
+            while (q2 < nrun && run[q2].cmd >= 0) q2++;
+            if (!pool_on) {
+                glBindVertexArray(R.pool_vao);
+                glUniform1i(U_SKINNED, SKIN_POOL);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_MORPH, R.pool_morph);
+                pool_on = true;
+            }
+            u32 c0 = (u32)r->cmd, c1 = (u32)run[q2 - 1].cmd + 1;
+            if (R.mdi) {
+                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, (const void *)((ring + cmd0 + c0) * sizeof(PoolCmd)),
+                                            (GLsizei)(c1 - c0), 0);
+                draws++;
+            } else {
+                for (u32 c = c0; c < c1; c++)
+                    glDrawElementsInstancedBaseVertexBaseInstance(GL_TRIANGLES, (GLsizei)cmd[c].count, GL_UNSIGNED_INT,
+                                                                  (const void *)((size_t)cmd[c].first_index * sizeof(u32)),
+                                                                  (GLsizei)cmd[c].instances, cmd[c].base_vertex, cmd[c].base_instance);
+                draws += c1 - c0;
+            }
+            for (u32 c = c0; c < c1; c++) tris += (f64)(cmd[c].count / 3) * cmd[c].instances;
+            q = q2;
+            continue;
+        }
+        u32 i = r->first, j = r->end;
+        pool_on = false;
+        glBindVertexArray(m->pooled ? R.pool_vao : m->vao);
         if (in[i].pose == NO_POSE) {
             glUniform1i(U_SKINNED, SKIN_STATIC);
-            glDrawElements(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT, NULL);
+            if (m->pooled)
+                glDrawElementsBaseVertex(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT,
+                                         (const void *)((size_t)m->pool_ibase * sizeof(u32)), (GLint)m->pool_vbase);
+            else
+                glDrawElements(GL_TRIANGLES, (GLsizei)m->index_count, GL_UNSIGNED_INT, NULL);
         } else {
             glUniform1i(U_SKINNED, SKIN_BONES);
             glUniform1i(U_INST_BASE, (GLint)(base + i));
@@ -811,7 +1015,7 @@ static void draw_insts(const Inst *in, u32 n, u32 base, u32 pass)
         }
         draws++;
         tris += (f64)(m->index_count / 3) * (f64)(j - i);
-        i = j;
+        q++;
     }
     if (pass >= 2) return;  // портреты и проход глубины в счётчики кадра не идут
     R.stat_draws[pass] += draws;
@@ -1107,7 +1311,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     }
     f64 t_prep = time_now();
     R.stream = (R.stream + 1) % STREAM_FRAMES;
-    R.used_poses = R.used_insts = 0;
+    R.used_poses = R.used_insts = R.used_recs = R.used_cmds = 0;
+    R.mdi = rs->mdi;
     stream_poses(items, count);
     R.stat_poses += R.used_poses;
     // Экземпляры в тенях берут уровень детализации грубее: тень мельче деталей
@@ -1132,7 +1337,13 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_BONES, R.bone_buf[R.stream]);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_INST, R.inst_buf[R.stream]);
     if (R.static_inst_buf) glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SB_STATIC_INST, R.static_inst_buf);
+    if (R.pool_vao) {
+        // Записи экземпляров и команды кадра — его часть кольца
+        glVertexArrayVertexBuffer(R.pool_vao, 2, R.pool_rec, (GLintptr)((size_t)R.stream * POOL_RECS * sizeof(PoolRec)), sizeof(PoolRec));
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, R.pool_cmd);
+    }
     R.stat_frames++;
+    pass_mark(0);
     R.stat_items = count;
 
     // 1. Тени
@@ -1159,6 +1370,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         glDisable(GL_POLYGON_OFFSET_FILL);
         glDisable(GL_DEPTH_CLAMP);
     }
+    pass_mark(1);
     if (timing) mark(1);
 
     // 2. Сцена в низком разрешении
@@ -1227,6 +1439,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         glBindShadingRateImageNV(R.rate.color);
         glEnable(GL_SHADING_RATE_IMAGE_NV);
     }
+    pass_mark(2);
     if (timing) mark(2);
     glUseProgram(R.prog_scene);
     glUniform1i(U_NOISE_TEX, rs->noise_tex ? 1 : 0);
@@ -1246,6 +1459,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     draw_terrain(&scene_view, 1);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
+    pass_mark(3);
     if (timing) mark(3);
 
     // 3. Атмосфера. Сначала объёмный свет в половинном разрешении, затем небо, туман и AO.
@@ -1305,6 +1519,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         glDrawArrays(GL_TRIANGLES, 0, 3);
         if (vrs) glDisable(GL_SHADING_RATE_IMAGE_NV);
     }
+    pass_mark(4);
     if (timing) mark(4);
 
     // 4. Фильтр: виньетка, зерно, сканлайны, аберрация; сразу в окно
@@ -1317,11 +1532,17 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     glBindTextureUnit(1, R.scene.depth);
     glBindTextureUnit(2, R.src_map.color);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+    pass_mark(5);
     if (timing) mark(5);
 }
 
 void render_frame_end(void)
 {
+    if (R.cpu_t[0] > 0.0) {
+        pass_mark(6);
+        for (u32 p = 0; p < PASS_COUNT; p++) R.stat_cpu[p] += R.cpu_t[p + 1] - R.cpu_t[p];
+        R.cpu_t[0] = 0.0;
+    }
     if (R.timing) {
         mark(6);
         R.timer_pending[R.timer_slot] = true;
