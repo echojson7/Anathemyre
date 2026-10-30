@@ -24,7 +24,7 @@ static const MemberDef g_start[] = {
       { GOODS("water", 1), GOODS("rusk", 6), GOODS("bandage", 4), GOODS("token", 1) } },
     { "НИКАНДР", 0, 1, Q_WORN, "bagor", { "quilt", "bucket", "pants" }, { "mitts", "belt" },
       { GOODS("water", 1), GOODS("meat", 3), GOODS("scrap", 2) } },
-    { "АППИЙ", 2, 0, Q_JUNK, "armatura", { "rags", "pants" }, { "boots" },
+    { "АППИЙ", 2, 0, Q_JUNK, "sekach", { "rags", "pants" }, { "boots" },
       { GOODS("fuel", 1), GOODS("part", 1), GOODS("rusk", 3) } },
     { "КИНСЛАВА", 1, 2, Q_MASTER, "sekach", { "quilt", "plate", "greaves", "pants" }, { "boots", "mitts", "pack" },
       { GOODS("water", 1), GOODS("bandage", 6), GOODS("meat", 5), { IK_WEAPON, "ressora", 1 } } },

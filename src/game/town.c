@@ -1079,7 +1079,7 @@ void town_folk_add(People *p, const Town *t, Rng *r, u32 walkers, u32 variants, 
         const char *role = c->role ? c->role : "ПРОХОЖИЙ";
         Rng sr;
         rng_seed(&sr, 0x70C0u + k, 93);
-        u8 weapon = def_weapon(p->variant[i] % 2 ? "armatura" : "ressora");
+        u8 weapon = def_weapon(p->variant[i] % 2 ? "sekach" : "ressora");
         sheet_random(c, &sr, name_next(p->variant[i] % BODY_KIND_COUNT == BODY_FEMALE), armed ? 1 : 0, weapon);
         if (!armed) {
             Item old;

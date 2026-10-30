@@ -166,6 +166,9 @@ void anim_bake_hit_guard(void);
 static inline u32 weapon_look(u8 quality) { return quality < WEAPON_LOOKS ? quality : WEAPON_LOOKS - 1; }
 static inline u32 weapon_mesh(u8 weapon, u8 quality) { return (u32)weapon * WEAPON_LOOKS + weapon_look(quality); }
 void weapon_build(MeshBuilder *mb, u8 weapon, u8 look, u8 bone);
+// Готовые формы из Blender (model в описании): data/meshes/weapons/<model>.mesh, один раз до мира.
+// Нет файла — оружие собирается из частей описания
+void weapon_models_load(Arena *perm, const char *data_dir);
 // То же неподвижной деталью сцены (стойки): сразу в мировых координатах, без кости
 void weapon_build_xf(MeshBuilder *mb, u8 weapon, u8 look, M4 xf);
 // Факел: древко с обмоткой (flame = false) или пламя отдельной сеткой; слот CHAR_BONE_TORCH
