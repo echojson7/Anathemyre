@@ -39,12 +39,7 @@ void combat_events_done(CombatWorld *w)
 
 void combat_set_state(CombatWorld *w, u32 i, u8 s, f32 dur)
 {
-    // Как ляжет: сбитый ударом — на спину, ползущий — ничком, упавший без сознания стоя — как придётся
-    u8 was = w->state[i];
-    if (s == FS_KNOCKED) w->prone[i] = 0;
-    else if (s == FS_CRAWL) w->prone[i] = 1;
-    else if ((s == FS_UNCONSCIOUS || s == FS_DEAD) && s != was && !fs_lying(was) && was != FS_SURRENDER)
-        w->prone[i] = combat_roll(w, i, 0, 131) < 0.5f;
+    // Как ляжет (prone), решают go_down, begin_getup и check_body до смены состояния
     w->state[i] = s;
     w->timer[i] = dur;
     w->dur[i] = dur;
@@ -197,13 +192,52 @@ static void enter_ready(CombatWorld *w, u32 i)
     combat_set_state(w, i, FS_READY, 0.0f);
 }
 
+// Сбит с ног: падение, подъём со спины и ничком, подбор оружия, с. Падать помогает тяжесть, вставать
+// приходится через силу: подъём вдвое дольше падения. От навыков не зависят
+#define KNOCKED_S 1.1f
+#define GETUP_BACK_S 2.2f
+#define GETUP_FRONT_S 2.0f
+#define PICKUP_S 0.9f
+
+static bool legs_hold(const CombatWorld *w, u32 i)
+{
+    return part_ratio(w, i, PART_LEG_L) > 0.0f && part_ratio(w, i, PART_LEG_R) > 0.0f;
+}
+
+// Пора вставать: на перебитых ногах не встаёт вовсе, а сразу ползёт
+static void begin_getup(CombatWorld *w, u32 i)
+{
+    if (!legs_hold(w, i)) {
+        w->prone[i] = LIE_FRONT;
+        combat_set_state(w, i, FS_CRAWL, 0.0f);
+        return;
+    }
+    combat_set_state(w, i, FS_GETUP, w->prone[i] == LIE_FRONT ? GETUP_FRONT_S : GETUP_BACK_S);
+    combat_event(w, EV_GETUP, i, i);
+}
+
+// Валится с ног: ничком — если толкнуло в спину или (без сознания) с броском; убитый ударом сбоку
+// остаётся на боку. Уже лежащий лежит как лежал
+static void go_down(CombatWorld *w, u32 i, u8 s, f32 dur, f32 front_p, u32 salt)
+{
+    if (!fs_lying(w->state[i])) {
+        u8 f = w->fall[i];
+        if (s == FS_DEAD && w->state[i] != FS_SURRENDER && (f == FALL_LEFT || f == FALL_RIGHT)) w->prone[i] = f == FALL_LEFT ? LIE_SIDE_L : LIE_SIDE_R;
+        else w->prone[i] = f == FALL_FRONT || combat_roll(w, i, 0, salt) < front_p ? LIE_FRONT : LIE_BACK;
+    }
+    combat_set_state(w, i, s, dur);
+}
+
 // После подъёма или пробуждения: может ли снова драться
 static void after_getup(CombatWorld *w, u32 i)
 {
     if (w->disarmed[i]) {
         combat_set_state(w, i, FS_SURRENDER, 0.0f);
-    } else if (part_ratio(w, i, PART_LEG_L) <= 0.0f || part_ratio(w, i, PART_LEG_R) <= 0.0f) {
+    } else if (!legs_hold(w, i)) {
+        w->prone[i] = LIE_FRONT;
         combat_set_state(w, i, FS_CRAWL, 0.0f);
+    } else if (w->loose[i]) {
+        combat_set_state(w, i, FS_PICKUP, PICKUP_S);
     } else {
         enter_ready(w, i);
     }
@@ -217,19 +251,22 @@ static void check_body(CombatWorld *w, u32 i)
     for (u32 p = 0; p <= PART_STOMACH; p++) {
         f32 mx = g_part_hp[p];
         if (w->hp[p][i] <= -mx) {
-            combat_set_state(w, i, FS_DEAD, 0.0f);
+            go_down(w, i, FS_DEAD, 0.0f, 0.0f, 0);
             combat_event(w, EV_DEATH, i, i);
             return;
         }
         if (w->hp[p][i] <= -(tough / 100.0f * 0.5f) * mx) ko = true;
     }
     if (w->blood[i] <= 0.0f) {
+        // Истёк кровью: оседает и валится набок, не ничком
+        if (w->state[i] == FS_SURRENDER) w->prone[i] = LIE_BACK;
+        else if (!fs_lying(w->state[i])) w->prone[i] = combat_roll(w, i, 0, 37) < 0.5f ? LIE_SIDE_L : LIE_SIDE_R;
         combat_set_state(w, i, FS_DEAD, 0.0f);
         combat_event(w, EV_DEATH, i, i);
         return;
     }
     if (ko && w->state[i] != FS_UNCONSCIOUS) {
-        combat_set_state(w, i, FS_UNCONSCIOUS, 0.0f);
+        go_down(w, i, FS_UNCONSCIOUS, 0.0f, 0.4f, 23);
         combat_event(w, EV_KO, i, i);
         return;
     }
@@ -242,8 +279,8 @@ static void check_body(CombatWorld *w, u32 i)
             combat_event(w, EV_SURRENDER, i, i);
         }
     }
-    bool legs_ok = part_ratio(w, i, PART_LEG_L) > 0.0f && part_ratio(w, i, PART_LEG_R) > 0.0f;
-    if (!legs_ok && !fs_lying(w->state[i])) {
+    if (!legs_hold(w, i) && !fs_lying(w->state[i])) {
+        w->prone[i] = LIE_FRONT;
         combat_set_state(w, i, FS_CRAWL, 0.0f);
         combat_event(w, EV_FALL, i, i);
     }
@@ -278,7 +315,7 @@ static u8 apply_damage(CombatWorld *w, u32 t, u32 part, f32 cut, f32 blunt, f32 
     bool standing = !fs_lying(s) && !fs_out(s);
     // Резкий скачок шока валит с ног; стойкость поднимает порог
     if (standing && dshock > 45.0f * (1.0f + sk(w, t, SK_TOUGHNESS) / 100.0f)) {
-        combat_set_state(w, t, FS_KNOCKED, 0.8f);
+        go_down(w, t, FS_KNOCKED, KNOCKED_S, 0.0f, 0);
         combat_event(w, EV_FALL, t, t);
     } else if (standing && blunt > 20.0f * (1.0f + sk(w, t, SK_TOUGHNESS) / 100.0f)) {
         combat_set_state(w, t, FS_STAGGER, (0.4f + 0.6f * combat_roll(w, t, 0, 21)) * (1.0f - sk(w, t, SK_TOUGHNESS) / 200.0f));
@@ -604,6 +641,10 @@ static void resolve_strike(CombatWorld *w, u32 i)
         gain(w, t, SK_DEFENSE, 0.03f, attack_eff(w, i));
         combat_event(w, EV_HIT, i, t);
         u32 hit_ev = w->last_ev;
+        // Куда толкает удар: от бьющего; спереди — назад, со спины — вперёд, сбоку — вбок
+        f32 ha = angle_to(w, t, i);
+        f32 ah = fabsf(ha);
+        w->fall[t] = ah < 0.9f ? FALL_BACK : ah > 2.25f ? FALL_FRONT : ha > 0.0f ? FALL_RIGHT : FALL_LEFT;
         u8 flags = apply_damage(w, t, part, cut, blunt, pierce);
         CombatEvent *e = &w->ev[hit_ev];
         e->part = (u8)part;
@@ -624,7 +665,10 @@ static void resolve_strike(CombatWorld *w, u32 i)
                 f32 push = 0.5f + combat_roll(w, i, t, 70);
                 w->x[t] += dx / l * push;
                 w->z[t] += dz / l * push;
-                combat_set_state(w, t, FS_KNOCKED, 0.8f);
+                go_down(w, t, FS_KNOCKED, KNOCKED_S, 0.0f, 0);
+                // Сильный удар выбивает оружие из рук: чем больше перевес силы, тем вернее
+                f32 p_drop = clampf(0.15f + 0.3f * (force / resist - 1.0f), 0.15f, 0.5f) * (1.0f - sk(w, t, SK_STRENGTH) / 200.0f);
+                if (!w->disarmed[t] && combat_roll(w, t, i, 71) < p_drop) w->loose[t] = 1;
                 combat_event(w, EV_KNOCKDOWN, i, t);
             }
         }
@@ -655,8 +699,7 @@ static void tick_body(CombatWorld *w, u32 i)
         }
         w->blood[i] = fminf(w->blood[i] + 0.1f * dt, w->blood_max[i]);
         if (vitals_ok && w->blood[i] > 0.55f * w->blood_max[i]) {
-            combat_set_state(w, i, FS_GETUP, 1.5f * (1.0f - sk(w, i, SK_TOUGHNESS) / 200.0f));
-            combat_event(w, EV_GETUP, i, i);
+            begin_getup(w, i);
         }
     }
     check_body(w, i);
@@ -686,10 +729,14 @@ static void tick_state(CombatWorld *w, u32 i, u32 *strikes, u32 *ns)
         break;
     }
     case FS_DOWN:
-        combat_set_state(w, i, FS_GETUP, 1.5f * (1.0f - sk(w, i, SK_TOUGHNESS) / 200.0f));
+        begin_getup(w, i);
         break;
     case FS_GETUP:
         after_getup(w, i);
+        break;
+    case FS_PICKUP:
+        w->loose[i] = 0;
+        enter_ready(w, i);
         break;
     default:
         enter_ready(w, i);
@@ -739,6 +786,7 @@ static bool pinned(const CombatWorld *w, u32 i)
 // Тело на земле: отрезок вдоль взгляда от ног до головы. На спину падают назад, ничком — вперёд
 #define LIE_FEET 0.15f   // ноги от точки тела, м
 #define LIE_HEAD 1.35f   // голова от точки тела, м
+#define LIE_FEET_SIDE 0.6f // на боку ноги дальше: тело сдвинуто в сторону падения
 #define LIE_R    0.42f   // стоящий держится от оси лежащего не ближе
 #define LIE_STEP 0.06f   // за тик отходит от лежащего не больше (1.2 м/с)
 
@@ -790,10 +838,15 @@ static void around_bodies(CombatWorld *w)
     const f32 len = LIE_FEET + LIE_HEAD, reach = 0.5f * len + LIE_R;
     for (u32 j = 0; j < w->count; j++) {
         if (!on_ground(w, j)) continue;
-        // Ось тела от ног к голове
-        f32 dir = w->prone[j] ? 1.0f : -1.0f;
-        f32 ux = sinf(w->heading[j]) * dir, uz = cosf(w->heading[j]) * dir;
-        f32 ax = w->x[j] - ux * LIE_FEET, az = w->z[j] - uz * LIE_FEET;
+        // Ось тела от ног к голове: на спине голова сзади, ничком — впереди, на боку — поперёк, в сторону падения
+        f32 sh = sinf(w->heading[j]), ch = cosf(w->heading[j]), ux, uz, feet = LIE_FEET;
+        switch (w->prone[j]) {
+        case LIE_FRONT: ux = sh, uz = ch; break;
+        case LIE_SIDE_L: ux = ch, uz = -sh, feet = LIE_FEET_SIDE; break;
+        case LIE_SIDE_R: ux = -ch, uz = sh, feet = LIE_FEET_SIDE; break;
+        default: ux = -sh, uz = -ch; break;
+        }
+        f32 ax = w->x[j] - ux * feet, az = w->z[j] - uz * feet;
         f32 mx = ax + ux * 0.5f * len, mz = az + uz * 0.5f * len;
         u32 nn = combat_near(w, mx, mz, reach, TAGS_FIGHTING, near);
         for (u32 q = 0; q < nn; q++) {
@@ -900,7 +953,7 @@ void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap)
     B(idle);
     for (u32 p = 0; p < PART_COUNT; p++) w->hp[p] = ARENA_PUSH_ARRAY(a, f32, cap);
     F(blood); F(blood_max); F(bleed); F(shock); F(morale); F(morale_base); F(mass); F(height);
-    B(fracture); B(severed); B(disarmed); B(prone);
+    B(fracture); B(severed); B(disarmed); B(fall); B(prone); B(loose);
     for (u32 s = 0; s < SK_COUNT; s++) w->skill[s] = ARENA_PUSH_ARRAY(a, f32, cap);
     B(weapon); B(weapon_q);
     for (u32 s = 0; s < SLOT_COUNT; s++) w->armor[s] = ARENA_PUSH_ARRAY(a, u8, cap);
@@ -929,7 +982,7 @@ void combat_ser(Ser *s, CombatWorld *w)
     C(timer); C(dur); C(pause); C(target); C(since_hit); C(mvx); C(mvz); C(idle); C(order);
     for (u32 p = 0; p < PART_COUNT; p++) C(hp[p]);
     C(blood); C(blood_max); C(bleed); C(shock); C(morale); C(morale_base); C(mass); C(height);
-    C(fracture); C(severed); C(disarmed); C(prone);
+    C(fracture); C(severed); C(disarmed); C(fall); C(prone); C(loose);
     for (u32 k = 0; k < SK_COUNT; k++) C(skill[k]);
     C(weapon); C(weapon_q);
     for (u32 k = 0; k < SLOT_COUNT; k++) C(armor[k]);
@@ -1012,7 +1065,9 @@ void combat_load(CombatWorld *w, u32 i, const FighterDesc *d)
     w->fracture[i] = fresh ? 0 : d->fracture;
     w->severed[i] = fresh ? 0 : d->severed;
     w->disarmed[i] = 0;
+    w->fall[i] = FALL_BACK;
     w->prone[i] = 0;
+    w->loose[i] = 0;
     for (u32 s = 0; s < SK_COUNT; s++) w->skill[s][i] = d->skill[s];
     w->weapon[i] = d->weapon;
     w->weapon_q[i] = d->weapon_q;
