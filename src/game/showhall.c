@@ -54,11 +54,12 @@
 #define SH_MOVE_PRE 2.5f // стоит перед движением
 #define SH_WAIT   1.5f   // ходок стоит у края галереи
 #define SH_NEAR   60.0f  // фигуры считаются, если глаз ближе, м
-// Сроки клипов всем телом — те же, что в бою: падение FS_KNOCKED 0.8 с и подъём FS_GETUP 1.5 с
-// (sim/combat.c), оседание COLLAPSE_S 0.9 с (fight_anim.c). Тред падений вынесет их в общие константы
-#define SH_FALL_S     0.8f
-#define SH_GETUP_S    1.5f
-#define SH_COLLAPSE_S 0.9f
+// Сроки клипов всем телом — те же, что в бою: падение KNOCKED_S, подъём со спины GETUP_BACK_S и ничком
+// GETUP_FRONT_S (sim/combat.c), оседание COLLAPSE_S (fight_anim.c)
+#define SH_FALL_S     1.1f
+#define SH_GETUP_S    2.2f
+#define SH_GETUP_FRONT_S 2.0f
+#define SH_COLLAPSE_S 1.1f
 #define SH_LIE_S      3.0f
 #define SH_STAND_S    3.0f
 
@@ -397,7 +398,9 @@ static void clip_cycle(Exhibit *e, f32 T, CharAction *a)
                                    { "СТОИТ", CLIP_NONE, SH_STAND_S }, { "ПАДАЕТ", CLIP_FALL, SH_FALL_S } };
     static const Step faint[4] = { { "СТОИТ", CLIP_NONE, SH_STAND_S }, { "ОСЕДАЕТ", CLIP_COLLAPSE, SH_COLLAPSE_S },
                                    { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S }, { "ВСТАЁТ", CLIP_GETUP, SH_GETUP_S } };
-    const Step *st = e->what == CL_KNOCK ? knock : faint;
+    static const Step faint_down[4] = { { "СТОИТ", CLIP_NONE, SH_STAND_S }, { "ОСЕДАЕТ", CLIP_COLLAPSE, SH_COLLAPSE_S },
+                                        { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S }, { "ВСТАЁТ", CLIP_GETUP, SH_GETUP_FRONT_S } };
+    const Step *st = e->what == CL_KNOCK ? knock : e->what == CL_FAINT_DOWN ? faint_down : faint;
     f32 cyc = st[0].s + st[1].s + st[2].s + st[3].s, lt = wrapf(T + e->shift, cyc);
     u32 k = 0;
     while (k < 3 && lt >= st[k].s) lt -= st[k++].s;

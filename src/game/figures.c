@@ -188,7 +188,7 @@ static void pose_job(void *ctx, u32 b, u32 e)
 }
 
 // Человек i в бою: поза от поля боя, сложение и оружие — от владельца тела. true — оружие выпало (drop)
-static bool fight_pose(const Field *fd, u32 i, PoseJob *j, M4 *drop)
+static bool fight_pose(const Field *fd, u32 i, PoseJob *j, M4 *drop, const f32 slope[2])
 {
     CharPose walk = j->p;
     V3 dp;
@@ -200,7 +200,11 @@ static bool fight_pose(const Field *fd, u32 i, PoseJob *j, M4 *drop)
     j->p.width = walk.width;
     j->p.joints = walk.joints;
     if (!walk.weapon) j->p.weapon = 0;
+    j->p.slope_x = slope[0];
+    j->p.slope_z = slope[1];
     j->fight = true;
+    // Выпавшее оружие лежит на склоне, а не на высоте ног
+    dp.y += slope[0] * (dp.x - walk.pos.x) + slope[1] * (dp.z - walk.pos.z);
     if (dropped) weapon_ground_pose(dp, dy, drop);
     return dropped;
 }
@@ -252,6 +256,8 @@ void figures_view(Figures *f, const People *p, const Field *fd, f32 alpha, Groun
             f->view[i] = *b;
             f->view[i].pos = v3(x, ground(x, z), z);
             f->view[i].heading = f->view[i].move_yaw = h;
+            f->slope[i][0] = (ground(x + 0.4f, z) - ground(x - 0.4f, z)) * 1.25f;
+            f->slope[i][1] = (ground(x, z + 0.4f) - ground(x, z - 0.4f)) * 1.25f;
         } else {
             player_lerp(&p->last[i], b, alpha, &f->view[i]);
         }
@@ -296,7 +302,7 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
             j->look = p->look[i];
             M4 *drop = &f->drop[(size_t)i * RENDER_MAX_BONES];
             // Вне боя оружие не выпадает: всё на костях прошлой позы
-            if (fight && fight_pose(fd, (u32)b->slot, j, drop)) wb = drop;
+            if (fight && fight_pose(fd, (u32)b->slot, j, drop, f->slope[i])) wb = drop;
         }
         items[n++] = (DrawItem){ .mesh = &m->body[kind], .bones = bones };
         n += push_gear(items + n, m->gear + kind * GEAR_ROW, p->gear[i], p->ngear[i], bones);
