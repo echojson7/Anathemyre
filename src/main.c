@@ -79,7 +79,7 @@ typedef struct Options {
     bool        no_mdi;      // люди по вызову на сетку (сравнение с одним вызовом на проход)
     bool        no_skin_cache; // позы людей в каждом проходе (сравнение с кешем поз)
     i32         light_preset;  // набор СВЕТ на старте (LightPreset)
-    i32         light[8];      // части СВЕТ на старте: материалы, кривая, экспозиция, свечение, отражённый, каскады, мягкий край, контактные; -1 — из набора
+    i32         light[9];      // части СВЕТ на старте: материалы, кривая, экспозиция, свечение, отражённый, каскады, мягкий край, контактные, углы; -1 — из набора
     bool        fullscreen;  // окно без рамки на весь монитор
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
@@ -120,7 +120,7 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 static void usage(void)
 {
     puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N] [--hall-t S]");
-    puts("anathemyre [--light 0..2] [--light-parts МАТЕРИАЛЫ КРИВАЯ ЭКСПОЗИЦИЯ СВЕЧЕНИЕ ОТРАЖЁННЫЙ КАСКАДЫ МЯГКИЙ КОНТАКТ]   свет на старте: набор ПРЕЖНИЙ/БЫСТРЫЙ/РЕАЛИСТИЧНЫЙ или части (docs/lighting.md)");
+    puts("anathemyre [--light 0..2] [--light-parts МАТЕРИАЛЫ КРИВАЯ ЭКСПОЗИЦИЯ СВЕЧЕНИЕ ОТРАЖЁННЫЙ КАСКАДЫ МЯГКИЙ КОНТАКТ УГЛЫ]   свет на старте: набор ПРЕЖНИЙ/БЫСТРЫЙ/РЕАЛИСТИЧНЫЙ или части (docs/lighting.md)");
     puts("anathemyre [--load file.sav] [--warp S] [--save file.sav] [--sum-after S]   сохранение без меню: прочитать, прогнать, записать; сумма мира через S секунд и выход");
     puts("anathemyre [--defs DIR] [--mods DIR]   описания вещей и моды из других папок (по умолчанию data/defs и mods, docs/content.md)");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
@@ -174,8 +174,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--no-mdi")) o->no_mdi = true;
         else if (!strcmp(a, "--no-skin-cache")) o->no_skin_cache = true;
         else if (!strcmp(a, "--light") && i + 1 < argc) o->light_preset = (i32)((u32)atoi(argv[++i]) % LIGHT_PRESET_COUNT);
-        else if (!strcmp(a, "--light-parts") && i + 8 < argc)
-            for (u32 k = 0; k < 8; k++) o->light[k] = atoi(argv[++i]);
+        else if (!strcmp(a, "--light-parts") && i + 9 < argc)
+            for (u32 k = 0; k < 9; k++) o->light[k] = atoi(argv[++i]);
         else if (!strcmp(a, "--fullscreen")) o->fullscreen = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
@@ -319,7 +319,7 @@ int main(int argc, char **argv)
     time_init();
     Options opt = {
         .tod = 0.31f, .shot_frames = 90, .stage = STAGE_FULL, .bands_hours = 1.0f, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
-        .light = { -1, -1, -1, -1, -1, -1, -1, -1 },
+        .light = { -1, -1, -1, -1, -1, -1, -1, -1, -1 },
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f }, .api = -1,
     };
     if (!parse_args(argc, argv, &opt)) return 1;
@@ -424,6 +424,7 @@ int main(int argc, char **argv)
     if (opt.light[5] >= 0) set.rs.light_casc = opt.light[5] != 0;
     if (opt.light[6] >= 0) set.rs.light_soft = opt.light[6] != 0;
     if (opt.light[7] >= 0) set.rs.light_contact = opt.light[7] != 0;
+    if (opt.light[8] >= 0) set.rs.light_ao = (u8)(opt.light[8] % LIGHT_AO_COUNT);
     // Звук: слушатель у камеры, шаги, бой поля и арены. Без звука снимки кадров и --mute.
     // Банк собирается в своём потоке при старте; устройство открывается, только если звук включён
     WorldSound *wsound = ARENA_PUSH_ARRAY(&perm, WorldSound, 1);
