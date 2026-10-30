@@ -1,6 +1,7 @@
 #include "ostov.h"
 
 #include "../core/rng.h"
+#include "../core/palette.h"
 
 // Цвета поверхностей (альбедо, линейные)
 #define C_CONC   v3(0.46f, 0.44f, 0.41f)
@@ -8,7 +9,6 @@
 #define C_RUST   v3(0.36f, 0.20f, 0.11f)
 #define C_IRON   v3(0.20f, 0.19f, 0.18f)
 #define C_CABLE  v3(0.05f, 0.05f, 0.05f)
-#define C_SAND   v3(0.40f, 0.34f, 0.26f)
 
 // Уровни: пол, низ и верх плиты павильона, пол галереи и её потолок
 #define FY  0.1f
@@ -57,12 +57,6 @@ static f32 vnoise3(V3 p, u32 s)
 static f32 fbm3(V3 p, u32 s)
 {
     return 0.5f * vnoise3(p, s) + 0.3f * vnoise3(v3_mul(p, 2.03f), s + 1) + 0.2f * vnoise3(v3_mul(p, 4.11f), s + 2);
-}
-
-static f32 smooth01(f32 a, f32 b, f32 x)
-{
-    f32 t = clampf((x - a) / (b - a), 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
 }
 
 static V3 vpos(const MeshBuilder *mb, u32 i) { return v3(mb->v[i].pos[0], mb->v[i].pos[1], mb->v[i].pos[2]); }
@@ -145,7 +139,7 @@ static V3 rough_disp(const Hex *h, const Rough *r, V3 p)
 {
     f32 e[6];
     for (u32 f = 0; f < 6; f++) e[f] = h->d[f] - v3_dot(h->n[f], p);
-    f32 spots = smooth01(0.3f, 0.75f, vnoise3(v3_mul(p, 1.6f), r->seed + 7));
+    f32 spots = smoothstepf(0.3f, 0.75f, vnoise3(v3_mul(p, 1.6f), r->seed + 7));
     V3 D = v3(0, 0, 0);
     for (u32 f = 0; f < 6; f++) {
         if ((r->hide & HF(f)) || e[f] > 0.003f) continue;
@@ -155,10 +149,10 @@ static V3 rough_disp(const Hex *h, const Rough *r, V3 p)
             if (g == f || (r->hide & HF(g))) continue;
             bool bg = r->broken & HF(g);
             f32 cw = r->chip_w * (bg ? 2.0f : 1.0f);
-            k = maxf(k, (bg ? 2.5f : 1.0f) * (1.0f - smooth01(0.0f, cw, e[g])));
+            k = maxf(k, (bg ? 2.5f : 1.0f) * (1.0f - smoothstepf(0.0f, cw, e[g])));
         }
         // Рёбра всегда чуть сбиты, местами сколоты глубоко, кое-где выбит целый кусок угла
-        f32 bite = smooth01(0.6f, 0.85f, vnoise3(v3_mul(p, 0.45f), r->seed + 9));
+        f32 bite = smoothstepf(0.6f, 0.85f, vnoise3(v3_mul(p, 0.45f), r->seed + 9));
         in += r->chip * minf(k, 1.0f) * (0.2f + 0.8f * spots + 2.2f * bite) + r->chip * maxf(k - 1.0f, 0.0f);
         if (r->broken & HF(f)) in += r->brk * (0.2f + 0.8f * fbm3(v3_mul(p, 2.3f), r->seed + 50 + f));
         D = v3_sub(D, v3_mul(h->n[f], in));
@@ -474,7 +468,7 @@ static void drift(MeshBuilder *mb, V3 c, V3 u, V3 n, f32 a, f32 b, f32 h, u32 se
 {
     u32 nu = (u32)CLAMP((i32)(2.0f * a / 0.4f), 2, 60), nv = (u32)CLAMP((i32)(b / 0.35f), 2, 30);
     if (!mb_reserve(mb, (nu + 1) * (nv + 1), nu * nv * 6)) return;
-    mb_set(mb, C_SAND, MAT_SAND, BONE_NONE);
+    mb_set(mb, PAL_SAND, MAT_SAND, BONE_NONE);
     u32 v0 = mb->vcount, i0 = mb->icount;
     for (u32 j = 0; j <= nv; j++)
         for (u32 i = 0; i <= nu; i++) {
@@ -499,7 +493,7 @@ static void mound(MeshBuilder *mb, V3 c, f32 rad, f32 h, u32 seed)
 {
     u32 n = 18;
     if (!mb_reserve(mb, (n + 1) * (n + 1), n * n * 6)) return;
-    mb_set(mb, C_SAND, MAT_SAND, BONE_NONE);
+    mb_set(mb, PAL_SAND, MAT_SAND, BONE_NONE);
     u32 v0 = mb->vcount, i0 = mb->icount;
     for (u32 j = 0; j <= n; j++)
         for (u32 i = 0; i <= n; i++) {

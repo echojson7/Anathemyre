@@ -6,7 +6,6 @@ frag vkcheck.frag
 vert -DSHADOW_PASS frame.glsl skin.glsl scene.vert
 frag -DSHADOW_PASS shadow.frag
 vert frame.glsl skin.glsl scene.vert
-frag frame.glsl common.glsl scene.frag
 vert -DNOISE_HASH fullscreen.vert
 frag -DNOISE_HASH frame.glsl common.glsl rays.frag
 vert fullscreen.vert
@@ -25,3 +24,5 @@ frag bloom_up.frag
 vert ui.vert
 frag ui.frag
 frag upscale.frag
+frag frame.glsl common.glsl sky.glsl scene.frag
+comp sky.glsl sky_bake.comp

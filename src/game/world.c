@@ -120,7 +120,7 @@ static void world_tick(World *w)
     w->chron->tick = w->tick;
     memcpy(p->last, p->body, p->count * sizeof *p->body);
     prof_zone(PZ_PEOPLE);
-    people_update(p, &w->rng, &w->town_rng, TICK_DT, testroom_ground);
+    people_update(p, &w->rng, &w->town_rng, TICK_DT, world_ground);
     squad_update(&w->squad, TICK_DT, world_ground);
     near_tick(w->near, w->bands, p, w->field, &w->squad, w->focus, TICK_DT, world_ground);
     prof_zone(PZ_ARENA);

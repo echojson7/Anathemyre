@@ -2,27 +2,106 @@
 
 #include <string.h>
 
+#include "../core/hash.h"
+
 #define COLLAPSE_S 0.9f   // оседает на землю без сознания
 #define KNEEL_S 1.1f      // опускается на колени
-#define DRAW_S 0.85f      // достать или убрать оружие
+#define DRAW_S 0.6f       // достать или убрать оружие: основа, с, и прибавка за килограмм (DRAW_KG)
+#define DRAW_KG 0.04f     // клинок 3 кг — 0.72 с, балка 18 кг — 1.3 с
+#define DRAW_HURRY 1.8f   // в замахе и в блоке достаёт быстрее во столько раз
+#define STRIKE_S 0.11f    // сам удар от верха замаха до цели: основа, с, и прибавка за килограмм (STRIKE_KG)
+#define STRIKE_KG 0.012f  // клинок 3 кг — 0.15 с, балка 18 кг — 0.33 с
+#define KNOCK_TRAVEL 0.7f // отброшенный пятится назад первые столько от падения
+#define DODGE_LEAD 0.3f   // уворачивается за столько до удара; до того отступает в стойке
 #define SHEATHE_AFTER 2.5f  // бой стоит столько, прежде чем убирают оружие
 
-static f32 hashf(u32 x)
-{
-    x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
-    return (f32)(x & 0xFFFFFF) / 16777215.0f;
-}
-
-static f32 wrap_angle(f32 a)
-{
-    while (a > PI_F) a -= 2.0f * PI_F;
-    while (a < -PI_F) a += 2.0f * PI_F;
-    return a;
-}
+// Боевой шаг: в стойке стопа стоит на земле, пока тело не уйдёт от её места; тогда она переставляется.
+// Вбок и назад первой идёт нога со стороны движения, вторая подтягивается; ноги не скрещиваются
+#define STEP_S     0.22f  // шаг, с
+#define STEP_FAR   0.13f  // стопа дальше этого от места в стойке — шагает
+#define STEP_TIDY  0.05f  // стоит, а стопа не на месте больше этого ...
+#define STEP_TIDY_S 0.5f  // ... столько секунд — поправляет
+#define STEP_LIFT  0.07f  // подъём стопы в шаге, м
 
 static f32 approach(f32 x, f32 target, f32 rate, f32 dt) { return x + (target - x) * fminf(1.0f, rate * dt); }
 
 static f32 step_to(f32 x, f32 target, f32 step) { return x + clampf(target - x, -step, step); }
+
+// Вес оружия в руке, кг (без оружия — 0)
+static f32 weapon_kg(const CombatWorld *w, u32 i) { return w->disarmed[i] ? 0.0f : g_weapons[w->weapon[i]].weight; }
+
+// Множители позы: рост и ширина, как в fight_anim_pose
+static f32 body_h(const CombatWorld *w, u32 i) { return w->height[i] / 1.8f; }
+static f32 body_w(const FightAnim *f) { return 1.0f + 0.08f * sinf(f->seed * 3.17f + 1.0f); }
+
+// Место стопы в стойке, координаты боя
+static void stance_slot(f32 x, f32 z, f32 hs, f32 hc, f32 sw, u32 side, f32 *sx, f32 *sz)
+{
+    V3 j = g_body_bones[side ? BONE_FOOT_R : BONE_FOOT_L].joint;
+    f32 mx = side ? j.x - CHAR_STANCE_OUT_R : j.x + CHAR_STANCE_OUT_L, mz = side ? -CHAR_STANCE_Z : CHAR_STANCE_Z;
+    *sx = x + sw * (mx * hc + mz * hs);
+    *sz = z + sw * (-mx * hs + mz * hc);
+}
+
+// Стопы в стойке: стоят, пока тело не уйдёт от их места, затем переставляются по одной.
+// h — показанный разворот, v — скорость тела (шаг ставится с упреждением)
+static void feet_update(FightAnim *f, const CombatWorld *w, u32 i, f32 h, f32 vx, f32 vz, bool on, f32 dt)
+{
+    f32 sh = body_h(w, i), sw = body_w(f) * sh;
+    f32 hs = sinf(h), hc = cosf(h);
+    f32 sx[2], sz[2];
+    for (u32 s = 0; s < 2; s++) stance_slot(f->disp_x, f->disp_z, hs, hc, sw, s, &sx[s], &sz[s]);
+    if (!on) {
+        for (u32 s = 0; s < 2; s++) {
+            f->foot_x[s] = sx[s];
+            f->foot_z[s] = sz[s];
+            f->step_t[s] = -1.0f;
+            f->feet_off[s] = v3(0, 0, 0);
+        }
+        f->untidy = 0.0f;
+        return;
+    }
+    f32 lead = STEP_S * 0.5f;
+    f32 err[2];
+    for (u32 s = 0; s < 2; s++) {
+        f32 tx = sx[s] + vx * lead, tz = sz[s] + vz * lead;
+        if (f->step_t[s] >= 0.0f) {
+            // Отставшая нога шагает быстрее
+            f32 dx = tx - f->from_x[s], dz = tz - f->from_z[s];
+            f32 rate = fmaxf(1.0f, sqrtf(dx * dx + dz * dz) / 0.35f);
+            f->step_t[s] += rate * dt / STEP_S;
+            if (f->step_t[s] >= 1.0f) {
+                f->step_t[s] = -1.0f;
+                f->foot_x[s] = tx;
+                f->foot_z[s] = tz;
+                f->steps++;
+            } else {
+                f32 e = smooth01(f->step_t[s]);
+                f->foot_x[s] = lerpf(f->from_x[s], tx, e);
+                f->foot_z[s] = lerpf(f->from_z[s], tz, e);
+            }
+        }
+        f32 dx = f->foot_x[s] - sx[s], dz = f->foot_z[s] - sz[s];
+        err[s] = sqrtf(dx * dx + dz * dz);
+    }
+    // Вторая нога трогается, когда первая прошла полшага
+    bool busy = (f->step_t[0] >= 0.0f && f->step_t[0] < 0.5f) || (f->step_t[1] >= 0.0f && f->step_t[1] < 0.5f);
+    u32 s = err[1] > err[0] ? 1u : 0u;
+    if (f->step_t[s] >= 0.0f) s ^= 1u;
+    bool idle = f->step_t[0] < 0.0f && f->step_t[1] < 0.0f;
+    f->untidy = idle && fmaxf(err[0], err[1]) > STEP_TIDY ? f->untidy + dt : 0.0f;
+    if (!busy && f->step_t[s] < 0.0f && (err[s] > STEP_FAR || (f->untidy > STEP_TIDY_S && err[s] > STEP_TIDY))) {
+        f->step_t[s] = 0.0f;
+        f->from_x[s] = f->foot_x[s];
+        f->from_z[s] = f->foot_z[s];
+        f->untidy = 0.0f;
+    }
+    for (u32 k = 0; k < 2; k++) {
+        f32 dx = f->foot_x[k] - sx[k], dz = f->foot_z[k] - sz[k];
+        f32 lift = f->step_t[k] >= 0.0f ? STEP_LIFT * sinf(PI_F * f->step_t[k]) : 0.0f;
+        f->feet_off[k] = v3((dx * hc - dz * hs) / sw, lift / sh, (dx * hs + dz * hc) / sw);
+    }
+}
 
 // Доля пройденного состояния с учётом времени между тиками
 static f32 state_progress(const CombatWorld *w, u32 i, f32 alpha)
@@ -55,16 +134,15 @@ void fight_anim_update(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, f32
     u8 st = w->state[i];
     if (st != f->vst) {
         f->from_stand = !fs_lying(f->vst) && f->vst != FS_SURRENDER;
-        // Лицом вниз: ползущие и половина потерявших сознание; сбитые ударом — на спину
-        if (st == FS_KNOCKED) f->prone = false;
-        else if (st == FS_CRAWL) f->prone = true;
-        else if ((st == FS_UNCONSCIOUS || st == FS_DEAD) && f->from_stand)
-            f->prone = hashf((u32)(f->seed * 131.0f) + w->tick) < 0.5f;
         if (st == FS_DODGE) {
             u32 h = (u32)(f->seed * 71.0f) + w->tick * 7u;
             f->dodge_kind = (u8)(hashf(h) * DODGE_COUNT);
             if (f->dodge_kind >= DODGE_COUNT) f->dodge_kind = DODGE_BACK;
             f->dodge_side = hashf(h + 1u) < 0.5f ? 1.0f : -1.0f;
+        }
+        if (st == FS_KNOCKED) {
+            f->knock_x = f->disp_x;
+            f->knock_z = f->disp_z;
         }
         if (st == FS_WINDUP && w->target[i] >= 0) {
             f->lock_x = w->x[w->target[i]];
@@ -75,12 +153,15 @@ void fight_anim_update(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, f32
     } else {
         f->vt += dt;
     }
+    // Ничком или на спину решает бой: от этого, где лежит тело и как его обходят
+    f->prone = w->prone[i] != 0;
 
-    // Показанная позиция: отброшенный ударом отлетает не за тик, а за доли секунды
+    // Показанная позиция: отброшенный ударом не отлетает за тик, а пятится, пока валится
     f32 tx = lerpf(f->prev_x, w->x[i], alpha), tz = lerpf(f->prev_z, w->z[i], alpha);
     if (st == FS_KNOCKED) {
-        f->disp_x = approach(f->disp_x, tx, 7.0f, dt);
-        f->disp_z = approach(f->disp_z, tz, 7.0f, dt);
+        f32 k = smooth01(state_progress(w, i, alpha) / KNOCK_TRAVEL);
+        f->disp_x = lerpf(f->knock_x, tx, k);
+        f->disp_z = lerpf(f->knock_z, tz, k);
     } else {
         f->disp_x = tx;
         f->disp_z = tz;
@@ -95,6 +176,7 @@ void fight_anim_update(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, f32
     if (speed > 0.15f) f->move_dir = wrap_angle(atan2f(vx, vz) - w->heading[i]);
     if (moving) f->phase += f->speed * dt / char_stride(f->speed);
     f->phase -= floorf(f->phase);
+    f32 shown_h = f->prev_h + wrap_angle(w->heading[i] - f->prev_h) * alpha;
 
     bool armed = !w->disarmed[i];
     bool fighting = st == FS_READY || st == FS_WINDUP || st == FS_STRIKE || st == FS_RECOVER || st == FS_BLOCK ||
@@ -105,14 +187,46 @@ void fight_anim_update(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, f32
     if (w->halted && !calm && st == FS_READY) guard_t = 0.35f;
     // Оружие достаёт сразу; в стойку встаёт, когда оно в руке
     f32 wield_t = armed && !calm && !fs_out(st) ? 1.0f : 0.0f;
-    f32 rate = (st == FS_WINDUP || st == FS_BLOCK) ? 3.0f / DRAW_S : 1.0f / DRAW_S;
+    // Тяжёлое достаёт дольше; в замахе — быстрее и в любом случае до начала самого удара
+    f32 kg = weapon_kg(w, i), draw_s = DRAW_S + DRAW_KG * kg, strike_s = STRIKE_S + STRIKE_KG * kg;
+    f32 rate = (st == FS_WINDUP || st == FS_BLOCK) ? DRAW_HURRY / draw_s : 1.0f / draw_s;
+    if (st == FS_WINDUP) {
+        f32 left = (1.0f - state_progress(w, i, alpha)) * w->dur[i] - strike_s;
+        rate = fmaxf(rate, (1.0f - f->wield) / fmaxf(left, 0.05f));
+    }
     f->wield = step_to(f->wield, wield_t, rate * dt);
+    // Замах и удар: бой засчитывает попадание в конце замаха, поэтому сам удар (0..1 → 1..2) идёт в его
+    // последние strike_s секунд и доходит до цели в миг попадания; длина удара — по весу оружия. После
+    // попадания (FS_STRIKE) оружие на миг остаётся у цели, затем возврат
+    if (st == FS_WINDUP) {
+        f32 wt = w->dur[i], e = state_progress(w, i, alpha) * wt, raise = fmaxf(wt - strike_s, 0.4f * wt);
+        f->swing = e < raise ? e / raise : 1.0f + fminf((e - raise) / strike_s, 1.0f);
+    } else if (st == FS_STRIKE) {
+        f->swing = fminf(2.0f, fmaxf(f->swing, 1.0f) + dt / strike_s);
+    } else if (st == FS_RECOVER) {
+        f->swing = 2.0f + state_progress(w, i, alpha);
+    } else {
+        f->swing = 0.0f;
+    }
     if (f->wield < 0.9f) guard_t *= f->wield / 0.9f;
     f->guard = approach(f->guard, guard_t, 5.0f, dt);
     f->block = approach(f->block, st == FS_BLOCK ? 1.0f : 0.0f, 14.0f, dt);
-    f->dodge = approach(f->dodge, st == FS_DODGE ? 1.0f : 0.0f, 9.0f, dt);
+    // Уворот держится до удара и ещё 0.2 с после: уходит с линии в последний момент
+    bool dodge_now = st == FS_DODGE && w->timer[i] - alpha * COMBAT_DT - 0.2f < DODGE_LEAD;
+    f->dodge = approach(f->dodge, dodge_now ? 1.0f : 0.0f, 12.0f, dt);
     f->stagger = approach(f->stagger, st == FS_STAGGER ? 1.0f : 0.0f, 10.0f, dt);
     f->limp = approach(f->limp, st == FS_UNCONSCIOUS || st == FS_DEAD ? 1.0f : 0.0f, 3.0f, dt);
+
+    // Ноги в стойке переставляются боевым шагом; отходящий идёт обычным шагом
+    bool upright = !fs_lying(st) && !fs_out(st);
+    // Издали к цели — обычным шагом, оружие наготове
+    f->feet = approach(f->feet, upright && st != FS_RETREAT && f->speed < 1.3f ? f->guard : 0.0f, 8.0f, dt);
+    feet_update(f, w, i, shown_h, vx, vz, upright && f->feet > 0.01f, dt);
+    if (f->feet > 0.5f) {
+        // Фаза шага по переставленным ногам (половина цикла — шаг раньше начатой ноги): звук шагов — в касание
+        f32 t = fmaxf(f->step_t[0], f->step_t[1]);
+        f->phase = 0.5f * (f32)(f->steps & 1u) + 0.5f * fmaxf(t, 0.0f);
+    }
 
     // Отдача: по тому, сколько и где убыло здоровья
     f32 worst = 0.0f;
@@ -153,15 +267,13 @@ bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha,
         .width = 1.0f + 0.08f * sinf(f->seed * 3.17f + 1.0f), .move_dir = f->move_dir,
         .weapon = f->dropped ? 0 : (u8)(w->weapon[i] + 1),
     };
-    f32 swing = 0.0f;
-    if (st == FS_WINDUP) swing = state_progress(w, i, alpha);
-    else if (st == FS_STRIKE) swing = 1.0f + state_progress(w, i, alpha);
-    else if (st == FS_RECOVER) swing = 2.0f + state_progress(w, i, alpha);
+    f32 swing = f->swing;
     *a = (CharAction){
         .guard = f->guard, .attack = w->attack[i], .swing = swing, .block = f->block,
         .dodge = f->dodge, .dodge_kind = f->dodge_kind, .dodge_side = f->dodge_side, .stagger = f->stagger,
         .flinch = f->flinch, .flinch_part = f->flinch_part, .wield = f->wield,
         .prone = f->prone, .limp = f->limp, .severed = w->severed[i],
+        .steps = true, .feet = f->feet, .feet_off = { f->feet_off[0], f->feet_off[1] },
     };
     // Удар ведётся в точку на цели, куда метит бой: туда же, где он ищет, во что попало
     i32 t = w->target[i];
@@ -208,7 +320,7 @@ bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha,
             a->clip_t = f->vt / COLLAPSE_S;
         } else {
             a->clip = CLIP_CRAWL;
-            a->clip_t = f->phase * 2.6f + time * 0.0f + f->vt;
+            a->clip_t = f->phase * 2.6f + f->vt;
         }
         break;
     case FS_SURRENDER:

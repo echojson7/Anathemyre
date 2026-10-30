@@ -35,15 +35,9 @@ static const GpuMesh *slot_mesh(const ValleyView *v, u32 s)
     return &v->prop[(s - SLOT_PROP) / VV_PROP_VARIANTS][(s - SLOT_PROP) % VV_PROP_VARIANTS];
 }
 
-static f32 smooth(f32 a, f32 b, f32 x)
-{
-    f32 t = clampf((x - a) / (b - a), 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
-}
-
 static f32 bare_at(f32 x, f32 z)
 {
-    return smooth(0.68f, 0.8f, valley_fbm(x * 0.05f + 9.0f, z * 0.05f - 4.0f, 3));
+    return smoothstepf(0.68f, 0.8f, valley_fbm(x * 0.05f + 9.0f, z * 0.05f - 4.0f, 3));
 }
 
 // Вода: полоса вдоль русла, цвет вершин — толща (мелко светлее)
@@ -74,7 +68,7 @@ static void water(MeshBuilder *mb)
 
 static void box_at(MeshBuilder *mb, V3 c, V3 size, f32 rx, f32 ry, f32 rz)
 {
-    mb_box(mb, m4_mul(m4_translate(c), m4_mul(m4_rot_y(ry), m4_mul(m4_rot_x(rx), m4_mul(m4_rot_z(rz), m4_scale(size))))));
+    mb_box(mb, m4_trs(c, size, rx, ry, rz));
 }
 
 static void glyph(MeshBuilder *mb, V3 c, V3 normal, f32 hw, f32 hh)
@@ -276,8 +270,8 @@ static void place_trees(Placer *pl)
             if (h < wy + 0.25f) continue;
             if (valley_normal(px, pz).y < 0.72f) continue;
             f32 f = valley_forest(px, pz);
-            f32 edge = smooth(0.1f, 0.35f, f) * smooth(0.75f, 0.45f, f);
-            f32 bank = smooth(w + 1.0f, w + 2.5f, d) * smooth(w + 10.0f, w + 5.0f, d);
+            f32 edge = smoothstepf(0.1f, 0.35f, f) * smoothstepf(0.75f, 0.45f, f);
+            f32 bank = smoothstepf(w + 1.0f, w + 2.5f, d) * smoothstepf(w + 10.0f, w + 5.0f, d);
             if (u >= 0.015f + edge * 0.3f + bank * 0.22f + f * 0.08f) continue;
             f32 s = rng_range(r, 0.65f, 1.45f);
             place(pl, SLOT_TREE + (u32)TREE_BUSH * VV_TREE_VARIANTS + rng_below(r, VV_TREE_VARIANTS), v3(px, h - 0.05f, pz), s,
@@ -382,8 +376,8 @@ static void place_grass(Placer *pl)
                 V3 n = valley_normal(px, pz);
                 if (n.y < 0.8f) continue;
                 f32 f = valley_forest(px, pz), dry = valley_dry(px, pz);
-                f32 patch = smooth(0.22f, 0.55f, valley_fbm(px * 0.15f + 3.0f, pz * 0.15f - 7.0f, 2));
-                dens = (0.25f + 0.75f * patch) * (1.0f - bare_at(px, pz) * 0.85f) * (1.0f - f * 0.6f) * smooth(0.8f, 0.9f, n.y);
+                f32 patch = smoothstepf(0.22f, 0.55f, valley_fbm(px * 0.15f + 3.0f, pz * 0.15f - 7.0f, 2));
+                dens = (0.25f + 0.75f * patch) * (1.0f - bare_at(px, pz) * 0.85f) * (1.0f - f * 0.6f) * smoothstepf(0.8f, 0.9f, n.y);
                 if (pick < f * 0.35f) k = GRASS_FERN;
                 else if (pick < 0.08f + 0.35f * dry) k = GRASS_TALL;
                 else if (pick > 0.97f - 0.04f * (1.0f - dry)) k = GRASS_FLOWERS;

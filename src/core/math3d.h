@@ -35,6 +35,25 @@ static inline f32 clampf(f32 x, f32 lo, f32 hi) { return x < lo ? lo : (x > hi ?
 // fminf/fmaxf из libm не встраиваются (правила NaN) и в горячих циклах стоят вызова; эти — одна инструкция
 static inline f32 minf(f32 a, f32 b) { return a < b ? a : b; }
 static inline f32 maxf(f32 a, f32 b) { return a > b ? a : b; }
+// Плавный переход 0..1 (smoothstep): x от a до b, за краями — 0 и 1
+static inline f32 smoothstepf(f32 a, f32 b, f32 x)
+{
+    f32 t = clampf((x - a) / (b - a), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+// То же для доли t, уже отложенной от 0 до 1
+static inline f32 smooth01(f32 t)
+{
+    t = clampf(t, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+// Угол в -π..π
+static inline f32 wrap_angle(f32 a)
+{
+    while (a > PI_F) a -= 2.0f * PI_F;
+    while (a < -PI_F) a += 2.0f * PI_F;
+    return a;
+}
 
 static inline M4 m4_identity(void)
 {
@@ -131,6 +150,11 @@ static inline M4 m4_look_at(V3 eye, V3 target, V3 up)
     return r;
 }
 
+// Коробка или деталь в мире: масштаб size, поворот Z, затем X, затем Y, сдвиг в c
+static inline M4 m4_trs(V3 c, V3 size, f32 rx, f32 ry, f32 rz)
+{
+    return m4_mul(m4_translate(c), m4_mul(m4_rot_y(ry), m4_mul(m4_rot_x(rx), m4_mul(m4_rot_z(rz), m4_scale(size)))));
+}
 static inline V3 m4_point(M4 a, V3 p)
 {
     return v3(a.m[0] * p.x + a.m[4] * p.y + a.m[8] * p.z + a.m[12],
