@@ -395,7 +395,6 @@ def build(p, base, faces, Z, skel, W):
         dy = (y - e[1]) / hk
         brow = (bone == HEAD) & (dx > -0.016) & (dx < 0.026) & (dy > 0.012 + arch) & (dy < 0.021 + arch) \
             & (z > e[2] - 0.005) & (n[:, 2] > 0.3)
-        col[brow] = skin * 0.25 + hcol * 0.75
         brows |= brow
     if p['beard']:
         # Борода и усы: щетина объёмом 3 мм по нижней части лица
@@ -437,7 +436,6 @@ def build(p, base, faces, Z, skel, W):
     eyes = np.concatenate(eyes)
     ie = np.unique(eyes)
     tcl = np.where(mat == MAT_SKIN, TINT_SKIN, TINT_NONE)
-    tcl[brows] = TINT_HAIR
     if p['beard']:
         tcl[beard] = TINT_HAIR
     tcl[ie] = TINT_NONE
@@ -511,12 +509,14 @@ def build(p, base, faces, Z, skel, W):
     # кожа, губы, брови, борода, волосы — окраска кожи головы.
     # Глаза упрощаются отдельно и не меньше чем до 24 треугольников: иначе уходят под веки
     fcol = np.tile(skin, (nv, 1))
-    fcol[lips] = col[lips]; fcol[brows] = col[brows]
+    fcol[lips] = col[lips]; fcol[brows] = skin * 0.25 + hcol * 0.75
     fmat = np.full(nv, MAT_SKIN)
     if p['beard']:
         fcol[beard] = skin * 0.15 + hcol * 0.85
     fcol[ie] = col[ie]; fmat[ie] = MAT_SKIN
-    fpal, fpid = np.unique(np.concatenate([np.round(fcol, 4), fmat[:, None], tcl[:, None]], 1), axis=0, return_inverse=True)
+    ftcl = tcl.copy()
+    ftcl[brows] = TINT_HAIR
+    fpal, fpid = np.unique(np.concatenate([np.round(fcol, 4), fmat[:, None], ftcl[:, None]], 1), axis=0, return_inverse=True)
     fpid = fpid.ravel()
     fe = vote(fpid[eyes])
     Tf, Pf = refine(vote(fpid[body]).reshape(4, nf0).T)
@@ -529,10 +529,78 @@ def build(p, base, faces, Z, skel, W):
         md = mdelta(t, nt)
         src.append((tb, nt, md))
         lods.append(merge([split(vl, nt, t, fp, fpal, sk, md)]))
+    # Брови на LOD0–1 — лентой поверх кожи, а не окраской её граней: край не зависит от сетки лица.
+    # Форма как у живой брови: у переносья толще и ниже, подъём к 2/3 длины, хвост тонкий и опускается.
+    # Середина ленты темнее краёв. На дальних LOD — окраска кожи (brows выше)
+    brow_parts = []
+    th_ = src[0][0][(bone[src[0][0]] == HEAD).all(1)]
+    ta, tb, tc = vl[th_[:, 0]], vl[th_[:, 1]], vl[th_[:, 2]]
+    n0f = normals(vl, src[0][0])
+    def hit(o):
+        # Лучи вдоль −Z на кожу лица: точка и нормаль кожи (средняя по вершинам грани)
+        d = np.array([0.0, 0.0, -1.0])
+        e1, e2 = tb - ta, tc - ta
+        pv = np.cross(d, e2)
+        det = (e1 * pv).sum(1)
+        ok_ = np.abs(det) > 1e-12
+        det = np.where(ok_, det, 1.0)
+        out_p, out_n, out_v = [], [], []
+        for q in o:
+            tv = q - ta
+            u = (tv * pv).sum(1) / det
+            qv = np.cross(tv, e1)
+            w_ = (qv @ d) / det
+            t = (e2 * qv).sum(1) / det
+            t = np.where(ok_ & (u >= 0) & (w_ >= 0) & (u + w_ <= 1) & (t > 0), t, np.inf)
+            j = t.argmin()
+            out_p.append(q + d * t[j])
+            nn = n0f[th_[j]].mean(0)
+            out_n.append(nn / np.linalg.norm(nn))
+            out_v.append(th_[j][np.argmax([1 - u[j] - w_[j], u[j], w_[j]])])
+        return np.array(out_p), np.array(out_n), np.array(out_v)
+    for l in range(2):
+        m_ = (14, 9)[l]
+        bp, bt_, bcl = [], [], []
+        for sd, sg in (('L', 1), ('R', -1)):
+            e = J['eye.%s____head' % sd]
+            t = np.linspace(0, 1, m_)
+            dxs = (-0.017 + 0.044 * t) * hk
+            rise = np.where(t < 0.65, 1 - ((t - 0.65) / 0.65) ** 2, 1 - ((t - 0.65) / 0.35) ** 2 * 1.25)
+            # У мужчин бровь гуще и прямее
+            fem = p['gender'] < 0.5
+            cy = e[1] + (0.0145 + (0.0055 if fem else 0.0035) * rise) * hk
+            th = (0.0105 - 0.004 * t - 0.0045 * t ** 3) * hk * (0.5 + 0.5 * np.sqrt(np.clip(t / 0.15, 0, 1))) * (1.0 if fem else 1.08)
+            rows = (-0.5, -0.28, 0.32, 0.5)
+            o = np.array([[e[0] + sg * dx, y_ + r * h_, 1.0] for dx, y_, h_ in zip(dxs, cy, th) for r in rows])
+            pp, pn, pv_ = hit(o)
+            pp += pn * 0.0007
+            base_i = sum(len(x[0]) for x in bp)
+            bp.append((pp, pn, pv_))
+            for i in range(m_ - 1):
+                for r in range(3):
+                    a = base_i + i * 4 + r
+                    q = [a, a + 4, a + 5, a + 1] if sg > 0 else [a, a + 1, a + 5, a + 4]
+                    bt_ += [[q[0], q[1], q[2]], [q[0], q[2], q[3]]]
+                    bcl += [r == 1, r == 1]
+        P, N, V = (np.concatenate([b[i] for b in bp]) for i in range(3))
+        T = np.array(bt_)
+        # Грань наружу: по нормали кожи
+        fn = np.cross(P[T[:, 1]] - P[T[:, 0]], P[T[:, 2]] - P[T[:, 0]])
+        flip = (fn * N[T].mean(1)).sum(1) < 0
+        T[flip] = T[flip][:, ::-1]
+        # Окраска по граням: вершины делятся, у каждой грани свой цвет
+        core = np.array(bcl)
+        P2, N2, V2 = P[T.ravel()], N[T.ravel()], V[T.ravel()]
+        C2 = np.repeat(np.where(core[:, None], skin * 0.1 + hcol * 0.9, skin * 0.35 + hcol * 0.65), 3, 0)
+        T2 = np.arange(len(P2)).reshape(-1, 3)
+        k_ = len(P2)
+        d_ = src[0][2][V2].copy()
+        d_[:, :, 3:] = 0
+        brow_parts.append(((P2, N2, C2, np.full(k_, MAT_SKIN), np.full(k_, TINT_HAIR), sk[V2], d_), T2))
     gear, hair, under = garments(dict(vl=vl, sk=sk, bone=bone, J=J, src=src, ear_d=ear_d, hd=hd, top_y=top_y, hk=hk, line=line,
                                       hcol=hcol, female=p['gender'] < 0.5))
     # Бельё — часть сетки тела: лишнего вызова отрисовки нет
-    lods = [merge([(tuple(m[:-1]), m[-1]), (tuple(u[:-1]), u[-1])]) for m, u in zip(lods, under)]
+    lods = [merge([(tuple(m[:-1]), m[-1]), (tuple(u[:-1]), u[-1])] + brow_parts[l:l + 1]) for l, (m, u) in enumerate(zip(lods, under))]
     return lods, J, gear, hair
 
 
@@ -1214,58 +1282,122 @@ def garments(ctx):
     off = np.where((thigh | shin) | (Y < hip), 0.012 + 0.011 * np.clip((hip - Y) / (hip - ankle), 0, 1), 0.005)
     out['pants'] = [[shell(l, s, off, ((0.16, 0.165, 0.125), MAT_CLOTH), lay, relax=6)] for l in range(NL)]
 
-    # Бельё из небелёного холста: трусы с широкой тёмной резинкой; у мужчин короткие штанины и шов спереди,
-    # у женщин вырез по бедру и лиф на лямках, перекрещенных на спине (не полоса без лямок)
+    # Бельё из небелёного холста: трусы с широкой тёмной резинкой; у мужчин короткие штанины,
+    # у женщин вырез по бедру и лиф на лямках, перекрещенных на спине (не полоса без лямок).
+    # Резинка на 3 см выше бедренного сустава, чем была: трусы сидели на бёдрах низко (пользователь 2026-10-30)
     mid = np.isin(bone, [PELVIS, SPINE, TH_L, TH_R]) & np.isin(np.arange(nvl), used) & (AX < 0.012) & (Y > 0.6) & (Y < hip)
     crotch = Y[mid].min()
     LINEN, BAND = (0.33, 0.31, 0.26), (0.17, 0.16, 0.13)
     hips = np.isin(bone, [PELVIS, SPINE, TH_L, TH_R])
     if ctx['female']:
-        top, leg = hip + 0.075, crotch + 0.012 + 0.75 * np.maximum(0.0, AX - 0.025)
+        top, leg = hip + 0.105, crotch + 0.012 + 0.75 * np.maximum(0.0, AX - 0.025)
     else:
-        top, leg = hip + 0.065, crotch - 0.045 + 0.08 * np.maximum(0.0, AX - 0.06)
+        top, leg = hip + 0.095, crotch - 0.045 + 0.08 * np.maximum(0.0, AX - 0.06)
     sb = field(soft(hips), lin(top - Y), lin(Y - leg))
     lb = [(Y - top + 0.017, BAND, MAT_CLOTH, 1), (inside(Y < leg + 0.012, leg + 0.007 - Y), BAND, MAT_CLOTH, 1)]
-    if not ctx['female']:
-        lb.append((inside((Z > 0) & (Y < top - 0.017), np.minimum(0.003 - AX, Y - crotch - 0.02)), BAND, MAT_CLOTH, 1))
-    cand = used[np.isin(bone[used], [SPINE, CHEST, CLAV_L, CLAV_R])]
-    n0 = src[0][1]
+    n0, t0 = src[0][1], src[0][0]
+    # Кожа под лямками: грани LOD0 плеч, груди, спины и шеи
+    near_t = t0[np.isin(bone[t0], [SPINE, CHEST, CLAV_L, CLAV_R, NECK, UA_L, UA_R]).all(1)]
+    tri_a, tri_b, tri_c = vl[near_t[:, 0]], vl[near_t[:, 1]], vl[near_t[:, 2]]
+    tri_n = np.cross(tri_b - tri_a, tri_c - tri_a)
+    tri_n /= np.maximum(np.linalg.norm(tri_n, axis=1, keepdims=True), 1e-12)
 
-    def strap(sg, x0, y0, yb, k):
-        # Лямка лифа лентой по коже: спереди вверх от чашки, через плечо, на спине наискось к другому боку
-        top = cand[(np.abs(X[cand] - sg * (x0 + 0.01)) < 0.012)]
-        top = top[np.argmax(Y[top])]
-        def snap(x, y, front):
-            c = cand[(Z[cand] > Z[top]) == front]
-            return c[np.argmin((X[c] - x) ** 2 + (Y[c] - y) ** 2)]
-        q = [snap(sg * x0, y, True) for y in np.linspace(y0, Y[top] - 0.03, k // 3)] + [top]
-        q += [snap(sg * (x0 + 0.01) - sg * (x0 + 0.07) * t, Y[top] - 0.03 + (yb - Y[top] + 0.03) * t, False) for t in np.linspace(0, 1, k - k // 3)]
-        q = np.array(q)
-        path = vl[q] + n0[q] * 0.004
-        for _ in range(2):
-            path[1:-1] = 0.25 * path[:-2] + 0.5 * path[1:-1] + 0.25 * path[2:]
-        pv, pt = tube(path, n0[q], np.full(len(q), 0.016), np.full(len(q), 0.004), 4)
+    def ray(o, d):
+        # Первое пересечение лучей o + d·t с кожей (Мёллер — Трумбор)
+        e1, e2 = tri_b - tri_a, tri_c - tri_a
+        pv = np.cross(d[:, None], e2[None])
+        det = (e1[None] * pv).sum(2)
+        tv = o[:, None] - tri_a[None]
+        u = (tv * pv).sum(2) / np.where(np.abs(det) < 1e-12, 1e-12, det)
+        qv = np.cross(tv, e1[None])
+        v_ = (d[:, None] * qv).sum(2) / np.where(np.abs(det) < 1e-12, 1e-12, det)
+        t = (e2[None] * qv).sum(2) / np.where(np.abs(det) < 1e-12, 1e-12, det)
+        t = np.where((u >= 0) & (v_ >= 0) & (u + v_ <= 1) & (t > 0) & (np.abs(det) > 1e-12), t, np.inf)
+        return o + d * t.min(1)[:, None]
+
+    def closest(p):
+        # Ближняя точка кожи к каждой точке p и нормаль там (по ближней грани)
+        best, bn, bd = p.copy(), np.zeros_like(p), np.full(len(p), np.inf)
+        ab, ac = tri_b - tri_a, tri_c - tri_a
+        for i in range(len(p)):
+            ap = p[i] - tri_a
+            d1, d2 = (ab * ap).sum(1), (ac * ap).sum(1)
+            # Проекция на плоскость и зажим в треугольник через барицентрические координаты
+            dn = (ab * ab).sum(1) * (ac * ac).sum(1) - (ab * ac).sum(1) ** 2
+            u = ((ac * ac).sum(1) * d1 - (ab * ac).sum(1) * d2) / np.maximum(dn, 1e-18)
+            v_ = ((ab * ab).sum(1) * d2 - (ab * ac).sum(1) * d1) / np.maximum(dn, 1e-18)
+            u, v_ = np.clip(u, 0, 1), np.clip(v_, 0, 1)
+            k = np.maximum(u + v_, 1.0)
+            q = tri_a + ab * (u / k)[:, None] + ac * (v_ / k)[:, None]
+            d = np.linalg.norm(q - p[i], axis=1)
+            j = d.argmin()
+            best[i], bn[i], bd[i] = q[j], tri_n[j], d[j]
+        return best, bn
+
+    def strap(sg, x0, y0, yb, xb, k):
+        # Лямка лифа лентой по коже: спереди вверх от чашки, через плечо, на спине наискось к другому боку.
+        # Опорные точки — лучи на кожу спереди, сверху и сзади; потом лента натягивается (сглаживание)
+        # и выталкивается наружу на 3.5 мм от ближней кожи: над впадиной у ключицы идёт мостом, в тело не уходит
+        xs = sg * (x0 + 0.012)
+        top = ray(np.array([[xs, 2.5, 0.0]]), np.array([[0.0, -1.0, 0.0]]))[0]
+        fy = np.linspace(y0, top[1] - 0.035, 8)
+        front = ray(np.stack([sg * x0 + (xs - sg * x0) * (fy - y0) / (top[1] - 0.035 - y0), fy, np.full(8, 1.0)], 1), np.tile([0.0, 0.0, -1.0], (8, 1)))
+        bt = np.linspace(0, 1, 10)
+        back = ray(np.stack([xs + (xb - xs) * bt, top[1] - 0.035 + (yb - top[1] + 0.035) * bt, np.full(10, -1.0)], 1), np.tile([0.0, 0.0, 1.0], (10, 1)))
+        path = np.concatenate([front, [top], back])
+        path = path[np.isfinite(path).all(1)]
+        # Ровный шаг 6 мм
+        def resample(q, m):
+            sl = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(q, axis=0), axis=1))])
+            u = np.linspace(0, sl[-1], m)
+            return np.stack([np.interp(u, sl, q[:, c]) for c in range(3)], 1)
+        sl = np.linalg.norm(np.diff(path, axis=0), axis=1).sum()
+        q = resample(path, max(int(sl / 0.006), 8))
+        for _ in range(40):
+            q[1:-1] = 0.25 * q[:-2] + 0.5 * q[1:-1] + 0.25 * q[2:]
+            c, cn = closest(q)
+            gap = ((q - c) * cn).sum(1)
+            q += cn * np.maximum(0.0, 0.0035 - gap)[:, None]
+        q = resample(q, k)
+        c, cn = closest(q)
+        q += cn * np.maximum(0.0, 0.0035 - ((q - c) * cn).sum(1))[:, None]
+        # Нормали ближних граней скачут: лента без перекрутов — по сглаженной нормали
+        for _ in range(4):
+            cn[1:-1] = 0.25 * cn[:-2] + 0.5 * cn[1:-1] + 0.25 * cn[2:]
+        cn /= np.linalg.norm(cn, axis=1, keepdims=True)
+        # Скиннинг и морфы — от ближней вершины кожи
+        cv = cand[np.argmin(np.linalg.norm(vl[cand][None] - q[:, None], axis=2), axis=1)]
+        pv, pt = tube(q, cn, np.full(len(q), 0.014), np.full(len(q), 0.003), 4)
         ring = np.arange(len(pv)) // 4
-        d = md0[q[ring]].copy()
+        d = md0[cv[ring]].copy()
         d[:, :, 3:] = 0
         k_ = len(pv)
-        return ((pv, normals(pv, pt), np.tile(LINEN, (k_, 1)), np.full(k_, MAT_CLOTH), np.full(k_, TINT_NONE), sk[q[ring]], d), pt)
+        return ((pv, normals(pv, pt), np.tile(LINEN, (k_, 1)), np.full(k_, MAT_CLOTH), np.full(k_, TINT_NONE), sk[cv[ring]], d), pt)
 
+    cand = used[np.isin(bone[used], [SPINE, CHEST, CLAV_L, CLAV_R, NECK])]
+    straps = {}
+    if ctx['female']:
+        nip = J['breast.L____tail']
+        lo = nip[1] - 0.075
+        for sg in (1.0, -1.0):
+            straps[sg] = [strap(sg, abs(nip[0]), nip[1] + 0.012, lo + 0.035, -sg * 0.06, n) for n in (40, 28, 14, 8, 6)]
     under = []
     for l in range(NL):
         parts = [shell(l, sb, 0.003, (LINEN, MAT_CLOTH), lb, 0.8)]
         if ctx['female']:
-            nip = J['breast.L____tail']
-            lo = nip[1] - 0.075
             torso = np.isin(bone, [SPINE, CHEST, CLAV_L, CLAV_R])
-            # Чашки спереди до соска + 2.5 см, сзади лента 4.5 см; между чашками край ниже
-            k = np.clip((Z - nip[2] + 0.13) / 0.06, 0, 1)
-            hi = lo + 0.045 + (nip[1] + 0.025 - lo - 0.045) * k - 0.04 * np.clip(1 - AX / 0.03, 0, 1) * (Z > 0)
+            # Чашки спереди до соска + 2.5 см, сзади лента 4.5 см; между чашками край плавно спускается
+            # к узкой перемычке на грудине: в ложбину между грудей край не заходит и не ломается
+            k = np.clip((Z - nip[2] + 0.14) / 0.08, 0, 1)
+            k = k * k * (3 - 2 * k)
+            gore = np.clip(1 - AX / 0.055, 0, 1)
+            cup = lo + 0.045 + (nip[1] + 0.025 - lo - 0.045) * k
+            hi = cup + (lo + 0.05 - cup) * k * gore * gore * (3 - 2 * gore)
             sbra = field(soft(torso), lin(Y - lo), lin(hi - Y))
             lw = [(inside(Y < lo + 0.012, lo + 0.012 - Y), BAND, MAT_CLOTH, 1)]
             parts.append(shell(l, sbra, 0.003, (LINEN, MAT_CLOTH), lw, 0.8))
             for sg in (1.0, -1.0):
-                parts.append(strap(sg, abs(nip[0]), nip[1] + 0.015, lo + 0.03, (32, 24, 12, 6, 4)[l]))
+                parts.append(straps[sg][l])
         under.append(merge(parts))
     return ({g: [merge(parts) for parts in out[g]] for g in GEAR}, hairdos(ctx, shell, soft, lin, field, stripe), under)
 
