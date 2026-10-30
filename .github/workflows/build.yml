@@ -41,13 +41,26 @@ jobs:
           ! grep -q "СБОЙ" build/valley.txt
           python3 -c "from PIL import Image; Image.open('build/valley.ppm').save('build/valley.png')"
 
-      - name: Бой под ASan, детерминизм полевого боя на 1/2/4/8 потоках
+      - name: Отряды вдали рядом под ASan (пробные отряды, бой телами)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          LSAN_OPTIONS: suppressions=tools/lsan.supp
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --bands-test --warp 800 --cam 1026 249 2.0 0.3 9 --no-pixel --shot build/bands.ppm --frames 3 | tee build/bands_near.txt | grep "ОТРЯДЫ"
+          ! grep -q "СБОЙ" build/bands_near.txt
+          grep -q "отряд 1 рядом" build/bands_near.txt
+
+      - name: Бой под ASan, детерминизм полевого боя на 1/2/4/8 потоках, отряды вдали
         env:
           LSAN_OPTIONS: suppressions=tools/lsan.supp
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           ./build/anathemyre_debug --arena-bench 100 | tail -3
           ./build/anathemyre_debug --battle-bench 100 100 --battle-verify
+          # отряды вдали: сумма релиза (gcc) и отладки (clang) должна совпасть
+          ./build/anathemyre_debug --bands-bench 4000 --hours 0.25 | tee build/bands.txt | tail -3
+          test "$(./build/anathemyre --bands-bench 4000 --hours 0.25 | tail -1)" = "$(tail -1 build/bands.txt)"
 
       - name: Звук под ASan (сценка в WAV без устройства)
         env:

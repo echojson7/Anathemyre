@@ -231,7 +231,7 @@ static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 
             if (field_awake(fd, s) && fs_lying(fd->w.state[s])) tall = 0.4f;
         } else if (k >= w->squad->count + ARENA_MAX_BOUT) {
             u32 s = k - w->squad->count - ARENA_MAX_BOUT;
-            if (fd->flags[s] & FF_PLAYER) continue;
+            if (fd->flags[s] & (FF_PLAYER | FF_ABSENT)) continue;
             kd = LOOK_FIELD;
             idx = s;
             pos = w->view[s].pos;  // слот поля = номер в таблице

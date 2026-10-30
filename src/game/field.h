@@ -19,7 +19,10 @@ enum {
     FF_ASSIST = 1,  // идёт на помощь своим, если рядом дерутся
     FF_AGGRO = 2,   // сам нападает на тех, с кем враждует
     FF_PLAYER = 4,  // свой отряд: идёт по приказу — мимо боя, не ввязываясь
+    FF_ABSENT = 8,  // свободный слот: никого нет (field_free)
 };
+
+#define FIELD_TEAM_NOBODY (COMBAT_MAX_TEAMS - 1)  // команда свободных слотов: ни с кем не враждует
 
 typedef struct Field {
     CombatWorld w;
@@ -34,12 +37,19 @@ typedef struct Field {
     f32  px[FIELD_MAX], pz[FIELD_MAX], ph[FIELD_MAX];  // прошлый тик: сглаживание
     FightAnim anim[FIELD_MAX];       // вид бойца, пока слот не спит: пишет только кадр (field_present)
     f32  grudge[COMBAT_MAX_TEAMS];   // сколько ещё секунд команда помнит вражду
+    u32  enmity[COMBAT_MAX_TEAMS];   // вражда навсегда (field_enmity): не забывается
     u32  fights;                     // проснувшихся сейчас
 } Field;
 
 void field_init(Field *f, Arena *a, u64 seed);
 // Поставить тело на поле. Лист обязателен: в нём тело, навыки и оружие. Возвращает номер слота
 u32  field_add(Field *f, Player *body, CharSheet *sheet, u8 team, u8 flags);
+// Слот i снова занят: тело и лист — те же указатели, что при field_add, заполнены заново. Спит
+void field_reuse(Field *f, u32 i, u8 team, u8 flags);
+// Слот i свободен: спит, «мёртв» для всех, команды нет, интерфейс его не видит
+void field_free(Field *f, u32 i);
+// Команды a и b враждуют всегда (отряды вдали)
+void field_enmity(Field *f, u8 a, u8 b);
 // Приказ: слот who атакует слот target. false — нельзя (свой, мёртвый, нечем бить)
 bool field_attack(Field *f, u32 who, u32 target);
 // Отменить приказ атаки; leave — если дерётся, выйти из боя, как только сможет (приказ идти)

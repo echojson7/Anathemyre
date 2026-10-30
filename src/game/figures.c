@@ -266,6 +266,10 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
     // Кому нужна поза и что рисовать; кости ещё не готовы, элементы ссылаются на их место
     bool lit_any = false;
     for (u32 i = 0; i < p->count; i++) {
+        if (p->role[i] == ROLE_FREE) {
+            f->age[i] = -1.0f;  // свет факела по нему не ищется
+            continue;
+        }
         const Player *b = &f->view[i];
         const CharSheet *cs = &p->sheet[i];
         f32 lit = torch_lit(p->torch[i], p->seed[i], v->night);

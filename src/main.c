@@ -45,10 +45,15 @@ typedef struct Options {
     bool        inspect;     // выбрать отряд и открыть осмотр (для снимков)
     bool        editor;      // выбрать первого из отряда и открыть ВНЕШНОСТЬ (для снимков)
     i32         look_slot;   // для снимков: осмотреть чужого в слоте поля look_slot−1
+    bool        bands_test;  // пробные отряды вдали сразу при старте
+    f32         warp;        // для снимков: прогнать столько секунд мира до первого кадра
     u32         arena_bench; // прогнать N боёв арены без окна
     u32         field_bench; // сценка атаки и нагрузка поля на N−1 тел без окна
     i32         attack;      // для снимков: весь отряд сразу атакует бродящего номер attack−1
     u32         arena_log;   // сколько первых боёв печатать подробно
+    u32         bands_bench; // отряды вдали без окна: столько отрядов
+    f32         bands_hours; // часов дальнего мира
+    u32         bands_log;   // сколько первых событий печатать
     u32         battle[2];   // полевой бой: бойцов в каждом отряде
     bool        battle_verify;
     u32         threads;     // потоков вместе с главным (позы людей, бой); 0 — по числу ядер
@@ -96,11 +101,12 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--attack K] [--look-slot N] [--valley] [--threads N]");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N]");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
     puts("anathemyre --field-bench N [--seed N]   приказ атаки без окна, затем нагрузка поля на N тел");
+    puts("anathemyre --bands-bench N [--hours H] [--bands-log K] [--seed N]   отряды вдали без окна: N отрядов, H часов мира");
     puts("anathemyre --sound-demo out.wav   сценка звука (ветер, шаги, бой, даль) в файл и замер микшера; --mute — играть без звука");
 }
 
@@ -117,6 +123,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--inspect")) o->inspect = true;
         else if (!strcmp(a, "--editor")) o->editor = true;
         else if (!strcmp(a, "--look-slot") && i + 1 < argc) o->look_slot = atoi(argv[++i]) + 1;
+        else if (!strcmp(a, "--bands-test")) o->bands_test = true;
+        else if (!strcmp(a, "--warp") && i + 1 < argc) o->warp = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--move-bench")) {
             o->move_bench = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
@@ -136,6 +144,9 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--field-bench") && i + 1 < argc) o->field_bench = (u32)atoi(argv[++i]) + 1;
         else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
+        else if (!strcmp(a, "--bands-bench") && i + 1 < argc) o->bands_bench = (u32)atoi(argv[++i]);
+        else if (!strcmp(a, "--hours") && i + 1 < argc) o->bands_hours = strtof(argv[++i], NULL);
+        else if (!strcmp(a, "--bands-log") && i + 1 < argc) o->bands_log = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--battle-bench") && i + 2 < argc) {
             o->battle[0] = (u32)atoi(argv[++i]);
             o->battle[1] = (u32)atoi(argv[++i]);
@@ -211,7 +222,7 @@ int main(int argc, char **argv)
     platform_preinit();
     time_init();
     Options opt = {
-        .tod = 0.31f, .shot_frames = 90, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
+        .tod = 0.31f, .shot_frames = 90, .bands_hours = 1.0f, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
@@ -219,6 +230,7 @@ int main(int argc, char **argv)
     if (opt.field_bench) return field_bench(opt.field_bench - 1, opt.seed);
     if (opt.sound_demo) return audio_demo(opt.sound_demo);
     if (opt.arena_bench) return arena_bench(opt.arena_bench, opt.seed, opt.arena_log);
+    if (opt.bands_bench) return bands_bench(opt.bands_bench, opt.bands_hours, opt.seed, TICK_HZ, opt.bands_log);
     if (opt.battle[0] || opt.battle[1])
         return battle_bench(opt.battle[0], opt.battle[1], opt.seed, opt.threads, opt.battle_verify);
     // Дальше в консоль — только к/с, замеры и сбои; остальное в журнал на экране
@@ -328,6 +340,14 @@ int main(int argc, char **argv)
     for (u32 i = 0; victim >= 0 && i < squad->count; i++) {
         squad->selected[i] = true;
         field_attack(field, (u32)squad_body(squad, i)->slot, (u32)victim);
+    }
+    if (opt.bands_test) world_bands_test(world);
+    // Прогон мира до первого кадра (снимки): камера стоит, журнал — в консоль
+    if (opt.warp > 0.0f) {
+        log_set_echo(true);
+        world->focus = opt.cam.target;
+        for (u32 k = 0; k < (u32)(opt.warp * (f32)TICK_HZ); k++) world_update(world, TICK_DT);
+        log_set_echo(false);
     }
     u8 *shot_buf = NULL;
     if (opt.shot_path) shot_buf = arena_push(&perm, (size_t)opt.width * (size_t)opt.height * 3, 1);
@@ -440,7 +460,8 @@ int main(int argc, char **argv)
         editor_input(&editor, &hud, &hin, world, &cam, humans->on);
         humans_flip |= set.humans;
         bench_request |= set.bench;
-        set.humans = set.bench = false;
+        if (set.bands_test) world_bands_test(world);
+        set.humans = set.bench = set.bands_test = false;
         HudWorld hw = { .squad = squad, .arena = world->arena, .aview = &world->aview, .field = field, .view = fig->view,
                         .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day };
         bool ui_busy = hud_input(&hud, &hin, &hw);
@@ -455,7 +476,11 @@ int main(int argc, char **argv)
         }
         orders_input(&hud, &in, &hin, &hw, ui_busy, fv.cam_pos, ww, wh, world);
 
+        world->focus = cam.target;
         world_update(world, dt);
+        // Отряд вдали ушёл: его человека больше нет на месте, на которое смотрели
+        if (hud.look_kind == LOOK_FIELD && hud.look < field->w.count && (field->flags[hud.look] & FF_ABSENT))
+            hud_look(&hud, LOOK_NONE, 0);
         // Вид мира для кадра: бой между шагами, люди между двумя последними шагами
         prof_zone(PZ_FIGURES);
         world_present(world, dt);

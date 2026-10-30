@@ -81,7 +81,23 @@ bool world_init(World *w, Arena *perm, MeshBuilder *mb, u64 seed, f32 tod, bool 
     w->field = ARENA_PUSH_ARRAY(perm, Field, 1);
     field_init(w->field, perm, seed);
     people_join_field(p, w->field);
+    w->near = ARENA_PUSH_ARRAY(perm, NearBands, 1);
+    if (!near_init(w->near, p, w->field)) return false;
     memcpy(p->last, p->body, p->count * sizeof *p->body);
+
+    // Места и дороги: пока три места лагеря и долины, отрядов вдали нет. Места лагеря — с севера, на песке:
+    // дороги обходят зал, посёлок и древнюю стену
+    Places *pl = &w->places;
+    u32 hall = places_add(pl, "зал", 36.0f, -45.0f), town = places_add(pl, "Скудель", 78.0f, -32.0f);
+    u32 valley = places_add(pl, "долина у реки", w->valley->spawn.x, w->valley->spawn.z);
+    places_road(pl, hall, town);
+    places_road(pl, hall, valley);
+    places_road(pl, town, valley);
+    if (!places_build(pl, perm)) return false;
+    w->bands = ARENA_PUSH_ARRAY(perm, Bands, 1);
+    bands_init(w->bands, perm, pl, seed, TICK_HZ);
+    w->bands->log_left = 0xFFFFFFFFu;  // стычки и бегство — в журнал
+    w->focus = squad_home();
     return true;
 }
 
@@ -93,10 +109,12 @@ static void world_tick(World *w)
     prof_zone(PZ_PEOPLE);
     people_update(p, &w->rng, &w->town_rng, TICK_DT, testroom_ground);
     squad_update(&w->squad, TICK_DT, world_ground);
+    near_tick(w->near, w->bands, p, w->field, &w->squad, w->focus, TICK_DT, world_ground);
     prof_zone(PZ_ARENA);
     arena_view_tick(&w->aview, w->arena);
     prof_zone(PZ_FIELD);
     field_tick(w->field, world_ground);
+    bands_tick(w->bands);
     if (w->day_run) {
         w->tod += TICK_DT / DAY_LENGTH_S;
         if (w->tod >= 1.0f) {
@@ -131,6 +149,24 @@ f32 world_tod(const World *w)
     if (!w->day_run) return w->tod;
     f32 t = w->tod + w->alpha * TICK_DT / DAY_LENGTH_S;
     return t >= 1.0f ? t - 1.0f : t;
+}
+
+void world_bands_test(World *w)
+{
+    Bands *b = w->bands;
+    if (b->count) {
+        log_info("ОТРЯДЫ: пробные уже идут");
+        return;
+    }
+    // Места мира: 0 — зал, 1 — Скудель, 2 — долина (world_init)
+    static const u16 men[BAND_TIERS] = { 3, 2, 1 };
+    i32 a = bands_add(b, 0, 1, men), c = bands_add(b, 1, 2, men);
+    if (a < 0 || c < 0) return;
+    bands_hostile(b, 0, 1);
+    field_enmity(w->field, TEAM_BANDS + 0, TEAM_BANDS + 1);
+    bands_send(b, (u32)a, 2);
+    bands_send(b, (u32)c, 1);
+    log_info("ОТРЯДЫ: два пробных отряда, у Скудели и в долине, идут навстречу");
 }
 
 bool world_squad_fighting(const World *w)
