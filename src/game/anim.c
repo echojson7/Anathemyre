@@ -1014,8 +1014,10 @@ static bool weapon_two_hand(u8 w)
     return wc == WC_POLEARM || wc == WC_HEAVY;
 }
 
-// Где вторая (левая) рука на оси оружия, м от правой
+// Где вторая (левая) рука на оси оружия, м от правой, и докуда может по ней скользить
 static f32 weapon_left_grip(u8 w) { return g_weapons[w].wclass == WC_POLEARM ? 0.62f : -0.15f; }
+static f32 wpn_grip_lo(u8 w) { return g_weapons[w].wclass == WC_POLEARM ? 0.12f : -0.16f; }
+static f32 wpn_grip_hi(u8 w) { return g_weapons[w].wclass == WC_POLEARM ? 1.10f : -0.11f; }
 
 // Ось рукояти в кулаке (поза привязки): из кулака вперёд со стороны большого пальца, чуть вниз;
 // лезвие к пальцам
@@ -1053,6 +1055,27 @@ static Xf sheath_frame(u8 w, u8 *bone)
     return frame_axes(v3(0.40f, 1.0f, -0.02f), v3(0.0f, 0.0f, -1.0f), v3(s.x - 0.16f, s.y - 0.12f, s.z + 0.03f));
 }
 
+#define DRAW_MID 0.4f  // доля вынимания до промежуточного положения
+
+// Промежуточное положение при доставании (пространство модели, грудь c)
+static Xf draw_mid(u8 w, const Xf *sheath, const Xf *c)
+{
+    Carry k = weapon_carry(w);
+    if (k == CARRY_BELT) {
+        // Вытянуто из ножен вверх-вперёд по их оси, клинок ещё в их направлении
+        Xf m = *sheath;
+        m.t = v3_add(v3_sub(sheath->t, v3_mul(sheath->y, 0.32f)), v3_mul(c->z, 0.08f));
+        return m;
+    }
+    if (k == CARRY_BACK_HIGH)
+        // Над правым плечом, клинок назад и чуть вверх: дальше переходит на плечо
+        return frame_axes(v3_add(v3_mul(c->z, -0.85f), v3_mul(c->y, 0.5f)), v3_mul(c->y, 1.0f),
+                          v3_add(sheath->t, v3_add(v3_mul(c->y, 0.12f), v3_mul(c->z, 0.10f))));
+    // Древко стоймя у правого бока
+    return frame_axes(c->y, c->z,
+                      v3_add(c->t, v3_add(v3_add(v3_mul(c->x, -0.34f), v3_mul(c->y, -0.25f)), v3_mul(c->z, 0.02f))));
+}
+
 // ---------------------------------------------------------------- оружие в бою
 
 // Стойка и блок по типу оружия: рукоять и оси оружия относительно груди (поза привязки, от сустава груди)
@@ -1066,22 +1089,40 @@ static const GuardK g_guard[3] = {
     { { -0.15f, -0.14f, 0.35f }, { 0.15f, 1.60f, 1.0f }, { 0.0f, -1.0f, 1.6f },
       { -0.12f, 0.38f, 0.30f }, { 1.0f, 0.30f, 0.15f }, { 0.0f, 1.0f, 0.25f } },
     // Древковое: правая у бедра, древко вперёд в грудь противнику; блок — древко поперёк груди
-    { { -0.16f, -0.21f, 0.08f }, { 0.10f, 0.35f, 1.0f }, { 0.0f, -1.0f, 0.0f },
-      { -0.25f, 0.05f, 0.25f }, { 1.0f, 0.35f, 0.10f }, { 0.0f, 0.0f, 1.0f } },
+    { { -0.18f, -0.14f, 0.32f }, { 0.36f, 0.30f, 1.0f }, { 0.0f, -1.0f, 0.0f },
+      { -0.25f, 0.05f, 0.33f }, { 1.0f, 0.35f, 0.10f }, { 0.0f, 0.0f, 1.0f } },
     // Тяжёлое двуручное: рукоять у живота, клинок стоймя чуть вперёд; блок — плашмя перед собой
-    { { -0.10f, -0.17f, 0.31f }, { 0.18f, 1.0f, 0.30f }, { 0.0f, 0.0f, 1.0f },
+    { { -0.17f, -0.13f, 0.38f }, { 0.18f, 1.0f, 0.30f }, { 0.0f, 0.0f, 1.0f },
       { -0.10f, 0.10f, 0.32f }, { 0.35f, 1.0f, 0.10f }, { 1.0f, 0.0f, 0.0f } },
 };
 
 static Xf frame_lerp(const Xf *a, const Xf *b, f32 t) { return xf_slerp_rot(a, b, t, v3_lerp(a->t, b->t, t)); }
 
+// То же, но рукоять идёт вокруг корпуса, а не сквозь него: поворот, удаление от оси груди c и высота
+// меняются по отдельности
+static Xf frame_around(const Xf *a, const Xf *b, f32 t, const Xf *c)
+{
+    V3 ra = v3_sub(a->t, c->t), rb = v3_sub(b->t, c->t);
+    f32 ya = v3_dot(ra, c->y), yb = v3_dot(rb, c->y);
+    V3 ha = v3_sub(ra, v3_mul(c->y, ya)), hb = v3_sub(rb, v3_mul(c->y, yb));
+    f32 la = v3_len(ha), lb = v3_len(hb);
+    V3 h = v3_lerp(v3_mul(ha, 1.0f / fmaxf(la, 1e-4f)), v3_mul(hb, 1.0f / fmaxf(lb, 1e-4f)), t);
+    f32 hl = v3_len(h);
+    V3 pos = c->t;
+    if (hl > 1e-3f) pos = v3_add(pos, v3_mul(h, lerpf(la, lb, t) / hl));
+    else pos = v3_add(pos, v3_lerp(ha, hb, t));
+    pos = v3_add(pos, v3_mul(c->y, lerpf(ya, yb, t)));
+    return xf_slerp_rot(a, b, t, pos);
+}
+
 // Оружие на доле удара q (0 — взведено, 1 — конец проводки). Размах и удар сверху: клинок от плеча P
 // по дуге в плоскости следа, на ударе точка клинка проходит через цель T; укол — рукоять вперёд, остриё за T
-static Xf strike_frame(const CharAction *a, V3 P, V3 T, f32 len, f32 reach, f32 q)
+static Xf strike_frame(const CharAction *a, const Xf *c, V3 P, V3 T, f32 len, f32 reach, f32 q, bool pole, bool two)
 {
     if (a->attack == ATK_THRUST) {
-        // Рукоять от бока толкается к цели, пока остриё не уйдёт за неё; дальше руки не пускают
-        V3 gw = v3_add(P, v3(0.0f, -0.28f, -0.12f));
+        // Рукоять от бедра толкается к цели, пока остриё не уйдёт за неё; дальше руки не пускают.
+        // Взведено: рукоять у правого бедра снаружи, локоть отведён назад мимо корпуса
+        V3 gw = v3_add(P, v3_add(v3_add(v3_mul(c->x, -0.07f), v3_mul(c->y, -0.36f)), v3_mul(c->z, 0.03f)));
         V3 db = v3_sub(T, gw);
         f32 dbl = fmaxf(v3_len(db), 0.3f);
         f32 push = clampf(dbl - len + 0.10f - (a->aim_stop ? 0.30f : 0.0f), 0.10f, 0.60f);
@@ -1091,20 +1132,23 @@ static Xf strike_frame(const CharAction *a, V3 P, V3 T, f32 len, f32 reach, f32 
         if (gl > reach) gh = v3_add(P, v3_mul(gp, reach / gl));
         V3 g = v3_lerp(gw, gh, smooth01(q / 0.45f));
         V3 u = v3_norm(v3_sub(T, g));
-        return frame_axes(u, v3_cross(u, v3(0, 1, 0)), g);
+        return frame_axes(u, v3_cross(v3(0, 1, 0), u), g);
     }
     V3 d = v3_sub(T, P);
     f32 D = fmaxf(v3_len(d), 0.3f);
     V3 u0 = v3_mul(d, 1.0f / D);
     bool over = a->attack == ATK_OVERHEAD;
-    f32 tw = over ? -2.2f : -1.9f, tf = over ? 0.9f : 1.3f;
+    // Древко не заводят далеко за спину: другой конец прошёл бы сквозь тело; двуручное сверху — над головой,
+    // а не за ней: левой руке туда не достать
+    f32 tw = over ? (two ? -1.55f : -2.2f) : pole ? -1.1f : -1.9f, tf = over ? 0.9f : 1.3f;
     f32 th = lerpf(tw, tf, q);
     // Блок: клинок встаёт перед целью и отскакивает
     if (a->aim_stop && th > -0.35f) th = -0.35f - 0.4f * fminf(th + 0.35f, 1.0f);
     V3 m = over ? v3(a->aim_s, -1.0f, 0.0f) : v3(1.0f, a->aim_s, 0.0f);
     m = v3_norm(v3_sub(m, v3_mul(u0, v3_dot(m, u0))));
     f32 ah = clampf(D - 0.7f * len, 0.25f, reach);
-    f32 r = th < 0.0f ? lerpf(ah, 0.38f, (th / tw) * (th / tw)) : lerpf(ah, 0.42f, (th / tf) * (th / tf));
+    f32 rw = pole ? 0.56f : two ? 0.60f : 0.46f, rf = pole ? 0.58f : 0.50f;
+    f32 r = th < 0.0f ? lerpf(ah, rw, (th / tw) * (th / tw)) : lerpf(ah, rf, (th / tf) * (th / tf));
     f32 sn, cs;
     fsincos(th, &sn, &cs);
     V3 u = v3_add(v3_mul(u0, cs), v3_mul(m, sn));
@@ -1125,55 +1169,205 @@ static Xf fight_frame(const CharAction *a, u8 wpn, const Xf *wld)
         f = frame_lerp(&f, &b, smooth01(bl));
     }
     if (a->swing <= 0.0f || !a->aim_on) return f;
+    // Двуручным машут от середины плеч: оружие перед телом, обе руки достают
     V3 P = wld[BONE_UPPER_ARM_R].t;
+    if (weapon_two_hand(wpn) && a->attack != ATK_THRUST) P = v3_lerp(P, wld[BONE_UPPER_ARM_L].t, 0.5f);
     f32 reach = v3_len(v3_sub(joint(BONE_FOREARM_R), joint(BONE_UPPER_ARM_R))) +
                 v3_len(v3_sub(joint(BONE_HAND_R), joint(BONE_FOREARM_R))) + 0.07f;
     f32 len = g_weapons[wpn].length;
+    bool pole = wc == WC_POLEARM, two = weapon_two_hand(wpn);
     if (a->swing < 1.0f) {
-        Xf s = strike_frame(a, P, a->aim, len, reach, 0.0f);
-        return frame_lerp(&f, &s, smooth01(a->swing));
+        Xf s = strike_frame(a, c, P, a->aim, len, reach, 0.0f, pole, two);
+        return frame_around(&f, &s, smooth01(a->swing), c);
     }
-    if (a->swing < 2.0f) return strike_frame(a, P, a->aim, len, reach, ease_out(a->swing - 1.0f));
-    Xf s = strike_frame(a, P, a->aim, len, reach, 1.0f);
-    return frame_lerp(&s, &f, smooth01((a->swing - 2.0f) / 0.8f));
+    if (a->swing < 2.0f) return strike_frame(a, c, P, a->aim, len, reach, ease_out(a->swing - 1.0f), pole, two);
+    Xf s = strike_frame(a, c, P, a->aim, len, reach, 1.0f, pole, two);
+    return frame_around(&s, &f, smooth01((a->swing - 2.0f) / 0.8f), c);
 }
 
 // ---------------------------------------------------------------- IK руки
 
-static void arm_ik(Xf *wld, u32 side, V3 target, const Xf *hand_rot)
+// Ортонормальный базис: ось кости, шарнир, их произведение (столбцы)
+static Xf basis(V3 axis, V3 hinge)
 {
-    u8 up = side == L ? BONE_UPPER_ARM_L : BONE_UPPER_ARM_R;
-    u8 fo = up + 1, ha = up + 2;
-    f32 l1 = v3_len(v3_sub(joint(fo), joint(up))), l2 = v3_len(v3_sub(joint(ha), joint(fo)));
-    V3 S = wld[up].t, E = wld[fo].t, W = wld[ha].t;
+    hinge = v3_norm(v3_sub(hinge, v3_mul(axis, v3_dot(hinge, axis))));
+    return (Xf){ axis, hinge, v3_cross(axis, hinge), v3(0, 0, 0) };
+}
+
+// Поворот, переводящий базис b в базис w
+static Xf basis_map(const Xf *b, const Xf *w)
+{
+    Xf r;
+    r.x = v3_add(v3_add(v3_mul(w->x, b->x.x), v3_mul(w->y, b->y.x)), v3_mul(w->z, b->z.x));
+    r.y = v3_add(v3_add(v3_mul(w->x, b->x.y), v3_mul(w->y, b->y.y)), v3_mul(w->z, b->z.y));
+    r.z = v3_add(v3_add(v3_mul(w->x, b->x.z), v3_mul(w->y, b->y.z)), v3_mul(w->z, b->z.z));
+    r.t = v3(0, 0, 0);
+    return r;
+}
+
+#define SHAFT_R 0.22f     // древко двуручного не ближе к оси груди, м
+#define SHIFT_MAX 0.32f   // на сколько двуручное тянут к левой руке, дальше она отпускает, м
+#define THRUST_SHIFT 0.06f // то же в уколе
+#define ELBOW_HABIT 0.35f // насколько локоть тянется вниз-наружу-назад против продолжения кисти
+#define ELBOW_R 0.21f     // подсказка локтя не ближе к оси груди, м: корпус 0.16 и толщина руки
+#define FORE_R 0.19f      // предплечье не ближе к оси груди, м
+#define CHEST_FWD 0.03f   // ось корпуса впереди сустава груди, м
+#define HEAD_R 0.14f      // и к середине головы, м
+#define WRIST_MAX 1.30f   // излом запястья, рад (~75°): дальше кисть доворачивается к предплечью
+#define WRIST_COS 0.2675f // cos WRIST_MAX
+#define WRIST_SIN 0.9636f
+
+// Два звена: локоть и запястье для цели target и полюса локтя pole
+typedef struct ArmFit {
+    V3 u, f, n, E, W;
+} ArmFit;
+
+static ArmFit arm_fit(V3 S, V3 target, V3 Ei, u32 side, f32 l1, f32 l2)
+{
+    ArmFit r;
     V3 d = v3_sub(target, S);
-    f32 dl = v3_len(d);
-    if (dl < 1e-4f) return;
+    f32 dl = fmaxf(v3_len(d), 1e-4f);
     V3 dn = v3_mul(d, 1.0f / dl);
     f32 len = clampf(dl, 0.3f * (l1 + l2), l1 + l2 - 1e-3f);
-    // Локоть остаётся в плоскости, где был: вниз и наружу
-    V3 pole = v3_sub(E, S);
+    // К локтю без излома — привычный: вниз, наружу и назад
+    V3 pole = v3_sub(Ei, S), anat = v3(side == L ? 0.45f : -0.45f, -1.0f, -0.5f);
     pole = v3_sub(pole, v3_mul(dn, v3_dot(pole, dn)));
-    if (v3_dot(pole, pole) < 1e-6f) pole = v3(side == L ? 0.3f : -0.3f, -1.0f, -0.3f);
+    anat = v3_sub(anat, v3_mul(dn, v3_dot(anat, dn)));
+    f32 pl = v3_len(pole), al = v3_len(anat);
+    pole = v3_add(pl > 1e-5f ? v3_mul(pole, 1.0f / pl) : v3(0, 0, 0), v3_mul(anat, ELBOW_HABIT / fmaxf(al, 1e-5f)));
+    if (v3_dot(pole, pole) < 1e-8f) pole = v3_cross(dn, v3(1, 0, 0));
     pole = v3_norm(pole);
     f32 ca = clampf((l1 * l1 + len * len - l2 * l2) / (2.0f * l1 * len), -1.0f, 1.0f);
     f32 sa = sqrtf(1.0f - ca * ca);
-    V3 E2 = v3_add(S, v3_add(v3_mul(dn, l1 * ca), v3_mul(pole, l1 * sa)));
-    Xf r1 = xf_between(v3_norm(v3_sub(E, S)), v3_norm(v3_sub(E2, S)));
-    Xf u = xf_mul(&r1, &wld[up]);
-    u.t = S;
-    V3 fdir = xf_dir(&r1, v3_sub(W, E));
-    V3 W2 = v3_add(E2, v3_mul(dn, len));
-    W2 = v3_add(E2, v3_mul(v3_norm(v3_sub(target, E2)), l2));
-    Xf r2 = xf_between(v3_norm(fdir), v3_norm(v3_sub(W2, E2)));
-    Xf rr = xf_mul(&r2, &r1);
-    Xf f = xf_mul(&rr, &wld[fo]);
-    f.t = E2;
-    Xf h = hand_rot ? *hand_rot : xf_mul(&rr, &wld[ha]);
-    h.t = W2;
-    wld[up] = u;
-    wld[fo] = f;
-    wld[ha] = h;
+    r.u = v3_add(v3_mul(dn, ca), v3_mul(pole, sa));
+    r.E = v3_add(S, v3_mul(r.u, l1));
+    r.W = v3_add(S, v3_mul(dn, len));
+    r.f = v3_norm(v3_sub(r.W, r.E));
+    // Шарнир: поперёк плоскости плечо — локоть — запястье; у прямой руки — по полюсу
+    r.n = v3_cross(r.u, r.f);
+    if (v3_dot(r.n, r.n) < 1e-6f) r.n = v3_cross(r.u, pole);
+    r.n = v3_norm(r.n);
+    return r;
+}
+
+// Кисть не ломается сильнее WRIST_MAX: ось кисти ставится на конус вокруг предплечья f
+static bool wrist_clamp(Xf *hr, V3 fa, V3 f)
+{
+    V3 hd = xf_dir(hr, fa);
+    if (v3_dot(hd, f) >= WRIST_COS) return false;
+    V3 side = v3_sub(hd, v3_mul(f, v3_dot(hd, f)));
+    f32 sl = v3_len(side);
+    V3 to = sl > 1e-5f ? v3_add(v3_mul(f, WRIST_COS), v3_mul(side, WRIST_SIN / sl)) : f;
+    Xf back = xf_between(hd, to);
+    *hr = xf_mul(&back, hr);
+    return true;
+}
+
+// Рука без локтя и предплечья внутри корпуса и головы: подсказка локтя выводится из цилиндра груди;
+// если локоть или предплечье всё же ближе FORE_R к оси груди (или к голове) — локоть отводится наружу
+// и рука ставится заново
+// Насколько локоть и предплечье залезли в корпус (ось cc) или голову hc; push — куда их выводить
+static f32 arm_inside(const ArmFit *k, const Xf *ch, V3 cc, V3 hc, V3 *push)
+{
+    f32 worst = 0.0f;
+    for (u32 j = 0; j <= 3; j++) {
+        V3 q = v3_lerp(k->E, k->W, 0.25f * (f32)j);
+        V3 r = v3_sub(q, cc);
+        f32 h = v3_dot(r, ch->y);
+        if (h > -0.30f && h < 0.36f) {
+            V3 rq = v3_sub(r, v3_mul(ch->y, h));
+            f32 l2 = v3_dot(rq, rq);
+            if (l2 < FORE_R * FORE_R && l2 > 1e-8f) {
+                f32 l = sqrtf(l2);
+                if (FORE_R - l > worst) {
+                    worst = FORE_R - l;
+                    *push = v3_mul(rq, 1.0f / l);
+                }
+            }
+        }
+        if (h < 0.30f) continue;  // голова выше
+        V3 rh2 = v3_sub(q, hc);
+        f32 lh2 = v3_dot(rh2, rh2);
+        if (lh2 < HEAD_R * HEAD_R && lh2 > 1e-8f) {
+            f32 lh = sqrtf(lh2);
+            if (HEAD_R - lh > worst) {
+                worst = HEAD_R - lh;
+                *push = v3_mul(rh2, 1.0f / lh);
+            }
+        }
+    }
+    return worst;
+}
+
+static ArmFit arm_fit_clear(V3 S, V3 target, V3 Ei, u32 side, f32 l1, f32 l2, const Xf *ch, V3 hc)
+{
+    // Ось корпуса чуть впереди сустава груди: грудь выпуклая спереди
+    V3 cc = v3_add(ch->t, v3_mul(ch->z, CHEST_FWD));
+    V3 rc = v3_sub(Ei, cc);
+    V3 rh = v3_sub(rc, v3_mul(ch->y, v3_dot(rc, ch->y)));
+    f32 rl = v3_len(rh);
+    if (rl < ELBOW_R) {
+        V3 out = rl > 1e-4f ? v3_mul(rh, 1.0f / rl) : v3_mul(ch->x, side == L ? 1.0f : -1.0f);
+        Ei = v3_add(Ei, v3_mul(out, ELBOW_R - rl));
+    }
+    ArmFit k = arm_fit(S, target, Ei, side, l1, l2);
+    V3 push = v3(0, 0, 0);
+    f32 worst = arm_inside(&k, ch, cc, hc, &push);
+    if (worst <= 0.0f) return k;
+    k = arm_fit(S, target, v3_add(k.E, v3_mul(push, 2.0f * worst + 0.02f)), side, l1, l2);
+    worst = arm_inside(&k, ch, cc, hc, &push);
+    if (worst <= 0.01f) return k;
+    // Наружу не выходит (рука сложена у плеча, локоть ушёл за корпус): локоть вперёд-вниз и в сторону руки
+    V3 fwd = v3_add(v3_add(v3_mul(ch->z, 0.30f), v3_mul(ch->y, -0.15f)), v3_mul(ch->x, side == L ? 0.10f : -0.10f));
+    ArmFit k2 = arm_fit(S, target, v3_add(S, fwd), side, l1, l2);
+    return arm_inside(&k2, ch, cc, hc, &push) < worst ? k2 : k;
+}
+
+// Рука к запястью target с поворотом кисти hand_rot. Локоть ставится так, чтобы предплечье продолжало
+// кисть, насколько дотягивается; плечо и предплечье строятся по шарниру локтя, поэтому локоть гнётся,
+// как у живого. Если кисть пришлось довернуть к предплечью, а grip задан (точка хвата от запястья в осях
+// кисти) — рука переставляется так, чтобы хват остался на месте. Закрутка кисти — поровну локтю и запястью
+static void arm_ik(Xf *wld, u32 side, V3 target, const Xf *hand_rot, const V3 *grip)
+{
+    u8 up = side == L ? BONE_UPPER_ARM_L : BONE_UPPER_ARM_R;
+    u8 fo = up + 1, ha = up + 2;
+    V3 ua = v3_sub(joint(fo), joint(up)), fa = v3_sub(joint(ha), joint(fo));
+    f32 l1 = v3_len(ua), l2 = v3_len(fa);
+    ua = v3_mul(ua, 1.0f / l1);
+    fa = v3_mul(fa, 1.0f / l2);
+    // Шарнир локтя в позе привязки: сгиб ведёт предплечье вперёд
+    const V3 hinge_b = v3(-1.0f, 0.0f, 0.0f);
+    Xf hr = hand_rot ? *hand_rot : wld[ha];
+    V3 S = wld[up].t;
+    if (v3_dot(v3_sub(target, S), v3_sub(target, S)) < 1e-8f) return;
+    // Локоть без излома запястья: от запястья назад по оси кисти
+    const Xf *ch = &wld[BONE_CHEST];
+    V3 hc = xf_point(&wld[BONE_HEAD], v3_sub(v3(0.0f, 1.69f, 0.03f), joint(BONE_HEAD)));
+    ArmFit k = arm_fit_clear(S, target, v3_sub(target, v3_mul(xf_dir(&hr, fa), l2)), side, l1, l2, ch, hc);
+    if (wrist_clamp(&hr, fa, k.f) && grip) {
+        V3 at = v3_add(target, xf_dir(hand_rot ? hand_rot : &wld[ha], *grip));
+        V3 t2 = v3_sub(at, xf_dir(&hr, *grip));
+        hr = hand_rot ? *hand_rot : wld[ha];
+        k = arm_fit_clear(S, t2, v3_sub(t2, v3_mul(xf_dir(&hr, fa), l2)), side, l1, l2, ch, hc);
+        wrist_clamp(&hr, fa, k.f);
+    }
+    Xf ub = basis(ua, hinge_b), uw = basis(k.u, k.n);
+    Xf fb = basis(fa, hinge_b), fw = basis(k.f, k.n);
+    Xf ru = basis_map(&ub, &uw), rf = basis_map(&fb, &fw);
+    // Закрутка кисти вокруг предплечья: половину берёт предплечье (поворот к середине между ними)
+    V3 hn = xf_dir(&hr, hinge_b), fn = xf_dir(&rf, hinge_b);
+    hn = v3_sub(hn, v3_mul(k.f, v3_dot(hn, k.f)));
+    fn = v3_norm(v3_sub(fn, v3_mul(k.f, v3_dot(fn, k.f))));
+    V3 mid = v3_add(v3_mul(fn, v3_len(hn)), hn);
+    if (v3_dot(mid, mid) < 1e-8f) mid = v3_cross(k.f, fn);
+    Xf twr = xf_between(fn, v3_norm(mid));
+    rf = xf_mul(&twr, &rf);
+    ru.t = S;
+    rf.t = k.E;
+    hr.t = k.W;
+    wld[up] = ru;
+    wld[fo] = rf;
+    wld[ha] = hr;
 }
 
 // ---------------------------------------------------------------- сборка
@@ -1222,23 +1416,32 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
             for (u32 b = BONE_CLAVICLE_L; b <= BONE_HAND_R; b++) o.r[b] = keep.r[b];
     }
 
-    // Оружие в руке вне стойки: опущено, остриё вперёд-вниз; двуручное — наперевес у бедра
-    if (wield > 0.0f) {
-        bool two = weapon_two_hand(wpn);
-        ArmK carry = (ArmK){ -0.20f, 0.05f, 0.10f, -0.45f, 0.95f, 0.0f };
-        if (g_weapons[wpn].wclass == WC_POLEARM) carry = (ArmK){ -0.45f, 0.35f, 0.10f, -1.25f, 0.75f, 0.0f };
-        else if (two) carry = (ArmK){ -0.15f, 0.30f, 0.10f, -0.75f, 1.10f, 0.0f };
-        set_arm(&o, R, arm_lerp(get_arm(&o, R), carry, smooth01((wield - 0.45f) / 0.55f)));
-    }
-
     // Походка
+    ArmK pre = get_arm(&o, R);
     Loco lo = { 0 };
     locomotion(p, &o, &lo);
-    if (wield > 0.5f) {
-        // Рука с оружием машет вполсилы
-        ArmK r = get_arm(&o, R);
-        r.ux *= 0.5f;
-        set_arm(&o, R, r);
+    // Оружие в руке вне стойки, одной рукой: клинок опущен, остриё вперёд-вниз; древко стоймя, как посох;
+    // тяжёлое на правом плече. Рука с оружием машет на ходу меньше, с тяжёлым почти не машет
+    if (wield > 0.0f) {
+        ArmK carry = (ArmK){ -0.20f, 0.05f, 0.10f, -0.45f, 0.95f, 0.0f };
+        f32 sway = 0.5f;
+        if (g_weapons[wpn].wclass == WC_POLEARM) {
+            carry = (ArmK){ -0.10f, 0.00f, 0.12f, -1.45f, 0.00f, 0.0f };
+            sway = 0.25f;
+        } else if (weapon_two_hand(wpn)) {
+            carry = (ArmK){ -0.35f, 0.10f, 0.12f, -2.30f, 0.00f, 0.0f };
+            sway = 0.12f;
+        }
+        ArmK cur = get_arm(&o, R);
+        carry.ux += sway * (cur.ux - pre.ux);
+        set_arm(&o, R, arm_lerp(cur, carry, smooth01((wield - 0.45f) / 0.55f)));
+    }
+    // С пояса: левая висит чуть в стороне от ножен, при доставании придерживает их и уходит назад-наружу,
+    // чтобы клинок вышел мимо предплечья
+    if (armed && wield < 1.0f && weapon_carry(wpn) == CARRY_BELT) {
+        ArmK l = get_arm(&o, L);
+        l.out += 0.10f * (1.0f - wield);
+        set_arm(&o, L, arm_lerp(l, (ArmK){ 0.30f, -0.10f, 0.38f, -0.55f, 0.20f, 0.0f }, fsin(wield * PI_F)));
     }
 
     // Факел в левой руке: предплечье вперёд, древко стоит, пламя сбоку от лица; рука почти не машет.
@@ -1395,26 +1598,24 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         g.t = v3_sub(g_body_sockets[SOCKET_HAND_R].pos, g_body_bones[BONE_HAND_R].joint);
         // Поворот кисти, при котором рукоять ложится в ножны
         Xf ginv = { v3(g.x.x, g.y.x, g.z.x), v3(g.x.y, g.y.y, g.z.y), v3(g.x.z, g.y.z, g.z.z), v3(0, 0, 0) };
-        Xf hand_at_sheath = xf_mul(&sheath, &ginv);
         const f32 GRAB = 0.45f;
         if (wield > 0.0f && wield < 1.0f && a->clip == CLIP_NONE) {
+            // Рука идёт к ножнам вокруг корпуса; оружие выходит через промежуточное положение: с пояса —
+            // вдоль ножен вверх-вперёд, со спины — через верх над плечом (тяжёлое) или вниз к правому боку
+            // (древко), а не напрямую сквозь тело. Убирают тем же путём назад
             Xf hand_fk = wld[BONE_HAND_R];
-            V3 grip_fk = xf_point(&hand_fk, g.t);
-            Xf hrot;
-            V3 grip_t;
-            if (wield < GRAB) {
-                f32 s = smooth01(wield / GRAB);
-                hrot = xf_slerp_rot(&hand_fk, &hand_at_sheath, s, v3(0, 0, 0));
-                grip_t = v3_lerp(grip_fk, sheath.t, s);
-            } else {
-                f32 s = smooth01((wield - GRAB) / (1.0f - GRAB));
-                hrot = xf_slerp_rot(&hand_at_sheath, &hand_fk, s, v3(0, 0, 0));
-                // Сначала вытягивает вдоль ножен, потом выносит вперёд
-                grip_t = v3_add(v3_lerp(sheath.t, grip_fk, smooth01((s - 0.15f) / 0.85f)),
-                                v3_mul(sheath.y, -0.35f * fsin(PI_F * fminf(1.0f, s * 1.4f))));
+            Xf carry = xf_mul(&hand_fk, &g);
+            Xf mid = draw_mid(wpn, &sheath, &wld[BONE_CHEST]);
+            const Xf *ch = &wld[BONE_CHEST];
+            Xf wf_;
+            if (wield < GRAB) wf_ = frame_around(&carry, &sheath, smooth01(wield / GRAB), ch);
+            else {
+                f32 s = (wield - GRAB) / (1.0f - GRAB);
+                if (s < DRAW_MID) wf_ = frame_around(&sheath, &mid, smooth01(s / DRAW_MID), ch);
+                else wf_ = frame_around(&mid, &carry, smooth01((s - DRAW_MID) / (1.0f - DRAW_MID)), ch);
             }
-            V3 wrist = v3_sub(grip_t, xf_dir(&hrot, g.t));
-            arm_ik(wld, R, wrist, &hrot);
+            Xf hrot = xf_mul(&wf_, &ginv);
+            arm_ik(wld, R, v3_sub(wf_.t, xf_dir(&hrot, g.t)), &hrot, &g.t);
         }
         // В бою оружие ведёт рамка стойки, блока или удара, правая рука идёт за ним
         f32 wf = guard * smooth01((wield - 0.6f) / 0.4f) * (1.0f - 0.7f * clampf(a->stagger, 0.0f, 1.0f));
@@ -1423,7 +1624,7 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
             Xf hrot = xf_mul(&ff, &ginv);
             V3 wrist = v3_sub(ff.t, xf_dir(&hrot, g.t));
             Xf hb = xf_slerp_rot(&wld[BONE_HAND_R], &hrot, wf, v3(0, 0, 0));
-            arm_ik(wld, R, v3_lerp(wld[BONE_HAND_R].t, wrist, wf), &hb);
+            arm_ik(wld, R, v3_lerp(wld[BONE_HAND_R].t, wrist, wf), &hb, &g.t);
         }
         bool in_hand = wield >= GRAB && a->clip == CLIP_NONE;
         // Выбывшие роняют оружие сами (вызывающий рисует его на земле); в клипе — в руке
@@ -1431,18 +1632,69 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         weapon = in_hand ? xf_mul(&wld[BONE_HAND_R], &g) : sheath;
         // Двуручное: левая рука на древке
         if (in_hand && weapon_two_hand(wpn)) {
-            f32 w2 = smooth01((wield - 0.75f) / 0.25f) * (1.0f - clip_w) * (1.0f - 0.6f * clampf(a->stagger, 0.0f, 1.0f));
+            // Вне стойки несут одной рукой: левая свободна
+            f32 w2 = smooth01((wield - 0.75f) / 0.25f) * (1.0f - clip_w) * (1.0f - 0.6f * clampf(a->stagger, 0.0f, 1.0f)) *
+                     smooth01(guard / 0.5f);
             if (w2 > 0.0f) {
-                // Хват скользит по древку к месту, куда левая рука достаёт
-                f32 lu = v3_len(v3_sub(joint(BONE_FOREARM_L), joint(BONE_UPPER_ARM_L)));
-                f32 lf = v3_len(v3_sub(joint(BONE_HAND_L), joint(BONE_FOREARM_L)));
-                f32 r = 0.96f * (lu + lf) + 0.06f;
-                V3 os = v3_sub(weapon.t, wld[BONE_UPPER_ARM_L].t);
-                f32 bb = v3_dot(weapon.y, os), cc = v3_dot(os, os) - r * r, disc = bb * bb - cc;
-                f32 gs = weapon_left_grip(wpn);
-                if (disc < 0.0f) gs = -bb;
-                else gs = clampf(gs, -bb - sqrtf(disc), -bb + sqrtf(disc));
-                V3 at = v3_add(weapon.t, v3_mul(weapon.y, clampf(gs, -0.35f, 1.2f)));
+                // Левая скользит по древку в пределах хвата к месту, куда достаёт; если не достаёт никуда —
+                // оружие сдвигается к ней, пока обе руки не будут на нём
+                f32 glo = wpn_grip_lo(wpn), ghi = wpn_grip_hi(wpn), gs = weapon_left_grip(wpn);
+                V3 SL = wld[BONE_UPPER_ARM_L].t, SR = wld[BONE_UPPER_ARM_R].t;
+                f32 rl = 0.97f * (v3_len(v3_sub(joint(BONE_FOREARM_L), joint(BONE_UPPER_ARM_L))) +
+                                  v3_len(v3_sub(joint(BONE_HAND_L), joint(BONE_FOREARM_L)))) + 0.06f;
+                f32 rr = 0.97f * (v3_len(v3_sub(joint(BONE_FOREARM_R), joint(BONE_UPPER_ARM_R))) +
+                                  v3_len(v3_sub(joint(BONE_HAND_R), joint(BONE_FOREARM_R)))) + 0.06f;
+                V3 os = v3_sub(weapon.t, SL);
+                f32 bb = v3_dot(weapon.y, os), disc = bb * bb - (v3_dot(os, os) - rl * rl);
+                f32 ra = disc >= 0.0f ? -bb - sqrtf(disc) : 1e9f, rb = disc >= 0.0f ? -bb + sqrtf(disc) : -1e9f;
+                if (fmaxf(ra, glo) <= fminf(rb, ghi)) gs = clampf(gs, fmaxf(ra, glo), fminf(rb, ghi));
+                else gs = clampf(-bb, glo, ghi);
+                V3 shift = v3(0, 0, 0);
+                const Xf *ch = &wld[BONE_CHEST];
+                f32 b0 = g_weapons[wpn].wclass == WC_POLEARM ? -0.22f : -0.18f, b1 = g_weapons[wpn].length;
+                for (u32 it = 0; it < 3; it++) {
+                    V3 dl = v3_sub(v3_add(v3_add(weapon.t, shift), v3_mul(weapon.y, gs)), SL);
+                    V3 dr = v3_sub(v3_add(weapon.t, shift), SR);
+                    f32 ll = v3_len(dl), lr = v3_len(dr);
+                    if (ll > rl) shift = v3_sub(shift, v3_mul(dl, 1.0f - rl / ll));
+                    if (lr > rr) shift = v3_sub(shift, v3_mul(dr, 1.0f - rr / lr));
+                }
+                // Далеко к левой оружие не тянут: в крайних точках размаха левая отпускает древко.
+                // Укол не укорачивают совсем: на полном выпаде древко остаётся в правой
+                f32 sl = v3_len(shift), smax = a->attack == ATK_THRUST && a->swing > 0.0f ? THRUST_SHIFT : SHIFT_MAX;
+                if (sl > smax) {
+                    w2 *= 1.0f - smooth01((sl - smax) / 0.10f);
+                    shift = v3_mul(shift, smax / sl);
+                }
+                shift = v3_mul(shift, w2);
+                // Древко не сквозь корпус: ближайшая к оси груди точка отводится наружу
+                for (u32 it = 0; it < 2; it++) {
+                    f32 best = SHAFT_R * SHAFT_R;
+                    V3 away = v3(0, 0, 0);
+                    for (u32 k = 0; k <= 6; k++) {
+                        V3 q = v3_sub(v3_add(v3_add(weapon.t, shift), v3_mul(weapon.y, lerpf(b0, b1, (f32)k / 6.0f))), ch->t);
+                        f32 h = v3_dot(q, ch->y);
+                        if (h < -0.30f || h > 0.45f) continue;
+                        V3 rq = v3_sub(q, v3_mul(ch->y, h));
+                        f32 l2 = v3_dot(rq, rq);
+                        if (l2 < best) {
+                            best = l2;
+                            away = rq;
+                        }
+                    }
+                    if (best < SHAFT_R * SHAFT_R) {
+                        f32 l = sqrtf(best);
+                        away = l > 1e-4f ? v3_mul(away, 1.0f / l) : ch->z;
+                        shift = v3_add(shift, v3_mul(away, SHAFT_R - l));
+                    }
+                }
+                if (v3_dot(shift, shift) > 1e-6f) {
+                    weapon.t = v3_add(weapon.t, shift);
+                    Xf hrot = xf_mul(&weapon, &ginv);
+                    arm_ik(wld, R, v3_sub(weapon.t, xf_dir(&hrot, g.t)), &hrot, &g.t);
+                    weapon = xf_mul(&wld[BONE_HAND_R], &g);
+                }
+                V3 at = v3_add(weapon.t, v3_mul(weapon.y, gs));
                 Xf flip = { v3(-1, 0, 0), v3(0, 1, 0), v3(0, 0, -1), v3(0, 0, 0) };
                 Xf wr = xf_mul(&weapon, &flip);
                 wr.t = v3(0, 0, 0);
@@ -1450,9 +1702,12 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
                 Xf gl = g;
                 gl.t.x = -gl.t.x;
                 V3 wrist_t = v3_sub(at, xf_dir(&hl, gl.t));
-                V3 wrist_fk = wld[BONE_HAND_L].t;
-                Xf hrot = xf_slerp_rot(&wld[BONE_HAND_L], &hl, w2, v3(0, 0, 0));
-                arm_ik(wld, L, v3_lerp(wrist_fk, wrist_t, w2), &hrot);
+                // Отпущенная левая уходит вниз к левому бедру вокруг корпуса, не сквозь него
+                Xf fr = wld[BONE_HAND_L], on = hl;
+                fr.t = v3_add(SL, v3_add(v3_add(v3_mul(ch->x, 0.10f), v3_mul(ch->y, -0.50f)), v3_mul(ch->z, 0.06f)));
+                on.t = wrist_t;
+                Xf hrot = w2 < 1.0f ? frame_around(&fr, &on, w2, ch) : on;
+                arm_ik(wld, L, hrot.t, &hrot, &gl.t);
             }
         }
     }

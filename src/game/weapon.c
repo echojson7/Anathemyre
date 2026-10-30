@@ -60,9 +60,9 @@ void weapon_build(MeshBuilder *mb, u8 weapon)
         wbox(mb, 0.66f, 0.92f, 0.14f, 0.12f, 0.0f, 0.15f);
         break;
     case W_BAGOR:
-        // Багор: длинное древко, крюк и пика на конце; хват у нижней трети
+        // Багор: длинное древко, крюк и пика на конце; правая в 0.22 м от торца
         mb_set(mb, wood, MAT_LEATHER, B);
-        wcyl(mb, -0.55f, 1.95f, 0.02f, 0.0f);
+        wcyl(mb, -0.22f, 1.95f, 0.02f, 0.0f);
         mb_set(mb, wrap, MAT_CLOTH, B);
         wcyl(mb, -0.10f, 0.12f, 0.026f, 0.0f);
         wcyl(mb, 0.55f, 0.75f, 0.026f, 0.0f);
