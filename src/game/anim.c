@@ -1489,14 +1489,21 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     // Голова к цели, наклоны от разгона и поворота
     o.r[BONE_HEAD].y += 0.7f * p->look - chest_yaw * 0.6f * (1.0f - guard);
     o.r[BONE_SPINE].y += 0.3f * p->look * (1.0f - guard);
-    o.r[BONE_HEAD].z += 0.5f * p->lean_side;
+    o.r[BONE_HEAD].z += 0.35f * p->lean_side;
     o.r[BONE_PELVIS].x += p->lean_fwd * 0.6f;
     o.r[BONE_SPINE].x += p->lean_fwd * 0.6f;
     o.r[BONE_HEAD].x -= p->lean_fwd;
     o.off.z += p->lean_fwd * 0.35f;
-    o.r[BONE_PELVIS].z -= p->lean_side * 0.6f;
-    o.r[BONE_SPINE].z -= p->lean_side * 0.4f;
-    o.off.x -= p->lean_side * 0.25f;
+    // Крен в повороте — всем телом от стоп, а не изгибом поясницы: таз уходит внутрь поворота и
+    // клонится вместе с корпусом, стопы остаются на следу, ноги ставятся наискось. Голова чуть
+    // выравнивается к горизонту
+    {
+        f32 ls, lc, hy = joint(BONE_PELVIS).y;
+        fsincos(p->lean_side, &ls, &lc);
+        o.r[BONE_PELVIS].z -= p->lean_side;
+        o.off.x += hy * ls;
+        o.off.y -= hy * (1.0f - lc);
+    }
 
     // Всем телом: падение, лёжа, подъём, на колени, ползком
     f32 clip_w = 0.0f;

@@ -10,7 +10,8 @@
 #define ACCEL       3.0f   // разгон, м/с²
 #define BRAKE       6.0f   // торможение, м/с²
 #define ARRIVE_DEC  2.5f   // мягкое торможение к цели, м/с²
-#define LAT_ACC     7.0f   // предел бокового ускорения в повороте, м/с²
+#define LAT_ACC     4.5f   // предел бокового ускорения в повороте, м/с² (~0.45 g, живой на бегу берёт 0.3–0.5 g)
+#define TURN_K      3.0f   // руление: поворот скорости, рад/с на радиан отклонения от цели
 #define TURN_MOVE   6.0f   // предел поворота скорости на малом ходу, рад/с
 #define TURN_BODY   5.5f   // разворот тела на месте, рад/с: 180° за ~0.6 с
 #define TURN_TRACK  10.0f  // на ходу тело следует за направлением шага
@@ -74,9 +75,14 @@ void player_update(Player *p, f32 dt, GroundFn ground)
         // Со старта трогается, когда до цели осталось меньше ~100° поворота тела
         f32 face = fabsf(wrap_angle(p->move_yaw - p->heading));
         goal *= 1.0f - smooth01((face - 0.6f) / 1.1f);
-        // Направление скорости поворачивает не быстрее, чем позволяет боковое ускорение
-        f32 w = fminf(TURN_MOVE, LAT_ACC / fmaxf(p->speed, 0.1f)) * dt;
-        p->move_yaw = wrap_angle(p->move_yaw + clampf(wrap_angle(want - p->move_yaw), -w, w));
+        // Руление плавное: малую поправку курса растягивает на шаг-другой, а не берёт самой тугой дугой.
+        // Поворот скорости — не быстрее, чем позволяет боковое ускорение
+        f32 err = wrap_angle(want - p->move_yaw);
+        f32 wmax = fminf(TURN_MOVE, LAT_ACC / fmaxf(p->speed, 0.1f));
+        f32 rate = clampf(err * TURN_K, -wmax, wmax);
+        f32 step = rate * dt;
+        if (fabsf(step) > fabsf(err)) step = err;
+        p->move_yaw = wrap_angle(p->move_yaw + step);
     }
     p->speed += clampf(goal - p->speed, -BRAKE * dt, ACCEL * dt);
     p->pos.x += sinf(p->move_yaw) * p->speed * dt;
