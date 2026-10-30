@@ -181,9 +181,8 @@ void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool h
     Input raw = *in;
     if (hud_debug_begin(h, &raw)) {
         // Разделы: отладка и группа СВЕТ
-        static const char *tab_name[] = { "ОТЛАДКА", "СВЕТ" };
-        i32 tab_step = hud_form_step(&h->dbg.f, "РАЗДЕЛ", tab_name[h->dbg.tab]);
-        if (tab_step) h->dbg.tab = (u8)((h->dbg.tab + 2u + (u32)tab_step) % 2u);
+        static const char *const tab_name[] = { "ОТЛАДКА", "СВЕТ" };
+        hud_form_tabs(&h->dbg.f, tab_name, 2, &h->dbg.tab);
         if (h->dbg.tab == 1) menu_light(h, s, w, cam, st);
         else menu_debug(h, s, w, cam, humans_on, st);
     }

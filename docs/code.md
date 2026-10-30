@@ -1,0 +1,30 @@
+# Устройство кода: общее и где оно лежит
+
+Состояние на 2026-10-30. Разбор структуры и план шагов — Claude Doc «Anathemyre: разбор структуры кода и
+переиспользования». Здесь — правила, которые уже действуют в коде.
+
+## Общие помощники (одна копия на всю игру)
+
+| Что | Где | Вместо |
+|---|---|---|
+| `hash_u32`, `hashf` — хеш без состояния, число 0..1 (и выбор позы отдыха в player.c) | `src/core/hash.h` | `hashf` в anim.c, fight_anim.c, arena_view.c; `mix32` в combat.c; тело `hash01` в look.c |
+| `smoothstepf(a, b, x)` — плавный переход | `src/core/math3d.h` | `smooth` в sky.c, map.c, valley.c, arena_view.c, valley_view.c; `smooth01(a, b, x)` в ostov.c |
+| `smooth01(t)` — то же для доли 0..1 | `src/core/math3d.h` | копии в anim.c и player.c |
+| `wrap_angle` — угол в −π..π | `src/core/math3d.h` | копии в player.c, fight_anim.c, arena_view.c |
+| `m4_trs(c, size, rx, ry, rz)` — матрица детали постройки | `src/core/math3d.h` | `xf_box` в testroom.c и arena_view.c, `xf` в town.c, выражение в valley_view.c |
+| `PAL_*` — общие бетон, тёмный бетон, ржавчина, песок, красный и зелёный знак | `src/core/palette.h` | `C_CONCRETE`, `C_CONC`, `C_RUST`, `C_SAND`, `C_GLYPH_*` в testroom.c, arena_view.c, town.c, ostov.c, map.c |
+
+Правила:
+- Новый помощник, нужный двум файлам, — сразу в `core/`, не второй `static`.
+- Свой цвет у постройки — только если он отличается намеренно (выбеленный бетон и своя ржавчина Остова,
+  свет ламп Скудели); общий материал берётся из `palette.h`.
+- Хеши с другим перемешиванием (`hash2` в map.c и valley.c, `hash3` в ostov.c и flora.c) пока свои:
+  замена сдвинет рельеф и растения. Свести их — отдельный шаг с новым эталоном кадра.
+- Тела с одним скелетом не копируют суставы: худой (`BODY_THIN`) берёт `JOINTS_MH_MALE` и `HAIR_MH_MALE` (look.c).
+- `Pose` в anim.c смешивается как массив f32; `_Static_assert` рядом с ней требует, чтобы новые поля были f32 или V3.
+
+## Проверка «без изменений в игре»
+
+Уборка кода не меняет ни кадра, ни мира. Сверка с прошлой сборкой: три кадра `--shot` с `--day-stop --no-pixel`
+(совпадают все пиксели, кроме счётчика к/с наверху), сумма мира `--sum-after`, выводы `--arena-bench`,
+`--battle-bench`, `--field-bench`, `--move-bench`, `--bands-bench` без строк времени, `tools/save_check.sh`.

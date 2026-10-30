@@ -40,6 +40,7 @@ typedef struct Player {
     u8   gait;
     u16  group;      // номер приказа: кто идёт вместе, держит общий темп
     u8   ctrl;       // CTRL_*
+    i8   stride;     // длина шага перед остановкой: 1 + stride/400 (в байтах выравнивания, размер прежний)
     i32  slot;       // слот на поле боя, -1 — нет
     V3   target;
     bool moving;
@@ -51,6 +52,9 @@ void player_order_move(Player *p, V3 target);
 // Сразу в позу отдыха kind (витрина, сцены): вход с начала, держит hold с
 void player_rest(Player *p, u8 kind, f32 hold);
 void player_update(Player *p, f32 dt, GroundFn ground);
+// Множитель длины шага (1 — обычный): перед целью шаги подгоняются, чтобы встать на ней, когда опорная
+// стопа под телом. Тот же множитель идёт в позу (CharPose.stride), иначе стопа поедет
+f32  player_stride(const Player *p);
 // Тело для кадра между двумя шагами мира: a — прошлый шаг, b — текущий, t — доля шага 0..1
 void player_lerp(const Player *a, const Player *b, f32 t, Player *out);
 // Проверка разворотов без окна: шаг, трусца, бег; 90°, 135°, 180°; trace_path — CSV траекторий или NULL

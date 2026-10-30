@@ -46,6 +46,7 @@ typedef struct CharPose {
     f32 walk;        // 0 стоит .. 1 идёт
     f32 run;         // 0 шаг .. 1 бег (0.5 — трусца)
     f32 speed;       // фактическая скорость, м/с: по ней длина шага
+    f32 stride;      // множитель длины шага перед остановкой (player_stride), 0 = 1
     f32 time;
     f32 seed;
     f32 height;      // множитель роста, 0 = 1
@@ -112,6 +113,16 @@ static inline f32 char_cadence(f32 v)
 }
 // Длина полного цикла шага (два шага), м
 static inline f32 char_stride(f32 v) { return fmaxf(v, 0.5f) / char_cadence(fmaxf(v, 0.5f)); }
+// То же с походкой run: бегом темп не ниже 150 шагов в минуту, даже на малой скорости (разгон с места и
+// торможение — короткими частыми беговыми шагами). При походке по скорости совпадает с char_stride
+static inline f32 char_stride_run(f32 v, f32 run)
+{
+    v = fmaxf(v, 0.5f);
+    f32 c = char_cadence(v), w = clampf((run - 0.25f) / 0.25f, 0.0f, 1.0f);
+    return v / (c + (fmaxf(c, 1.25f) - c) * w);
+}
+// Фаза шага, где левая стопа в середине опоры под телом (правая — +0.5): с неё трогаются и на ней встают
+#define CHAR_REST_PHASE 0.22f
 // Походка под скорость, м/с: до 1.6 шаг, к 4.8 полный бег
 static inline f32 char_run_from_speed(f32 v) { return clampf((v - 1.6f) / 3.2f, 0.0f, 1.0f); }
 

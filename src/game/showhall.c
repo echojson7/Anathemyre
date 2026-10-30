@@ -6,16 +6,17 @@
 #include "look.h"
 #include "ostov.h"
 #include "../core/log.h"
+#include "../core/palette.h"
 #include "../render/ui.h"
 
-// Цвета поверхностей (альбедо, линейные)
-#define C_CONC   v3(0.40f, 0.385f, 0.36f)
-#define C_CONC_D v3(0.31f, 0.30f, 0.285f)
+// Цвета поверхностей (альбедо, линейные): общие из palette.h, свои — краска, железо, натрий ламп
+#define C_CONC   PAL_CONCRETE
+#define C_CONC_D PAL_CONCRETE_DARK
 #define C_PAINT  v3(0.52f, 0.47f, 0.33f)
-#define C_RUST   v3(0.34f, 0.19f, 0.10f)
+#define C_RUST   PAL_RUST
 #define C_IRON   v3(0.19f, 0.18f, 0.17f)
 #define C_LAMP   v3(1.0f, 0.70f, 0.36f)   // натрий: болезненно-жёлтый
-#define C_GLYPH  v3(0.25f, 1.0f, 0.40f)
+#define C_GLYPH  PAL_GLYPH_GREEN
 
 // Коробка цеха снаружи и внутри (стены WT), уровни: пол, низ и верх плиты галереи, низ и верх крыши
 #define X0  -22.0f
@@ -196,7 +197,7 @@ static void build_mesh(MeshBuilder *mb)
         mb_set(mb, C_IRON, MAT_METAL, BONE_NONE);
         mb_box(mb, m4_mul(m4_translate(v3(x, FY + 1.5f, MZ + 0.09f)), m4_scale(v3(0.06f, 2.8f, 0.04f))));
     }
-    glyph(mb, v3(-13.5f, 3.4f, MZ), v3(0, 0, 1), 0.5f, 0.5f, v3(0.95f, 0.18f, 0.10f));
+    glyph(mb, v3(-13.5f, 3.4f, MZ), v3(0, 0, 1), 0.5f, 0.5f, PAL_GLYPH_RED);
 
     // Лестница: ступени цельным бетоном до пола
     mb_set(mb, C_CONC_D, MAT_CONCRETE, BONE_NONE);

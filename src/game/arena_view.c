@@ -2,13 +2,12 @@
 
 #include <string.h>
 
-#define C_CONCRETE v3(0.42f, 0.40f, 0.37f)
-#define C_CONCRETE_DARK v3(0.30f, 0.29f, 0.27f)
-#define C_RUST v3(0.42f, 0.24f, 0.13f)
+#include "../core/hash.h"
+#include "../core/palette.h"
+
 #define C_RUST_DARK v3(0.28f, 0.17f, 0.10f)
 #define C_FLOOR v3(0.36f, 0.31f, 0.24f)
 #define C_GLYPH v3(0.16f, 0.62f, 0.28f)
-#define C_GLYPH_RED v3(0.95f, 0.18f, 0.10f)
 #define C_LAMP v3(0.95f, 0.82f, 0.45f)
 
 #define SLAB_R 8.6f     // вписанный радиус бетонной плиты
@@ -16,30 +15,12 @@
 #define FENCE_R 7.15f   // ограда: восьмиугольник, внутрь влезает круг ARENA_RADIUS
 #define FLOOR_TOP 0.125f
 
-static f32 hashf(u32 x)
-{
-    x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
-    return (f32)(x & 0xFFFFFF) / 16777215.0f;
-}
-
-static f32 wrap_angle(f32 a)
-{
-    while (a > PI_F) a -= 2.0f * PI_F;
-    while (a < -PI_F) a += 2.0f * PI_F;
-    return a;
-}
-
-static M4 xf_box(V3 c, V3 size, f32 rx, f32 ry, f32 rz)
-{
-    return m4_mul(m4_translate(c), m4_mul(m4_rot_y(ry), m4_mul(m4_rot_x(rx), m4_mul(m4_rot_z(rz), m4_scale(size)))));
-}
-
 // Восьмиугольная плита из четырёх полос: их объединение и есть восьмиугольник, грани плоские
 static void oct_slab(MeshBuilder *mb, V3 c, f32 r_in, f32 y0, f32 y1)
 {
     f32 side = 2.0f * r_in * tanf(PI_F / 8.0f);
     for (int k = 0; k < 4; k++)
-        mb_box(mb, xf_box(v3(c.x, 0.5f * (y0 + y1), c.z), v3(side, y1 - y0, 2.0f * r_in), 0, (f32)k * PI_F * 0.25f, 0));
+        mb_box(mb, m4_trs(v3(c.x, 0.5f * (y0 + y1), c.z), v3(side, y1 - y0, 2.0f * r_in), 0, (f32)k * PI_F * 0.25f, 0));
 }
 
 // Угол восьмиугольника с вписанным радиусом r_in; k = 0..7, отсчёт от +Z к +X
@@ -60,7 +41,7 @@ static void floor_glyph(MeshBuilder *mb, V3 c, V3 radial, f32 half_len, f32 half
 void arena_view_build(MeshBuilder *mb, V3 center)
 {
     // Плита и песок
-    mb_set(mb, C_CONCRETE, MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, PAL_CONCRETE, MAT_CONCRETE, BONE_NONE);
     oct_slab(mb, center, SLAB_R, -0.3f, 0.12f);
     mb_set(mb, C_FLOOR, MAT_SAND, BONE_NONE);
     oct_slab(mb, center, FLOOR_R, 0.0f, FLOOR_TOP);
@@ -82,16 +63,16 @@ void arena_view_build(MeshBuilder *mb, V3 center)
         bool gate_post = k == gate - 1 || k == gate;
         f32 h = gate_post ? 3.1f : 2.3f;
         mb_set(mb, C_RUST_DARK, MAT_RUST, BONE_NONE);
-        mb_box(mb, xf_box(v3(p.x, h * 0.5f, p.z), v3(0.22f, h, 0.06f), 0, a, 0));
-        mb_box(mb, xf_box(v3(p.x, h * 0.5f, p.z), v3(0.05f, h, 0.2f), 0, a, 0));
-        mb_set(mb, C_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
-        mb_box(mb, xf_box(v3(p.x, 0.25f, p.z), v3(0.5f, 0.3f, 0.5f), 0, a, 0));
+        mb_box(mb, m4_trs(v3(p.x, h * 0.5f, p.z), v3(0.22f, h, 0.06f), 0, a, 0));
+        mb_box(mb, m4_trs(v3(p.x, h * 0.5f, p.z), v3(0.05f, h, 0.2f), 0, a, 0));
+        mb_set(mb, PAL_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
+        mb_box(mb, m4_trs(v3(p.x, 0.25f, p.z), v3(0.5f, 0.3f, 0.5f), 0, a, 0));
     }
     for (int k = 0; k < 8; k++) {
         int k1 = (k + 1) % 8;
         if (k1 == gate) continue;
         V3 a = oct_corner(center, FENCE_R, k, 0.0f), b = oct_corner(center, FENCE_R, k1, 0.0f);
-        mb_set(mb, C_RUST, MAT_RUST, BONE_NONE);
+        mb_set(mb, PAL_RUST, MAT_RUST, BONE_NONE);
         static const f32 rails[3] = { 0.55f, 1.15f, 1.85f };
         for (int r = 0; r < 3; r++)
             mb_cylinder(mb, v3(a.x, rails[r], a.z), v3(b.x, rails[r] - (r == 2 ? 0.06f : 0.0f), b.z), 0.04f, 8);
@@ -111,9 +92,9 @@ void arena_view_build(MeshBuilder *mb, V3 center)
         mb_set(mb, C_RUST_DARK, MAT_RUST, BONE_NONE);
         mb_cylinder(mb, a, b, 0.09f, 10);
         V3 m = v3_lerp(a, b, 0.5f);
-        mb_set(mb, C_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
-        mb_box(mb, xf_box(v3(m.x, 2.45f, m.z - 0.02f), v3(1.6f, 0.75f, 0.08f), 0, 0, 0));
-        mb_set(mb, C_GLYPH_RED, MAT_GLYPH, BONE_NONE);
+        mb_set(mb, PAL_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
+        mb_box(mb, m4_trs(v3(m.x, 2.45f, m.z - 0.02f), v3(1.6f, 0.75f, 0.08f), 0, 0, 0));
+        mb_set(mb, PAL_GLYPH_RED, MAT_GLYPH, BONE_NONE);
         mb_quad(mb, v3(m.x, 2.45f, m.z - 0.07f), v3(-0.7f, 0, 0), v3(0, 0.3f, 0));
     }
 
@@ -123,16 +104,16 @@ void arena_view_build(MeshBuilder *mb, V3 center)
         V3 dir = v3(sinf(a), 0.0f, cosf(a));
         V3 base = v3(center.x + dir.x * 10.2f, 0.0f, center.z + dir.z * 10.2f);
         mb_set(mb, C_RUST_DARK, MAT_RUST, BONE_NONE);
-        mb_box(mb, xf_box(v3(base.x, 5.2f, base.z), v3(0.32f, 10.4f, 0.32f), 0, a, 0));
+        mb_box(mb, m4_trs(v3(base.x, 5.2f, base.z), v3(0.32f, 10.4f, 0.32f), 0, a, 0));
         for (int i = 0; i < 6; i++)
-            mb_box(mb, xf_box(v3(base.x, 1.2f + (f32)i * 1.6f, base.z), v3(0.5f, 0.06f, 0.5f), 0, a, 0));
-        mb_set(mb, C_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
-        mb_box(mb, xf_box(v3(base.x, 0.3f, base.z), v3(1.1f, 0.6f, 1.1f), 0, a, 0));
+            mb_box(mb, m4_trs(v3(base.x, 1.2f + (f32)i * 1.6f, base.z), v3(0.5f, 0.06f, 0.5f), 0, a, 0));
+        mb_set(mb, PAL_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
+        mb_box(mb, m4_trs(v3(base.x, 0.3f, base.z), v3(1.1f, 0.6f, 1.1f), 0, a, 0));
         // Корпус фонаря смотрит в центр и вниз
         V3 lamp = v3(base.x - dir.x * 0.5f, 10.2f, base.z - dir.z * 0.5f);
         f32 yaw = atan2f(-dir.x, -dir.z);
         mb_set(mb, v3(0.16f, 0.16f, 0.17f), MAT_METAL, BONE_NONE);
-        mb_box(mb, xf_box(lamp, v3(1.2f, 0.7f, 0.5f), 0.55f, yaw, 0));
+        mb_box(mb, m4_trs(lamp, v3(1.2f, 0.7f, 0.5f), 0.55f, yaw, 0));
         mb_set(mb, C_LAMP, MAT_EMISSIVE, BONE_NONE);
         V3 fwd = v3(sinf(yaw), 0.0f, cosf(yaw));
         V3 lens = v3_add(lamp, v3_add(v3_mul(fwd, 0.22f), v3(0, -0.14f, 0)));
@@ -147,23 +128,23 @@ void arena_view_build(MeshBuilder *mb, V3 center)
         V3 in = v3_norm(v3(center.x - p.x, 0.0f, center.z - p.z));
         V3 c = v3_add(p, v3_mul(in, 0.2f));
         mb_set(mb, C_RUST_DARK, MAT_RUST, BONE_NONE);
-        mb_box(mb, xf_box(v3_add(p, v3_mul(in, 0.1f)), v3(0.2f, 0.04f, 0.04f), 0, atan2f(in.x, in.z) + PI_F * 0.5f, 0));
-        mb_box(mb, xf_box(v3_add(c, v3(0, 0.1f, 0)), v3(0.16f, 0.025f, 0.16f), 0, 0.3f, 0));
+        mb_box(mb, m4_trs(v3_add(p, v3_mul(in, 0.1f)), v3(0.2f, 0.04f, 0.04f), 0, atan2f(in.x, in.z) + PI_F * 0.5f, 0));
+        mb_box(mb, m4_trs(v3_add(c, v3(0, 0.1f, 0)), v3(0.16f, 0.025f, 0.16f), 0, 0.3f, 0));
         for (int i = 0; i < 4; i++) {
             f32 a = (f32)i * PI_F * 0.5f + 0.3f;
-            mb_box(mb, xf_box(v3(c.x + sinf(a) * 0.07f, c.y - 0.02f, c.z + cosf(a) * 0.07f), v3(0.012f, 0.22f, 0.012f), 0, a, 0));
+            mb_box(mb, m4_trs(v3(c.x + sinf(a) * 0.07f, c.y - 0.02f, c.z + cosf(a) * 0.07f), v3(0.012f, 0.22f, 0.012f), 0, a, 0));
         }
         mb_set(mb, v3_mul(C_LAMP, 0.5f), MAT_EMISSIVE, BONE_NONE);
-        mb_box(mb, xf_box(v3_add(c, v3(0, -0.02f, 0)), v3(0.07f, 0.11f, 0.07f), 0, 0.3f, 0));
+        mb_box(mb, m4_trs(v3_add(c, v3(0, -0.02f, 0)), v3(0.07f, 0.11f, 0.07f), 0, 0.3f, 0));
     }
 
     // Бетонные блоки, на которых стоят и сидят зрители
-    mb_set(mb, C_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, PAL_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
     for (int i = 0; i < 9; i++) {
         f32 a = 0.5f + (f32)i * 0.62f;
         if (fabsf(wrap_angle(a - PI_F)) < 0.6f) continue;  // проход к воротам
         f32 r = 9.4f + 0.5f * hashf((u32)i * 13u);
-        mb_box(mb, xf_box(v3(center.x + sinf(a) * r, 0.25f, center.z + cosf(a) * r), v3(1.6f, 0.5f, 0.6f), 0, a, 0.03f));
+        mb_box(mb, m4_trs(v3(center.x + sinf(a) * r, 0.25f, center.z + cosf(a) * r), v3(1.6f, 0.5f, 0.6f), 0, a, 0.03f));
     }
 }
 
@@ -230,19 +211,13 @@ M4 arena_view_look(const ArenaSession *s, u32 ri, CharLook *lk)
     return look_matrix(lk, kind);
 }
 
-static f32 smooth(f32 a, f32 b, f32 x)
-{
-    f32 t = clampf((x - a) / (b - a), 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
-}
-
 u32 arena_view_lights(const ArenaView *v, f32 night, f32 time, PointLight *out)
 {
     u32 n = 0;
     V3 c = v->center;
     for (u32 k = 0; k < AV_LIGHTS; k++) {
         // Зажигаются не разом; пока лампа разгорается, она мигает
-        f32 on = smooth(0.30f + 0.06f * (f32)k, 0.42f + 0.06f * (f32)k, night);
+        f32 on = smoothstepf(0.30f + 0.06f * (f32)k, 0.42f + 0.06f * (f32)k, night);
         if (on <= 0.0f) continue;
         if (on < 1.0f && hashf((u32)(time * 9.0f) * 7u + k) < 0.35f) continue;
         // Дрожь напряжения: свет едва заметно дышит, изредка проседает
