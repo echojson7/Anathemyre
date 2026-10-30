@@ -155,11 +155,14 @@ static void menu_debug(Hud *h, Settings *s, World *w, RtsCamera *cam, bool human
     // Физика вещей (docs/physics.md): выключатель, куча лома у точки взгляда, сколько тел в каком состоянии
     if (hud_debug_check(h, "ФИЗИКА", &w->phys->on)) log_info("ФИЗИКА: %s", w->phys->on ? "вкл" : "выкл");
     if (hud_debug_button(h, "ФИЗИКА: БРОСИТЬ ЛОМ")) world_phys_drop(w);
+    if (hud_debug_button(h, "ФИЗИКА: БРОСИТЬ ВЕЩИ")) world_loot_drop(w);
     const PhysStats *ps = &w->phys->st;
     snprintf(val, sizeof val, "%u / %u / %u", ps->active, ps->asleep, ps->frozen);
     hud_debug_text(h, "ФИЗИКА: СЧИТ / СПИТ / ЗАСТЫЛО", val);
     snprintf(val, sizeof val, "%.3f МС, ПАР %u", (f64)ps->ms, ps->pairs);
     hud_debug_text(h, "ФИЗИКА: ШАГ", val);
+    snprintf(val, sizeof val, "%u", ground_live_count(w->ground));
+    hud_debug_text(h, "ВЕЩЕЙ НА ЗЕМЛЕ", val);
     if (hud_debug_button(h, "МИР: СОХРАНИТЬ")) s->save = true;
     if (hud_debug_button(h, "МИР: ЗАГРУЗИТЬ")) s->load = true;
     snprintf(val, sizeof val, "%llu", (unsigned long long)w->chron->total);
@@ -236,7 +239,15 @@ void orders_input(const Hud *h, const Input *in, const Input *hin, const HudWorl
         bool on_body = hud_pick(h, hin, hw, &pk, &pi);
         bool any = false;
         for (u32 i = 0; i < sq->count; i++) any |= sq->selected[i];
-        if (on_body && pk == LOOK_FIELD) {
+        i32 item = on_body ? -1 : hud_pick_item(h, hin, hw);
+        if (item >= 0 && any) {
+            // Вещь на земле: первый выбранный идёт её подобрать
+            V3 at = ground_pos(w->ground, w->phys, (u32)item);
+            i32 who = squad_primary(sq);
+            field_cancel(fd, (u32)squad_body(sq, (u32)who)->slot, true);
+            squad_order_pick(sq, item, at);
+            audio_play_ui(SFX_UI_ORDER, 1.0f);
+        } else if (on_body && pk == LOOK_FIELD) {
             for (u32 i = 0; i < sq->count; i++)
                 if (sq->selected[i]) field_attack(fd, (u32)squad_body(sq, i)->slot, pi);
             if (any) audio_play_ui(SFX_UI_ORDER, 1.0f);

@@ -115,6 +115,9 @@ bool world_init(World *w, Arena *perm, MeshBuilder *mb, u64 seed, f32 tod, bool 
     w->phys = ARENA_PUSH_ARRAY(perm, Phys, 1);
     phys_init(w->phys, perm);
     scrap_view_init(&w->scrap, mb, perm);
+    w->ground = ARENA_PUSH_ARRAY(perm, Ground, 1);
+    ground_init(w->ground, perm);
+    loot_view_init(&w->loot, mb, perm);
     Rng pr;
     rng_seed(&pr, seed, 13);
     V3 vs = w->valley->spawn;
@@ -142,6 +145,16 @@ static void world_tick(World *w)
     bands_tick(w->bands);
     // Физика вокруг своих и точки взгляда камеры. Лом по кнопке — тоже здесь: мир меняется только в шаге
     prof_zone(PZ_PHYS);
+    // Вещи на земле: выронили и подняли в бою, бросили из мешка, подобрали по приказу
+    loot_arena(w->ground, w->phys, w->arena, w->aview.in_bout, w->aview.center, w->aview.floor_y, w->tick);
+    loot_field(w->ground, w->phys, w->field, world_ground, w->tick);
+    loot_asks(w->ground, w->phys, &w->ground_ask, &w->squad, w->tick);
+    loot_pickups(w->ground, w->phys, &w->squad, w->field);
+    if (w->loot_drop) {
+        loot_drop_test(w->ground, w->phys, v3(w->focus.x, world_ground(w->focus.x, w->focus.z), w->focus.z), w->loot_drop,
+                       w->seed ^ w->tick);
+        w->loot_drop = 0;
+    }
     if (w->phys_drop) {
         Rng r;
         rng_seed(&r, w->seed ^ w->tick, 17);
@@ -210,6 +223,8 @@ void world_bands_test(World *w)
 
 void world_phys_drop(World *w) { w->phys_drop = 24; }
 
+void world_loot_drop(World *w) { w->loot_drop = 8; }
+
 bool world_squad_fighting(const World *w)
 {
     bool fighting = false;
@@ -253,7 +268,7 @@ static u64 world_layout(void)
                       sizeof(CombatEvent), sizeof(Bands), sizeof(NearBands), sizeof(ArenaSession),
                       sizeof(ArenaView), sizeof(Squad), sizeof(Field), sizeof(Chronicle), PEOPLE_MAX, FIELD_MAX, BANDS_MAX,
                       CHRON_CAP, PART_COUNT, SK_COUNT, SLOT_COUNT, COMBAT_MAX_TEAMS, TICK_HZ,
-                      PHYS_MAX, PHYS_SPHERES };
+                      PHYS_MAX, PHYS_SPHERES, GROUND_MAX, sizeof(GroundAsks) };
     return ser_fnv(SER_HASH_START, v, sizeof v);
 }
 
@@ -283,12 +298,20 @@ static void world_ser(Ser *s, void *user)
     bands_ser(s, w->bands);
     near_ser(s, w->near, w->bands->count);
     phys_ser(s, w->phys);
+    ground_ser(s, w->ground);
+    ser_count(s, &w->ground_ask.n, GROUND_ASKS);
+    SER(s, w->ground_ask.it);
+    SER(s, w->ground_ask.at);
+    SER(s, w->ground_ask.yaw);
+    SER(s, w->ground_ask.who);
     // Описания с тех пор поменяли порядок (мод, правка файлов): номера вещей — под нынешние
     if (s->mode == SER_LOAD && !map.same && !s->bad) {
         for (u32 i = 0; i < w->people->count; i++) defs_remap_sheet(&w->people->sheet[i], &map);
         defs_remap_combat(&w->field->w, &map);
         defs_remap_combat(&w->arena->w, &map);
         for (u32 k = 0; k < ARENA_ROSTER; k++) defs_remap_desc(&w->arena->roster[k].d, &map);
+        for (u32 k = 0; k < w->ground->count; k++) defs_remap_item(&w->ground->item[k], &map);
+        for (u32 k = 0; k < w->ground_ask.n; k++) defs_remap_item(&w->ground_ask.it[k], &map);
     }
 }
 

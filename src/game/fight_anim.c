@@ -13,7 +13,6 @@
 #define TURN_S 1.2f       // со спины на живот, прежде чем ползти
 #define KNEEL_S 1.6f      // опускается на колени
 #define FADE_S 0.35f      // переход из прежнего клипа в новый
-#define DROP_FALL_S 0.4f  // выроненное оружие падает из руки на землю
 #define DRAW_S 0.6f       // достать или убрать оружие: основа, с, и прибавка за килограмм (DRAW_KG)
 #define DRAW_KG 0.04f     // клинок 3 кг — 0.72 с, балка 18 кг — 1.3 с
 #define DRAW_HURRY 1.8f   // в замахе и в блоке достаёт быстрее во столько раз
@@ -333,33 +332,15 @@ void fight_anim_update(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, f32
     // Клип всем телом
     clip_now(f, w, i, alpha);
 
-    // Оружие выпадает из рук у выбывших и обезоруженных, а у сбитого с ног — если удар его выбил (loose);
-    // выроненное он поднимает сам: на середине подбора оно снова в руке
-    bool lost = !armed || st == FS_UNCONSCIOUS || st == FS_DEAD || st == FS_SURRENDER ||
-                (w->loose[i] && !(st == FS_PICKUP && f->clip_t > 0.55f));
-    if (!f->dropped && lost) {
-        f->dropped = true;
-        f->drop_age = 0.0f;
-        f32 h = w->heading[i];
-        if (w->loose[i] && armed) {
-            // Рядом, справа впереди: туда потом тянется рука при подборе
-            f->drop_pos = v3(w->x[i] + sinf(h) * 0.55f - cosf(h) * 0.25f, 0.0f, w->z[i] + cosf(h) * 0.55f + sinf(h) * 0.25f);
-            f->drop_yaw = h + 1.2f;
-        } else {
-            h += (hashf((u32)(f->seed * 7.0f) + w->tick) - 0.5f) * 1.5f;
-            f->drop_pos = v3(w->x[i] + sinf(h) * 0.7f - cosf(h) * 0.3f, 0.0f, w->z[i] + cosf(h) * 0.7f + sinf(h) * 0.3f);
-            f->drop_yaw = h + PI_F * 0.5f;
-        }
-    } else if (f->dropped && !lost) {
-        f->dropped = false;
-        f->wield = 1.0f;
-    }
+    // Оружие на земле — вещью мира (world.c, docs/physics.md): в руке его нет, пока не поднимет
+    bool lost = w->gitem[i] != COMBAT_IN_HAND;
+    if (f->dropped && !lost) f->wield = 1.0f;
+    f->dropped = lost;
     if (f->dropped) f->wield = 0.0f;
-    f->drop_age += dt;
 }
 
 bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, V3 origin, f32 floor_y, f32 time,
-                     CharPose *p, CharAction *a, V3 *drop_pos, f32 *drop_yaw)
+                     CharPose *p, CharAction *a)
 {
     u8 st = w->state[i];
     f32 h = f->prev_h + wrap_angle(w->heading[i] - f->prev_h) * alpha;
@@ -408,14 +389,6 @@ bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha,
     a->prev_prone = f->pprone;
     a->prev_side = f->pside;
     a->fade = f->fade;
-    if (f->dropped) {
-        // Летит из руки: от пояса вниз с ускорением, не дальше места, где ляжет
-        f32 u = clampf(f->drop_age / DROP_FALL_S, 0.0f, 1.0f);
-        f32 hx = sinf(h) * 0.25f - cosf(h) * 0.2f, hz = cosf(h) * 0.25f + sinf(h) * 0.2f;
-        f32 fx = lerpf(f->disp_x + hx, f->drop_pos.x, u), fz = lerpf(f->disp_z + hz, f->drop_pos.z, u);
-        *drop_pos = v3(origin.x + fx, floor_y + 0.03f + 0.9f * (1.0f - u * u), origin.z + fz);
-        *drop_yaw = f->drop_yaw;
-    }
     return f->dropped;
 }
 

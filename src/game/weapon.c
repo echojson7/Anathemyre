@@ -66,9 +66,3 @@ void torch_build(MeshBuilder *mb, bool flame)
 
 V3 torch_flame_pos(const M4 *bones) { return m4_point(bones[CHAR_BONE_FLAME], v3(0.0f, 0.12f, 0.0f)); }
 
-void weapon_ground_pose(V3 pos, f32 yaw, M4 *out)
-{
-    // Ось оружия ложится горизонтально, лезвие на ребро не встаёт: плашмя
-    M4 m = m4_mul(m4_translate(pos), m4_mul(m4_rot_y(yaw), m4_mul(m4_rot_x(PI_F * 0.5f), m4_rot_y(PI_F * 0.5f))));
-    for (int i = 0; i < CHAR_BONES; i++) out[i] = m;
-}

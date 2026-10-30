@@ -15,6 +15,7 @@
 #include "arena_view.h"
 #include "bands_near.h"
 #include "field.h"
+#include "loot.h"
 #include "people.h"
 #include "scrap.h"
 #include "squad.h"
@@ -48,6 +49,10 @@ typedef struct World {
     Phys         *phys;          // вещи с физикой: лом, потом оружие на земле и тела (docs/physics.md)
     ScrapView     scrap;
     u32           phys_drop;     // просьба меню: бросить столько лома у точки взгляда на следующем шаге
+    Ground       *ground;        // вещи на земле: брошенное, выроненное в бою (loot.c)
+    LootView      loot;
+    GroundAsks    ground_ask;    // просьбы интерфейса бросить вещь из мешка: исполняет шаг мира
+    u32           loot_drop;     // просьба меню: бросить столько вещей у точки взгляда
     char         *strings;       // пул строк сохранения: имена и роли после загрузки
     V3            focus;         // точка взгляда камеры: рядом с ней отряды становятся телами
     GpuMesh       hall, far, town_mesh, ostov;  // статика лагеря: зал и обломки, мегаструктуры, посёлок, руина Остов
@@ -77,6 +82,8 @@ bool world_squad_in_valley(const World *w);
 bool world_travel(World *w);
 // Бросить кучу лома у точки взгляда (отладка, кнопка в НАСТРОЙКАХ): падает на следующем шаге мира
 void world_phys_drop(World *w);
+// Бросить вещи (оружие и товар) у точки взгляда (отладка, кнопка в НАСТРОЙКАХ)
+void world_loot_drop(World *w);
 // Отряд дерётся
 bool world_squad_fighting(const World *w);
 // Пробные отряды вдали (отладка): по одному у Скудели и в долине, враждуют и идут навстречу по одной дороге

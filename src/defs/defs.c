@@ -596,3 +596,5 @@ void defs_remap_combat(CombatWorld *w, const DefMap *m)
         for (u32 s = 0; s < SLOT_COUNT; s++) w->armor[s][i] = to_armor(m, w->armor[s][i]);
     }
 }
+
+void defs_remap_item(Item *it, const DefMap *m) { remap_item(it, m); }

@@ -11,8 +11,8 @@
 
 // Зрители — обычные люди из таблицы (People, ROLE_WATCHER): арена только расставляет их за оградой
 #define AV_SPECTATORS 14
-// Сколько наборов костей нужно бойцам арены (с выпавшим оружием); рисует их figures.c
-#define AV_BONE_SETS (ARENA_MAX_BOUT * 2)
+// Сколько наборов костей нужно бойцам арены; рисует их figures.c
+#define AV_BONE_SETS ARENA_MAX_BOUT
 // Свет арены: два прожектора и две лампы на воротах
 #define AV_LIGHTS 4
 

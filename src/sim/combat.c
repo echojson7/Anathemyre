@@ -949,6 +949,7 @@ void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap)
     F(x); F(z); F(heading); F(timer); F(dur); F(pause); F(since_hit); F(mvx); F(mvz);
     B(state); B(team); B(attack); B(react); F(aim_x); F(aim_y); F(aim_s);
     w->target = ARENA_PUSH_ARRAY(a, i32, cap);
+    w->gitem = ARENA_PUSH_ARRAY(a, i32, cap);
     w->order = ARENA_PUSH_ARRAY(a, i32, cap);
     B(idle);
     for (u32 p = 0; p < PART_COUNT; p++) w->hp[p] = ARENA_PUSH_ARRAY(a, f32, cap);
@@ -982,7 +983,7 @@ void combat_ser(Ser *s, CombatWorld *w)
     C(timer); C(dur); C(pause); C(target); C(since_hit); C(mvx); C(mvz); C(idle); C(order);
     for (u32 p = 0; p < PART_COUNT; p++) C(hp[p]);
     C(blood); C(blood_max); C(bleed); C(shock); C(morale); C(morale_base); C(mass); C(height);
-    C(fracture); C(severed); C(disarmed); C(fall); C(prone); C(loose);
+    C(fracture); C(severed); C(disarmed); C(fall); C(prone); C(loose); C(gitem);
     for (u32 k = 0; k < SK_COUNT; k++) C(skill[k]);
     C(weapon); C(weapon_q);
     for (u32 k = 0; k < SLOT_COUNT; k++) C(armor[k]);
@@ -1068,6 +1069,7 @@ void combat_load(CombatWorld *w, u32 i, const FighterDesc *d)
     w->fall[i] = FALL_BACK;
     w->prone[i] = 0;
     w->loose[i] = 0;
+    w->gitem[i] = COMBAT_IN_HAND;
     for (u32 s = 0; s < SK_COUNT; s++) w->skill[s][i] = d->skill[s];
     w->weapon[i] = d->weapon;
     w->weapon_q[i] = d->weapon_q;

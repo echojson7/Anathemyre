@@ -7,6 +7,7 @@
 
 #include "../platform/platform.h"
 #include "arena_view.h"
+#include "../sim/ground.h"
 #include "field.h"
 #include "squad.h"
 
@@ -66,6 +67,10 @@ typedef struct HudWorld {
     f32                 time;       // реальное время, с
     f32                 tod;        // время суток 0..1
     u32                 day;
+    const Ground       *ground;     // вещи на земле: имя под курсором, подбор
+    const Phys         *phys;
+    GroundAsks         *ground_ask; // бросить вещь с курсора на землю
+    f32                 alpha;      // доля шага мира: где кадр показывает вещи
 } HudWorld;
 
 // Скорость времени по кнопкам часов: пауза, ×1, ×2, ×5 (шагов мира за секунду — в столько раз больше)
@@ -81,6 +86,8 @@ void hud_look(Hud *h, u8 kind, u32 index);
 bool hud_window_open(const Hud *h);
 // Кто под курсором в мире (свои, бойцы арены, чужие на поле); false — никого или курсор над интерфейсом
 bool hud_pick(const Hud *h, const Input *in, const HudWorld *w, u8 *kind, u32 *index);
+// Вещь на земле под курсором (Ground) или -1
+i32  hud_pick_item(const Hud *h, const Input *in, const HudWorld *w);
 
 // Окно с виджетами. Между ui_begin и hud_input: begin (false — окно закрыто), виджеты, end.
 // end возвращает true, если мышь занята окном; тогда клики в мир и HUD не передавать.

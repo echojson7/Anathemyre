@@ -159,8 +159,6 @@ static inline f32 char_run_from_speed(f32 v) { return clampf((v - 1.6f) / 3.2f, 
 void character_pose(const CharPose *p, const CharAction *act, M4 *out_bones);
 // Капсулы боевой стойки (g_body_hit_guard) с позы guard = 1 с одноручным. После body_hit_build
 void anim_bake_hit_guard(void);
-// Матрицы для оружия, брошенного на землю: рукоять в точке pos
-void weapon_ground_pose(V3 pos, f32 yaw, M4 *out_bones);
 
 // Оружие отдельной сеткой; кости — слот CHAR_BONE_WEAPON, рукоять в начале координат, острие по +Y
 void weapon_build(MeshBuilder *mb, u8 weapon);
