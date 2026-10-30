@@ -4,7 +4,7 @@ layout(std140, binding = 33) uniform Shade {
     mat4  u_casc_vp[2];  // каскады 1 и 2 (±180 и ±700 м); каскад 0 — u_light_vp
     mat4  u_scene_vp;    // камера: контактные тени
     vec4  u_casc_ext;    // полуразмеры каскадов 0, 1, 2, м; w — глубина карты, м
-    ivec4 u_shade;       // x — каскады, y — мягкий край, z — контактные тени
+    ivec4 u_shade;       // x — каскады, y — мягкий край, z — контактные тени, w — GTAO (углы)
 };
 layout(binding = 6) uniform sampler2DShadow u_shadow;           // каскад 0: прежняя карта ±45 м
 layout(binding = 32) uniform sampler2DArrayShadow u_casc;

@@ -33,6 +33,8 @@ enum {
     B_SKY = 31,       // сетка неба (sky.glsl); глубина запекания — на 29 (B_EXPO_SRC до экспозиции свободна)
     // Тени СВЕТА (shadow_sun.glsl): каскады, блок Shade, контактные тени, карта каскада 0 без сравнения
     B_CASC = 32, B_SHADE = 33, B_CONTACT = 34, B_SHADOW_RAW = 35,
+    // Углы СВЕТА: GTAO после размытия (сцена) и до него (размытие)
+    B_GTAO = 36, B_GTAO_RAW = 37,
 };
 #define SKIN_STATIC 0
 #define SKIN_BONES 1
@@ -211,6 +213,8 @@ static struct {
     RbBuf  shade_buf;     // блоки Shade: кольцо кадров
     u32    shade_step;
     Target contact;       // контактные тени (R8), contact.frag
+    RbPipe pipe_gtao, pipe_gtao_blur;
+    Target gtao[2];       // GTAO в половинном разрешении: 0 — сырое, 1 — размытое (R — открытость, G — дальность)
     u32    pset;      // набор текущего прохода
     RbTex  noise_tex; // значения hash13 в узлах решётки NOISE_N³: noise3 одной выборкой (common.glsl)
     RbTex  shadow_tex;
@@ -356,7 +360,8 @@ static void pipes_free(void)
             for (u32 c = 0; c < 2; c++) rb_pipe_free(&R.mesh_pipe[s][l][c]);
     RbPipe *full[] = { &R.pipe_rays, &R.pipe_atmos, &R.pipe_ao, &R.pipe_style, &R.pipe_src_map,
                        &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max, &R.pipe_skin,
-                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky, &R.pipe_contact };
+                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky, &R.pipe_contact,
+                       &R.pipe_gtao, &R.pipe_gtao_blur };
     for (u32 i = 0; i < ARRAY_COUNT(full); i++) rb_pipe_free(full[i]);
 }
 
@@ -406,9 +411,13 @@ static bool pipes_make(void)
     R.pipe_sky = rb_pipe_make(&(RbPipeDesc){ .cs = { "sky.glsl", "sky_bake.comp" }, .name = "сетка неба" });
     const char *contact_fs[RB_SHADER_FILES] = { "frame.glsl", "common.glsl", "contact.frag" };
     R.pipe_contact = pipe_full("контактные тени", contact_fs, RB_FMT_R8, NULL, false);
+    const char *gtao_fs[RB_SHADER_FILES] = { "frame.glsl", "common.glsl", "ao.glsl", "gtao.frag" };
+    R.pipe_gtao = pipe_full("GTAO", gtao_fs, RB_FMT_RG16F, NULL, false);
+    const char *gtao_blur_fs[RB_SHADER_FILES] = { "gtao_blur.frag" };
+    R.pipe_gtao_blur = pipe_full("GTAO: размытие", gtao_blur_fs, RB_FMT_RG16F, NULL, false);
     if (!R.pipe_rays || !R.pipe_atmos || !R.pipe_ao || !R.pipe_style || !R.pipe_src_map || !R.pipe_vrs_block ||
         !R.pipe_vrs || !R.pipe_level || !R.pipe_level_max || !R.pipe_skin || !R.pipe_expo || !R.pipe_bloom_down ||
-        !R.pipe_bloom_up || !R.pipe_sky || !R.pipe_contact) {
+        !R.pipe_bloom_up || !R.pipe_sky || !R.pipe_contact || !R.pipe_gtao || !R.pipe_gtao_blur) {
         pipes_free();
         return false;
     }
@@ -420,7 +429,8 @@ bool render_reload_shaders(void)
     // Старые конвейеры живут, пока новые не собраны целиком
     RbPipe *full[] = { &R.pipe_rays, &R.pipe_atmos, &R.pipe_ao, &R.pipe_style, &R.pipe_src_map,
                        &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max, &R.pipe_skin,
-                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky, &R.pipe_contact };
+                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky, &R.pipe_contact,
+                       &R.pipe_gtao, &R.pipe_gtao_blur };
     RbPipe old_mesh[PSETS][LAYS][2], old_full[ARRAY_COUNT(full)];
     memcpy(old_mesh, R.mesh_pipe, sizeof old_mesh);
     memset(R.mesh_pipe, 0, sizeof R.mesh_pipe);
@@ -571,6 +581,8 @@ void render_shutdown(void)
     rb_tex_free(&R.sky_depth);
     rb_tex_free(&R.casc_tex);
     target_free(&R.contact);
+    target_free(&R.gtao[0]);
+    target_free(&R.gtao[1]);
     for (u32 i = 0; i < STREAM_FRAMES; i++) {
         rb_buf_free(&R.bone_buf[i]);
         rb_buf_free(&R.inst_buf[i]);
@@ -1542,6 +1554,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         target_make(&R.level, iw, ih, RB_FMT_R8UI, false);
         target_make(&R.level_max, (iw + 7) / 8, (ih + 7) / 8, RB_FMT_R8UI, false);
         target_make(&R.contact, iw, ih, RB_FMT_R8, false);
+        for (u32 i = 0; i < 2; i++) target_make(&R.gtao[i], (iw + 1) / 2, (ih + 1) / 2, RB_FMT_RG16F, false);
         for (i32 i = 0, bw = iw, bh = ih; i < BLOOM_LEVELS; i++) {
             bw = MAX((bw + 1) / 2, 1);
             bh = MAX((bh + 1) / 2, 1);
@@ -1593,6 +1606,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     u32 ng_shadow = rs->shadows && rs->flora ? gather_groups(&shadow_view, true, g_idraw[0]) : 0;
     u32 ng_scene = rs->flora ? gather_groups(&scene_view, false, g_idraw[1]) : 0;
     bool atmos = rs->atmos, rays = atmos && rs->rays && rs->shadows, ao = atmos && rs->ao;
+    // GTAO гасит рассеянный свет в сцене, прежнее AO атмосферы при нём не идёт
+    bool gtao = ao && rs->light_ao == LIGHT_AO_GTAO;
     // Размер пикселя на дальности 1 м; s^P = (px_m / d)^P = PIXEL_K * px_m^P * (1/d)^P
     f32 px_k = rs->pixel ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
     bool vrs = R.vrs && rs->vrs && rs->pixel;
@@ -1620,7 +1635,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     memcpy(f->pix, (f32[4]){ px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14] }, sizeof f->pix);
     f->post = rs->post ? 1 : 0;
     f->ao_half = rs->ao_half ? 1 : 0;
-    f->parts = (rays ? 1 : 0) | (ao ? 2 : 0);
+    f->parts = (rays ? 1 : 0) | (ao && !gtao ? 2 : 0);
     f->tile[0] = R.vrs_tile[0] / 4;
     f->tile[1] = R.vrs_tile[1] / 4;
     f->light[0] = rs->light_mat;
@@ -1707,6 +1722,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         sd.shade[0] = rs->shadows && rs->light_casc && (R.casc_ready & 3u) == 3u;
         sd.shade[1] = rs->light_soft;
         sd.shade[2] = rs->shadows && rs->light_contact;
+        sd.shade[3] = gtao;
         size_t off = (size_t)R.stream * R.shade_step;
         rb_buf_write(R.shade_buf, off, sizeof sd, &sd);
         rb_bind_ubo(B_SHADE, R.shade_buf, off, sizeof sd);
@@ -1749,6 +1765,13 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     // Контактные тени по готовой глубине (время — в столбце глубина)
     if (rs->shadows && rs->light_contact) draw_full(&R.contact, R.pipe_contact, 0);
     rb_bind_tex(B_CONTACT, R.contact.color, RB_SMP_NEAREST);
+    // GTAO по той же глубине, затем размытие 4x4 по дальности (время — в столбце глубина)
+    if (gtao) {
+        draw_full(&R.gtao[0], R.pipe_gtao, 0);
+        rb_bind_tex(B_GTAO_RAW, R.gtao[0].color, RB_SMP_NEAREST);
+        draw_full(&R.gtao[1], R.pipe_gtao_blur, 0);
+    }
+    rb_bind_tex(B_GTAO, R.gtao[1].color, RB_SMP_NEAREST);
     pass_mark(2);
     if (timing) mark(2);
     pass_to(&R.scene, false, NULL, rate);
