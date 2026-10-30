@@ -3,13 +3,8 @@
 
 in vec2 v_uv;
 
-layout(location = 30) uniform mat4 u_inv_vp;
-layout(location = 31) uniform vec3 u_cam;
-layout(location = 34) uniform mat4 u_light_vp;
-layout(location = 35) uniform float u_time;
-layout(location = 36) uniform int u_frame;
-layout(binding = 1) uniform sampler2D u_depth;
-layout(binding = 2) uniform sampler2DShadow u_shadow;
+layout(binding = 7) uniform sampler2D u_depth;
+layout(binding = 6) uniform sampler2DShadow u_shadow;
 
 out vec2 o_rays;
 
@@ -25,7 +20,7 @@ void main()
 {
     float d = texture(u_depth, v_uv).r;
     vec4 w = u_inv_vp * vec4(v_uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
-    vec3 ray = w.xyz / w.w - u_cam;
+    vec3 ray = w.xyz / w.w - u_cam_pos;
     float dist = d >= 1.0 ? 4000.0 : length(ray);
     vec3 dir = normalize(ray);
 
@@ -37,7 +32,7 @@ void main()
     float lit = 0.0;
     for (int i = 0; i < STEPS; i++) {
         float t = (float(i) + jitter) * step_len;
-        vec3 p = u_cam + dir * t;
+        vec3 p = u_cam_pos + dir * t;
         float dens = 0.7 + 0.6 * noise3(p * 0.15 + vec3(u_time * 0.2, 0.0, u_time * 0.1));
         lit += light_vis(p) * dens * exp(-t * 0.012);
     }

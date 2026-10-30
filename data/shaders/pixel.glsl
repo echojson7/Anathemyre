@@ -2,10 +2,9 @@
 // по нему источник цвета каждого пикселя (src_map.frag), откуда берёт цвет фильтр кадра (style.frag)
 // и строится карта частоты шейдинга (vrs_block.frag)
 
-layout(location = 44) uniform vec4 u_pix;   // размер пикселя k = x * (1/d)^y; m10, m14 проекции
-layout(binding = 1) uniform sampler2D u_depth;
-layout(binding = 4) uniform usampler2D u_level_map;  // level_at каждого пикселя, level.frag
-layout(binding = 5) uniform usampler2D u_level_max;  // самый крупный level в блоке 8x8, level_max.frag
+layout(binding = 7) uniform sampler2D u_depth;
+layout(binding = 12) uniform usampler2D u_level_map;  // level_at каждого пикселя, level.frag
+layout(binding = 13) uniform usampler2D u_level_max;  // самый крупный level в блоке 8x8, level_max.frag
 
 // Размеры ячеек: шаг 0.5 пикселя кадра, ниже 2 — шаг 0.25; храним их в четвертях: q = 4k
 const int PIXEL_MAX_Q = 32;  // 8 пикселей

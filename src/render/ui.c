@@ -1,8 +1,9 @@
 #include "ui.h"
 
+#include <stddef.h>
 #include <string.h>
 
-#include "gl.h"
+#include "rb.h"
 #include "render.h"
 
 #define UI_MAX_QUADS 16384
@@ -140,13 +141,17 @@ static const GlyphArt g_small[] = {
 #define SMALL_COUNT ARRAY_COUNT(g_small)
 _Static_assert(FONT_COUNT + SMALL_COUNT < (ATLAS / CELL) * (ATLAS / CELL), "шрифт не влезает в атлас");
 
+// Привязки текстур (ui.frag, upscale.frag)
+enum { B_UI_ATLAS = 20, B_UI_IMAGE = 21 };
+
 #define UI_BOXES 32
 #define UI_PAD   2.0f  // апскейл смешивает соседние пиксели цели: накладываем с запасом 1, чистим с запасом 2
 
 static struct {
-    u32 prog, vao, vbo, tex;
-    u32 prog_up;               // слой рисуется в своём масштабе и ровно растягивается на окно
-    u32 fbo[UI_LAYERS], target[UI_LAYERS];
+    RbPipe pipe;
+    RbPipe pipe_up;            // слой рисуется в своём масштабе и ровно растягивается на окно
+    RbBuf vbo;                 // кольцо кадров: RB_FRAMES × UI_LAYERS кусков по слою
+    RbTex tex, target[UI_LAYERS];
     i32 tw[UI_LAYERS], th[UI_LAYERS];  // размер цели: одна точка шрифта — один пиксель цели
     u8  lut_ascii[128];   // номер буквы + 1, 0 — нет
     u8  lut_cyr[0x60];    // U+0400..U+045F
@@ -156,7 +161,7 @@ static struct {
     f32 user_scale, user_text;  // ползунки отладочного меню
     u32 layer;
     i32 win_w, win_h;
-    u32 image;            // текстура для ui_image
+    RbTex image;          // текстура для ui_image
     f32 time;
     u32 count[UI_LAYERS];  // вершин в кадре
     // Занятые части цели в кадре (x0, y0, x1, y1) с запасом UI_PAD, не пересекаются.
@@ -203,42 +208,31 @@ bool ui_init(void)
     }
     pix[ATLAS * ATLAS - 1] = 255;  // сплошная заливка
 
-    U.prog = render_program("ui.vert", "ui.frag");
-    U.prog_up = render_program("fullscreen.vert", "upscale.frag");
-    if (!U.prog || !U.prog_up) return false;
-    glCreateFramebuffers(UI_LAYERS, U.fbo);
-    glCreateTextures(GL_TEXTURE_2D, 1, &U.tex);
-    glTextureStorage2D(U.tex, 1, GL_R8, ATLAS, ATLAS);
-    glTextureSubImage2D(U.tex, 0, 0, 0, ATLAS, ATLAS, GL_RED, GL_UNSIGNED_BYTE, pix);
-    glTextureParameteri(U.tex, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTextureParameteri(U.tex, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-    glCreateBuffers(1, &U.vbo);
-    glNamedBufferStorage(U.vbo, (GLsizeiptr)sizeof U.v[0], NULL, GL_DYNAMIC_STORAGE_BIT);
-    glCreateVertexArrays(1, &U.vao);
-    glVertexArrayVertexBuffer(U.vao, 0, U.vbo, 0, sizeof(UiVertex));
-    glEnableVertexArrayAttrib(U.vao, 0);
-    glEnableVertexArrayAttrib(U.vao, 1);
-    glEnableVertexArrayAttrib(U.vao, 2);
-    glVertexArrayAttribFormat(U.vao, 0, 2, GL_FLOAT, GL_FALSE, 0);
-    glVertexArrayAttribFormat(U.vao, 1, 2, GL_FLOAT, GL_FALSE, 8);
-    glVertexArrayAttribFormat(U.vao, 2, 4, GL_UNSIGNED_BYTE, GL_TRUE, 16);
-    glVertexArrayAttribBinding(U.vao, 0, 0);
-    glVertexArrayAttribBinding(U.vao, 1, 0);
-    glVertexArrayAttribBinding(U.vao, 2, 0);
+    // Слой копит цвет по альфе в свою цель; на окно — уже умноженным на альфу
+    U.pipe = rb_pipe_make(&(RbPipeDesc){
+        .vs = { "ui.vert" }, .fs = { "ui.frag" }, .name = "интерфейс", .blend = RB_BLEND_ALPHA, .color = { RB_FMT_RGBA8 },
+        .layout = { .attr = { { 0, 0, RB_ATTR_F32x2, offsetof(UiVertex, x) }, { 1, 0, RB_ATTR_F32x2, offsetof(UiVertex, u) },
+                              { 2, 0, RB_ATTR_UN8x4, offsetof(UiVertex, color) } },
+                    .attrs = 3, .stride = { sizeof(UiVertex) } },
+    });
+    U.pipe_up = rb_pipe_make(&(RbPipeDesc){
+        .vs = { "fullscreen.vert" }, .fs = { "upscale.frag" }, .name = "интерфейс на окно", .blend = RB_BLEND_PREMUL,
+    });
+    if (!U.pipe || !U.pipe_up) return false;
+    U.tex = rb_tex_make(&(RbTexDesc){ .fmt = RB_FMT_R8, .w = ATLAS, .h = ATLAS, .usage = RB_TEX_SAMPLED });
+    rb_tex_write(U.tex, 0, 0, 0, 0, ATLAS, ATLAS, 1, pix, 0);
+    U.vbo = rb_buf_make(RB_FRAMES * sizeof U.v, RB_BUF_VERTEX | RB_BUF_DYNAMIC, NULL);
     U.user_scale = U.user_text = 1.0f;
-    return true;
+    return U.tex && U.vbo;
 }
 
 void ui_shutdown(void)
 {
-    if (U.prog) glDeleteProgram(U.prog);
-    if (U.prog_up) glDeleteProgram(U.prog_up);
-    glDeleteTextures(UI_LAYERS, U.target);
-    glDeleteFramebuffers(UI_LAYERS, U.fbo);
-    if (U.tex) glDeleteTextures(1, &U.tex);
-    if (U.vbo) glDeleteBuffers(1, &U.vbo);
-    if (U.vao) glDeleteVertexArrays(1, &U.vao);
+    rb_pipe_free(&U.pipe);
+    rb_pipe_free(&U.pipe_up);
+    for (u32 l = 0; l < UI_LAYERS; l++) rb_tex_free(&U.target[l]);
+    rb_tex_free(&U.tex);
+    rb_buf_free(&U.vbo);
 }
 
 void ui_begin(i32 win_w, i32 win_h)
@@ -351,7 +345,7 @@ void ui_image(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 ti
     quad(x, y, w, h, u0 + 2.0f, v0, u1 + 2.0f, v1, tint);
 }
 
-void ui_set_image(u32 tex) { U.image = tex; }
+void ui_set_image(RbTex tex) { U.image = tex; }
 void ui_set_time(f32 t) { U.time = t; }
 
 void ui_frame(f32 x, f32 y, f32 w, f32 h, u32 color)
@@ -430,49 +424,36 @@ static void draw_layer(u32 l)
 {
     i32 tw = (i32)floorf((f32)U.win_w / U.text[l]), th = (i32)floorf((f32)U.win_h / U.text[l]);
     if (tw != U.tw[l] || th != U.th[l]) {
-        if (U.target[l]) glDeleteTextures(1, &U.target[l]);
-        glCreateTextures(GL_TEXTURE_2D, 1, &U.target[l]);
-        glTextureStorage2D(U.target[l], 1, GL_RGBA8, tw, th);
-        glTextureParameteri(U.target[l], GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTextureParameteri(U.target[l], GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTextureParameteri(U.target[l], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTextureParameteri(U.target[l], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glNamedFramebufferTexture(U.fbo[l], GL_COLOR_ATTACHMENT0, U.target[l], 0);
+        rb_tex_free(&U.target[l]);
+        U.target[l] = rb_tex_make(&(RbTexDesc){ .fmt = RB_FMT_RGBA8, .w = tw, .h = th, .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
         U.tw[l] = tw;
         U.th[l] = th;
     }
     // Прозрачный фон: цвет копится уже умноженным на альфу
-    glBindFramebuffer(GL_FRAMEBUFFER, U.fbo[l]);
-    glViewport(0, 0, tw, th);
-    glClearColor(0, 0, 0, 0);
-    glEnable(GL_SCISSOR_TEST);
+    rb_pass_begin(&(RbPass){ .color = { { U.target[l] } } });
+    static const f32 clear[4] = { 0, 0, 0, 0 };
     for (u32 i = 0; i < U.boxes[l]; i++) {
         const f32 *b = U.box[l][i];
         i32 x0 = MAX((i32)floorf(b[0]), 0), y0 = MAX((i32)floorf(b[1]), 0);
         i32 x1 = MIN((i32)ceilf(b[2]), tw), y1 = MIN((i32)ceilf(b[3]), th);
-        if (x1 > x0 && y1 > y0) {
-            glScissor(x0, th - y1, x1 - x0, y1 - y0);
-            glClear(GL_COLOR_BUFFER_BIT);
-        }
+        if (x1 > x0 && y1 > y0) rb_clear_rect(x0, th - y1, x1 - x0, y1 - y0, clear, false);
     }
-    glDisable(GL_SCISSOR_TEST);
-    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    glNamedBufferSubData(U.vbo, 0, (GLsizeiptr)(U.count[l] * sizeof(UiVertex)), U.v[l]);
-    glUseProgram(U.prog);
-    glUniform2f(0, (f32)tw, (f32)th);
-    glUniform1f(1, U.time);
-    glBindTextureUnit(0, U.tex);
-    if (U.image) glBindTextureUnit(1, U.image);
-    glBindVertexArray(U.vao);
-    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)U.count[l]);
+    size_t off = ((size_t)rb_frame_slot() * UI_LAYERS + l) * sizeof U.v[0];
+    rb_buf_write(U.vbo, off, U.count[l] * sizeof(UiVertex), U.v[l]);
+    rb_bind_pipe(U.pipe);
+    rb_bind_vertex(0, U.vbo, off);
+    f32 push[4] = { (f32)tw, (f32)th, U.time, 0.0f };
+    rb_push(0, sizeof push, push);
+    rb_bind_tex(B_UI_ATLAS, U.tex, RB_SMP_NEAREST_REPEAT);
+    if (U.image) rb_bind_tex(B_UI_IMAGE, U.image, RB_SMP_NEAREST);
+    rb_draw(U.count[l], 0, 1);
+    rb_pass_end();
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, U.win_w, U.win_h);
-    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    glUseProgram(U.prog_up);
-    glUniform2f(43, (f32)U.win_w, (f32)U.win_h);
-    glBindTextureUnit(0, U.target[l]);
-    glEnable(GL_SCISSOR_TEST);
+    rb_pass_begin(&(RbPass){ 0 });
+    rb_bind_pipe(U.pipe_up);
+    f32 out[4] = { (f32)U.win_w, (f32)U.win_h, 0.0f, 0.0f };
+    rb_push(0, sizeof out, out);
+    rb_bind_tex(B_UI_ATLAS, U.target[l], RB_SMP_LINEAR);
     const f32 sx = (f32)U.win_w / (f32)tw, sy = (f32)U.win_h / (f32)th;
     for (u32 i = 0; i < U.boxes[l]; i++) {
         const f32 *b = U.box[l][i];
@@ -481,19 +462,15 @@ static void draw_layer(u32 l)
         if (x1 <= x0 || y1 <= y0) continue;
         i32 wx0 = (i32)floorf(x0 * sx), wx1 = (i32)ceilf(x1 * sx);
         i32 wy0 = (i32)floorf(((f32)th - y1) * sy), wy1 = (i32)ceilf(((f32)th - y0) * sy);
-        glScissor(wx0, wy0, wx1 - wx0, wy1 - wy0);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        rb_scissor(wx0, wy0, wx1 - wx0, wy1 - wy0);
+        rb_draw(3, 0, 1);
     }
-    glDisable(GL_SCISSOR_TEST);
+    rb_pass_end();
 }
 
 void ui_end(void)
 {
     if (U.win_w <= 0 || U.win_h <= 0) return;
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glEnable(GL_BLEND);
     for (u32 l = 0; l < UI_LAYERS; l++)
         if (U.count[l]) draw_layer(l);
-    glDisable(GL_BLEND);
 }

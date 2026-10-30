@@ -2,10 +2,8 @@
 
 in vec2 v_uv;
 
-layout(location = 41) uniform int u_post;
-layout(location = 42) uniform int u_frame;
-layout(binding = 0) uniform sampler2D u_src;
-layout(binding = 2) uniform usampler2D u_src_map;  // откуда пиксель берёт цвет, src_map.frag
+layout(binding = 8) uniform sampler2D u_src;
+layout(binding = 11) uniform usampler2D u_src_map;  // откуда пиксель берёт цвет, src_map.frag
 
 out vec4 o_color;
 

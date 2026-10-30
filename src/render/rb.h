@@ -166,7 +166,7 @@ void rb_clear_rect(i32 x, i32 y, i32 w, i32 h, const f32 *color, bool depth);
 void rb_bind_pipe(RbPipe p);
 // b = 0 — поток нулей (шаг 0): сетка без весов костей в раскладке с ними
 void rb_bind_vertex(u32 stream, RbBuf b, size_t offset);
-void rb_bind_index(RbBuf b, size_t offset, bool u16);
+void rb_bind_index(RbBuf b, size_t offset, bool idx16);
 // size 0 — весь буфер от offset
 void rb_bind_ubo(u32 binding, RbBuf b, size_t offset, size_t size);
 void rb_bind_ssbo(u32 binding, RbBuf b, size_t offset, size_t size);

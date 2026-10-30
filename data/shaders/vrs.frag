@@ -1,13 +1,12 @@
 // Карта частоты шейдинга (GL_NV_shading_rate_image): клетка карты — самая мелкая частота её блоков 4x4
 
-layout(location = 45) uniform ivec2 u_tile;      // клетка карты в блоках 4x4
-layout(binding = 3) uniform usampler2D u_block;  // vrs_block.frag
+layout(binding = 14) uniform usampler2D u_block;  // vrs_block.frag
 
 out uint o_rate;
 
 void main()
 {
-    ivec2 b0 = ivec2(gl_FragCoord.xy) * u_tile;
+    ivec2 b0 = ivec2(gl_FragCoord.xy) * u_tile.xy;
     ivec2 size = textureSize(u_block, 0);
     uint r = 2u;
     for (int y = 0; y < u_tile.y; y++)
