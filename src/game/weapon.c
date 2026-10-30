@@ -1,6 +1,8 @@
 // Сетки оружия по описаниям: в своей системе — рукоять в начале координат, острие по +Y, лезвие по +Z
 #include "anim.h"
 
+#include <string.h>
+
 // Брусок вдоль оси от d0 до d1 (м от кулака); ширина к лезвию, толщина поперёк, сдвиг к лезвию,
 // наклон бруска в плоскости лезвия
 static void wbox(MeshBuilder *mb, f32 d0, f32 d1, f32 width, f32 thick, f32 off, f32 tilt)
@@ -22,18 +24,346 @@ static void wcyl(MeshBuilder *mb, f32 d0, f32 d1, f32 r, f32 off)
     mb_cylinder(mb, v3(0, d0, off), v3(0, d1, off), r, 10);
 }
 
-void weapon_build(MeshBuilder *mb, u8 weapon)
+// Треугольник с плоской нормалью; обход разворачивается так, чтобы нормаль смотрела по out
+static void ftri(MeshBuilder *mb, V3 a, V3 b, V3 c, V3 out)
 {
-    // Форма из описания (data/defs/weapons.txt): стержни и бруски по порядку
-    const WeaponDef *d = &g_weapons[weapon];
-    for (u32 k = 0; k < d->parts; k++) {
-        const WeaponPart *p = &g_weapon_parts[d->part + k];
-        mb_set(mb, v3(p->color[0], p->color[1], p->color[2]), (Material)p->mat, CHAR_BONE_WEAPON);
-        if (p->kind == WP_ROD) wcyl(mb, p->v[0], p->v[1], p->v[2], p->v[3]);
-        else wbox(mb, p->v[0], p->v[1], p->v[2], p->v[3], p->v[4], p->v[5]);
+    V3 n = v3_cross(v3_sub(b, a), v3_sub(c, a));
+    f32 l = v3_len(n);
+    if (l < 1e-9f) return;
+    n = v3_mul(n, 1.0f / l);
+    if (v3_dot(n, out) < 0.0f) {
+        V3 t = b;
+        b = c, c = t, n = v3_mul(n, -1.0f);
+    }
+    if (!mb_reserve(mb, 3, 3)) return;
+    u32 i = mb_vertex(mb, a, n);
+    mb_vertex(mb, b, n);
+    mb_vertex(mb, c, n);
+    mb_tri(mb, i, i + 1, i + 2);
+}
+
+// Детерминированное «случайное» 0..1 от номеров: щербины и ржавчина одинаковы при каждом старте
+static f32 whash(u32 a, u32 b)
+{
+    u32 h = a * 0x9E3779B1u ^ (b + 0x7F4A7C15u) * 0x85EBCA77u;
+    h ^= h >> 15, h *= 0x2C1B3C6Du, h ^= h >> 12;
+    return (f32)(h & 0xFFFFu) / 65535.0f;
+}
+
+// Клинок протяжкой: станции (ось, обух, лезвие, толщина, толщина обуха, ребро), сечение — пятиугольник
+// обух сверху и снизу, ребро, кромка; при толщине обуха 0 — ромб (обоюдоострый)
+enum { ST_N = 6, ST_MAX = 96 };
+
+static void blade_section(const f32 *s, V3 out[5])
+{
+    f32 zr = s[1] + s[5] * (s[2] - s[1]);
+    out[0] = v3(s[4], s[0], s[1]);
+    out[1] = v3(s[3], s[0], zr);
+    out[2] = v3(0.0f, s[0], s[2]);
+    out[3] = v3(-s[3], s[0], zr);
+    out[4] = v3(-s[4], s[0], s[1]);
+}
+
+static void blade_build(MeshBuilder *mb, const f32 *st, u32 n)
+{
+    for (u32 i = 0; i + 1 < n; i++) {
+        V3 a[5], b[5];
+        blade_section(&st[i * ST_N], a);
+        blade_section(&st[(i + 1) * ST_N], b);
+        // Середина участка: от неё нормали наружу
+        V3 c = v3(0.0f, 0.5f * (st[i * ST_N] + st[(i + 1) * ST_N]),
+                  0.25f * (st[i * ST_N + 1] + st[i * ST_N + 2] + st[(i + 1) * ST_N + 1] + st[(i + 1) * ST_N + 2]));
+        for (u32 k = 0; k < 5; k++) {
+            u32 k1 = (k + 1) % 5;
+            V3 m = v3_mul(v3_add(v3_add(a[k], a[k1]), v3_add(b[k], b[k1])), 0.25f);
+            V3 o = v3_sub(m, c);
+            ftri(mb, a[k], a[k1], b[k1], o);
+            ftri(mb, a[k], b[k1], b[k], o);
+        }
+    }
+    // Торцы: первая и последняя станции, если сечение не сходится в точку
+    for (u32 e = 0; e < 2; e++) {
+        u32 i = e ? n - 1 : 0, j = e ? n - 2 : 1;
+        V3 a[5];
+        blade_section(&st[i * ST_N], a);
+        V3 o = v3(0.0f, st[i * ST_N] - st[j * ST_N], 0.0f);
+        ftri(mb, a[0], a[1], a[2], o);
+        ftri(mb, a[0], a[2], a[3], o);
+        ftri(mb, a[0], a[3], a[4], o);
     }
 }
 
+// Щербины по кромке: вставить три станции и в средней увести кромку к ребру
+static u32 blade_nicks(f32 *st, u32 n, u32 nicks, u32 seed)
+{
+    if (n < 2) return n;
+    f32 y0 = st[0], y1 = st[(n - 1) * ST_N];
+    for (u32 k = 0; k < nicks && n + 3 <= ST_MAX; k++) {
+        f32 y = y0 + (y1 - y0) * (0.12f + 0.7f * whash(seed, k)), w = 0.007f + 0.008f * whash(seed, k + 50);
+        f32 depth = 0.15f + 0.25f * whash(seed, k + 100);
+        f32 ys[3] = { y - w, y, y + w };
+        for (u32 q = 0; q < 3; q++) {
+            // Участок, куда попадает ys[q] (станции могут идти и в обратную сторону)
+            u32 i = 0;
+            while (i + 2 < n && (st[(i + 1) * ST_N] - ys[q]) * (y1 - y0) < 0.0f) i++;
+            f32 a = st[i * ST_N], b = st[(i + 1) * ST_N];
+            if (fabsf(b - a) < 1e-5f) break;
+            f32 t = clampf((ys[q] - a) / (b - a), 0.0f, 1.0f);
+            f32 nw[ST_N];
+            for (u32 c = 0; c < ST_N; c++) nw[c] = st[i * ST_N + c] + (st[(i + 1) * ST_N + c] - st[i * ST_N + c]) * t;
+            if (q == 1) {
+                f32 zr = nw[1] + nw[5] * (nw[2] - nw[1]);
+                nw[2] -= (nw[2] - zr) * depth;
+            }
+            memmove(&st[(i + 2) * ST_N], &st[(i + 1) * ST_N], sizeof(f32) * ST_N * (n - i - 1));
+            memcpy(&st[(i + 1) * ST_N], nw, sizeof nw);
+            n++;
+        }
+    }
+    return n;
+}
+
+// ---------------------------------------------------------------- пластина с прорезями
+
+enum { PL_MAX = 512 };
+
+static f32 cross2(V2 a, V2 b, V2 c) { return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); }
+
+static bool seg_cross(V2 a, V2 b, V2 c, V2 d)
+{
+    f32 d1 = cross2(c, d, a), d2 = cross2(c, d, b), d3 = cross2(a, b, c), d4 = cross2(a, b, d);
+    return ((d1 > 0.0f) != (d2 > 0.0f)) && ((d3 > 0.0f) != (d4 > 0.0f));
+}
+
+static bool in_tri(V2 p, V2 a, V2 b, V2 c)
+{
+    return cross2(a, b, p) > 0.0f && cross2(b, c, p) > 0.0f && cross2(c, a, p) > 0.0f;
+}
+
+static f32 area2(const V2 *p, const u16 *ix, u32 n)
+{
+    f32 s = 0.0f;
+    for (u32 i = 0; i < n; i++) {
+        V2 a = p[ix[i]], b = p[ix[(i + 1) % n]];
+        s += a.x * b.y - b.x * a.y;
+    }
+    return s;
+}
+
+// Контур (против часовой) с дырами (по часовой) — один многоугольник через перемычки, потом уши
+static u32 plate_triangulate(const V2 *p, u16 *poly, u32 n, const u16 *hole_at, const u16 *hole_n, u32 holes,
+                             u16 *tri)
+{
+    bool used[8] = { 0 };
+    for (u32 h = 0; h < holes; h++) {
+        // Дыра с самой дальней по оси точкой — первой
+        u32 best = 0;
+        f32 by = -1e9f;
+        for (u32 k = 0; k < holes; k++) {
+            if (used[k]) continue;
+            for (u32 i = 0; i < hole_n[k]; i++)
+                if (p[hole_at[k] + i].x > by) by = p[hole_at[k] + i].x, best = k;
+        }
+        used[best] = true;
+        u32 hm = hole_at[best];
+        for (u32 i = 0; i < hole_n[best]; i++)
+            if (p[hole_at[best] + i].x > p[hm].x) hm = hole_at[best] + i;
+        // Ближайшая видимая вершина многоугольника
+        i32 pick = -1;
+        f32 pd = 1e9f;
+        for (u32 i = 0; i < n; i++) {
+            V2 a = p[hm], b = p[poly[i]];
+            f32 d = (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y);
+            if (d >= pd) continue;
+            bool ok = true;
+            for (u32 j = 0; j < n && ok; j++) {
+                u16 e0 = poly[j], e1 = poly[(j + 1) % n];
+                if (e0 == poly[i] || e1 == poly[i]) continue;
+                if (seg_cross(a, b, p[e0], p[e1])) ok = false;
+            }
+            for (u32 k = 0; k < holes && ok; k++)
+                for (u32 j = 0; j < hole_n[k] && ok; j++) {
+                    u16 e0 = (u16)(hole_at[k] + j), e1 = (u16)(hole_at[k] + (j + 1) % hole_n[k]);
+                    if (e0 == hm || e1 == hm) continue;
+                    if (seg_cross(a, b, p[e0], p[e1])) ok = false;
+                }
+            if (ok) pick = (i32)i, pd = d;
+        }
+        if (pick < 0 || n + hole_n[best] + 2 > PL_MAX) continue;
+        // poly[..pick], дыра от hm по кругу, hm, poly[pick..]
+        u16 tmp[PL_MAX];
+        u32 m = 0;
+        for (u32 i = 0; i <= (u32)pick; i++) tmp[m++] = poly[i];
+        u32 off = hm - hole_at[best];
+        for (u32 i = 0; i <= hole_n[best]; i++) tmp[m++] = (u16)(hole_at[best] + (off + i) % hole_n[best]);
+        for (u32 i = (u32)pick; i < n; i++) tmp[m++] = poly[i];
+        memcpy(poly, tmp, sizeof(u16) * m);
+        n = m;
+    }
+    // Уши
+    u32 nt = 0, guard = 0;
+    while (n > 3 && guard++ < 4 * PL_MAX) {
+        bool cut = false;
+        for (u32 i = 0; i < n; i++) {
+            u16 ia = poly[(i + n - 1) % n], ib = poly[i], ic = poly[(i + 1) % n];
+            V2 a = p[ia], b = p[ib], c = p[ic];
+            if (cross2(a, b, c) <= 1e-12f) continue;
+            bool ear = true;
+            for (u32 j = 0; j < n && ear; j++) {
+                u16 q = poly[j];
+                if (q == ia || q == ib || q == ic) continue;
+                V2 v = p[q];
+                if ((v.x == a.x && v.y == a.y) || (v.x == b.x && v.y == b.y) || (v.x == c.x && v.y == c.y)) continue;
+                if (in_tri(v, a, b, c)) ear = false;
+            }
+            if (!ear) continue;
+            tri[nt * 3] = ia, tri[nt * 3 + 1] = ib, tri[nt * 3 + 2] = ic;
+            nt++;
+            memmove(&poly[i], &poly[i + 1], sizeof(u16) * (n - i - 1));
+            n--;
+            cut = true;
+            break;
+        }
+        // Остались вырожденные (на одной прямой) — выбросить вершину
+        if (!cut) {
+            memmove(&poly[0], &poly[1], sizeof(u16) * (n - 1));
+            n--;
+        }
+    }
+    if (n == 3) {
+        tri[nt * 3] = poly[0], tri[nt * 3 + 1] = poly[1], tri[nt * 3 + 2] = poly[2];
+        nt++;
+    }
+    return nt;
+}
+
+// Пластина толщиной th: лицевые стороны по ±X, стенки по контуру и прорезям
+static void plate_build(MeshBuilder *mb, const WeaponPart *pl, const WeaponPart *holes, u32 nholes)
+{
+    V2 p[PL_MAX];
+    u16 poly[PL_MAX], hole_at[8], hole_n[8], tri[PL_MAX * 3];
+    u32 n = pl->npt / 2;
+    if (n < 3 || n > PL_MAX / 2) return;
+    for (u32 i = 0; i < n; i++) p[i] = (V2){ g_weapon_pts[pl->pt + i * 2], g_weapon_pts[pl->pt + i * 2 + 1] };
+    for (u32 i = 0; i < n; i++) poly[i] = (u16)i;
+    if (area2(p, poly, n) < 0.0f)
+        for (u32 i = 0; i < n / 2; i++) {
+            V2 t = p[i];
+            p[i] = p[n - 1 - i], p[n - 1 - i] = t;
+        }
+    u32 np = n, nh = 0;
+    for (u32 h = 0; h < nholes && h < 8; h++) {
+        const f32 *v = holes[h].v;
+        const u32 segs = 14;
+        if (np + segs > PL_MAX / 2) break;
+        hole_at[nh] = (u16)np, hole_n[nh] = (u16)segs;
+        // По часовой
+        for (u32 i = 0; i < segs; i++) {
+            f32 a = -2.0f * PI_F * (f32)i / (f32)segs;
+            p[np++] = (V2){ v[0] + cosf(a) * v[2], v[1] + sinf(a) * v[3] };
+        }
+        nh++;
+    }
+    u32 nt = plate_triangulate(p, poly, n, hole_at, hole_n, nh, tri);
+    f32 hx = pl->v[0] * 0.5f;
+    for (u32 t = 0; t < nt; t++)
+        for (u32 sd = 0; sd < 2; sd++) {
+            f32 x = sd ? -hx : hx;
+            V2 a = p[tri[t * 3]], b = p[tri[t * 3 + 1]], c = p[tri[t * 3 + 2]];
+            ftri(mb, v3(x, a.x, a.y), v3(x, b.x, b.y), v3(x, c.x, c.y), v3(sd ? -1.0f : 1.0f, 0, 0));
+        }
+    // Стенки: у контура наружу (против часовой — нормаль вправо от хода), у прорезей внутрь дыры — так же
+    for (u32 r = 0; r <= nh; r++) {
+        u32 at = r ? hole_at[r - 1] : 0, cnt = r ? hole_n[r - 1] : n;
+        for (u32 i = 0; i < cnt; i++) {
+            V2 a = p[at + i], b = p[at + (i + 1) % cnt];
+            V3 o = v3(0.0f, b.y - a.y, -(b.x - a.x));
+            V3 a0 = v3(hx, a.x, a.y), a1 = v3(-hx, a.x, a.y), b0 = v3(hx, b.x, b.y), b1 = v3(-hx, b.x, b.y);
+            ftri(mb, a0, b0, b1, o);
+            ftri(mb, a0, b1, a1, o);
+        }
+    }
+}
+
+// ---------------------------------------------------------------- вид по качеству
+
+// Ржавчина: доля металлических частей в рыжем и насколько; щербин на кромку
+static const f32 g_rust_share[WEAPON_LOOKS] = { 0.85f, 0.4f, 0.0f };
+static const f32 g_rust_mix[WEAPON_LOOKS] = { 0.8f, 0.55f, 0.0f };
+static const u32 g_nicks[WEAPON_LOOKS] = { 4, 2, 0 };
+
+void weapon_build(MeshBuilder *mb, u8 weapon, u8 look, u8 bone)
+{
+    // Форма из описания (data/defs/weapons.txt) по порядку частей
+    const WeaponDef *d = &g_weapons[weapon];
+    if (d->unique || look >= WEAPON_LOOKS) look = WEAPON_LOOKS - 1;
+    for (u32 k = 0; k < d->parts; k++) {
+        const WeaponPart *p = &g_weapon_parts[d->part + k];
+        V3 col = v3(p->color[0], p->color[1], p->color[2]);
+        Material mat = (Material)p->mat;
+        u32 seed = (u32)weapon * 131u + k;
+        if (mat == MAT_METAL && whash(seed, 7) < g_rust_share[look]) {
+            f32 m = g_rust_mix[look] * (0.75f + 0.25f * whash(seed, 8));
+            col = v3_lerp(col, v3(0.27f, 0.16f, 0.10f), m);
+        }
+        // Обмотка у хлама — тряпьё
+        if (p->kind == WP_WRAP && look == 0) col = v3(0.24f, 0.21f, 0.16f), mat = MAT_CLOTH;
+        mb_set(mb, col, mat, bone);
+        switch (p->kind) {
+        case WP_ROD: wcyl(mb, p->v[0], p->v[1], p->v[2], p->v[3]); break;
+        case WP_BOX: wbox(mb, p->v[0], p->v[1], p->v[2], p->v[3], p->v[4], p->v[5]); break;
+        case WP_BLADE: {
+            f32 st[ST_MAX * ST_N];
+            u32 n = p->npt / ST_N;
+            if (n < 2 || n > ST_MAX) break;
+            memcpy(st, &g_weapon_pts[p->pt], sizeof(f32) * n * ST_N);
+            if (p->mat == MAT_METAL) n = blade_nicks(st, n, g_nicks[look], seed);
+            blade_build(mb, st, n);
+            break;
+        }
+        case WP_PLATE: {
+            u32 h = 0;
+            while (k + 1 + h < d->parts && g_weapon_parts[d->part + k + 1 + h].kind == WP_HOLE) h++;
+            plate_build(mb, p, &g_weapon_parts[d->part + k + 1], h);
+            break;
+        }
+        case WP_WRAP: {
+            // Витки обмотки: короткие наклонные кольца поверх рукояти
+            u32 turns = (u32)p->v[3];
+            if (!turns) break;
+            f32 pitch = (p->v[1] - p->v[0]) / (f32)turns;
+            V3 ax = v3_norm(v3(0.0f, 1.0f, 0.32f));
+            for (u32 i = 0; i < turns; i++) {
+                V3 c = v3(0.0f, p->v[0] + ((f32)i + 0.5f) * pitch, 0.0f);
+                f32 r = p->v[2] * (look == 0 ? 0.95f + 0.15f * whash(seed, i) : 1.0f);
+                mb_cylinder(mb, v3_sub(c, v3_mul(ax, pitch * 0.4f)), v3_add(c, v3_mul(ax, pitch * 0.4f)), r, 8);
+            }
+            break;
+        }
+        case WP_KNOB: {
+            f32 len = p->v[1] - p->v[0], r = p->v[2];
+            const V2 prof[] = { { 0.0f, 0.0f }, { 0.0f, r * 0.6f }, { len * 0.3f, r }, { len * 0.7f, r },
+                                { len, r * 0.6f }, { len, 0.0f } };
+            mb_lathe(mb, v3(0, p->v[0], p->v[3]), v3(0, p->v[1], p->v[3]), prof, 6, 8, 1.0f, 1.0f);
+            break;
+        }
+        default: break;
+        }
+    }
+}
+
+void weapon_build_xf(MeshBuilder *mb, u8 weapon, u8 look, M4 xf)
+{
+    u32 v0 = mb->vcount;
+    weapon_build(mb, weapon, look, BONE_NONE);
+    for (u32 i = v0; i < mb->vcount; i++) {
+        Vertex *v = &mb->v[i];
+        V3 p = m4_point(xf, v3(v->pos[0], v->pos[1], v->pos[2]));
+        V3 n = v3_norm(m4_dir(xf, v3(v->nrm[0], v->nrm[1], v->nrm[2])));
+        v->pos[0] = p.x, v->pos[1] = p.y, v->pos[2] = p.z;
+        v->nrm[0] = n.x, v->nrm[1] = n.y, v->nrm[2] = n.z;
+    }
+}
 
 void torch_build(MeshBuilder *mb, bool flame)
 {

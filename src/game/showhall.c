@@ -480,7 +480,7 @@ u32 showhall_draw(ShowHall *s, const CharMeshes *m, V3 eye, f32 time, f32 dt, Dr
         b[RENDER_LOOK_SLOT] = (M4){ 0 };
         items[n++] = (DrawItem){ .mesh = &m->body[e->body], .bones = b };
         if (e->hair) items[n++] = (DrawItem){ .mesh = &m->gear[e->body * GEAR_ROW + e->hair], .bones = b };
-        if (e->weapon) items[n++] = (DrawItem){ .mesh = &m->weapon[e->weapon - 1], .bones = b };
+        if (e->weapon) items[n++] = (DrawItem){ .mesh = &m->weapon[weapon_mesh((u8)(e->weapon - 1), Q_SOUND)], .bones = b };
     }
     return n;
 }

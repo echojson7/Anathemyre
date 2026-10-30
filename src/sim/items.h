@@ -23,14 +23,22 @@ typedef struct WeaponDef {
     u8  size_w, size_h;  // клетки инвентаря
     u8  voice, voice_strike;  // голос железа (SFX_WPN_* по порядку): закрылся им и ударил им
     u16 part, parts;  // форма: части в g_weapon_parts
+    bool common;      // в общем запасе: отряды, арена, толпа берут случайное оружие отсюда
+    bool unique;      // единственная вещь: вид не зависит от качества
 } WeaponDef;
 
-// Часть формы оружия в своей системе: рукоять в начале координат, острие по +Y, лезвие по +Z
-typedef enum WeaponPartKind { WP_ROD, WP_BOX } WeaponPartKind;
+// Часть формы оружия в своей системе: рукоять в начале координат, острие по +Y, лезвие по +Z.
+// Клинок и пластина — с точками в g_weapon_pts (pt — начало, npt — сколько чисел)
+typedef enum WeaponPartKind { WP_ROD, WP_BOX, WP_BLADE, WP_PLATE, WP_HOLE, WP_WRAP, WP_KNOB } WeaponPartKind;
 typedef struct WeaponPart {
     u8  kind, mat;
+    u32 pt;
+    u16 npt;
     f32 color[3];
-    f32 v[6];  // стержень: от, до, радиус, сдвиг; брусок: от, до, ширина, толщина, сдвиг, наклон
+    // стержень: от, до, радиус, сдвиг; брусок: от, до, ширина, толщина, сдвиг, наклон;
+    // пластина: толщина; прорезь: центр по оси и к лезвию, полуоси; обмотка: от, до, радиус, витков;
+    // навершие: от, до, радиус, сдвиг
+    f32 v[6];
 } WeaponPart;
 
 #define WEAPON_CAP 64  // сеток оружия на GPU
@@ -52,7 +60,8 @@ typedef struct ArmorDef {
 #define ARMOR_NONE 255
 #define GEAR_NONE 255
 #define GEAR_HIDES_HAIR (1u << 31)
-#define WEAPON_PARTS 24  // частей формы на оружие
+#define WEAPON_PARTS 48  // частей формы на оружие
+#define WEAPON_PTS 1536  // чисел точек клинков и пластин на оружие
 
 // Качество: множитель урона оружия и сопротивлений брони
 enum { Q_JUNK, Q_WORN, Q_SOUND, Q_MASTER, Q_ANCIENT, Q_COUNT };
@@ -70,6 +79,10 @@ typedef struct AttackDef {
 extern const WeaponDef  *g_weapons;
 extern u32               g_weapon_count;
 extern const WeaponPart *g_weapon_parts;
+extern const f32        *g_weapon_pts;
+// Общий запас (common yes): из него случайное оружие отрядов, арены и толпы, по порядку записей
+extern u8                g_weapon_pool[WEAPON_CAP];
+extern u32               g_weapon_pool_count;
 extern const ArmorDef   *g_armors;
 extern u32               g_armor_count;
 extern AttackDef         g_attacks[ATK_COUNT];

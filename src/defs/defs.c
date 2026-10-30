@@ -13,6 +13,7 @@
 
 static WeaponDef  s_weapons[WEAPON_CAP];
 static WeaponPart s_parts[WEAPON_CAP * WEAPON_PARTS];
+static f32        s_pts[WEAPON_CAP * WEAPON_PTS];
 static ArmorDef   s_armors[ARMOR_CAP];
 static GoodsDef   s_goods[GOODS_CAP];
 static DefText    s_text;
@@ -233,9 +234,59 @@ static bool weapon_field(const DefLine *l, Block *b, Arena *mem)
         b->paint = true;
         return true;
     }
-    bool rod = def_is(k, "rod");
-    if (rod || def_is(k, "box")) {
-        if (!nums(l, rod ? 4 : 6, v)) return false;
+    if (def_is(k, "common")) return flag(l, &d->common);
+    if (def_is(k, "unique")) return flag(l, &d->unique);
+    // Точки клинка (st) и контура пластины (pt, bumps) — к последней части формы
+    bool st = def_is(k, "st"), pt = def_is(k, "pt"), bumps = def_is(k, "bumps");
+    if (st || pt || bumps) {
+        WeaponPart *p = d->parts && b->shape ? &s_parts[d->part + d->parts - 1] : NULL;
+        if (!p || p->kind != (st ? WP_BLADE : WP_PLATE)) {
+            def_error(l, st ? "st — после blade" : "pt и bumps — после plate");
+            return false;
+        }
+        f32 a[DEF_TOKENS];
+        u32 na = l->n - 1;
+        if (st ? na != 6 : pt ? !na || na % 2 : na != 5) {
+            def_error(l, st ? "st: ось, обух, лезвие, толщина, толщина обуха, ребро" :
+                         pt ? "pt: пары «ось к_лезвию»" : "bumps: от до к_лезвию сколько выступ");
+            return false;
+        }
+        for (u32 i = 0; i < na; i++)
+            if (!def_num(&l->tok[1 + i], &a[i])) {
+                def_error(l, "не число: %.*s", (int)l->tok[1 + i].n, l->tok[1 + i].s);
+                return false;
+            }
+        // Зубцы: n полукругов от y0 до y1 по линии z, выступ r (меньше нуля — выемки)
+        f32 gen[2 * 8 * 5];
+        if (bumps) {
+            u32 nb = (u32)a[3], m = 0;
+            if (nb < 1 || nb > 8) {
+                def_error(l, "зубцов от 1 до 8");
+                return false;
+            }
+            f32 step = (a[1] - a[0]) / (f32)nb;
+            for (u32 i = 0; i < nb; i++)
+                for (u32 j = 0; j < 5; j++) {
+                    f32 ang = PI_F * (1.0f - (f32)j / 4.0f), c = a[0] + ((f32)i + 0.5f) * step;
+                    gen[m++] = c + cosf(ang) * step * 0.5f;
+                    gen[m++] = a[2] + sinf(ang) * a[4];
+                }
+            na = m;
+        }
+        const f32 *src = bumps ? gen : a;
+        if ((u32)(p->pt - d->part / WEAPON_PARTS * WEAPON_PTS) + p->npt + na > WEAPON_PTS) {
+            def_error(l, "точек формы больше %u", WEAPON_PTS);
+            return false;
+        }
+        memcpy(&s_pts[p->pt + p->npt], src, sizeof(f32) * na);
+        p->npt = (u16)(p->npt + na);
+        return true;
+    }
+    static const char *const shape[] = { "rod", "box", "blade", "plate", "hole", "wrap", "knob" };
+    static const u32 shape_n[] = { 4, 6, 0, 1, 4, 4, 4 };
+    i32 sk = def_word(k, shape, ARRAY_COUNT(shape));
+    if (sk >= 0) {
+        if (!nums(l, shape_n[sk], v)) return false;
         if (!b->paint) {
             def_error(l, "перед частями формы нужен paint");
             return false;
@@ -247,10 +298,21 @@ static bool weapon_field(const DefLine *l, Block *b, Arena *mem)
             def_error(l, "частей формы больше %u", WEAPON_PARTS);
             return false;
         }
+        if (sk == WP_HOLE && (!d->parts || s_parts[d->part + d->parts - 1].kind < WP_PLATE ||
+                              s_parts[d->part + d->parts - 1].kind > WP_HOLE)) {
+            def_error(l, "hole — сразу после plate или другой hole");
+            return false;
+        }
+        // Точки идут подряд за точками прежних частей этого оружия
+        u32 at = b->id * WEAPON_PTS;
+        for (u32 i = 0; i < d->parts; i++) {
+            const WeaponPart *q = &s_parts[d->part + i];
+            if (q->npt && q->pt + q->npt > at) at = q->pt + q->npt;
+        }
         WeaponPart *p = &s_parts[d->part + d->parts++];
-        *p = (WeaponPart){ .kind = rod ? WP_ROD : WP_BOX, .mat = b->mat };
+        *p = (WeaponPart){ .kind = (u8)sk, .mat = b->mat, .pt = at };
         memcpy(p->color, b->color, sizeof p->color);
-        memcpy(p->v, v, sizeof p->v);
+        memcpy(p->v, v, sizeof(f32) * shape_n[sk]);
         return true;
     }
     def_error(l, "у оружия нет поля %.*s", (int)k->n, k->s);
@@ -427,6 +489,9 @@ static bool parent(const DefLine *l, Block *b)
         *d = s_weapons[p];
         d->id = id, d->part = part;
         memcpy(&s_parts[part], &s_parts[s_weapons[p].part], sizeof(WeaponPart) * d->parts);
+        // Точки родителя — в свой участок, номера частей сдвигаются туда же
+        memcpy(&s_pts[b->id * WEAPON_PTS], &s_pts[(u32)p * WEAPON_PTS], sizeof(f32) * WEAPON_PTS);
+        for (u32 i = 0; i < d->parts; i++) s_parts[part + i].pt = s_parts[part + i].pt - (u32)p * WEAPON_PTS + b->id * WEAPON_PTS;
         break;
     }
     case DK_ARMOR: {
@@ -495,6 +560,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
     g_weapon_count = g_armor_count = g_goods_count = 0;
     g_weapons = s_weapons;
     g_weapon_parts = s_parts;
+    g_weapon_pts = s_pts;
     g_armors = s_armors;
     g_goods = s_goods;
     if (!deftext_open(&s_text, mem, base_dir, mods_dir)) return false;
@@ -522,6 +588,13 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
         if (!ok) break;
     }
     if (bad || !ok || !check()) return false;
+    g_weapon_pool_count = 0;
+    for (u32 i = 0; i < g_weapon_count; i++)
+        if (s_weapons[i].common) g_weapon_pool[g_weapon_pool_count++] = (u8)i;
+    if (!g_weapon_pool_count) {
+        log_error("ОПИСАНИЯ: нет оружия с common yes — отрядам и арене нечего дать");
+        return false;
+    }
     // Что закрывает сетка: от всех записей с этим видом
     memset(g_gear_hides, 0, sizeof g_gear_hides);
     for (u32 i = 0; i < g_armor_count; i++)
