@@ -39,7 +39,7 @@ typedef enum GearId {
 extern const char *const g_gear_file[GEAR_COUNT];
 
 // Причёски (data/meshes/hair): рисуются как вещи, в ряду сеток тела после вещей. NULL — вида нет
-#define HAIR_MAX 4
+#define HAIR_MAX 7
 #define GEAR_ROW (GEAR_COUNT + HAIR_MAX)
 extern const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX];
 // Причёска в список вещей gear[0..n) (номер в ряду): возвращает 0 или 1. Под кожухом причёски нет
