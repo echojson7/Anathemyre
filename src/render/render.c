@@ -26,6 +26,8 @@ enum {
     B_SRC_MAP = 11, B_LEVEL = 12, B_LEVEL_MAX = 13, B_BLOCK = 14, B_NOISE = 15,
     // Кеш поз (skin.comp): задания, таблица групп, вершины и веса общего буфера, кеш
     B_SKIN_JOB = 22, B_SKIN_GROUP = 23, B_SKIN_VERT = 24, B_SKIN_SKIN = 25, B_SKIN_OUT = 26,
+    // Свет кадра (docs/lighting.md): экспозиция (SSBO), источник ступени свечения, кадр для замера яркости, свечение
+    B_EXPO = 27, B_BLOOM_SRC = 28, B_EXPO_SRC = 29, B_BLOOM = 30,
 };
 #define SKIN_STATIC 0
 #define SKIN_BONES 1
@@ -120,8 +122,10 @@ typedef struct GpuFrame {
     f32 pix[4];
     i32 post, ao_half, parts, pad;
     i32 tile[4];
+    i32 light[4];
+    f32 lightf[4];
 } GpuFrame;
-_Static_assert(sizeof(GpuFrame) == 288, "GpuFrame — как блок Frame в frame.glsl");
+_Static_assert(sizeof(GpuFrame) == 320, "GpuFrame — как блок Frame в frame.glsl");
 // Блоков кадра в кольце на кадр: сам кадр и портреты (у каждого своя камера)
 #define FRAME_BLOCKS (1 + RENDER_PORTRAIT_SLOTS)
 
@@ -136,6 +140,11 @@ typedef struct ScenePush {
 _Static_assert(sizeof(ScenePush) == RB_PUSH_BYTES, "ScenePush — весь u_push");
 #define PUSH_DRAW 64   // смещение skinned, inst_base, morphs
 #define PUSH_FADE 80
+
+// Ступеней свечения (bloom_down.frag): от 1/2 до 1/64 кадра
+#define BLOOM_LEVELS 6
+// Доля свечения в кадре: слабое рассеяние, не ореолы
+#define BLOOM_MIX 0.04f
 
 // Цель: цвет и глубина (по желанию) одного размера
 typedef struct Target {
@@ -153,6 +162,10 @@ static struct {
     // Конвейеры сеток: [проход][раскладка][0 — с отсечением задних граней, 1 — без]
     RbPipe mesh_pipe[PSETS][LAYS][2];
     RbPipe pipe_rays, pipe_atmos, pipe_ao, pipe_style, pipe_src_map, pipe_vrs_block, pipe_vrs, pipe_level, pipe_level_max, pipe_skin;
+    RbPipe pipe_expo, pipe_bloom_down, pipe_bloom_up;
+    RbBuf  expo_buf;  // автоэкспозиция: множитель и средняя яркость (expo.comp)
+    Target bloom[BLOOM_LEVELS];  // ступени свечения: 1/2, 1/4 … кадра
+    f64    light_t;   // время прошлого кадра: привыкание глаза
     u32    pset;      // набор текущего прохода
     RbTex  noise_tex; // значения hash13 в узлах решётки NOISE_N³: noise3 одной выборкой (common.glsl)
     RbTex  shadow_tex;
@@ -293,7 +306,8 @@ static void pipes_free(void)
         for (u32 l = 0; l < LAYS; l++)
             for (u32 c = 0; c < 2; c++) rb_pipe_free(&R.mesh_pipe[s][l][c]);
     RbPipe *full[] = { &R.pipe_rays, &R.pipe_atmos, &R.pipe_ao, &R.pipe_style, &R.pipe_src_map,
-                       &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max, &R.pipe_skin };
+                       &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max, &R.pipe_skin,
+                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up };
     for (u32 i = 0; i < ARRAY_COUNT(full); i++) rb_pipe_free(full[i]);
 }
 
@@ -335,8 +349,14 @@ static bool pipes_make(void)
     R.pipe_level = pipe_full("размер пикселя", level_fs, RB_FMT_R8UI, NULL, false);
     R.pipe_level_max = pipe_full("размер в блоке", level_max_fs, RB_FMT_R8UI, NULL, false);
     R.pipe_skin = rb_pipe_make(&(RbPipeDesc){ .cs = { "skin.glsl", "skin.comp" }, .name = "кеш поз" });
+    R.pipe_expo = rb_pipe_make(&(RbPipeDesc){ .cs = { "frame.glsl", "expo.comp" }, .name = "экспозиция" });
+    const char *bloom_down_fs[RB_SHADER_FILES] = { "frame.glsl", "bloom_down.frag" };
+    R.pipe_bloom_down = pipe_full("свечение вниз", bloom_down_fs, RB_FMT_RGBA16F, NULL, false);
+    R.pipe_bloom_up = rb_pipe_make(&(RbPipeDesc){ .vs = { "fullscreen.vert" }, .fs = { "bloom_up.frag" }, .name = "свечение вверх",
+                                                  .color = { RB_FMT_RGBA16F }, .blend = RB_BLEND_ADD });
     if (!R.pipe_rays || !R.pipe_atmos || !R.pipe_ao || !R.pipe_style || !R.pipe_src_map || !R.pipe_vrs_block ||
-        !R.pipe_vrs || !R.pipe_level || !R.pipe_level_max || !R.pipe_skin) {
+        !R.pipe_vrs || !R.pipe_level || !R.pipe_level_max || !R.pipe_skin || !R.pipe_expo || !R.pipe_bloom_down ||
+        !R.pipe_bloom_up) {
         pipes_free();
         return false;
     }
@@ -347,7 +367,8 @@ bool render_reload_shaders(void)
 {
     // Старые конвейеры живут, пока новые не собраны целиком
     RbPipe *full[] = { &R.pipe_rays, &R.pipe_atmos, &R.pipe_ao, &R.pipe_style, &R.pipe_src_map,
-                       &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max, &R.pipe_skin };
+                       &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max, &R.pipe_skin,
+                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up };
     RbPipe old_mesh[PSETS][LAYS][2], old_full[ARRAY_COUNT(full)];
     memcpy(old_mesh, R.mesh_pipe, sizeof old_mesh);
     memset(R.mesh_pipe, 0, sizeof R.mesh_pipe);
@@ -460,7 +481,9 @@ bool render_init(Arena *scratch, const char *data_dir)
 
     R.shadow_tex = rb_tex_make(&(RbTexDesc){ .fmt = RB_FMT_D24, .w = SHADOW_SIZE, .h = SHADOW_SIZE,
                                              .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
-    if (!R.shadow_tex || !R.frame_buf) return false;
+    // Множитель 1.2 — как без автоэкспозиции, пока первый замер не готов
+    R.expo_buf = rb_buf_make(4 * sizeof(f32), RB_BUF_STORAGE, (f32[4]){ 1.2f, 0, 0, 0 });
+    if (!R.shadow_tex || !R.frame_buf || !R.expo_buf) return false;
     return target_make(&R.portrait, RENDER_PORTRAIT_PX * RENDER_PORTRAIT_SLOTS, RENDER_PORTRAIT_PX, RB_FMT_RGBA16F, true);
 }
 
@@ -471,6 +494,7 @@ void render_shutdown(void)
     terrain_shutdown();
     Target *t[] = { &R.scene, &R.rays, &R.ao, &R.atmos, &R.src_map, &R.level, &R.level_max, &R.block, &R.rate, &R.portrait };
     for (u32 i = 0; i < ARRAY_COUNT(t); i++) target_free(t[i]);
+    for (u32 i = 0; i < BLOOM_LEVELS; i++) target_free(&R.bloom[i]);
     rb_tex_free(&R.noise_tex);
     rb_tex_free(&R.shadow_tex);
     for (u32 i = 0; i < STREAM_FRAMES; i++) {
@@ -479,7 +503,7 @@ void render_shutdown(void)
         rb_buf_free(&R.light_buf[i]);
     }
     RbBuf *bufs[] = { &R.frame_buf, &R.static_inst_buf, &R.pool_vbo, &R.pool_skin, &R.pool_ibo, &R.pool_morph, &R.pool_rec, &R.pool_cmd,
-                      &R.skin_out, &R.skin_job, &R.skin_group };
+                      &R.skin_out, &R.skin_job, &R.skin_group, &R.expo_buf };
     for (u32 i = 0; i < ARRAY_COUNT(bufs); i++) rb_buf_free(bufs[i]);
     pipes_free();
     rb_shutdown();
@@ -1346,6 +1370,11 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         target_make(&R.src_map, iw, ih, RB_FMT_RG16UI, false);
         target_make(&R.level, iw, ih, RB_FMT_R8UI, false);
         target_make(&R.level_max, (iw + 7) / 8, (ih + 7) / 8, RB_FMT_R8UI, false);
+        for (i32 i = 0, bw = iw, bh = ih; i < BLOOM_LEVELS; i++) {
+            bw = MAX((bw + 1) / 2, 1);
+            bh = MAX((bh + 1) / 2, 1);
+            target_make(&R.bloom[i], bw, bh, RB_FMT_RGBA16F, false);
+        }
         if (R.vrs && !(target_make(&R.block, (iw + 3) / 4, (ih + 3) / 4, RB_FMT_R8UI, false) &&
                        target_make(&R.rate, (iw + R.vrs_tile[0] - 1) / R.vrs_tile[0], (ih + R.vrs_tile[1] - 1) / R.vrs_tile[1],
                                    RB_FMT_R8UI, false)))
@@ -1422,6 +1451,15 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     f->parts = (rays ? 1 : 0) | (ao ? 2 : 0);
     f->tile[0] = R.vrs_tile[0] / 4;
     f->tile[1] = R.vrs_tile[1] / 4;
+    f->light[0] = rs->light_mat;
+    f->light[1] = rs->light_curve;
+    f->light[2] = rs->light_expo ? 1 : 0;
+    f->light[3] = rs->light_bloom ? 1 : 0;
+    f64 now = time_now();
+    f->lightf[0] = R.light_t > 0.0 ? (f32)(now - R.light_t) : 0.0f;
+    R.light_t = now;
+    f->lightf[1] = BLOOM_MIX / BLOOM_LEVELS;
+    f->lightf[2] = BLOOM_LEVELS;
     frame_write(0, f);
     R.stat_prep += time_now() - t_prep;
     rb_bind_ssbo(B_BONES, R.bone_buf[R.stream], 0, 0);
@@ -1507,8 +1545,29 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     pass_mark(4);
     if (timing) mark(4);
 
+    // Свет кадра: свечение ступенями вниз и обратно, затем средняя яркость для экспозиции
+    RbTex hdr = atmos ? R.atmos.color : R.scene.color;
+    if (rs->light_bloom) {
+        for (u32 i = 0; i < BLOOM_LEVELS; i++) {
+            rb_bind_tex(B_BLOOM_SRC, i ? R.bloom[i - 1].color : hdr, RB_SMP_LINEAR);
+            rb_push(0, sizeof(u32[4]), (u32[4]){ i == 0 });
+            draw_full(&R.bloom[i], R.pipe_bloom_down, 0);
+        }
+        for (u32 i = BLOOM_LEVELS - 1; i > 0; i--) {
+            rb_bind_tex(B_BLOOM_SRC, R.bloom[i].color, RB_SMP_LINEAR);
+            draw_full(&R.bloom[i - 1], R.pipe_bloom_up, 0);
+        }
+        rb_bind_tex(B_BLOOM, R.bloom[0].color, RB_SMP_LINEAR);
+    }
+    rb_bind_ssbo(B_EXPO, R.expo_buf, 0, 0);
+    if (rs->light_expo) {
+        rb_bind_tex(B_EXPO_SRC, hdr, RB_SMP_LINEAR);
+        rb_bind_pipe(R.pipe_expo);
+        rb_dispatch(1, 1, 1);
+    }
+
     // 4. Фильтр: виньетка, зерно, сканлайны, аберрация; сразу в окно
-    rb_bind_tex(B_COLOR, atmos ? R.atmos.color : R.scene.color, RB_SMP_NEAREST);
+    rb_bind_tex(B_COLOR, hdr, RB_SMP_NEAREST);
     rb_pass_begin(&(RbPass){ 0 });
     rb_bind_pipe(R.pipe_style);
     rb_draw(3, 0, 1);

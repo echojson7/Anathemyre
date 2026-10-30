@@ -15,6 +15,9 @@ layout(std140, binding = 1) uniform Frame {
     int   u_parts;      // бит 0 — объёмные лучи, бит 1 — AO (ЭТАП СЦЕНЫ)
     int   u_frame_pad;
     ivec4 u_tile;       // xy — клетка карты частоты в блоках 4x4 (vrs.frag)
+    ivec4 u_light;      // группа СВЕТ: x — материалы (0 старые, 1 GGX), y — кривая (0 ACES, 1 AgX, 2 PBR Neutral),
+                        // z — автоэкспозиция, w — bloom (docs/lighting.md)
+    vec4  u_lightf;     // x — секунд с прошлого кадра (привыкание глаза)
 };
 
 // Константы вызова сцены и теней (render.c, ScenePush)

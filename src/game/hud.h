@@ -50,6 +50,7 @@ typedef struct Hud {
         HudForm f;
         bool journal;          // журнал справа от меню
         bool fps_on;           // счётчик кадров сверху по центру
+        u8   tab;              // раздел меню: 0 ОТЛАДКА, 1 СВЕТ
         f32  fps, fps_ms;      // что показывает счётчик
     } dbg;
 } Hud;
