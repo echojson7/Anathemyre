@@ -148,7 +148,7 @@ typedef struct Pose {
 } Pose;
 // pose_lerp и body_track смешивают Pose как массив f32: поле другого типа сломает смешивание молча.
 // Новое поле — только f32 или V3, и число здесь вместе с ним
-_Static_assert(sizeof(Pose) == sizeof(f32) * (3 + 3 * BONE_COUNT + 6 + 2 + 1 + 2 + 1), "в Pose только f32 и V3");
+_Static_assert(sizeof(Pose) == sizeof(f32) * (3 + 3 * BONE_COUNT + 6 + 2 + 2 + 2 + 1 + 2 + 1), "в Pose только f32 и V3");
 
 static void pose_lerp(Pose *a, const Pose *b, f32 t)
 {
