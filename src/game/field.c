@@ -91,10 +91,15 @@ void field_ser(Ser *s, Field *f)
     SER_N(s, f->px, n);
     SER_N(s, f->pz, n);
     SER_N(s, f->ph, n);
-    SER_N(s, f->anim, n);
     SER(s, f->grudge);
     SER(s, f->enmity);
     SER(s, f->fights);
+}
+
+void field_view_restore(Field *f)
+{
+    for (u32 i = 0; i < f->w.count; i++)
+        if (!f->w.idle[i]) fight_anim_settle(&f->anim[i], &f->w, i, (f32)i * 13.7f + 3.0f);
 }
 
 void field_enmity(Field *f, u8 a, u8 b)

@@ -5,6 +5,7 @@
 #include "../core/clock.h"
 #include "../core/log.h"
 #include "../core/prof.h"
+#include "../defs/defs.h"
 #include "../io/save.h"
 #include "../world/map.h"
 #include "names.h"
@@ -129,11 +130,14 @@ static void world_tick(World *w)
     field_tick(w->field, world_ground);
     bands_tick(w->bands);
     if (w->day_run) {
-        w->tod += TICK_DT / DAY_LENGTH_S;
-        if (w->tod >= 1.0f) {
-            w->tod -= 1.0f;
+        // Время суток — целое число шагов от полуночи: сутки ровно DAY_TICKS, ошибка f32 не копится.
+        // Ползунок может поставить любое время — оно встаёт на ближайший шаг
+        u32 k = (u32)(w->tod * (f32)DAY_TICKS + 0.5f) + 1u;
+        if (k >= DAY_TICKS) {
+            k -= DAY_TICKS;
             w->day++;
         }
+        w->tod = (f32)k / (f32)DAY_TICKS;
     }
     w->tick++;
 }
@@ -222,7 +226,7 @@ bool world_travel(World *w)
 static u64 world_layout(void)
 {
     const u64 v[] = { SAVE_VERSION, sizeof(People), sizeof(Player), sizeof(CharSheet), sizeof(FighterDesc),
-                      sizeof(FightAnim), sizeof(CombatEvent), sizeof(Bands), sizeof(NearBands), sizeof(ArenaSession),
+                      sizeof(CombatEvent), sizeof(Bands), sizeof(NearBands), sizeof(ArenaSession),
                       sizeof(ArenaView), sizeof(Squad), sizeof(Field), sizeof(Chronicle), PEOPLE_MAX, FIELD_MAX, BANDS_MAX,
                       CHRON_CAP, PART_COUNT, SK_COUNT, SLOT_COUNT, COMBAT_MAX_TEAMS, TICK_HZ };
     return ser_fnv(SER_HASH_START, v, sizeof v);
@@ -232,6 +236,10 @@ static u64 world_layout(void)
 static void world_ser(Ser *s, void *user)
 {
     World *w = user;
+    // Имена описаний — первыми: нет нужного описания — мир не читается вовсе
+    DefMap map;
+    defs_ser(s, &map);
+    if (s->refused) return;
     SER(s, w->tick);
     SER(s, w->acc);
     SER(s, w->tod);
@@ -249,6 +257,13 @@ static void world_ser(Ser *s, void *user)
     arena_view_ser(s, &w->aview);
     bands_ser(s, w->bands);
     near_ser(s, w->near, w->bands->count);
+    // Описания с тех пор поменяли порядок (мод, правка файлов): номера вещей — под нынешние
+    if (s->mode == SER_LOAD && !map.same && !s->bad) {
+        for (u32 i = 0; i < w->people->count; i++) defs_remap_sheet(&w->people->sheet[i], &map);
+        defs_remap_combat(&w->field->w, &map);
+        defs_remap_combat(&w->arena->w, &map);
+        for (u32 k = 0; k < ARENA_ROSTER; k++) defs_remap_desc(&w->arena->roster[k].d, &map);
+    }
 }
 
 bool world_save(World *w, const char *path)
@@ -267,6 +282,8 @@ bool world_load(World *w, const char *path)
     f64 t0 = time_now();
     SaveInfo info = { .layout = world_layout(), .seed = w->seed };
     if (!save_read(path, &info, world_ser, w, w->strings, WORLD_STRINGS)) return false;
+    field_view_restore(w->field);
+    arena_view_restore(&w->aview, w->arena);
     w->alpha = w->acc / TICK_DT;
     u32 mins = (u32)(w->tod * 24.0f * 60.0f);
     log_info("СОХРАНЕНИЕ: мир прочитан, день %u, %02u:%02u, за %.0f мс", w->day, mins / 60 % 24, mins % 60,

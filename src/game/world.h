@@ -24,6 +24,7 @@
 // Шаг мира: все — люди, отряд, бой, арена, сутки — на одном тике с боем
 #define TICK_HZ COMBAT_HZ
 #define TICK_DT COMBAT_DT
+#define DAY_TICKS ((u32)DAY_LENGTH_S * TICK_HZ)  // шагов в сутках: время суток идёт по ним
 #define TICKS_PER_FRAME_MAX 8  // больше за кадр не догоняет: игра замедляется, а не застывает
 // Время анимаций и шейдеров идёт по кругу этого периода: f32 после часов игры теряет точность
 #define TIME_WRAP_TICKS (TICK_HZ * 3600u)

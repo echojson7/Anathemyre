@@ -74,6 +74,13 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/save_check.sh ./build/anathemyre_debug build
 
+      - name: Описания и моды под ASan (другой порядок описаний, правка модом, сохранение без мода, ошибка в файле)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          LSAN_OPTIONS: suppressions=tools/lsan.supp
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/defs_check.sh ./build/anathemyre_debug build
+
       - name: Бой под ASan, детерминизм полевого боя на 1/2/4/8 потоках, отряды вдали
         env:
           LSAN_OPTIONS: suppressions=tools/lsan.supp
