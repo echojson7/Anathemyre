@@ -122,7 +122,8 @@ enum { LIGHT_CURVE_ACES, LIGHT_CURVE_AGX, LIGHT_CURVE_NEUTRAL, LIGHT_CURVE_COUNT
 
 // Время проходов на GPU, мс, среднее с прошлого render_take_stats
 // глубина — проход глубины и карты пикселей; интерфейс — портреты и HUD после render_frame
-enum { PASS_SHADOW, PASS_DEPTH, PASS_SCENE, PASS_ATMOS, PASS_STYLE, PASS_UI, PASS_COUNT };
+// свет — свечение и автоэкспозиция (группа СВЕТ), без них почти 0
+enum { PASS_SHADOW, PASS_DEPTH, PASS_SCENE, PASS_ATMOS, PASS_LIGHT, PASS_STYLE, PASS_UI, PASS_COUNT };
 typedef struct RenderStats {
     f64 gpu_ms[PASS_COUNT];
     f64 gpu_total_ms;

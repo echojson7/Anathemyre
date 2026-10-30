@@ -1565,6 +1565,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         rb_bind_pipe(R.pipe_expo);
         rb_dispatch(1, 1, 1);
     }
+    pass_mark(5);
+    if (timing) mark(5);
 
     // 4. Фильтр: виньетка, зерно, сканлайны, аберрация; сразу в окно
     rb_bind_tex(B_COLOR, hdr, RB_SMP_NEAREST);
@@ -1572,19 +1574,19 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     rb_bind_pipe(R.pipe_style);
     rb_draw(3, 0, 1);
     rb_pass_end();
-    pass_mark(5);
-    if (timing) mark(5);
+    pass_mark(6);
+    if (timing) mark(6);
 }
 
 void render_frame_end(void)
 {
     if (R.cpu_t[0] > 0.0) {
-        pass_mark(6);
+        pass_mark(7);
         for (u32 p = 0; p < PASS_COUNT; p++) R.stat_cpu[p] += R.cpu_t[p + 1] - R.cpu_t[p];
         R.cpu_t[0] = 0.0;
     }
     if (R.timing) {
-        mark(6);
+        mark(7);
         R.timer_pending[R.timer_slot] = true;
         R.timer_frame[R.timer_slot] = R.frame_no;
         R.timing = false;
