@@ -375,7 +375,7 @@ static bool target_make(Target *t, i32 w, i32 h, RbFmt color_fmt, bool depth)
 // Проход в цель t
 static void pass_to(const Target *t, bool clear, const f32 *color, RbTex rate)
 {
-    RbPass p = { .color = { { t->color } }, .depth = { t->depth }, .clear_color = clear, .clear_depth = clear && t->depth, .rate = rate };
+    RbPass p = { .color = { { .tex = t->color } }, .depth = { .tex = t->depth }, .clear_color = clear, .clear_depth = clear && t->depth, .rate = rate };
     if (color) memcpy(p.clear, color, sizeof p.clear);
     rb_pass_begin(&p);
 }
@@ -1344,7 +1344,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
 
     // 1. Тени. Ветер и прореживание в вершинном шейдере: те же значения во всех проходах (и в проходе глубины)
     if (rs->shadows) {
-        rb_pass_begin(&(RbPass){ .depth = { R.shadow_tex }, .clear_depth = true });
+        rb_pass_begin(&(RbPass){ .depth = { .tex = R.shadow_tex }, .clear_depth = true });
         R.pset = PS_SHADOW;
         push_view_proj(light_vp);
         draw_insts(g_inst[0], n_shadow, base_shadow, 0);

@@ -430,7 +430,7 @@ static void draw_layer(u32 l)
         U.th[l] = th;
     }
     // Прозрачный фон: цвет копится уже умноженным на альфу
-    rb_pass_begin(&(RbPass){ .color = { { U.target[l] } } });
+    rb_pass_begin(&(RbPass){ .color = { { .tex = U.target[l] } } });
     static const f32 clear[4] = { 0, 0, 0, 0 };
     for (u32 i = 0; i < U.boxes[l]; i++) {
         const f32 *b = U.box[l][i];
