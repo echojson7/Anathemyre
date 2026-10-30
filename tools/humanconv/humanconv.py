@@ -1431,7 +1431,7 @@ def hairdos(ctx):
     n0, md0 = src[0][1], src[0][2]
     used = np.unique(src[0][0])
     j = lambda n: J[n + '____head']
-    eye_y, neck_y, clav_y = j('eye.L')[1], j('neck01')[1], j('clavicle.L')[1]
+    eye_y, neck_y = j('eye.L')[1], j('neck01')[1]
     sst = lambda u: (lambda c: c * c * (3 - 2 * c))(np.clip(u, 0, 1))
 
     # Линия роста: на лбу 6.8 см ниже макушки (было 8.2 — лоб выглядел обритым), у висков ниже,
