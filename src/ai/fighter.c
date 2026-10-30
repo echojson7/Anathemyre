@@ -276,6 +276,18 @@ void fighter_ai_init(FighterAI *ai, Arena *a, u32 cap)
     ai->target = ARENA_PUSH_ARRAY(a, i32, cap);
 }
 
+void fighter_ai_ser(Ser *s, FighterAI *ai, u32 count)
+{
+    ser_check(s, count <= ai->cap);
+    if (s->bad) return;
+    SER_N(s, ai->act, count);
+    SER_N(s, ai->kind, count);
+    SER_N(s, ai->target, count);
+    SER(s, ai->cx);
+    SER(s, ai->cz);
+    SER(s, ai->cn);
+}
+
 void fighter_think_all(FighterAI *ai, CombatWorld *w)
 {
     if (w->halted) {

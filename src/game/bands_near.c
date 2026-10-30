@@ -28,6 +28,15 @@ bool near_init(NearBands *n, People *p, Field *f)
     return true;
 }
 
+void near_ser(Ser *s, NearBands *n, u32 bands)
+{
+    SER(s, n->owner);
+    SER(s, n->tier);
+    SER(s, n->rank);
+    SER_N(s, n->shown, bands);
+    SER_N(s, n->heading, bands);
+}
+
 // Куда смотрит строй: по дороге, на месте — как стоял
 static f32 band_heading(NearBands *n, const Bands *b, u32 bi)
 {
@@ -95,6 +104,8 @@ static void appear(NearBands *n, Bands *b, People *p, Field *f, u32 bi, GroundFn
         }
     bands_set_near(b, bi, true);
     log_info("ОТРЯДЫ: отряд %u рядом, людей %u из %u", bi, shown, men);
+    chron_add(b->chron, (ChronRec){ .kind = CH_BAND_NEAR, .from = b->from[bi], .to = b->to[bi], .a = bi, .b = CHRON_NOBODY,
+                                    .n = (i32)shown, .m = (i32)men, .x = b->x[bi], .z = b->z[bi] });
 }
 
 // Отряд снова точка: в нём те, кто остался в живых, и те, кто не стал телами
@@ -123,6 +134,8 @@ static void leave(NearBands *n, Bands *b, People *p, Field *f, u32 bi)
     memset(n->shown[bi], 0, sizeof n->shown[bi]);
     bands_set_near(b, bi, false);
     log_info("ОТРЯДЫ: отряд %u ушёл, тел вернулось %u из %u", bi, back, was);
+    chron_add(b->chron, (ChronRec){ .kind = CH_BAND_FAR, .from = b->from[bi], .to = b->to[bi], .a = bi, .b = CHRON_NOBODY,
+                                    .n = (i32)back, .m = (i32)was, .x = b->x[bi], .z = b->z[bi] });
     bands_set_men(b, bi, men);
 }
 

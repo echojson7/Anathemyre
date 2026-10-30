@@ -859,6 +859,34 @@ void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap)
     grid_init(&w->grid, a, cap, 128 * 128 * 4, 2.0f);
 }
 
+void combat_ser(Ser *s, CombatWorld *w)
+{
+    ser_count(s, &w->count, w->cap);
+    SER(s, w->seed);
+    SER(s, w->tick);
+    SER(s, w->mercy);
+    SER(s, w->halted);
+    SER(s, w->fence_r);
+    SER(s, w->foe);
+    u32 n = w->count;
+#define C(name) SER_N(s, w->name, n)
+    C(x); C(z); C(heading); C(state); C(team); C(attack); C(react); C(aim_x); C(aim_y); C(aim_s);
+    C(timer); C(dur); C(pause); C(target); C(since_hit); C(mvx); C(mvz); C(idle); C(order);
+    for (u32 p = 0; p < PART_COUNT; p++) C(hp[p]);
+    C(blood); C(blood_max); C(bleed); C(shock); C(morale); C(morale_base); C(mass); C(height);
+    C(fracture); C(severed); C(disarmed);
+    for (u32 k = 0; k < SK_COUNT; k++) C(skill[k]);
+    C(weapon); C(weapon_q);
+    for (u32 k = 0; k < SLOT_COUNT; k++) C(armor[k]);
+    C(grid_tag); C(sep_x); C(sep_z); C(strikes);
+#undef C
+    ser_count(s, &w->ev_count, w->ev_cap);
+    SER_N(s, w->ev, w->ev_count);
+    SER(s, w->last_ev);
+    SER(s, w->grid_dirty);
+    grid_ser(s, &w->grid);
+}
+
 void combat_reset(CombatWorld *w, u64 seed)
 {
     w->count = 0;

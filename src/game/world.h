@@ -7,6 +7,7 @@
 
 #include "../core/arena.h"
 #include "../core/rng.h"
+#include "../io/chronicle.h"
 #include "../render/render.h"
 #include "../sim/bands.h"
 #include "../world/places.h"
@@ -26,6 +27,7 @@
 #define TICKS_PER_FRAME_MAX 8  // больше за кадр не догоняет: игра замедляется, а не застывает
 // Время анимаций и шейдеров идёт по кругу этого периода: f32 после часов игры теряет точность
 #define TIME_WRAP_TICKS (TICK_HZ * 3600u)
+#define WORLD_STRINGS KB(32)  // имена и роли людей, прочитанные из сохранения
 
 typedef struct World {
     u64           seed;
@@ -40,6 +42,8 @@ typedef struct World {
     Places        places;        // места и дороги: зал, Скудель, долина
     Bands        *bands;         // отряды вдали; в мире их нет, пробные — кнопкой в НАСТРОЙКАХ
     NearBands    *near;          // отряды вдали рядом: тела
+    Chronicle    *chron;         // журнал событий мира
+    char         *strings;       // пул строк сохранения: имена и роли после загрузки
     V3            focus;         // точка взгляда камеры: рядом с ней отряды становятся телами
     GpuMesh       hall, far, town_mesh;  // статика лагеря: зал и обломки, мегаструктуры, посёлок
     u64           tick;          // шагов мира с начала
@@ -70,5 +74,12 @@ bool world_travel(World *w);
 bool world_squad_fighting(const World *w);
 // Пробные отряды вдали (отладка): по одному у Скудели и в долине, враждуют и идут навстречу по одной дороге
 void world_bands_test(World *w);
+// Сохранение мира между шагами: люди, отряд, бой, арена, отряды вдали, журнал событий, время. Карта, места,
+// посёлок и вид строятся из зерна и в файл не идут (docs/save.md)
+bool world_save(World *w, const char *path);
+// Прочитать мир того же зерна и той же сборки. false — мир не тронут (или испорчен, если файл оборвался)
+bool world_load(World *w, const char *path);
+// Сумма всего, что идёт в сохранение: одинаковый мир — одинаковая сумма
+u64  world_checksum(World *w);
 
 #endif

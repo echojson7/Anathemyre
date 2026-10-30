@@ -31,6 +31,10 @@ void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool h
         bool humans_want = humans_on;
         if (hud_debug_button(h, world_squad_in_valley(w) ? "ПЕРЕХОД: В ЛАГЕРЬ" : "ПЕРЕХОД: В ДОЛИНУ")) s->travel = true;
         if (hud_debug_button(h, "ОТРЯДЫ ВДАЛИ: ПУСТИТЬ ПРОБНЫЕ")) s->bands_test = true;
+        if (hud_debug_button(h, "МИР: СОХРАНИТЬ")) s->save = true;
+        if (hud_debug_button(h, "МИР: ЗАГРУЗИТЬ")) s->load = true;
+        snprintf(val, sizeof val, "%llu", (unsigned long long)w->chron->total);
+        hud_debug_text(h, "СОБЫТИЙ В ЖУРНАЛЕ МИРА", val);
         if (hud_debug_check(h, "ЛЮДИ ДЛЯ СРАВНЕНИЯ", &humans_want)) {
             s->humans = true;
             if (humans_want) *cam = (RtsCamera){ .target = { 3.4f, 0, 22 }, .yaw = 0.0f, .pitch = 0.15f, .dist = 6.5f };

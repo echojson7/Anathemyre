@@ -27,6 +27,8 @@ typedef struct NearBands {
 
 // Занять места: дописать свободных людей в таблицу и на поле боя (после people_join_field)
 bool near_init(NearBands *n, People *p, Field *f);
+// Сохранение: чьи места заняты и строй первых bands отрядов
+void near_ser(Ser *s, NearBands *n, u32 bands);
 // Шаг мира, после ходьбы людей и отряда: тела идут за своими точками; раз в секунду (перед шагом отрядов
 // с первым куском) — кто стал телами, кто снова точкой. focus — точка взгляда камеры, dt — шаг мира
 void near_tick(NearBands *n, Bands *b, People *p, Field *f, const Squad *sq, V3 focus, f32 dt, GroundFn ground);

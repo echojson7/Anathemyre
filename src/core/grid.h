@@ -7,6 +7,7 @@
 #define ANA_GRID_H
 
 #include "arena.h"
+#include "ser.h"
 
 #define GRID_MAX_TAGS 32
 #define GRID_BLOCK 4      // грубый слой: блок из GRID_BLOCK×GRID_BLOCK ячеек
@@ -40,5 +41,7 @@ u32  grid_query(const Grid *g, f32 x, f32 z, f32 r, u32 mask, u32 *out, u32 out_
 void grid_count(const Grid *g, f32 x, f32 z, f32 r, u32 mask, const f32 *px, const f32 *pz, u32 *count);
 // Объединение меток в блоках, задетых квадратом 2r (с запасом до размера блока)
 u32  grid_tags(const Grid *g, f32 x, f32 z, f32 r);
+// Сохранение: сетка как построена (ёмкости — от grid_init)
+void grid_ser(Ser *s, Grid *g);
 
 #endif

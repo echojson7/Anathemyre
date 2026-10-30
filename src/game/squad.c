@@ -190,3 +190,14 @@ i32 squad_primary(const Squad *s)
         if (s->selected[i]) return (i32)i;
     return -1;
 }
+
+void squad_ser(Ser *s, Squad *sq)
+{
+    ser_count(s, &sq->count, SQUAD_MAX);
+    SER(s, sq->member);
+    SER(s, sq->selected);
+    SER(s, sq->order_pos);
+    SER(s, sq->order_marker);
+    SER(s, sq->formation);
+    SER(s, sq->next_group);
+}

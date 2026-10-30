@@ -338,6 +338,11 @@ bool platform_exe_dir(char *buf, size_t size)
     return true;
 }
 
+#include <errno.h>
+#include <sys/stat.h>
+
+bool platform_make_dir(const char *path) { return mkdir(path, 0755) == 0 || errno == EEXIST; }
+
 // ---------------------------------------------------------------- потоки
 
 #include <pthread.h>

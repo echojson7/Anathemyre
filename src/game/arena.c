@@ -221,6 +221,28 @@ bool arena_session_init(ArenaSession *s, Arena *mem, u64 seed)
     return true;
 }
 
+void arena_ser(Ser *sr, ArenaSession *s)
+{
+    combat_ser(sr, &s->w);
+    fighter_ai_ser(sr, &s->ai, s->w.count);
+    SER(sr, s->rng);
+    SER(sr, s->next_name);
+    SER(sr, s->roster);
+    SER(sr, s->st);
+    SER(sr, s->hash);
+    SER(sr, s->ticks);
+    SER(sr, s->bout);
+    ser_count(sr, &s->n, ARENA_MAX_BOUT);
+    SER(sr, s->idx);
+    SER(sr, s->team);
+    SER(sr, s->group);
+    SER(sr, s->log);
+    SER(sr, s->rating);
+    SER(sr, s->decided);
+    SER(sr, s->end_tick);
+    SER(sr, s->winner);
+}
+
 // Подбор пары или двух четвёрок из отдохнувших; false — драться некому
 static bool pick_bout(ArenaSession *s)
 {

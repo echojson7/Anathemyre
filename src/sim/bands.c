@@ -81,6 +81,13 @@ static const char *where(const Bands *b, u32 i, char *buf, size_t n)
     return buf;
 }
 
+// В журнал событий: где отряд — его место или дорога
+static void note(Bands *b, u8 kind, u32 i, u32 j, i32 n, i32 m)
+{
+    chron_add(b->chron, (ChronRec){ .kind = kind, .from = b->from[i], .to = b->to[i], .a = i, .b = j, .n = n, .m = m,
+                                    .x = b->x[i], .z = b->z[i] });
+}
+
 static void place_pos(Bands *b, u32 i)
 {
     const Places *p = b->places;
@@ -158,6 +165,7 @@ static void engage(Bands *b, u32 i)
     b->men0[j] = (u16)bands_men(b, j);
     b->hurt[i] = b->hurt[j] = 0.0f;
     b->fights++;
+    note(b, CH_BAND_CLASH, i, j, b->men0[i], b->men0[j]);
     if (b->log_left) {
         b->log_left--;
         char buf[96];
@@ -177,6 +185,7 @@ static void rout(Bands *b, u32 i)
 {
     const Places *p = b->places;
     b->routs++;
+    note(b, CH_BAND_ROUT, i, CHRON_NOBODY, (i32)bands_men(b, i), b->men0[i]);
     if (b->log_left) {
         b->log_left--;
         char buf[96];
@@ -218,6 +227,7 @@ static void fight(Bands *b, u32 i, f32 dt)
     if (!left) {
         b->state[i] = BAND_GONE;
         b->wiped++;
+        note(b, CH_BAND_WIPED, i, j, 0, b->men0[i]);
         if (b->log_left) {
             b->log_left--;
             char buf[96];
@@ -288,11 +298,43 @@ void bands_set_men(Bands *b, u32 i, const u16 men[BAND_TIERS])
     if (bands_men(b, i)) return;
     b->state[i] = BAND_GONE;
     b->wiped++;
+    note(b, CH_BAND_WIPED, i, CHRON_NOBODY, 0, 0);
     if (b->log_left) {
         b->log_left--;
         char buf[96];
         log_info("ОТРЯДЫ: отряд %u истреблён %s", i, where(b, i, buf, sizeof buf));
     }
+}
+
+void bands_ser(Ser *s, Bands *b)
+{
+    ser_count(s, &b->count, BANDS_MAX);
+    SER(s, b->phase);
+    SER(s, b->sec);
+    ser_check(s, b->phase < b->phases);
+    u32 n = b->count;
+    SER_N(s, b->x, n);
+    SER_N(s, b->z, n);
+    SER_N(s, b->along, n);
+    SER_N(s, b->wait, n);
+    SER_N(s, b->hurt, n);
+    SER_N(s, b->men, n);
+    SER_N(s, b->men0, n);
+    SER_N(s, b->foe, n);
+    SER_N(s, b->from, n);
+    SER_N(s, b->to, n);
+    SER_N(s, b->goal, n);
+    SER_N(s, b->team, n);
+    SER_N(s, b->state, n);
+    SER_N(s, b->tag, n);
+    SER_N(s, b->near, n);
+    SER_N(s, b->hold, n);
+    SER(s, b->hostile);
+    grid_ser(s, &b->grid);
+    SER(s, b->fights);
+    SER(s, b->routs);
+    SER(s, b->wiped);
+    SER(s, b->dead);
 }
 
 u64 bands_checksum(const Bands *b)

@@ -51,6 +51,13 @@ jobs:
           ! grep -q "СБОЙ" build/bands_near.txt
           grep -q "отряд 1 рядом" build/bands_near.txt
 
+      - name: Сохранение под ASan (запись посреди боя, чтение в новом процессе — мир идёт бит в бит)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          LSAN_OPTIONS: suppressions=tools/lsan.supp
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/save_check.sh ./build/anathemyre_debug build
+
       - name: Бой под ASan, детерминизм полевого боя на 1/2/4/8 потоках, отряды вдали
         env:
           LSAN_OPTIONS: suppressions=tools/lsan.supp

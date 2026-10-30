@@ -8,6 +8,7 @@
 #define ANA_FIELD_H
 
 #include "../ai/fighter.h"
+#include "../io/chronicle.h"
 #include "../sim/inventory.h"
 #include "fight_anim.h"
 #include "player.h"
@@ -39,6 +40,7 @@ typedef struct Field {
     f32  grudge[COMBAT_MAX_TEAMS];   // сколько ещё секунд команда помнит вражду
     u32  enmity[COMBAT_MAX_TEAMS];   // вражда навсегда (field_enmity): не забывается
     u32  fights;                     // проснувшихся сейчас
+    Chronicle *chron;                // куда писать выбывших; NULL — некуда
 } Field;
 
 void field_init(Field *f, Arena *a, u64 seed);
@@ -54,6 +56,8 @@ void field_enmity(Field *f, u8 a, u8 b);
 bool field_attack(Field *f, u32 who, u32 target);
 // Отменить приказ атаки; leave — если дерётся, выйти из боя, как только сможет (приказ идти)
 void field_cancel(Field *f, u32 who, bool leave);
+// Сохранение: бой, решения, правила поля и вид бойцов. Тела и листы — у таблицы людей
+void field_ser(Ser *s, Field *f);
 // Тик поля (шаг мира): после ходьбы тел. Тело бойца в бою стоит там, где его держит симуляция
 void field_tick(Field *f, GroundFn ground);
 // Вид боя для кадра: alpha — доля шага после тика, dt — игровое время кадра. Мир не меняет

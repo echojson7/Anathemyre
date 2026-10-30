@@ -6,6 +6,7 @@
 
 #include "../core/arena.h"
 #include "../core/grid.h"
+#include "../core/ser.h"
 #include "items.h"
 
 #define COMBAT_HZ 20
@@ -171,6 +172,8 @@ void combat_events_done(CombatWorld *w);
 // Забрать состояние тела и навыки обратно в описание (после боя)
 void combat_store(const CombatWorld *w, u32 i, FighterDesc *d);
 
+// Сохранение: все бойцы (count, ёмкость — от combat_init), их журнал этого тика и сетка
+void combat_ser(Ser *s, CombatWorld *w);
 // Свёртка событий журнала в контрольную сумму (проверка детерминизма)
 u64 combat_hash_events(const CombatWorld *w, u64 h);
 // Сколько бойцов команды ещё в бою

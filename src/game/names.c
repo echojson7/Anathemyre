@@ -14,10 +14,13 @@ static const char *g_female[] = {
     "ЛУКРЕЦИЯ", "ДОБРОНЕГА", "ХРИСЕИДА", "ГОРЯСЕРА", "ЕВТЕРПА", "ЧЕСЛАВА", "АГЛАЯ", "ВЕСЕЛИНА",
 };
 
+static u32 g_next[2];  // сколько выдано: мужских, женских
+
 const char *name_next(bool female)
 {
-    static u32 next[2];
     u32 k = female ? 1 : 0;
     u32 n = female ? ARRAY_COUNT(g_female) : ARRAY_COUNT(g_male);
-    return (female ? g_female : g_male)[next[k]++ % n];
+    return (female ? g_female : g_male)[g_next[k]++ % n];
 }
+
+void names_ser(Ser *s) { SER(s, g_next); }

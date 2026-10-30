@@ -47,6 +47,10 @@ typedef struct Options {
     i32         look_slot;   // для снимков: осмотреть чужого в слоте поля look_slot−1
     bool        bands_test;  // пробные отряды вдали сразу при старте
     f32         warp;        // для снимков: прогнать столько секунд мира до первого кадра
+    const char *save_path;   // записать мир после прогона (--warp)
+    const char *load_path;   // прочитать мир до прогона
+    f32         sum_after;   // проверка сохранений: ещё столько секунд мира, сумма мира в консоль и выход
+    bool        sum_set;
     u32         arena_bench; // прогнать N боёв арены без окна
     u32         field_bench; // сценка атаки и нагрузка поля на N−1 тел без окна
     i32         attack;      // для снимков: весь отряд сразу атакует бродящего номер attack−1
@@ -102,6 +106,7 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 static void usage(void)
 {
     puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N]");
+    puts("anathemyre [--load file.sav] [--warp S] [--save file.sav] [--sum-after S]   сохранение без меню: прочитать, прогнать, записать; сумма мира через S секунд и выход");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
@@ -125,6 +130,12 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--look-slot") && i + 1 < argc) o->look_slot = atoi(argv[++i]) + 1;
         else if (!strcmp(a, "--bands-test")) o->bands_test = true;
         else if (!strcmp(a, "--warp") && i + 1 < argc) o->warp = strtof(argv[++i], NULL);
+        else if (!strcmp(a, "--save") && i + 1 < argc) o->save_path = argv[++i];
+        else if (!strcmp(a, "--load") && i + 1 < argc) o->load_path = argv[++i];
+        else if (!strcmp(a, "--sum-after") && i + 1 < argc) {
+            o->sum_after = strtof(argv[++i], NULL);
+            o->sum_set = true;
+        }
         else if (!strcmp(a, "--move-bench")) {
             o->move_bench = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
@@ -342,11 +353,27 @@ int main(int argc, char **argv)
         field_attack(field, (u32)squad_body(squad, i)->slot, (u32)victim);
     }
     if (opt.bands_test) world_bands_test(world);
-    // Прогон мира до первого кадра (снимки): камера стоит, журнал — в консоль
-    if (opt.warp > 0.0f) {
+    // Сохранение в папке saves рядом с data
+    char save_path[600];
+    snprintf(save_path, sizeof save_path, "%s/../saves", data_dir);
+    bool save_dir = platform_make_dir(save_path);
+    snprintf(save_path + strlen(save_path), sizeof save_path - strlen(save_path), "/world.sav");
+    // Прогон мира до первого кадра (снимки, проверка сохранений): камера стоит, журнал — в консоль
+    bool quit_now = false;
+    int status = 0;  // сохранение без меню не прошло — выход с ошибкой
+    if (opt.load_path || opt.warp > 0.0f || opt.save_path || opt.sum_set) {
         log_set_echo(true);
         world->focus = opt.cam.target;
-        for (u32 k = 0; k < (u32)(opt.warp * (f32)TICK_HZ); k++) world_update(world, TICK_DT);
+        if (opt.load_path && !world_load(world, opt.load_path)) quit_now = true;
+        for (u32 k = 0; !quit_now && k < (u32)(opt.warp * (f32)TICK_HZ); k++) world_update(world, TICK_DT);
+        if (!quit_now && opt.save_path && !world_save(world, opt.save_path)) quit_now = true;
+        status = quit_now ? 1 : 0;
+        if (!quit_now && opt.sum_set) {
+            for (u32 k = 0; k < (u32)(opt.sum_after * (f32)TICK_HZ); k++) world_update(world, TICK_DT);
+            log_stat("МИР: шаг %llu, сумма %016llx", (unsigned long long)world->tick,
+                     (unsigned long long)world_checksum(world));
+            quit_now = true;
+        }
         log_set_echo(false);
     }
     u8 *shot_buf = NULL;
@@ -357,6 +384,7 @@ int main(int argc, char **argv)
     f32 cam_lift = opt.cam.target.y, cam_y = world_ground(cam.target.x, cam.target.z);
     Input in;
     memset(&in, 0, sizeof in);
+    in.quit = quit_now;
     f64 last = time_now();
     FrameStats stats = { .t = last, .fps_t = last };
     f32 real_time = 0;
@@ -461,7 +489,21 @@ int main(int argc, char **argv)
         humans_flip |= set.humans;
         bench_request |= set.bench;
         if (set.bands_test) world_bands_test(world);
-        set.humans = set.bench = set.bands_test = false;
+        if (set.save) {
+            if (!save_dir) log_error("СОХРАНЕНИЕ: папка для %s не создана", save_path);
+            else world_save(world, save_path);
+        }
+        // Мир прочитан: камера к отряду, позы и портреты заново
+        if (set.load && world_load(world, save_path)) {
+            jumped = true;
+            V3 lp = squad_body(squad, (u32)MAX(0, squad_primary(squad)))->pos;
+            cam.target = v3(lp.x, cam.target.y, lp.z);
+            cam_y = world_ground(cam.target.x, cam.target.z);
+            for (u32 i = 0; i < PEOPLE_MAX; i++) fig->age[i] = -1.0f;
+            figures_portraits_reset();
+            hud_look(&hud, LOOK_NONE, 0);
+        }
+        set.humans = set.bench = set.bands_test = set.save = set.load = false;
         HudWorld hw = { .squad = squad, .arena = world->arena, .aview = &world->aview, .field = field, .view = fig->view,
                         .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day };
         bool ui_busy = hud_input(&hud, &hin, &hw);
@@ -588,5 +630,5 @@ int main(int argc, char **argv)
     arena_free(&scratch);
     arena_free(&perm);
     log_info("СЕАНС ЗАВЕРШЁН");
-    return 0;
+    return status;
 }

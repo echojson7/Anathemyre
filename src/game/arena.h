@@ -54,6 +54,8 @@ typedef struct ArenaSession {
 } ArenaSession;
 
 bool arena_session_init(ArenaSession *s, Arena *mem, u64 seed);
+// Сохранение: ростер, итоги, текущий бой (настройки показа — log_bouts, after_bout_s — не пишутся)
+void arena_ser(Ser *sr, ArenaSession *s);
 // Начать следующий бой. false — все отдыхают, вызвать ещё раз
 bool arena_bout_begin(ArenaSession *s);
 // Один тик боя; true — бой закрыт и его надо завершить arena_bout_end

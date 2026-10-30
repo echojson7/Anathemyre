@@ -208,6 +208,12 @@ void arena_view_tick(ArenaView *v, ArenaSession *s)
     }
 }
 
+void arena_view_ser(Ser *s, ArenaView *v)
+{
+    SER(s, v->in_bout);
+    SER(s, v->fa);
+}
+
 void arena_view_present(ArenaView *v, const ArenaSession *s, f32 alpha, f32 dt)
 {
     const CombatWorld *w = &s->w;
