@@ -16,7 +16,10 @@ vec3 aces(vec3 x)
 
 void main()
 {
-    vec2 uv = (vec2(texelFetch(u_src_map, ivec2(gl_FragCoord.xy), 0).rg) + 0.5) / vec2(textureSize(u_src, 0));
+    // Без пиксельности (u_pix.x = 0) карта источников не считается: пиксель берёт свой цвет
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    vec2 src = u_pix.x > 0.0 ? vec2(texelFetch(u_src_map, p, 0).rg) : vec2(p);
+    vec2 uv = (src + 0.5) / vec2(textureSize(u_src, 0));
     if (u_post == 0) {
         o_color = vec4(pow(aces(texture(u_src, uv).rgb * 1.2), vec3(1.0 / 2.2)), 1.0);
         return;

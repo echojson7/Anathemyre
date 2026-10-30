@@ -18,6 +18,7 @@ layout(location = 24) uniform vec3 u_sky_amb;
 layout(location = 25) uniform vec3 u_ground_amb;
 layout(location = 27) uniform float u_texel_on; // 0 — пиксельность выключена (RenderSettings.pixel)
 layout(location = 26) uniform int u_unlit;   // портреты интерфейса: свой неподвижный свет
+layout(location = 51) uniform int u_shadow_on;  // 0 — тени выключены (ЭТАП СЦЕНЫ): карта теней не читается
 layout(binding = 0) uniform sampler2DShadow u_shadow;
 
 out vec4 o_color;
@@ -281,7 +282,7 @@ void main()
 
     // Листва и трава просвечивают: свет заходит и на обратную сторону
     float ndl = foliage ? 0.25 + 0.5 * max(dot(N, L), 0.0) + 0.25 * abs(dot(N, L)) : max(dot(N, L), 0.0);
-    float sh = ndl > 0.0 ? sun_shadow(W, N) : 0.0;
+    float sh = ndl > 0.0 ? (u_shadow_on != 0 ? sun_shadow(W, N) : 1.0) : 0.0;
 
     // Небо и отражённый от песка свет (0.6 — тени темнее, решение пользователя 2026-10-29)
     vec3 ambient = mix(u_ground_amb, u_sky_amb, N.y * 0.5 + 0.5) * 0.6;
