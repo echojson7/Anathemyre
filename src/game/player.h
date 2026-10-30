@@ -28,6 +28,12 @@ typedef struct Player {
     f32  lean_side;  // крен в поворот, рад; > 0 — влево
     f32  look;       // голова к цели раньше тела, рад относительно heading
     f32  idle;       // сколько стоит без движения, с
+    // Поза отдыха (anim.h, RestKind): садится, держит, встаёт. Пока садится или встаёт — не идёт
+    u8   rest, rest_ph;
+    u16  rest_n;     // сколько поз было: от него и rest_seed выбор следующей
+    u32  rest_seed;
+    f32  rest_t;     // с от начала фазы; в RP_BACK — сколько входа осталось пройти назад
+    f32  rest_hold;  // сколько держать позу, с
     f32  phase, walk;
     f32  run;        // походка: 0 шаг .. 1 бег, следует за фактической скоростью
     f32  vmax;       // предел скорости на этот кадр, ставит отряд
@@ -42,6 +48,8 @@ typedef struct Player {
 
 void player_init(Player *p, V3 pos, f32 heading);
 void player_order_move(Player *p, V3 target);
+// Сразу в позу отдыха kind (витрина, сцены): вход с начала, держит hold с
+void player_rest(Player *p, u8 kind, f32 hold);
 void player_update(Player *p, f32 dt, GroundFn ground);
 // Тело для кадра между двумя шагами мира: a — прошлый шаг, b — текущий, t — доля шага 0..1
 void player_lerp(const Player *a, const Player *b, f32 t, Player *out);

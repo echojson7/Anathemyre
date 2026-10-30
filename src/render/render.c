@@ -124,8 +124,9 @@ typedef struct GpuFrame {
     i32 tile[4];
     i32 light[4];
     f32 lightf[4];
+    f32 room_lo[4], room_hi[4], room_door[4], room_fill[4];
 } GpuFrame;
-_Static_assert(sizeof(GpuFrame) == 320, "GpuFrame — как блок Frame в frame.glsl");
+_Static_assert(sizeof(GpuFrame) == 384, "GpuFrame — как блок Frame в frame.glsl");
 // Блоков кадра в кольце на кадр: сам кадр и портреты (у каждого своя камера)
 #define FRAME_BLOCKS (1 + RENDER_PORTRAIT_SLOTS)
 
@@ -1460,6 +1461,13 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     R.light_t = now;
     f->lightf[1] = BLOOM_MIX / BLOOM_LEVELS;
     f->lightf[2] = BLOOM_LEVELS;
+    if (fv->room.on) {
+        const RoomDark *rm = &fv->room;
+        memcpy(f->room_lo, (f32[4]){ rm->lo.x, rm->lo.y, rm->lo.z, 1.0f }, sizeof f->room_lo);
+        memcpy(f->room_hi, (f32[4]){ rm->hi.x, rm->hi.y, rm->hi.z, rm->door_reach }, sizeof f->room_hi);
+        memcpy(f->room_door, (f32[4]){ rm->door.x, rm->door.y, rm->door.z, 0.0f }, sizeof f->room_door);
+        memcpy(f->room_fill, (f32[4]){ rm->fill.x, rm->fill.y, rm->fill.z, 0.0f }, sizeof f->room_fill);
+    }
     frame_write(0, f);
     R.stat_prep += time_now() - t_prep;
     rb_bind_ssbo(B_BONES, R.bone_buf[R.stream], 0, 0);

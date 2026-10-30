@@ -982,6 +982,12 @@ void ostov_build(MeshBuilder *mb)
     fixtures(mb, &rng);
 }
 
+void ostov_rough_box(MeshBuilder *mb, V3 lo, V3 hi, f32 cell, f32 chip, u8 hide, u32 seed)
+{
+    Rough r = rough(cell, 0.05f, chip, 0.30f, hide, seed);
+    rough_box(mb, lo, hi, &r);
+}
+
 f32 ostov_ground(f32 x, f32 z, f32 base)
 {
     if (x < PX0 || x > PX1 || z < PZ0 || z > PZ1) return base;

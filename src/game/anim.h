@@ -21,6 +21,24 @@
 
 _Static_assert(CHAR_BONES <= 24, "скелет с оружием не влезает в RENDER_MAX_BONES");
 
+// Позы отдыха: долгие, у каждой свой вход и свой выход (не тот же путь назад), сроки как у живого человека.
+// Выбирает и ведёт их тело (player.c): пока человек садится или встаёт, он не идёт. Подробно — docs/animations.md
+typedef enum RestKind { REST_NONE, REST_SQUAT, REST_SIT, REST_KNEEL, REST_ARMS, REST_STARE, REST_COUNT } RestKind;
+// Вход, держит, выход; RP_BACK — вход назад: передумал на полпути (приказ, тревога)
+typedef enum RestPhase { RP_ENTER, RP_HOLD, RP_EXIT, RP_BACK } RestPhase;
+typedef struct RestDef {
+    const char *name;            // для интерфейса: «НА КОРТОЧКАХ»
+    f32 enter_s, exit_s;         // вход и выход, с
+    f32 hold_min, hold_max;      // сколько держит, с
+    f32 weight;                  // как часто выбирают среди прочих
+} RestDef;
+extern const RestDef g_rest[REST_COUNT];
+
+// Короткие житейские движения стоя, раз в ~30 с; идут сами, без состояния
+typedef enum IdleMove { MOVE_NONE, MOVE_NECK, MOVE_BROW, MOVE_HILT, MOVE_LOOK, MOVE_BACK, MOVE_DUST, MOVE_COUNT } IdleMove;
+extern const f32 g_move_s[MOVE_COUNT];          // длительность, с
+extern const char *const g_move_name[MOVE_COUNT];
+
 typedef struct CharPose {
     V3  pos;         // точка на земле
     f32 heading;     // поворот вокруг Y, 0 = смотрит в +Z
@@ -36,7 +54,11 @@ typedef struct CharPose {
     f32 lean_fwd;    // наклон тела: > 0 вперёд, рад
     f32 lean_side;   // крен в поворот: > 0 влево, рад
     f32 look;        // поворот головы к цели относительно взгляда, рад
-    f32 idle;        // сколько стоит без движения, с: позы покоя только у давно стоящих
+    u8  rest;        // поза отдыха (RestKind), её ведёт тело (Player.rest)
+    u8  rest_ph;     // RestPhase
+    f32 rest_t;      // с от начала фазы; в RP_BACK — сколько входа осталось пройти назад
+    u8  move;        // 0 — движения стоя идут сами по времени; k + 1 — показать движение k (IdleMove) на move_t с
+    f32 move_t;
     u8  weapon;      // W_* + 1; 0 — без оружия
     f32 torch;       // 0 рука опущена .. 1 факел поднят перед собой (левая рука)
     bool calm;       // без поз ожидания (портреты)

@@ -293,6 +293,14 @@ void main()
     vec3 Lflat = normalize(vec3(-L.x, 0.0, -L.z));
     float bounce = max(dot(N, -Lflat), 0.0) * 0.08 + max(-N.y, 0.0) * 0.05;
     ambient += u_ground_amb * 1.5 * bounce;
+    // В помещении без неба небо светит только от входа, остальное — рассеянный свет ламп
+    float sky_k = 1.0, inside = u_unlit == 0 ? room_inside(W) : 0.0;
+    // С небом по сетке (u_lightf.w, docs/lighting.md) потолок и стены уже затеняют небо: не затемнять дважды
+    if (inside > 0.0) {
+        float door = exp(-length(W - u_room_door.xyz) / u_room_hi.w);
+        if (u_lightf.w < 0.5) sky_k = mix(1.0, 0.02 + 0.6 * door, inside);
+        ambient = ambient * sky_k + u_room_fill.rgb * inside;
+    }
 
     vec3 col;
     bool ggx = u_light.x == 1;
@@ -312,7 +320,7 @@ void main()
         // Небо в отражении: по направлению отражённого луча, Френель с поправкой на шероховатость
         vec3 Rv = reflect(-V, N);
         vec3 Fr = F0 + (max(vec3(1.0 - rough), F0) - F0) * pow(1.0 - nv, 5.0);
-        vec3 env = mix(u_ground_amb, u_sky_amb, Rv.y * 0.5 + 0.5) * 0.6;
+        vec3 env = mix(u_ground_amb, u_sky_amb, Rv.y * 0.5 + 0.5) * 0.6 * sky_k;
         col = albedo * (1.0 - Fr) * (u_sun_color * ndl * sh + ambient * ao) + env * Fr * ao + emissive;
         col += ggx_spec(N, V, L, a2, F0) * u_sun_color * sh;
     } else {
@@ -332,6 +340,8 @@ void main()
         float c = l_col[i].a, cone = 1.0;
         if (c > -1.0) cone = smoothstep(c, c + (1.0 - c) * 0.2, dot(-Ld, l_dir[i].xyz));
         k *= cone;
+        // Стены помещения: лампы внутри не светят наружу, огни снаружи — внутрь
+        if (u_room_lo.w > 0.5) k *= 1.0 - abs(room_inside(l_pos[i].xyz) - inside);
         if (k <= 0.0) continue;
         vec3 li = l_col[i].rgb * (k * light_falloff(d2, r));
         if (ggx) col += albedo * li + l_col[i].rgb * (cone * light_falloff(d2, r)) * ggx_spec(N, V, Ld, a2, F0);
@@ -340,7 +350,7 @@ void main()
     // Контровой свет от дымки: фигуры читаются силуэтом
     if (bones) {
         float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
-        col += (u_sky_amb + u_ground_amb) * rim * 0.35;
+        col += (u_sky_amb + u_ground_amb) * rim * 0.35 * sky_k;
     }
     // Портрет: неподвижный свет спереди-сверху-слева, без солнца и теней мира
     if (u_unlit != 0) col = albedo * (0.25 + 0.75 * max(dot(N, normalize(vec3(-0.5, 0.7, 0.6))), 0.0)) + emissive;

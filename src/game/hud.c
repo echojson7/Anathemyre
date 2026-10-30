@@ -268,6 +268,12 @@ static const char *move_state(const Field *f, const Player *p)
     static const char *go[GAIT_COUNT] = { "ИДЁТ ШАГОМ", "ТРУСИТ", "БЕЖИТ" };
     if (p->slot >= 0 && field_awake(f, (u32)p->slot)) return g_state_name[f->w.state[p->slot]];
     if (p->ctrl == CTRL_CHASE) return "К ЦЕЛИ";
+    if (p->rest != REST_NONE && p->rest < REST_COUNT) {
+        // Руки на груди и взгляд вверх — без «садится» и «встаёт»
+        if (p->rest_ph == RP_HOLD || p->rest >= REST_ARMS) return g_rest[p->rest].name;
+        if (p->rest_ph != RP_ENTER) return "ВСТАЁТ";
+        return p->rest == REST_KNEEL ? "ОПУСКАЕТСЯ НА КОЛЕНО" : "САДИТСЯ";
+    }
     return p->moving ? go[p->gait] : "СТОИТ";
 }
 

@@ -22,6 +22,7 @@
 #include "game/figures.h"
 #include "game/hud.h"
 #include "game/humans_row.h"
+#include "game/showhall.h"
 #include "game/stand.h"
 #include "game/sfx.h"
 #include "game/testroom.h"
@@ -78,6 +79,7 @@ typedef struct Options {
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
     i32         stand;       // стенд фигур сразу при старте: ряд + 1 (0 — нет)
+    f32         hall_t;      // сдвиг часов Мерильни, с (--hall-t): кадр нужной фазы
     bool        valley;      // начать в долине (иначе пешком или переход из меню НАСТРОЙКИ)
     bool        mute;        // без звука
     const char *sound_demo;  // сценка звука в WAV без окна
@@ -111,7 +113,7 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N]");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N] [--hall-t S]");
     puts("anathemyre [--light 0..2] [--light-parts МАТЕРИАЛЫ КРИВАЯ ЭКСПОЗИЦИЯ СВЕЧЕНИЕ]   свет на старте: набор ПРЕЖНИЙ/БЫСТРЫЙ/РЕАЛИСТИЧНЫЙ или части (docs/lighting.md)");
     puts("anathemyre [--load file.sav] [--warp S] [--save file.sav] [--sum-after S]   сохранение без меню: прочитать, прогнать, записать; сумма мира через S секунд и выход");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
@@ -150,6 +152,7 @@ static bool parse_args(int argc, char **argv, Options *o)
             if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
         } else if (!strcmp(a, "--humans")) o->humans = true;
         else if (!strcmp(a, "--stand") && i + 1 < argc) o->stand = atoi(argv[++i]) + 1;
+        else if (!strcmp(a, "--hall-t") && i + 1 < argc) o->hall_t = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--no-pixel")) o->no_pixel = true;
         else if (!strcmp(a, "--valley")) o->valley = true;
         else if (!strcmp(a, "--mute")) o->mute = true;
@@ -308,6 +311,7 @@ int main(int argc, char **argv)
     Figures *fig = ARENA_PUSH_ARRAY(&perm, Figures, 1);
     HumansRow *humans = ARENA_PUSH_ARRAY(&perm, HumansRow, 1);
     Stand *stand = ARENA_PUSH_ARRAY(&perm, Stand, 1);
+    ShowHall *hall = ARENA_PUSH_ARRAY(&perm, ShowHall, 1);
     if (!world_init(world, &perm, &mb, opt.seed, opt.tod, !opt.day_stop) || !figures_init(fig, cm, &mb, &perm, data_dir)) {
         jobs_shutdown();
         render_shutdown();
@@ -317,6 +321,8 @@ int main(int argc, char **argv)
     figures_view(fig, world->people, world->field, world->alpha, world_ground);
     humans_row_init(humans, &perm, world_ground);
     stand_init(stand, &perm);
+    showhall_init(hall, &mb, &perm);
+    hall->t_off = opt.hall_t;
     // Рельеф карты и растения долины — на весь сеанс
     render_set_terrain(map_fill, NULL);
     render_set_groups(world->valley->groups, world->valley->clusters, world->valley->cluster_count);
@@ -521,6 +527,7 @@ int main(int argc, char **argv)
         FrameView fv;
         fv.cam_pos = camera_eye(&cam);
         fv.cam_pos.y = fmaxf(fv.cam_pos.y, world_ground(fv.cam_pos.x, fv.cam_pos.z) + 1.5f);
+        fv.cam_pos = showhall_clamp_eye(cam.target, fv.cam_pos);
         fv.view = m4_look_at(fv.cam_pos, v3_add(cam.target, v3(0, 1.0f, 0)), v3(0, 1, 0));
         fv.proj = m4_perspective(CAM_FOV, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
 
@@ -597,6 +604,10 @@ int main(int argc, char **argv)
         items[n++] = (DrawItem){ .mesh = &world->far, .no_shadow = true };
         items[n++] = (DrawItem){ .mesh = &world->town_mesh };
         items[n++] = (DrawItem){ .mesh = &world->ostov };
+        // Мерильня: лампы горят всегда, фигуры — когда камера рядом
+        nl += showhall_lights(wtime, lights + nl, TORCH_LIGHTS_MAX - nl);
+        if (st_people) n += showhall_draw(hall, cm, fv.cam_pos, wtime, st_live ? dt : 0.0f, items + n);
+        else items[n++] = (DrawItem){ .mesh = &hall->mesh };
         n += valley_view_draw(valley, fv.cam_pos, items + n);
         prof_zone(PZ_FIGURES);
         if (st_people) {
@@ -637,6 +648,7 @@ int main(int argc, char **argv)
         fv.zenith = sky.zenith;
         fv.shadow_center = cam.target;
         fv.lights = lights;
+        showhall_room(&fv.room);
         fv.light_count = nl;
         fv.time = wtime;
         fv.frame = frame;
@@ -648,7 +660,10 @@ int main(int argc, char **argv)
         ui_set_time(real_time);
         hud.dbg.fps = stats.fps;
         hud.dbg.fps_ms = stats.fps_ms;
-        if (st_full) hud_draw(&hud, &hin, &hw);
+        if (st_full) {
+            showhall_labels(hall, hw.view_proj, fv.cam_pos);
+            hud_draw(&hud, &hin, &hw);
+        }
         ui_end();
         render_frame_end();
         swap_pending = true;

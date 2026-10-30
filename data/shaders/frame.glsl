@@ -18,7 +18,32 @@ layout(std140, binding = 1) uniform Frame {
     ivec4 u_light;      // группа СВЕТ: x — материалы (0 старые, 1 GGX), y — кривая (0 ACES, 1 AgX, 2 PBR Neutral),
                         // z — автоэкспозиция, w — bloom (docs/lighting.md)
     vec4  u_lightf;     // x — секунд с прошлого кадра (привыкание глаза)
+    // Помещение без неба (render.h, RoomDark): внутри коробки lo..hi нет света неба и дымки, кроме как от входа
+    vec4  u_room_lo;    // w > 0.5 — помещение есть
+    vec4  u_room_hi;    // w — как далеко от входа доходит свет неба, м
+    vec4  u_room_door;  // середина входа
+    vec4  u_room_fill;  // рассеянный свет ламп внутри
 };
+
+// Насколько точка внутри помещения: 1 внутри, 0 снаружи, на 0.25 м у стен плавно
+float room_inside(vec3 p)
+{
+    if (u_room_lo.w < 0.5) return 0.0;
+    vec3 a = smoothstep(u_room_lo.xyz, u_room_lo.xyz + 0.25, p) * (1.0 - smoothstep(u_room_hi.xyz - 0.25, u_room_hi.xyz, p));
+    return a.x * a.y * a.z;
+}
+
+// Доля пути от a до b внутри помещения
+float room_path(vec3 a, vec3 b)
+{
+    if (u_room_lo.w < 0.5) return 0.0;
+    vec3 d = b - a;
+    vec3 inv = 1.0 / (abs(d) + 1e-6) * sign(d + 1e-7);
+    vec3 t0 = (u_room_lo.xyz - a) * inv, t1 = (u_room_hi.xyz - a) * inv;
+    vec3 tn = min(t0, t1), tf = max(t0, t1);
+    float n = max(max(tn.x, tn.y), max(tn.z, 0.0)), f = min(min(tf.x, tf.y), min(tf.z, 1.0));
+    return max(f - n, 0.0);
+}
 
 // Константы вызова сцены и теней (render.c, ScenePush)
 #define u_view_proj mat4(uintBitsToFloat(u_push[0]), uintBitsToFloat(u_push[1]), uintBitsToFloat(u_push[2]), uintBitsToFloat(u_push[3]))

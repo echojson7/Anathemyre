@@ -82,6 +82,14 @@ typedef struct PointLight {
     f32 glow;       // свечение пыли вокруг источника, доля от color
 } PointLight;
 
+// Помещение без неба: внутри коробки lo..hi свет неба и дымка доходят только от входа (door), на door_reach м;
+// остальное освещают лампы (PointLight) и их рассеянный свет fill
+typedef struct RoomDark {
+    bool on;
+    V3   lo, hi, door, fill;
+    f32  door_reach;
+} RoomDark;
+
 typedef struct FrameView {
     M4  view, proj;
     V3  cam_pos;
@@ -94,6 +102,7 @@ typedef struct FrameView {
     u32 light_count;
     f32 time;
     u32 frame;
+    RoomDark room;
 } FrameView;
 
 typedef struct RenderSettings {
