@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "../core/hash.h"
 #include "../core/jobs.h"
 
 #define MAX_STRIKE_TARGETS 8
@@ -9,18 +10,12 @@
 
 // ---------------------------------------------------------------- служебное
 
-static u32 mix32(u32 x)
-{
-    x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
-    return x;
-}
-
 // Случайное число без общего потока: зависит только от seed, тика и участников,
 // поэтому порядок обработки бойцов (и потоки) на исход не влияют
 f32 combat_roll(const CombatWorld *w, u32 a, u32 b, u32 salt)
 {
-    u32 h = mix32((u32)w->seed ^ mix32((u32)(w->seed >> 32) + w->tick * 0x9E3779B9u));
-    h = mix32(h ^ (a * 0x85EBCA6Bu) ^ mix32(b + 0x27d4eb2du) ^ (salt * 0xC2B2AE35u));
+    u32 h = hash_u32((u32)w->seed ^ hash_u32((u32)(w->seed >> 32) + w->tick * 0x9E3779B9u));
+    h = hash_u32(h ^ (a * 0x85EBCA6Bu) ^ hash_u32(b + 0x27d4eb2du) ^ (salt * 0xC2B2AE35u));
     return (f32)(h >> 8) * (1.0f / 16777216.0f);
 }
 

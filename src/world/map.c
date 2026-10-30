@@ -2,6 +2,7 @@
 
 #include "../core/jobs.h"
 #include "valley.h"
+#include "../core/palette.h"
 
 #define MAP_N ((u32)(2.0f * MAP_HALF / MAP_STEP) + 1u)  // узлов крупного рельефа на сторону
 #define MAP_S (MAP_N + 2u)                              // с полем в узел за краем: выборке нужны соседи
@@ -15,7 +16,6 @@
 // Долина: своя высота в квадрате VALLEY_HALF, склоны сходят в дюны ещё на VALLEY_FADE
 #define VALLEY_FADE 700.0f
 
-#define C_SAND v3(0.40f, 0.34f, 0.26f)
 #define C_STONE v3(0.27f, 0.245f, 0.21f)
 
 static struct {
@@ -43,12 +43,6 @@ static f32 vnoise(f32 x, f32 z, u32 seed)
     fz = fz * fz * (3 - 2 * fz);
     f32 a = hash2(ix, iz, seed), b = hash2(ix + 1, iz, seed), c = hash2(ix, iz + 1, seed), d = hash2(ix + 1, iz + 1, seed);
     return lerpf(lerpf(a, b, fx), lerpf(c, d, fx), fz);
-}
-
-static f32 smooth(f32 a, f32 b, f32 x)
-{
-    f32 t = clampf((x - a) / (b - a), 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
 }
 
 // Мелкие дюны у лагеря: волны 80, 40 и 20 м
@@ -120,7 +114,7 @@ static f32 gnoise(f32 x, f32 z, u32 seed)
 static Coarse coarse_raw(f32 x, f32 z)
 {
     u32 s = M.seed;
-    f32 grow = smooth(RELIEF_R0, RELIEF_R1, sqrtf(x * x + z * z));
+    f32 grow = smoothstepf(RELIEF_R0, RELIEF_R1, sqrtf(x * x + z * z));
     f32 base = (gnoise(x / 6500.0f, z / 6500.0f, s) + 0.45f * gnoise(x / 2900.0f, z / 2900.0f, s + 1)) * 55.0f;
     // Гряды: гребни вдоль нулей шума, изломанные сдвигом координат; есть не везде
     f32 wx = x + gnoise(x / 3000.0f, z / 3000.0f, s + 11) * 700.0f;
@@ -129,11 +123,11 @@ static Coarse coarse_raw(f32 x, f32 z)
     f32 ax = wx * 0.866f + wz * 0.5f, az = wz * 0.866f - wx * 0.5f;
     f32 r1 = 1.0f - fminf(fabsf(gnoise(ax / 3600.0f, az / 1200.0f, s + 13)), 1.0f);
     f32 r2 = 1.0f - fminf(fabsf(gnoise(ax / 900.0f, az / 420.0f, s + 14)), 1.0f);
-    f32 mask = smooth(-0.2f, 0.3f, gnoise(x / 5200.0f, z / 5200.0f, s + 15));
+    f32 mask = smoothstepf(-0.2f, 0.3f, gnoise(x / 5200.0f, z / 5200.0f, s + 15));
     r1 *= r1 * r1;
     f32 ridge = r1 * r1 * (0.75f + 0.25f * r2 * r2) * mask * grow;
     // Где высокие дюны, где плоский такыр; на грядах дюны мельче
-    f32 dune = (0.15f + 0.85f * smooth(-0.35f, 0.35f, gnoise(x / 3200.0f, z / 3200.0f, s + 16))) *
+    f32 dune = (0.15f + 0.85f * smoothstepf(-0.35f, 0.35f, gnoise(x / 3200.0f, z / 3200.0f, s + 16))) *
                (1.0f - 0.8f * clampf(ridge * 1.5f, 0.0f, 1.0f));
     return (Coarse){ base * grow + ridge * 220.0f, dune, clampf(ridge * 1.6f, 0.0f, 1.0f) };
 }
@@ -195,8 +189,8 @@ f32 map_valley(f32 x, f32 z)
     if (dx >= VALLEY_FADE || dz >= VALLEY_FADE) return 0.0f;
     if (dx == 0.0f && dz == 0.0f) return 1.0f;
     // Склоны сходят в дюны неровно: где за 250 м, где за 700
-    f32 fade = VALLEY_FADE * (0.35f + 0.65f * smooth(-0.5f, 0.5f, gnoise(x / 450.0f, z / 450.0f, 77)));
-    return 1.0f - smooth(0.0f, fade, sqrtf(dx * dx + dz * dz));
+    f32 fade = VALLEY_FADE * (0.35f + 0.65f * smoothstepf(-0.5f, 0.5f, gnoise(x / 450.0f, z / 450.0f, 77)));
+    return 1.0f - smoothstepf(0.0f, fade, sqrtf(dx * dx + dz * dz));
 }
 
 // Точка карты: высота и то, из чего потом берётся цвет
@@ -216,7 +210,7 @@ static Sample sample(f32 x, f32 z)
     else {
         // Пустошь: крупный рельеф и дюны его размаха
         s.c = coarse_at(x, z);
-        s.desert = smooth(CAMP_R0, CAMP_R1, r);
+        s.desert = smoothstepf(CAMP_R0, CAMP_R1, r);
         s.h = s.c.h + s.c.dune * dunes_big(x, z) * 45.0f;
         if (s.desert < 1.0f) s.h = lerpf(camp_height(x, z, r), s.h, s.desert);
     }
@@ -239,12 +233,12 @@ static u32 pack_color(V3 a, f32 look)
 
 static u32 color_of(f32 x, f32 z, const Sample *s)
 {
-    V3 a = C_SAND;
+    V3 a = PAL_SAND;
     f32 look = 0.0f;
     if (s->desert > 0.0f) {
         // Песок пятнами светлее и темнее, на грядах камень
         f32 tone = 0.9f + 0.2f * vnoise(x / 700.0f, z / 700.0f, M.seed + 21);
-        a = v3_lerp(a, v3_lerp(v3_mul(C_SAND, tone), C_STONE, s->c.rock * 0.8f), s->desert);
+        a = v3_lerp(a, v3_lerp(v3_mul(PAL_SAND, tone), C_STONE, s->c.rock * 0.8f), s->desert);
         look = s->c.rock * 0.85f * s->desert;
     }
     if (s->valley > 0.0f) {

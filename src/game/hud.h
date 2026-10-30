@@ -91,6 +91,8 @@ bool hud_form_slider(HudForm *f, const char *label, f32 *v, f32 lo, f32 hi, cons
 void hud_form_text(HudForm *f, const char *label, const char *value);
 // Выбор из списка стрелками: −1 или +1 — щёлкнули влево или вправо, 0 — нет
 i32  hud_form_step(HudForm *f, const char *label, const char *value);
+// Вкладки в одну строку: *cur — выбранная; true — переключили
+bool hud_form_tabs(HudForm *f, const char *const *names, u32 n, u8 *cur);
 // Заголовок раздела с чертой
 void hud_form_head(HudForm *f, const char *label);
 // Образец цвета у правого края прошлой строки (вместо числа ползунка)

@@ -1,17 +1,21 @@
 #include "look.h"
 
+#include "../core/hash.h"
 #include "../render/mesh.h"
 
 const char *const g_body_file[BODY_KIND_COUNT] = { "mh_male", "mh_female", "mh_thin" };
 
+// Суставы мужского тела MakeHuman. У худого тот же скелет: худоба — морфами сетки
+#define JOINTS_MH_MALE {                                                                                                  \
+        { 0.000f, 0.000f, 0.000f }, { 0.000f, 0.970f, 0.003f }, { 0.000f, 1.061f, -0.030f }, { 0.000f, 1.197f, -0.030f },   \
+        { 0.000f, 1.555f, 0.012f }, { 0.000f, 1.661f, 0.053f }, { 0.024f, 1.477f, 0.023f }, { 0.195f, 1.446f, 0.019f },     \
+        { 0.228f, 1.141f, 0.019f }, { 0.240f, 0.881f, 0.031f }, { -0.024f, 1.477f, 0.023f }, { -0.195f, 1.446f, 0.019f },   \
+        { -0.228f, 1.141f, 0.019f }, { -0.240f, 0.881f, 0.031f }, { 0.113f, 0.965f, -0.008f }, { 0.136f, 0.529f, 0.010f },  \
+        { 0.159f, 0.075f, 0.029f }, { -0.113f, 0.965f, -0.008f }, { -0.136f, 0.529f, 0.010f }, { -0.159f, 0.075f, 0.029f }, \
+    }
+
 const V3 g_body_joints[BODY_KIND_COUNT][BONE_COUNT] = {
-    [BODY_MALE] = {
-        { 0.000f, 0.000f, 0.000f }, { 0.000f, 0.970f, 0.003f }, { 0.000f, 1.061f, -0.030f }, { 0.000f, 1.197f, -0.030f },
-        { 0.000f, 1.555f, 0.012f }, { 0.000f, 1.661f, 0.053f }, { 0.024f, 1.477f, 0.023f }, { 0.195f, 1.446f, 0.019f },
-        { 0.228f, 1.141f, 0.019f }, { 0.240f, 0.881f, 0.031f }, { -0.024f, 1.477f, 0.023f }, { -0.195f, 1.446f, 0.019f },
-        { -0.228f, 1.141f, 0.019f }, { -0.240f, 0.881f, 0.031f }, { 0.113f, 0.965f, -0.008f }, { 0.136f, 0.529f, 0.010f },
-        { 0.159f, 0.075f, 0.029f }, { -0.113f, 0.965f, -0.008f }, { -0.136f, 0.529f, 0.010f }, { -0.159f, 0.075f, 0.029f },
-    },
+    [BODY_MALE] = JOINTS_MH_MALE,
     [BODY_FEMALE] = {
         { 0.000f, 0.000f, 0.000f }, { 0.000f, 0.940f, 0.027f }, { 0.000f, 1.022f, -0.025f }, { 0.000f, 1.196f, 0.013f },
         { 0.000f, 1.530f, -0.001f }, { 0.000f, 1.653f, 0.049f }, { 0.026f, 1.453f, 0.024f }, { 0.165f, 1.436f, 0.024f },
@@ -19,13 +23,7 @@ const V3 g_body_joints[BODY_KIND_COUNT][BONE_COUNT] = {
         { -0.197f, 1.135f, 0.024f }, { -0.209f, 0.882f, 0.036f }, { 0.097f, 0.928f, 0.020f }, { 0.125f, 0.506f, 0.037f },
         { 0.153f, 0.077f, 0.054f }, { -0.097f, 0.928f, 0.020f }, { -0.125f, 0.506f, 0.037f }, { -0.153f, 0.077f, 0.054f },
     },
-    [BODY_THIN] = {
-        { 0.000f, 0.000f, 0.000f }, { 0.000f, 0.970f, 0.003f }, { 0.000f, 1.061f, -0.030f }, { 0.000f, 1.197f, -0.030f },
-        { 0.000f, 1.555f, 0.012f }, { 0.000f, 1.661f, 0.053f }, { 0.024f, 1.477f, 0.023f }, { 0.195f, 1.446f, 0.019f },
-        { 0.228f, 1.141f, 0.019f }, { 0.240f, 0.881f, 0.031f }, { -0.024f, 1.477f, 0.023f }, { -0.195f, 1.446f, 0.019f },
-        { -0.228f, 1.141f, 0.019f }, { -0.240f, 0.881f, 0.031f }, { 0.113f, 0.965f, -0.008f }, { 0.136f, 0.529f, 0.010f },
-        { 0.159f, 0.075f, 0.029f }, { -0.113f, 0.965f, -0.008f }, { -0.136f, 0.529f, 0.010f }, { -0.159f, 0.075f, 0.029f },
-    },
+    [BODY_THIN] = JOINTS_MH_MALE,
 };
 
 const char *const g_gear_file[GEAR_COUNT] = {
@@ -33,10 +31,11 @@ const char *const g_gear_file[GEAR_COUNT] = {
 };
 
 // Порядок как HAIR_FEMALE и HAIR_MALE в tools/humanconv
+#define HAIR_MH_MALE { "crop", "shag", "tied", "buzz", "slick", "long" }
 const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX] = {
-    [BODY_MALE] = { "crop", "shag", "tied", "buzz", "slick", "long" },
+    [BODY_MALE] = HAIR_MH_MALE,
     [BODY_FEMALE] = { "tail", "bun", "braid", "crop", "bob", "loose", "side" },
-    [BODY_THIN] = { "crop", "shag", "tied", "buzz", "slick", "long" },
+    [BODY_THIN] = HAIR_MH_MALE,
 };
 
 u32 look_hair(const CharLook *l, u8 *gear, u32 n)
@@ -115,12 +114,7 @@ static const V3 g_hair[] = {
     { 0.120f, 0.085f, 0.055f }, { 0.110f, 0.060f, 0.038f }, { 0.150f, 0.125f, 0.095f },
 };
 
-static f32 hash01(u32 *s)
-{
-    u32 x = (*s += 0x9e3779b9u);
-    x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
-    return (f32)(x & 0xFFFFFF) / 16777215.0f;
-}
+static f32 hash01(u32 *s) { return hashf(*s += 0x9e3779b9u); }
 
 void look_make(CharLook *l, u32 body, u32 seed, f32 mass, f32 height, f32 strength)
 {
