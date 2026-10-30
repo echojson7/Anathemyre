@@ -9,7 +9,7 @@
 #define REST_DX  1.0f   // шаг фигур в покое
 #define T_DX     2.1f   // шаг фигур в T-позе: руки в стороны
 #define ROW_W    (STAND_VIEWS * (REST_DX + T_DX))
-#define HAIR_DX  0.8f   // шаг голов в ряду причёсок
+#define HAIR_DX  0.55f  // шаг голов в ряду причёсок
 
 // Спереди, слева, сзади, в 3/4
 static const f32 g_view_yaw[STAND_VIEWS] = { 0.0f, 1.5707963f, 3.1415927f, -0.7853982f };

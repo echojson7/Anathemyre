@@ -12,8 +12,8 @@ static const char *const g_body_name[BODY_KIND_COUNT] = { "МУЖЧИНА", "Ж�
 static const char *cut_name(u32 body, u32 cut)
 {
     if (!cut) return body == BODY_FEMALE ? "НЕТ" : "БРИТЫЙ";
-    static const char *const file[] = { "crop", "shag", "tied", "tail", "bun", "braid" };
-    static const char *const name[] = { "СТРИЖКА", "ЛОХМЫ", "УЗЕЛ", "ХВОСТ", "ПУЧОК", "КОСА" };
+    static const char *const file[] = { "crop", "shag", "tied", "tail", "bun", "braid", "buzz", "slick", "long", "bob", "loose", "side" };
+    static const char *const name[] = { "СТРИЖКА", "ЛОХМЫ", "УЗЕЛ", "ХВОСТ", "ПУЧОК", "КОСА", "ЁЖИК", "ЗАЧЁС", "ДО ПЛЕЧ", "КАРЕ", "РАСПУЩЕННЫЕ", "ВИСКИ" };
     for (u32 k = 0; k < ARRAY_COUNT(file); k++)
         if (!strcmp(g_hair_file[body][cut - 1], file[k])) return name[k];
     return g_hair_file[body][cut - 1];
