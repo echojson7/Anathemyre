@@ -1,0 +1,29 @@
+// Запекание сетки неба: одно направление за кадр. Глубина сцены, видимой с этого направления неба
+// (ортогонально, как карта теней), сравнивается с каждой клеткой: клетка видит небо, если ничего не ближе
+layout(local_size_x = 64) in;
+
+layout(binding = 29) uniform sampler2D u_sky_depth;
+layout(std430, binding = 31) buffer SkyGrid { vec4 g_sky_origin; uint g_sky[]; };
+
+#define u_sky_vp mat4(uintBitsToFloat(u_push[0]), uintBitsToFloat(u_push[1]), uintBitsToFloat(u_push[2]), uintBitsToFloat(u_push[3]))
+#define u_sky_first (u_push[6].x != 0u)       // первое направление: клетки пишутся, а не прибавляются
+#define u_sky_bias uintBitsToFloat(u_push[6].y)  // запас глубины: клетка у самой поверхности не прячется за ней
+#define u_sky_base uintBitsToFloat(u_push[7].xyz) // угол сетки
+
+void main()
+{
+    ivec3 c = ivec3(gl_LocalInvocationID.x * 4u, gl_WorkGroupID.y, gl_WorkGroupID.z);
+    ivec2 size = textureSize(u_sky_depth, 0);
+    uint add = 0u;
+    for (int k = 0; k < 4; k++) {
+        vec3 p = u_sky_base + (vec3(c.x + k, c.y, c.z) + 0.5) * SKY_CELL;
+        vec4 q = u_sky_vp * vec4(p, 1.0);
+        vec3 n = q.xyz / q.w * 0.5 + 0.5;
+        bool open = true;
+        if (all(greaterThanEqual(n.xy, vec2(0.0))) && all(lessThan(n.xy, vec2(1.0))))
+            open = n.z <= texelFetch(u_sky_depth, ivec2(n.xy * vec2(size)), 0).r + u_sky_bias;
+        add |= (open ? 1u : 0u) << (uint(k) * 8u);
+    }
+    uint i = sky_index(c);
+    g_sky[i] = u_sky_first ? add : g_sky[i] + add;
+}
