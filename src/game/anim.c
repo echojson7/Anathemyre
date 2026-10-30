@@ -1,5 +1,7 @@
 #include "anim.h"
 
+#include "../core/hash.h"
+
 // ---------------------------------------------------------------- математика поз
 
 // Аффинное преобразование: столбцы поворота и сдвиг
@@ -115,23 +117,12 @@ static Xf xf_slerp_rot(const Xf *a, const Xf *b, f32 t, V3 pos)
     return q_to_xf(q_nlerp(q_from_xf(a), q_from_xf(b), t), pos);
 }
 
-static f32 smooth01(f32 t)
-{
-    t = clampf(t, 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
-}
 static f32 ease_out(f32 t)
 {
     t = clampf(t, 0.0f, 1.0f);
     return 1.0f - (1.0f - t) * (1.0f - t);
 }
 static f32 ramp(f32 x, f32 a, f32 b) { return smooth01((x - a) / (b - a)); }
-
-static f32 hashf(u32 x)
-{
-    x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
-    return (f32)(x & 0xFFFFFF) / 16777215.0f;
-}
 
 // Суставы тела, которое сейчас собирается (у каждого человека свои пропорции).
 // Позы считаются в любом потоке, поэтому указатель свой у потока
@@ -155,6 +146,9 @@ typedef struct Pose {
     f32 plant[2];         // нога несёт вес: таз опускается, чтобы она доставала до цели
     f32 kout;             // колени врозь, рад
 } Pose;
+// pose_lerp и body_track смешивают Pose как массив f32: поле другого типа сломает смешивание молча.
+// Новое поле — только f32 или V3, и число здесь вместе с ним
+_Static_assert(sizeof(Pose) == sizeof(f32) * (3 + 3 * BONE_COUNT + 6 + 2 + 1 + 2 + 1), "в Pose только f32 и V3");
 
 static void pose_lerp(Pose *a, const Pose *b, f32 t)
 {

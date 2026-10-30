@@ -1,0 +1,54 @@
+// Автоэкспозиция (СВЕТ: ЭКСПОЗИЦИЯ АВТО): средняя яркость кадра по логарифму, центр важнее краёв,
+// глаз привыкает плавно. Одна группа, 64x64 выборки из кадра до тонмаппинга
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 29) uniform sampler2D u_expo_src;
+// expo — множитель перед кривой, lum — средняя яркость (журнал и отладка), init — 1 после первого кадра
+layout(std430, binding = 27) buffer Expo { float expo, lum, init, pad; };
+
+shared float s_sum[256], s_w[256];
+
+// Привыкание: при этой средней яркости множитель тот же, что без автоэкспозиции (1.2)
+// (замеры 2026-10-30: утро на арене ~0.06, полдень ~0.19, остов ~0.035, вечер ~0.023)
+const float EXPO_REF = 0.06;
+const float EXPO_FIXED = 1.2;
+// Глаз привыкает не полностью: на каждые 2× темнее множитель растёт в 2^0.35 ≈ 1.27 раза, в пределах [0.8, 2]:
+// темнота остаётся тёмной, полдень чуть приглушён
+const float EXPO_K = 0.35;
+
+void main()
+{
+    uint t = gl_LocalInvocationIndex;
+    float sum = 0.0, wsum = 0.0;
+    for (uint k = 0u; k < 16u; k++) {
+        uvec2 c = gl_LocalInvocationID.xy * 4u + uvec2(k & 3u, k >> 2u);
+        vec2 uv = (vec2(c) + 0.5) / 64.0;
+        vec3 col = textureLod(u_expo_src, uv, 0.0).rgb;
+        float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        vec2 q = uv - 0.5;
+        float w = 1.0 - smoothstep(0.1, 0.7, length(q * vec2(1.2, 1.6)));
+        w = 0.25 + 0.75 * w;
+        sum += log2(max(l, 1e-4)) * w;
+        wsum += w;
+    }
+    s_sum[t] = sum;
+    s_w[t] = wsum;
+    barrier();
+    for (uint s = 128u; s > 0u; s >>= 1u) {
+        if (t < s) {
+            s_sum[t] += s_sum[t + s];
+            s_w[t] += s_w[t + s];
+        }
+        barrier();
+    }
+    if (t == 0u) {
+        float avg = exp2(s_sum[0] / s_w[0]);
+        float target = clamp(EXPO_FIXED * pow(EXPO_REF / avg, EXPO_K), 0.8, 2.0);
+        // Из темноты на свет глаз привыкает быстрее (~0.4 с), чем со света в темноту (~1.5 с)
+        float dt = clamp(u_lightf.x, 0.0, 0.1);
+        float rate = target < expo ? 2.5 : 0.7;
+        expo = init > 0.5 ? mix(expo, target, 1.0 - exp(-dt * rate)) : target;
+        lum = avg;
+        init = 1.0;
+    }
+}

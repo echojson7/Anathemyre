@@ -21,19 +21,6 @@
 
 const f32 g_gait_speed[GAIT_COUNT] = { 1.6f, 3.2f, 4.8f };
 
-static f32 wrap_angle(f32 a)
-{
-    while (a > PI_F) a -= 2.0f * PI_F;
-    while (a < -PI_F) a += 2.0f * PI_F;
-    return a;
-}
-
-static f32 smooth01(f32 t)
-{
-    t = clampf(t, 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
-}
-
 // Сглаживание к цели за время tau, с
 static f32 follow(f32 x, f32 goal, f32 tau, f32 dt) { return x + (goal - x) * fminf(1.0f, dt / tau); }
 

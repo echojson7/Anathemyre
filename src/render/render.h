@@ -110,11 +110,20 @@ typedef struct RenderSettings {
     bool flora;         // экземпляры: деревья, кусты, трава, камни
     bool mdi;           // сетки из общего буфера (люди) — один вызов на проход вместо вызова на сетку
     bool skin_cache;    // поза и морфы людей раз за кадр вычислительным проходом, проходы берут готовое
+    // Группа СВЕТ (docs/lighting.md): у каждой части несколько способов, нули — прежний свет
+    u8   light_mat;     // LIGHT_MAT_*: модель отражения поверхностей
+    u8   light_curve;   // LIGHT_CURVE_*: тонмаппинг
+    bool light_expo;    // автоэкспозиция: глаз привыкает к темноте и к яркому свету
+    bool light_bloom;   // слабое свечение ярких мест, как в объективе
 } RenderSettings;
+
+enum { LIGHT_MAT_OLD, LIGHT_MAT_GGX, LIGHT_MAT_COUNT };
+enum { LIGHT_CURVE_ACES, LIGHT_CURVE_AGX, LIGHT_CURVE_NEUTRAL, LIGHT_CURVE_COUNT };
 
 // Время проходов на GPU, мс, среднее с прошлого render_take_stats
 // глубина — проход глубины и карты пикселей; интерфейс — портреты и HUD после render_frame
-enum { PASS_SHADOW, PASS_DEPTH, PASS_SCENE, PASS_ATMOS, PASS_STYLE, PASS_UI, PASS_COUNT };
+// свет — свечение и автоэкспозиция (группа СВЕТ), без них почти 0
+enum { PASS_SHADOW, PASS_DEPTH, PASS_SCENE, PASS_ATMOS, PASS_LIGHT, PASS_STYLE, PASS_UI, PASS_COUNT };
 typedef struct RenderStats {
     f64 gpu_ms[PASS_COUNT];
     f64 gpu_total_ms;
