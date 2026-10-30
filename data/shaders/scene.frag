@@ -8,7 +8,7 @@ in vec3 v_local;
 flat in mat3 v_rot;
 flat in vec3 v_tint;
 
-layout(location = 17) uniform int u_skinned;
+layout(location = 17) uniform int u_skinned;   // как в scene.vert: 1 и 4 — люди (кости)
 layout(location = 18) uniform mat4 u_light_vp;
 layout(location = 20) uniform vec3 u_cam_pos;
 layout(location = 21) uniform vec3 u_sun_dir;
@@ -110,7 +110,8 @@ void main()
     mpp /= float(gl_FragmentSizeNV.x);
 #endif
     // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
-    float base = u_skinned == 1 ? TEXEL * 0.5 : TEXEL;
+    bool bones = u_skinned == 1 || u_skinned == 4;
+    float base = bones ? TEXEL * 0.5 : TEXEL;
     bool snap = mpp < base * u_texel_on;
     vec3 dl = snap ? texel_snap(v_local, Nl, base) : vec3(0.0);
     vec3 P = v_local + dl;           // материал: прилипает к телу
@@ -310,7 +311,7 @@ void main()
         col += albedo * li + li * spec * pow(max(dot(N, normalize(Ld + V)), 0.0), gloss);
     }
     // Контровой свет от дымки: фигуры читаются силуэтом
-    if (u_skinned == 1) {
+    if (bones) {
         float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
         col += (u_sky_amb + u_ground_amb) * rim * 0.35;
     }

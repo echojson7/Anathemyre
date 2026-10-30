@@ -99,6 +99,7 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
 #define GL_FRAMEBUFFER 0x8D40
 #define GL_DYNAMIC_STORAGE_BIT 0x0100
 #define GL_SHADER_STORAGE_BUFFER 0x90D2
+#define GL_DRAW_INDIRECT_BUFFER 0x8F3F
 #define GL_UNIFORM_BUFFER 0x8A11
 #define GL_DEBUG_SEVERITY_HIGH 0x9146
 #define GL_DEBUG_SEVERITY_MEDIUM 0x9147
@@ -145,6 +146,11 @@ typedef void (GLAPIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GL
     X(void, DrawElements, (GLenum mode, GLsizei count, GLenum type, const void *indices)) \
     X(void, DrawElementsInstanced, (GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instances)) \
     X(void, MultiDrawElements, (GLenum mode, const GLsizei *count, GLenum type, const void *const *indices, GLsizei drawcount)) \
+    X(void, DrawElementsBaseVertex, (GLenum mode, GLsizei count, GLenum type, const void *indices, GLint basevertex)) \
+    X(void, DrawElementsInstancedBaseVertexBaseInstance, (GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instances, GLint basevertex, GLuint baseinstance)) \
+    X(void, MultiDrawElementsIndirect, (GLenum mode, GLenum type, const void *indirect, GLsizei drawcount, GLsizei stride)) \
+    X(void, BindBuffer, (GLenum target, GLuint buffer)) \
+    X(void, VertexArrayBindingDivisor, (GLuint vao, GLuint bindingindex, GLuint divisor)) \
     X(void, BindBufferBase, (GLenum target, GLuint index, GLuint buffer)) \
     X(void, CreateBuffers, (GLsizei n, GLuint *buffers)) \
     X(void, NamedBufferStorage, (GLuint buffer, GLsizeiptr size, const void *data, GLbitfield flags)) \

@@ -30,6 +30,10 @@ typedef struct GpuMesh {
     // Для экземпляров: редеет с дальности fade[0] и пропадает к fade[1], м (0 — не редеет)
     f32  fade[2];
     bool two_sided;     // без отсечения задних граней (листья, трава)
+    // В общем буфере (gpu_mesh_upload_pooled): vao и буферы свои не заводятся, сетка лежит с первой вершины
+    // pool_vbase и первого индекса pool_ibase, морфы — с pool_moff (в uint)
+    bool pooled;
+    u32  pool_vbase, pool_ibase, pool_moff;
 } GpuMesh;
 
 // Экземпляр статической сетки (32 байта, InstRec в scene.vert): деревья, трава, камни
@@ -102,6 +106,7 @@ typedef struct RenderSettings {
     bool rays;          // объёмные лучи солнца (только с тенями и атмосферой)
     bool ao;            // затенение углов (только с атмосферой)
     bool flora;         // экземпляры: деревья, кусты, трава, камни
+    bool mdi;           // сетки из общего буфера (люди) — один вызов на проход вместо вызова на сетку
 } RenderSettings;
 
 // Время проходов на GPU, мс, среднее с прошлого render_take_stats
@@ -116,6 +121,7 @@ typedef struct RenderStats {
     f64 draws[2], tris[2], visible[2];
     u32 items;          // элементов в последнем кадре
     f64 prep_ms;        // CPU: границы, отсечение, LOD и раскладка по вызовам до первого вызова GL, мс за кадр
+    f64 cpu_ms[PASS_COUNT];  // CPU: вызовы GL каждого прохода после сбора, мс за кадр (интерфейс — портреты и HUD)
     f64 poses;          // наборов костей за кадр
     bool vrs;           // последний кадр шейдился блоками вблизи
 } RenderStats;
@@ -132,6 +138,11 @@ void render_take_stats(RenderStats *out);
 void render_shutdown(void);
 bool render_reload_shaders(void);
 bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb);
+// То же в общий буфер сеток: такие сетки с костями рисуются одним вызовом на проход (люди, их вещи, оружие).
+// Если буфер полон — обычная загрузка
+bool gpu_mesh_upload_pooled(GpuMesh *gm, const MeshBuilder *mb);
+// Занятость общего буфера в журнал
+void render_pool_log(void);
 // Сделать coarse следующим уровнем детализации fine: fine рисуется, пока сфера не меньше min_px пикселей
 void gpu_mesh_set_lod(GpuMesh *fine, const GpuMesh *coarse, f32 min_px);
 // Постоянный буфер экземпляров (заменяет прежний). Массив inst должен жить, пока он нужен рендеру:
