@@ -17,15 +17,6 @@ void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool h
         RenderSettings *rs = &s->rs;
         hud_debug_check(h, "ФИЛЬТР КАДРА", &rs->post);
         hud_debug_check(h, "ПИКСЕЛЬНОСТЬ", &rs->pixel);
-        // Способ пиксельности: по глубине (дробные шаги или целые 1-2-4-8) или весь кадр в низком разрешении
-        static const char *px_mode[] = { "ПИКСЕЛИ: ПО ГЛУБИНЕ", "ПИКСЕЛИ: ПО ГЛУБИНЕ 1-2-4-8", "ПИКСЕЛИ: КАДР 1/2",
-                                         "ПИКСЕЛИ: КАДР 1/3" };
-        u32 px_m = rs->pixel_div > 1 ? (u32)rs->pixel_div : rs->pixel_int ? 1u : 0u;
-        if (hud_debug_button(h, px_mode[px_m])) {
-            px_m = (px_m + 1) % 4;
-            rs->pixel_int = px_m == 1;
-            rs->pixel_div = px_m < 2 ? 1 : (i32)px_m;
-        }
         hud_debug_check(h, "ШЕЙДИНГ БЛОКАМИ", &rs->vrs);
         hud_debug_check(h, "AO ВПОЛОВИНУ", &rs->ao_half);
         hud_debug_check(h, "ШУМ ИЗ ТЕКСТУРЫ", &rs->noise_tex);
