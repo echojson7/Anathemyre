@@ -5,6 +5,7 @@
 #   2) мод правит поле и добавляет запись через parent
 #   3) сохранение с вещью мода без мода не читается, мир не тронут
 #   4) ошибка в файле мода: файл и строка в журнале, игра не стартует
+# Код выхода прогонов с окном не смотрим (под ASan драйвер GL оставляет утечку), только журнал.
 # ./tools/defs_check.sh [бинарник] [папка], на Linux без экрана — под xvfb-run
 set -e
 # Упало — последние строки журнала того прогона
@@ -57,14 +58,16 @@ END
 printf 'weapon kosa\n    parent sekach\n    damage 30 много 0\n' > "$DIR/mods_bad/slom/weapons.txt"
 
 a=$($BIN --bands-test $CAM --warp 775 --save "$DIR/defs1.sav" --sum-after 60 2>&1 | tee "$DIR/defs1.txt" | sum)
-$BIN --mods "$DIR/mods_none" --defs "$DIR/defs_rot" $CAM --load "$DIR/defs1.sav" --save "$DIR/defs2.sav" --sum-after 0 > "$DIR/defs2.txt" 2>&1
+$BIN --mods "$DIR/mods_none" --defs "$DIR/defs_rot" $CAM --load "$DIR/defs1.sav" --save "$DIR/defs2.sav" --sum-after 0 > "$DIR/defs2.txt" 2>&1 || true
+grep -q "мир записан" "$DIR/defs2.txt"
 b=$($BIN --mods "$DIR/mods_none" $CAM --load "$DIR/defs2.sav" --sum-after 60 2>&1 | tee "$DIR/defs3.txt" | sum)
 echo "без записи $a, через другой порядок описаний $b"
 test -n "$a" && test "$a" = "$b"
 
 # Мод: секач 8 кг, новая рессора от прежней
-$BIN --mods "$DIR/mods_ok" --bands-test $CAM --warp 1 --save "$DIR/defs_mod.sav" --sum-after 0 > "$DIR/defs4.txt" 2>&1
+$BIN --mods "$DIR/mods_ok" --bands-test $CAM --warp 1 --save "$DIR/defs_mod.sav" --sum-after 0 > "$DIR/defs4.txt" 2>&1 || true
 grep -q "оружия 6, .* модов 1" "$DIR/defs4.txt"
+grep -q "мир записан" "$DIR/defs4.txt"
 # Без мода не читается
 if $BIN --mods "$DIR/mods_none" $CAM --load "$DIR/defs_mod.sav" --sum-after 0 > "$DIR/defs5.txt" 2>&1; then exit 1; fi
 grep -q "ressora_stal" "$DIR/defs5.txt"
