@@ -1,6 +1,6 @@
 # Шаг 4а: замер ЭТАПЫ / GPU / CPU своими силами
 
-Сначала прочитай `common.md`. Шаг можно вести параллельно со шагом 3 (render/ и view/ не пересекаются с sim/). Память: anathemyre-perf-stages, anathemyre-perf-cpu, anathemyre-fps, anathemyre-vulkan.
+Сначала прочитай `common.md`. Шаг можно вести параллельно со шагом 3 (render/ и view/ не пересекаются с sim/). Память: anathemyre-perf, anathemyre-render.
 
 ## Решения пользователя
 - Цель: 3500–4000 к/с в тестовой сцене, графику не ухудшать. В бою максимум 256–512 человек.
