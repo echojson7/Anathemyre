@@ -97,7 +97,7 @@ jobs:
             build/vk.png
             build/vk_game.png
 
-  # Мир: сохранения и описания бит в бит, отряды вдали — сумма релиза и отладки совпадает
+  # Мир: сохранения бит в бит, отряды вдали — сумма релиза и отладки совпадает
   world:
     needs: build
     runs-on: ubuntu-24.04
@@ -116,13 +116,30 @@ jobs:
       - name: Сохранение (запись посреди боя, чтение в новом процессе — мир идёт бит в бит)
         run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/save_check.sh ./build/anathemyre_debug build
 
-      - name: Описания и моды (другой порядок описаний, правка модом, сохранение без мода, ошибка в файле)
-        run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/defs_check.sh ./build/anathemyre_debug build
 
       - name: Отряды вдали (сумма релиза и отладки)
         run: |
           ./build/anathemyre_debug --bands-bench 4000 --hours 0.25 | tee build/bands.txt | tail -3
           test "$(./build/anathemyre --bands-bench 4000 --hours 0.25 | tail -1)" = "$(tail -1 build/bands.txt)"
+
+  # Описания и моды — отдельно от сохранений: обе проверки самые долгие под ASan
+  defs:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin-linux
+          path: build
+      - name: Зависимости
+        run: |
+          chmod +x build/*
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libx11-6 xvfb xauth mesa-vulkan-drivers vulkan-validationlayers
+
+      - name: Описания и моды (другой порядок описаний, правка модом, сохранение без мода, ошибка в файле)
+        run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/defs_check.sh ./build/anathemyre_debug build
 
   # Бой (детерминизм на 1/2/4/8 потоках) и звук, под ASan без окна
   combat:
