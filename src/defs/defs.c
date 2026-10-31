@@ -36,6 +36,8 @@ static const char *const g_part_word[PART_COUNT] = { "head", "chest", "stomach",
 static const char *const g_mat_word[] = { "concrete", "rust", "sand", "cloth", "leather", "glyph", "emissive", "skin", "metal",
                                           "terrain", "rock", "water", "bark", "leaf", "grass", "steel" };
 static const char *const g_voice_word[VOICE_COUNT] = { "ressora", "sekach", "armatura", "bagor", "hook", "balka" };
+static const char *const g_impact_word[] = { "metal", "wood", "stone", "soft" };
+_Static_assert(ARRAY_COUNT(g_impact_word) == IMP_COUNT, "g_impact_word по номерам IMP_*");
 _Static_assert(MAT_METAL == 8 && MAT_GLYPH == 5 && MAT_STEEL == 15, "g_mat_word по номерам MAT_*");
 
 // Имена, которые ставит сам код: свой отряд, наборы арены, тестовые сцены. Переедут в файлы с фракциями
@@ -469,6 +471,7 @@ static bool material_field(const DefLine *l, Block *b)
     MatDef *d = &s_mats[b->id];
     const DefTok *k = &l->tok[0];
     if (def_is(k, "surface")) return args(l, 1) && word(l, 1, g_mat_word, ARRAY_COUNT(g_mat_word), &d->surface);
+    if (def_is(k, "impact")) return args(l, 1) && word(l, 1, g_impact_word, IMP_COUNT, &d->impact);
     if (def_is(k, "color")) {
         // Каждая строка — оттенок набора; первая в записи заменяет набор родителя
         f32 v[3];
@@ -528,7 +531,7 @@ static bool header(const DefLine *l, Block *b, Arena *mem)
         const char *id = def_copy(mem, t);
         if (!id) return false;
         b->id = g_mat_count++;
-        s_mats[b->id] = (MatDef){ .id = id, .surface = 255 };
+        s_mats[b->id] = (MatDef){ .id = id, .surface = 255, .impact = 255 };
         return true;
     }
     i32 at = find((u32)kind, t->s, t->n);
@@ -646,8 +649,8 @@ static bool check(void)
             ok = false;
         }
     for (u32 i = 0; i < g_mat_count; i++)
-        if (s_mats[i].surface == 255 || !s_mats[i].tones) {
-            log_error("ОПИСАНИЯ: материалу %s не хватает surface или color", s_mats[i].id);
+        if (s_mats[i].surface == 255 || s_mats[i].impact == 255 || !s_mats[i].tones) {
+            log_error("ОПИСАНИЯ: материалу %s не хватает surface, impact или color", s_mats[i].id);
             ok = false;
         }
     // Материалы кода: имя поля g_mat = имя записи

@@ -6,6 +6,8 @@
 
 #include "../sim/arena_ring.h"
 #include "../sim/field.h"
+#include "../sim/ground.h"
+#include "../sim/phys.h"
 
 // Звуки одного боя: поля или арены
 typedef struct SfxFight {
@@ -26,6 +28,7 @@ typedef struct WorldSound {
     V3   arena_center;
     u32  arena_bout;
     SfxFight field, arena;
+    u32  hit_seen;            // удары физики: сколько уже прочитано из кольца
 } WorldSound;
 
 // Подключить наблюдателей к журналам поля и арены
@@ -36,5 +39,9 @@ void sfx_listener(WorldSound *s, V3 eye, V3 target, f32 yaw);
 // view — тела такими, какими их показывает кадр (Figures.view, по слоту): шаги звучат в такт ногам
 void sfx_field(WorldSound *s, const Field *f, const Player *view);
 void sfx_arena(WorldSound *s, const ArenaRing *v, const ArenaSession *a);
+// Удары вещей с физикой (лом, оружие и вещи на земле) по материалу: о землю и друг о друга
+void sfx_phys(WorldSound *s, const Phys *p, const Ground *g);
+// Класс удара материала (Impact) → звук
+u8   impact_sfx(u8 impact);
 
 #endif

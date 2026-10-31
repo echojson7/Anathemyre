@@ -8,9 +8,13 @@
 #define MAT_TONES  8    // оттенков в наборе: ткани, листы
 #define MATDEF_CAP 128
 
+// Чем звучит удар по вещи из материала и её падение (ключ impact). Звук по классу выбирает вид
+typedef enum Impact { IMP_METAL, IMP_WOOD, IMP_STONE, IMP_SOFT, IMP_COUNT } Impact;
+
 typedef struct MatDef {
     const char *id;
     u8 surface;  // Material (MAT_*) из render/mesh.h
+    u8 impact;   // Impact
     u8 tones;
     V3 tone[MAT_TONES];  // tone[0] — основной цвет
 } MatDef;
@@ -34,5 +38,7 @@ extern const MatDef *g_mats;
 extern u32 g_mat_count;
 
 static inline V3 mat_c(const MatDef *m) { return m->tone[0]; }
+// Материал → класс звука удара (Impact)
+static inline u8 mat_impact(const MatDef *m) { return m->impact; }
 
 #endif
