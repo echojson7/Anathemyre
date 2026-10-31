@@ -162,7 +162,7 @@ static void menu_debug(Hud *h, Settings *s, World *w, RtsCamera *cam, bool human
     hud_debug_check(h, "SWAP ПОСЛЕ ЛОГИКИ", &s->swap_late);
     // Рендер меняется только с перезапуском: окно и все ресурсы создаются под него заново
     hud_debug_text(h, "РЕНДЕР СЕЙЧАС", render_api_name());
-    if (hud_debug_check(h, "РЕНДЕР: VULKAN (ПОСЛЕ ПЕРЕЗАПУСКА)", &s->render_vk)) s->render_save = true;
+    if (hud_debug_check(h, "РЕНДЕР: GL (ПОСЛЕ ПЕРЕЗАПУСКА)", &s->render_gl)) s->render_save = true;
     if (hud_debug_check(h, "СУТКИ ИДУТ", &w->day_run)) log_info("СУТКИ: %s", w->day_run ? "идут" : "остановлены");
     if (hud_debug_check(h, "КАМЕРА СЛЕДУЕТ", &s->follow) && s->follow) cam->dist = MIN(cam->dist, 8.0f);
     bool humans_want = humans_on;

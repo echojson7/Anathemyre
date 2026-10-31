@@ -54,7 +54,7 @@ jobs:
           LSAN_OPTIONS: suppressions=tools/lsan.supp
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
-          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --shot build/shot.ppm --frames 20 | tee build/log.txt
+          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --gl --shot build/shot.ppm --frames 20 | tee build/log.txt
           ! grep -q "СБОЙ" build/log.txt
           python3 -c "from PIL import Image; Image.open('build/shot.ppm').save('build/shot.png')"
 
@@ -64,7 +64,7 @@ jobs:
           LSAN_OPTIONS: suppressions=tools/lsan.supp
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
-          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --valley --shot build/valley.ppm --frames 5 --no-pixel --tod 0.42 --day-stop | tee build/valley.txt
+          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --gl --valley --shot build/valley.ppm --frames 5 --no-pixel --tod 0.42 --day-stop | tee build/valley.txt
           ! grep -q "СБОЙ" build/valley.txt
           python3 -c "from PIL import Image; Image.open('build/valley.ppm').save('build/valley.png')"
 
@@ -74,7 +74,7 @@ jobs:
           LSAN_OPTIONS: suppressions=tools/lsan.supp
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
-          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --bands-test --warp 800 --cam 1026 249 2.0 0.3 9 --no-pixel --shot build/bands.ppm --frames 3 | tee build/bands_near.txt | grep "ОТРЯДЫ"
+          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --gl --bands-test --warp 800 --cam 1026 249 2.0 0.3 9 --no-pixel --shot build/bands.ppm --frames 3 | tee build/bands_near.txt | grep "ОТРЯДЫ"
           ! grep -q "СБОЙ" build/bands_near.txt
           grep -q "отряд 1 рядом" build/bands_near.txt
 
@@ -83,14 +83,14 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
           LSAN_OPTIONS: suppressions=tools/lsan.supp
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/save_check.sh ./build/anathemyre_debug build
+        run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/save_check.sh "./build/anathemyre_debug --gl" build
 
       - name: Описания и моды под ASan (другой порядок описаний, правка модом, сохранение без мода, ошибка в файле)
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
           LSAN_OPTIONS: suppressions=tools/lsan.supp
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/defs_check.sh ./build/anathemyre_debug build
+        run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/defs_check.sh "./build/anathemyre_debug --gl" build
 
       - name: Бой под ASan, детерминизм полевого боя на 1/2/4/8 потоках, отряды вдали
         env:

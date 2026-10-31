@@ -238,7 +238,8 @@ static bool find_data_dir(char *out, size_t size)
 }
 
 // Настройки между запусками: anathemyre.cfg рядом с папкой data, строки «ключ значение».
-// Пока одна: render gl|vulkan (НАСТРОЙКИ → РЕНДЕР, после перезапуска)
+// Пока одна: backend vulkan|gl (НАСТРОЙКИ → РЕНДЕР: GL, после перезапуска). По умолчанию Vulkan.
+// Прежний ключ render не читается: старые файлы с render gl не держат GL после смены умолчания
 static void cfg_path(char *out, size_t size, const char *data_dir) { snprintf(out, size, "%s/../anathemyre.cfg", data_dir); }
 
 static RbApi cfg_api(const char *data_dir)
@@ -246,10 +247,10 @@ static RbApi cfg_api(const char *data_dir)
     char path[600], line[128];
     cfg_path(path, sizeof path, data_dir);
     FILE *f = fopen(path, "r");
-    RbApi api = RB_API_GL;
+    RbApi api = RB_API_VULKAN;
     if (!f) return api;
     while (fgets(line, sizeof line, f))
-        if (!strncmp(line, "render ", 7)) api = !strncmp(line + 7, "vulkan", 6) ? RB_API_VULKAN : RB_API_GL;
+        if (!strncmp(line, "backend ", 8)) api = !strncmp(line + 8, "gl", 2) ? RB_API_GL : RB_API_VULKAN;
     fclose(f);
     return api;
 }
@@ -263,7 +264,7 @@ static void cfg_save_api(const char *data_dir, RbApi api)
         log_error("НАСТРОЙКИ: не записан %s", path);
         return;
     }
-    fprintf(f, "render %s\n", api == RB_API_VULKAN ? "vulkan" : "gl");
+    fprintf(f, "backend %s\n", api == RB_API_VULKAN ? "vulkan" : "gl");
     fclose(f);
     log_info("РЕНДЕР: со следующего запуска %s", api == RB_API_VULKAN ? "VULKAN" : "GL");
 }
@@ -419,7 +420,7 @@ int main(int argc, char **argv)
         .swap_late = true, .follow = opt.follow, .ui_user = 1.0f, .ui_user_text = 1.0f,
         .sound_vol = 0.8f, .music_vol = 0.7f, .music_on = true, .travel = opt.valley,
         .stand = opt.stand > 0, .stand_moved = opt.stand > 0, .stand_row = opt.stand > 0 ? (u32)(opt.stand - 1) : 0,
-        .stage = opt.stage, .bench_stages = opt.bench_stages, .render_vk = api_want == RB_API_VULKAN,
+        .stage = opt.stage, .bench_stages = opt.bench_stages, .render_gl = api_want == RB_API_GL,
     };
     light_preset_apply(&set.rs, (LightPreset)opt.light_preset);
     if (opt.light[0] >= 0) set.rs.light_mat = (u8)(opt.light[0] % LIGHT_MAT_COUNT);
@@ -631,7 +632,7 @@ int main(int argc, char **argv)
         if (set.bands_test) world_bands_test(world);
         if (set.render_save) {
             set.render_save = false;
-            cfg_save_api(data_dir, set.render_vk ? RB_API_VULKAN : RB_API_GL);
+            cfg_save_api(data_dir, set.render_gl ? RB_API_GL : RB_API_VULKAN);
         }
         if (set.save) {
             if (!save_dir) log_error("СОХРАНЕНИЕ: папка для %s не создана", save_path);
