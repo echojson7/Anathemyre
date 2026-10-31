@@ -50,19 +50,20 @@ static u32 next_node(Rng *r, u32 at, u32 prev)
     return n ? opts[rng_below(r, n)] : prev;
 }
 
-static void walk_to(People *p, Rng *r, u32 i, u32 node)
+static void walk_to(People *p, Player *b, Rng *r, u32 i, u32 node)
 {
     const Node *nd = &k_nodes[node];
     p->prev[i] = p->node[i];
     p->node[i] = (u8)node;
     // Порядок случайных чисел задан явно: сначала z, потом x
     f32 jz = rng_range(r, -nd->jitter, nd->jitter), jx = rng_range(r, -nd->jitter, nd->jitter);
-    player_order_move(&p->body[i], v3(nd->x + jx, 0, nd->z + jz));
-    p->body[i].marker = 0.0f;
+    player_order_move(b, v3(nd->x + jx, 0, nd->z + jz));
+    b->marker = 0.0f;
 }
 
 void town_folk_add(People *p, const Town *t, Rng *r, u32 walkers, u32 variants, u8 team)
 {
+    Persons *ps = p->ps;
     u32 first = p->count;
     // Сначала продавцы, сторожа и работники, потом прохожие, остаток мест — зеваки.
     // Один посёлок: за своих встают сторожа
@@ -85,47 +86,51 @@ void town_folk_add(People *p, const Town *t, Rng *r, u32 walkers, u32 variants, 
             bool guard = sp->kind == SPOT_GUARD;
             u32 i = people_add(p, ROLE_TOWN, sp->pos, sp->heading, team, guard ? FF_ASSIST : 0);
             p->stand[i] = true;
-            p->sheet[i].role = sp->kind == SPOT_TRADER ? "ТОРГОВЕЦ" : guard ? "СТОРОЖ СКУДЕЛИ"
+            ps->sheet[people_place(p, i)].role = sp->kind == SPOT_TRADER ? "ТОРГОВЕЦ" : guard ? "СТОРОЖ СКУДЕЛИ"
                              : sp->kind == SPOT_WORKER ? "СБОРЩИК ЛОМА" : "ЖИТЕЛЬ СКУДЕЛИ";
         }
     }
-    for (u32 i = first; i < p->count; i++) {
-        p->seed[i] = rng_range(r, 0.0f, 100.0f);
-        p->variant[i] = (u8)rng_below(r, variants);
-        p->pace[i] = rng_range(r, 0.95f, 1.4f);
-        p->body[i].phase = rng_f32(r);
-        p->body[i].gait = GAIT_WALK;
-        p->home[i] = p->body[i].pos;
-        p->home_h[i] = p->body[i].heading;
+    for (u32 q = first; q < p->count; q++) {
+        u32 i = people_place(p, q);
+        ps->seed[i] = rng_range(r, 0.0f, 100.0f);
+        ps->variant[i] = (u8)rng_below(r, variants);
+        p->pace[q] = rng_range(r, 0.95f, 1.4f);
+        ps->move[i].phase = rng_f32(r);
+        ps->move[i].gait = GAIT_WALK;
+        p->home[q] = person_pos(ps, i);
+        p->home_h[q] = ps->heading[i];
     }
     // Листы жителей: свой поток случайных чисел, чтобы посёлок не зависел от их числа.
     // Сторожа бывалые, с ломом в руке (как рисуется), и у всех сторожей и у каждого пятого прохожего — факел
-    for (u32 i = first; i < p->count; i++) {
-        u32 k = i - first;
-        bool armed = p->fflags[i] & FF_ASSIST;
-        CharSheet *c = &p->sheet[i];
+    for (u32 q = first; q < p->count; q++) {
+        u32 k = q - first, i = people_place(p, q);
+        bool armed = ps->fflags[i] & FF_ASSIST;
+        CharSheet *c = &ps->sheet[i];
         const char *role = c->role ? c->role : "ПРОХОЖИЙ";
         Rng sr;
         rng_seed(&sr, 0x70C0u + k, 93);
-        u8 weapon = def_weapon(p->variant[i] % 2 ? "sekach" : "ressora");
-        sheet_random(c, &sr, name_next(p->variant[i] % BODY_KIND_COUNT == BODY_FEMALE), armed ? 1 : 0, weapon);
+        u8 weapon = def_weapon(ps->variant[i] % 2 ? "sekach" : "ressora");
+        sheet_random(c, &sr, name_next(ps->variant[i] % BODY_KIND_COUNT == BODY_FEMALE), armed ? 1 : 0, weapon);
         if (!armed) {
             ItemStack old;
             sheet_equip(c, SLOT_WEAPON, (ItemStack){ 0 }, &old);
         }
         c->role = role;
-        p->torch[i] = armed || (!p->stand[i] && k % 5 == 0);
-        people_look_random(p, i, k * 6151u + 5003u, k * 977u + 31u);
+        ps->torch[i] = armed || (!p->stand[q] && k % 5 == 0);
+        persons_look_random(ps, i, k * 6151u + 5003u, k * 977u + 31u);
     }
 }
 
 void town_folk_step(People *pp, u32 i, Rng *r, f32 dt, GroundFn ground)
 {
-    Player *p = &pp->body[i];
+    Persons *ps = pp->ps;
+    u32 at = people_place(pp, i);
+    Player b = person_body(ps, at), *p = &b;
     if (p->ctrl != CTRL_FREE) {
         // Бой или погоня: телом правит поле боя; после — постоит и пойдёт дальше
         pp->wait[i] = rng_range(r, 3.0f, 8.0f);
         player_update(p, dt, ground);
+        person_set_body(ps, at, p);
         return;
     }
     if (pp->stand[i] && (p->moving || v3_len(v3_sub(pp->home[i], p->pos)) > 0.5f)) {
@@ -137,16 +142,17 @@ void town_folk_step(People *pp, u32 i, Rng *r, f32 dt, GroundFn ground)
         p->vmax = pp->pace[i];
         player_update(p, dt, ground);
         if (!p->moving) p->heading = pp->home_h[i];
+        person_set_body(ps, at, p);
         return;
     }
     if (pp->stand[i]) {
         // Стоящие следят головой за ближайшим прохожим
         f32 best = 36.0f, goal = 0.0f;
         for (u32 j = 0; j < pp->count; j++) {
-            if (pp->role[j] != ROLE_TOWN || pp->stand[j]) continue;
-            const Player *o = &pp->body[j];
-            f32 dx = o->pos.x - p->pos.x, dz = o->pos.z - p->pos.z, d2 = dx * dx + dz * dz;
-            if (d2 < best && fabsf(o->pos.y - p->pos.y) < 2.0f) {
+            u32 o = people_place(pp, j);
+            if (ps->role[o] != ROLE_TOWN || pp->stand[j]) continue;
+            f32 dx = ps->x[o] - p->pos.x, dz = ps->z[o] - p->pos.z, d2 = dx * dx + dz * dz;
+            if (d2 < best && fabsf(ps->y[o] - p->pos.y) < 2.0f) {
                 f32 a = atan2f(dx, dz) - p->heading;
                 while (a > PI_F) a -= 2 * PI_F;
                 while (a < -PI_F) a += 2 * PI_F;
@@ -157,11 +163,13 @@ void town_folk_step(People *pp, u32 i, Rng *r, f32 dt, GroundFn ground)
             }
         }
         p->look += (goal - p->look) * fminf(1.0f, dt * 2.5f);
+        person_set_body(ps, at, p);
         return;
     }
     bool was = p->moving;
-    if (!p->moving && (pp->wait[i] -= dt) <= 0.0f) walk_to(pp, r, i, next_node(r, pp->node[i], pp->prev[i]));
+    if (!p->moving && (pp->wait[i] -= dt) <= 0.0f) walk_to(pp, p, r, i, next_node(r, pp->node[i], pp->prev[i]));
     p->vmax = pp->pace[i];
     player_update(p, dt, ground);
+    person_set_body(ps, at, p);
     if (was && !p->moving) pp->wait[i] = k_nodes[pp->node[i]].market ? rng_range(r, 1.5f, 8.0f) : rng_range(r, 0.0f, 1.2f);
 }

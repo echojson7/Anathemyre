@@ -243,12 +243,12 @@ void orders_input(const Hud *h, const Input *in, const Input *hin, const HudWorl
             // Вещь на земле: первый выбранный идёт её подобрать
             V3 at = ground_pos(w->ground, w->phys, (u32)item);
             i32 who = squad_primary(sq);
-            field_cancel(fd, (u32)squad_body(sq, (u32)who)->slot, true);
+            field_cancel(fd, squad_at(sq, (u32)who), true);
             squad_order_pick(sq, item, at);
             audio_play_ui(SFX_UI_ORDER, 1.0f);
         } else if (on_body && pk == LOOK_FIELD) {
             for (u32 i = 0; i < sq->count; i++)
-                if (sq->selected[i]) field_attack(fd, (u32)squad_body(sq, i)->slot, pi);
+                if (sq->selected[i]) field_attack(fd, squad_at(sq, i), pi);
             if (any) audio_play_ui(SFX_UI_ORDER, 1.0f);
         } else if (!on_body || pk != LOOK_SQUAD) {
             f32 nx = 2.0f * ((f32)in->mouse_x + 0.5f) / (f32)ww - 1.0f;
@@ -256,7 +256,7 @@ void orders_input(const Hud *h, const Input *in, const Input *hin, const HudWorl
             V3 hit;
             if (camera_pick_ground(hw->view_proj, eye, nx, ny, app_ground, &hit)) {
                 for (u32 i = 0; i < sq->count; i++)
-                    if (sq->selected[i]) field_cancel(fd, (u32)squad_body(sq, i)->slot, true);
+                    if (sq->selected[i]) field_cancel(fd, squad_at(sq, i), true);
                 // За край карты не уйти
                 hit.x = clampf(hit.x, -MAP_HALF + 20.0f, MAP_HALF - 20.0f);
                 hit.z = clampf(hit.z, -MAP_HALF + 20.0f, MAP_HALF - 20.0f);
@@ -268,11 +268,11 @@ void orders_input(const Hud *h, const Input *in, const Input *hin, const HudWorl
     if (hud_window_open(h)) return;
     if (in->key_pressed[KEY_H])
         for (u32 i = 0; i < sq->count; i++) {
-            Player *p = squad_body(sq, i);
             if (!sq->selected[i]) continue;
-            field_cancel(fd, (u32)p->slot, false);
+            Motion *p = squad_move(sq, i);
+            field_cancel(fd, squad_at(sq, i), false);
             if (p->ctrl == CTRL_FREE) {
-                p->target = p->pos;
+                p->target = squad_pos(sq, i);
                 p->moving = false;
             }
         }

@@ -15,10 +15,13 @@
 #define LEASH_R  22.0f  // за своей целью дальше этого не гонится
 #define GRUDGE_S 40.0f  // столько помнит вражду после боя
 
-void field_init(Field *f, Arena *a, u64 seed)
+void field_init(Field *f, Arena *a, Persons *ps, u64 seed)
 {
     memset(f, 0, sizeof *f);
+    f->ps = ps;
     combat_init(&f->w, a, FIELD_MAX, 4096);
+    // Место и курс бойца — столбцы реестра
+    combat_bind_place(&f->w, ps->x, ps->z, ps->heading);
     combat_reset(&f->w, seed);
     fighter_ai_init(&f->ai, a, FIELD_MAX);
     // Лежачих не добивают, сдачу принимают. Вражды нет, пока её не начнут
@@ -26,32 +29,28 @@ void field_init(Field *f, Arena *a, u64 seed)
     memset(f->w.foe, 0, sizeof f->w.foe);
 }
 
-u32 field_add(Field *f, Player *body, CharSheet *sheet, u8 team, u8 flags)
+// Описание бойца из реестра: лист, команда, где стоит
+static FighterDesc desc_of(const Field *f, u32 i, u8 team)
 {
-    CombatWorld *w = &f->w;
-    if (w->count >= FIELD_MAX) return FIELD_MAX - 1;
-    FighterDesc d = sheet->d;
+    const Persons *ps = f->ps;
+    FighterDesc d = ps->sheet[i].d;
     d.team = team;
-    d.pos = body->pos;
-    d.heading = body->heading;
-    u32 i = combat_add(w, &d);
-    w->idle[i] = 1;
-    f->body[i] = body;
-    f->sheet[i] = sheet;
-    f->flags[i] = flags;
-    body->slot = (i32)i;
-    return i;
+    d.pos = person_pos(ps, i);
+    d.heading = ps->heading[i];
+    return d;
 }
 
-void field_reuse(Field *f, u32 i, u8 team, u8 flags)
+void field_join(Field *f, u32 i, u8 team, u8 flags)
 {
     CombatWorld *w = &f->w;
-    if (i >= w->count) return;
-    Player *p = f->body[i];
-    FighterDesc d = f->sheet[i]->d;
-    d.team = team;
-    d.pos = p->pos;
-    d.heading = p->heading;
+    if (i > w->count || i >= FIELD_MAX) return;
+    FighterDesc d = desc_of(f, i, team);
+    if (i == w->count) {
+        combat_add(w, &d);
+        w->idle[i] = 1;
+        f->flags[i] = flags;
+        return;
+    }
     combat_load(w, i, &d);
     w->idle[i] = 1;
     w->order[i] = w->target[i] = -1;
@@ -59,8 +58,7 @@ void field_reuse(Field *f, u32 i, u8 team, u8 flags)
     f->flags[i] = flags;
     f->soft[i] = f->leave[i] = 0;
     f->calm[i] = 0.0f;
-    p->slot = (i32)i;
-    p->ctrl = CTRL_FREE;
+    f->ps->move[i].ctrl = CTRL_FREE;
 }
 
 void field_free(Field *f, u32 i)
@@ -117,7 +115,7 @@ static f32 dist(const CombatWorld *w, u32 i, u32 j)
 // Есть чем бить: в руке или своё выроненное лежит рядом (поднимет)
 static bool armed(const Field *f, u32 i)
 {
-    return item_weapon(f->sheet[i]->equip[SLOT_WEAPON]) != COMP_NONE || (i < f->w.count && f->w.gitem[i] >= 0);
+    return item_weapon(f->ps->sheet[i].equip[SLOT_WEAPON]) != COMP_NONE || (i < f->w.count && f->w.gitem[i] >= 0);
 }
 
 // Цель ещё в бою: жива, не без сознания, не сдалась
@@ -150,14 +148,14 @@ bool field_attack(Field *f, u32 who, u32 target)
     CombatWorld *w = &f->w;
     if (who >= w->count || !target_ok(f, who, target) || w->state[who] == FS_DEAD) return false;
     if (!armed(f, who)) {
-        log_info("%s: НЕЧЕМ БИТЬ", f->sheet[who]->name);
+        log_info("%s: НЕЧЕМ БИТЬ", f->ps->sheet[who].name);
         return false;
     }
     u8 a = w->team[who], b = w->team[target];
-    if (!combat_hostile(w, who, target)) log_info("%s ТЕПЕРЬ ВРАГ", f->sheet[target]->name);
+    if (!combat_hostile(w, who, target)) log_info("%s ТЕПЕРЬ ВРАГ", f->ps->sheet[target].name);
     combat_set_foes(w, a, b, true);
     f->grudge[a] = f->grudge[b] = GRUDGE_S;
-    if (w->order[who] != (i32)target) log_info("%s: ЦЕЛЬ — %s", f->sheet[who]->name, f->sheet[target]->name);
+    if (w->order[who] != (i32)target) log_info("%s: ЦЕЛЬ — %s", f->ps->sheet[who].name, f->ps->sheet[target].name);
     w->order[who] = (i32)target;
     f->soft[who] = 0;
     f->leave[who] = 0;
@@ -171,7 +169,7 @@ void field_cancel(Field *f, u32 who, bool leave)
     w->order[who] = -1;
     f->soft[who] = 0;
     if (!w->idle[who]) f->leave[who] = leave;
-    if (f->body[who]->ctrl == CTRL_CHASE) f->body[who]->ctrl = CTRL_FREE;
+    if (f->ps->move[who].ctrl == CTRL_CHASE) f->ps->move[who].ctrl = CTRL_FREE;
 }
 
 // Слот просыпается: тело, раны и оружие из листа, место — где стоит тело
@@ -179,11 +177,7 @@ static void wake(Field *f, u32 i)
 {
     CombatWorld *w = &f->w;
     if (!w->idle[i]) return;
-    Player *p = f->body[i];
-    FighterDesc d = f->sheet[i]->d;
-    d.team = w->team[i];
-    d.pos = p->pos;
-    d.heading = p->heading;
+    FighterDesc d = desc_of(f, i, w->team[i]);
     combat_load(w, i, &d);
     w->disarmed[i] = !armed(f, i);
     w->idle[i] = 0;
@@ -201,8 +195,8 @@ static void wake(Field *f, u32 i)
     f->ph[i] = w->heading[i];
     f->calm[i] = 0.0f;
     fight_anim_reset(&f->anim[i], w, i, (f32)i * 13.7f + 3.0f);
-    p->ctrl = CTRL_FIGHT;
-    p->speed = 0.0f;
+    f->ps->move[i].ctrl = CTRL_FIGHT;
+    f->ps->move[i].speed = 0.0f;
     f->fights++;  // до пересчёта в конце тика
 }
 
@@ -211,19 +205,20 @@ static void sleep_slot(Field *f, u32 i, GroundFn ground)
 {
     CombatWorld *w = &f->w;
     if (w->idle[i]) return;
-    combat_store(w, i, &f->sheet[i]->d);
+    combat_store(w, i, &f->ps->sheet[i].d);
     w->idle[i] = 1;
     w->target[i] = -1;
     w->mvx[i] = w->mvz[i] = 0.0f;
     combat_set_state(w, i, FS_READY, 0.0f);
     w->grid_dirty = true;
-    Player *p = f->body[i];
-    p->pos = v3(w->x[i], ground(w->x[i], w->z[i]), w->z[i]);
-    p->heading = p->move_yaw = w->heading[i];
+    Persons *ps = f->ps;
+    Motion *p = &ps->move[i];
+    ps->y[i] = ground(w->x[i], w->z[i]);
+    p->move_yaw = w->heading[i];
     p->speed = p->turn_rate = p->look = 0.0f;
     p->ctrl = CTRL_FREE;
     if (!f->leave[i]) {
-        p->target = p->pos;
+        p->target = person_pos(ps, i);
         p->moving = false;
     }
     f->leave[i] = 0;
@@ -271,7 +266,7 @@ static bool ally_fighting(const Field *f, u32 i, f32 r)
 
 static void order_done(Field *f, u32 i, u32 t)
 {
-    if (!f->soft[i]) log_info("%s: ЦЕЛЬ ВЫБЫЛА — %s, %s", f->sheet[i]->name, f->sheet[t]->name, g_state_name[f->w.state[t]]);
+    if (!f->soft[i]) log_info("%s: ЦЕЛЬ ВЫБЫЛА — %s, %s", f->ps->sheet[i].name, f->ps->sheet[t].name, g_state_name[f->w.state[t]]);
     f->w.order[i] = -1;
     f->soft[i] = 0;
 }
@@ -281,7 +276,7 @@ static void log_events(Field *f)
     CombatWorld *w = &f->w;
     for (u32 k = 0; k < w->ev_count; k++) {
         const CombatEvent *e = &w->ev[k];
-        const char *a = f->sheet[e->a]->name;
+        const char *a = f->ps->sheet[e->a].name;
         u8 kind = CH_KIND_COUNT;
         switch (e->kind) {
         case EV_KO:        log_info("%s БЕЗ СОЗНАНИЯ", a); kind = CH_KO; break;
@@ -304,7 +299,7 @@ static void rules_tick(Field *f, GroundFn ground)
     CombatWorld *w = &f->w;
     u32 active = 0;  // команды, которые сейчас дерутся
     for (u32 i = 0; i < w->count; i++) {
-        Player *p = f->body[i];
+        const Motion *p = &f->ps->move[i];
         i32 o = w->order[i];
         if (o >= 0 && !target_ok(f, i, (u32)o)) {
             order_done(f, i, (u32)o);
@@ -344,7 +339,7 @@ static void rules_tick(Field *f, GroundFn ground)
 
         u8 s = w->state[i];
         if (s == FS_DEAD) continue;  // тело остаётся лежать
-        combat_store(w, i, &f->sheet[i]->d);
+        combat_store(w, i, &f->ps->sheet[i].d);
         bool free = s == FS_READY || s == FS_RETREAT;
         if (f->leave[i] && free) {
             sleep_slot(f, i, ground);
@@ -382,13 +377,8 @@ static void rules_tick(Field *f, GroundFn ground)
 void field_tick(Field *f, GroundFn ground)
 {
     CombatWorld *w = &f->w;
-    // Спящие стоят там, где их довела ходьба
+    // Место спящих — там, где их довела ходьба: те же столбцы реестра
     for (u32 i = 0; i < w->count; i++) {
-        if (w->idle[i]) {
-            w->x[i] = f->body[i]->pos.x;
-            w->z[i] = f->body[i]->pos.z;
-            w->heading[i] = f->body[i]->heading;
-        }
         f->px[i] = w->x[i];
         f->pz[i] = w->z[i];
         f->ph[i] = w->heading[i];
@@ -406,26 +396,30 @@ void field_tick(Field *f, GroundFn ground)
     rules_tick(f, ground);
     log_events(f);
 
+    Persons *ps = f->ps;
     for (u32 i = 0; i < w->count; i++) {
-        Player *p = f->body[i];
+        Motion *p = &ps->move[i];
         i32 o = w->order[i];
         if (!w->idle[i]) {
             // В бою тело стоит там, где его держит симуляция; вид боя (выпады, сглаживание) — у кадра
-            p->pos = v3(w->x[i], ground(w->x[i], w->z[i]), w->z[i]);
-            p->heading = p->move_yaw = w->heading[i];
+            ps->y[i] = ground(w->x[i], w->z[i]);
+            p->move_yaw = w->heading[i];
             continue;
         }
         if (o >= 0) {
             // Бежит к цели своим шагом; чужие гонятся бегом
-            p->target = f->body[o]->pos;
+            p->target = person_pos(ps, (u32)o);
+            // Так было до реестра: цель с бо́льшим номером, что в бою, — где стояла до этого тика.
+            // Держим ради боя бит в бит; уберётся с одним миром боя (шаг 2д, PR 2), суммы тогда сдвинутся
+            if ((u32)o > i && !w->idle[o]) p->target = v3(f->px[o], ps->y[o], f->pz[o]);
             p->moving = true;
             p->ctrl = CTRL_CHASE;
             p->marker = 0.0f;
-            if (!(f->flags[i] & FF_PLAYER)) p->vmax = sheet_speed(f->sheet[i], GAIT_RUN);
+            if (!(f->flags[i] & FF_PLAYER)) p->vmax = sheet_speed(&ps->sheet[i], GAIT_RUN);
         } else if (p->ctrl == CTRL_CHASE) {
             // Погоня окончена: стоит, где догнал
             p->ctrl = CTRL_FREE;
-            p->target = p->pos;
+            p->target = person_pos(ps, i);
             p->moving = false;
         }
     }

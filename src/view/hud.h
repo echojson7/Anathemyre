@@ -63,7 +63,7 @@ typedef struct HudWorld {
     const ArenaSession *arena;      // бои арены (отладка, debug/); NULL — арены нет
     const ArenaRing    *ring;
     const Field        *field;
-    const Player       *view;       // люди такими, какими их показал кадр (Figures.view), по номеру в таблице
+    const Player       *view;       // люди такими, какими их показал кадр (Figures.view), по месту в реестре
     M4                  view_proj;
     f32                 time;       // реальное время, с
     f32                 tod;        // время суток 0..1

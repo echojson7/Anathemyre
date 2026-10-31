@@ -1052,7 +1052,10 @@ void combat_ser(Ser *s, CombatWorld *w)
     SER(s, w->foe);
     u32 n = w->count;
 #define C(name) SER_N(s, w->name, n)
-    C(x); C(z); C(heading); C(state); C(team); C(attack); C(react); C(aim_x); C(aim_y); C(aim_s);
+    if (!w->place_ext) {
+        C(x); C(z); C(heading);
+    }
+    C(state); C(team); C(attack); C(react); C(aim_x); C(aim_y); C(aim_s);
     C(timer); C(dur); C(pause); C(target); C(since_hit); C(mvx); C(mvz); C(idle); C(order);
     for (u32 p = 0; p < PART_COUNT; p++) C(hp[p]);
     C(blood); C(blood_max); C(bleed); C(shock); C(morale); C(morale_base); C(mass); C(height);
@@ -1068,6 +1071,12 @@ void combat_ser(Ser *s, CombatWorld *w)
     SER(s, w->last_ev);
     SER(s, w->grid_dirty);
     grid_ser(s, &w->grid);
+}
+
+void combat_bind_place(CombatWorld *w, f32 *x, f32 *z, f32 *heading)
+{
+    w->x = x, w->z = z, w->heading = heading;
+    w->place_ext = true;
 }
 
 void combat_reset(CombatWorld *w, u64 seed)

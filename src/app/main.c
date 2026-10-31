@@ -1,5 +1,5 @@
 // Anathemyre — этап 0: тестовая комната. Здесь вход: разбор аргументов, проверки без окна, окно и цикл кадра.
-// Мир и его шаг — world.c, люди — people.c, позы и отрисовка людей — figures.c, камера — camera.c,
+// Мир и его шаг — world.c, люди — persons.c, позы и отрисовка людей — figures.c, камера — camera.c,
 // меню и приказы — controls.c, замер кадра — bench.c
 #include <stdio.h>
 #include <stdlib.h>
@@ -225,13 +225,13 @@ static void draw_portraits(Figures *fig, const FrameView *fv, const CharMeshes *
             if (arena) figures_portrait_arena(fig, fv, cm, arena, k, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX);
             continue;
         }
-        // Чужой на поле: слот поля — номер в таблице людей, внешность та же, что в мире
+        // Чужой на поле: слот поля — место в реестре, внешность та же, что в мире
         if (focus && hud->look_kind == LOOK_FIELD && k < w->field->w.count) {
-            figures_portrait(fig, fv, cm, w->people, k, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, true);
+            figures_portrait(fig, fv, cm, w->persons, k, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX, true);
             continue;
         }
         if (focus && (hud->look_kind != LOOK_SQUAD || k >= sq->count)) continue;
-        figures_portrait(fig, fv, cm, w->people, sq->member[k], focus ? HUD_PORTRAIT_FOCUS : i,
+        figures_portrait(fig, fv, cm, w->persons, squad_at(sq, k), focus ? HUD_PORTRAIT_FOCUS : i,
                          focus ? HUD_PORTRAIT_FOCUS_PX : HUD_PORTRAIT_CARD_PX, focus);
     }
 }
@@ -324,7 +324,7 @@ int main(int argc, char **argv)
         return 1;
     }
     objects_solids(objs, world->phys);
-    figures_view(fig, world->people, world->field, world->alpha, app_ground);
+    figures_view(fig, world->persons, world->field, world->alpha, app_ground);
     // Рельеф карты и растения долины — на весь сеанс
     render_set_terrain(map_fill, NULL);
     render_set_groups(scene->valley->groups, scene->valley->clusters, scene->valley->cluster_count);
@@ -381,7 +381,7 @@ int main(int argc, char **argv)
     i32 victim = opt.attack > 0 ? people_nth(world->people, ROLE_WANDER, (u32)opt.attack - 1) : -1;
     for (u32 i = 0; victim >= 0 && i < squad->count; i++) {
         squad->selected[i] = true;
-        field_attack(field, (u32)squad_body(squad, i)->slot, (u32)victim);
+        field_attack(field, squad_at(squad, i), (u32)victim);
     }
     // Лом и вещи на первом шаге падают у точки камеры
     if (opt.dbg.phys_drop || opt.dbg.loot_drop) world->focus = opt.cam.target;
@@ -507,7 +507,7 @@ int main(int argc, char **argv)
         if (!bench.on) camera_update(&cam, &in, real_dt);
         // Камера и интерфейс видят людей такими, какими их показал прошлый кадр (figures_view)
         i32 lead = MAX(0, squad_primary(squad));
-        V3 lead_pos = fig->view[squad->member[lead]].pos;
+        V3 lead_pos = fig->view[squad_at(squad, lead)].pos;
         if (set.follow) cam.target = v3(lead_pos.x, 0, lead_pos.z);
         i32 ww, wh;
         platform_window_size(&ww, &wh);
@@ -545,10 +545,10 @@ int main(int argc, char **argv)
         // Мир прочитан: камера к отряду, позы и портреты заново
         if (set.load && world_load(world, save_path)) {
             jumped = true;
-            V3 lp = squad_body(squad, (u32)MAX(0, squad_primary(squad)))->pos;
+            V3 lp = squad_pos(squad, (u32)MAX(0, squad_primary(squad)));
             cam.target = v3(lp.x, cam.target.y, lp.z);
             cam_y = app_ground(cam.target.x, cam.target.z);
-            for (u32 i = 0; i < PEOPLE_MAX; i++) fig->age[i] = -1.0f;
+            for (u32 i = 0; i < PERSONS_MAX; i++) fig->age[i] = -1.0f;
             figures_portraits_reset();
             hud_look(&hud, LOOK_NONE, 0);
         }
@@ -558,7 +558,7 @@ int main(int argc, char **argv)
                         .ground = world->ground, .phys = world->phys, .ground_ask = &world->ground_ask, .alpha = world->alpha };
         bool ui_busy = hud_input(&hud, &hin, &hw);
         if (hud.focus >= 0 && !jumped) {
-            V3 fp = fig->view[squad->member[hud.focus]].pos;
+            V3 fp = fig->view[squad_at(squad, hud.focus)].pos;
             cam.target = v3(fp.x, cam.target.y, fp.z);
         }
         // Камера за тем, кого правят в окне ВНЕШНОСТЬ
@@ -585,7 +585,7 @@ int main(int argc, char **argv)
         if (st_live) {
             world_present(world, dt);
             if (dbg) debug_present(dbg, world, dt);
-            figures_view(fig, world->people, field, world->alpha, app_ground);
+            figures_view(fig, world->persons, field, world->alpha, app_ground);
         }
         f32 wtime = world_time(world);
         prof_zone(PZ_SOUND);
@@ -612,10 +612,10 @@ int main(int argc, char **argv)
                        RENDER_MAX_ITEMS / 8);
         prof_zone(PZ_FIGURES);
         if (st_people) {
-            people_dress_live(world->people);
+            persons_dress_live(world->persons);
             FigureView fview = { .view_proj = hw.view_proj, .eye = fv.cam_pos, .light_dir = sky.light_dir, .dt = real_dt,
                                  .time = wtime, .night = sky.night };
-            n += figures_draw(fig, cm, world->people, field, ring, arena, &fview, items + n, lights, &nl);
+            n += figures_draw(fig, cm, world->persons, field, ring, arena, &fview, items + n, lights, &nl);
         }
         if (!st_day) nl = 0;
         u32 posed = st_people ? fig->jobs : 0;

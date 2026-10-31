@@ -7,29 +7,32 @@
 #include "items.h"
 #include "names.h"
 
-bool near_init(NearBands *n, People *p, Field *f)
+bool near_init(NearBands *n, Persons *ps, Field *f)
 {
     memset(n, 0, sizeof *n);
-    if (p->count != f->w.count || p->count + NEAR_BODIES > PEOPLE_MAX) {
-        log_error("ОТРЯДЫ: нет мест под людей отрядов вдали (людей %u, на поле %u)", p->count, f->w.count);
+    if (ps->count != f->w.count || ps->count + NEAR_BODIES > PERSONS_MAX) {
+        log_error("ОТРЯДЫ: нет мест под людей отрядов вдали (людей %u, на поле %u)", ps->count, f->w.count);
         return false;
     }
-    n->first = p->count;
     Rng rng;
     rng_seed(&rng, 0x0B5Eu, 3);
+    u32 first = ps->count;
     for (u32 k = 0; k < NEAR_BODIES; k++) {
-        u32 i = people_add(p, ROLE_FREE, v3(0, 0, 0), 0.0f, TEAM_FREE, 0);
+        u32 i = person_place(persons_add(ps, ROLE_FREE, v3(0, 0, 0), 0.0f, TEAM_FREE, 0));
         // Лист — любой годный: слот поля читает из него тело, пока свободен — не нужен
-        sheet_random(&p->sheet[i], &rng, "", 0, 0);
-        field_add(f, &p->body[i], &p->sheet[i], TEAM_FREE, FF_ABSENT);
+        sheet_random(&ps->sheet[i], &rng, "", 0, 0);
+        field_join(f, i, TEAM_FREE, FF_ABSENT);
         field_free(f, i);
+        n->who[k] = PERSON_NONE;
         n->owner[k] = -1;
     }
+    for (u32 k = 0; k < NEAR_BODIES; k++) persons_free(ps, first + k);
     return true;
 }
 
 void near_ser(Ser *s, NearBands *n, u32 bands)
 {
+    SER(s, n->who);
     SER(s, n->owner);
     SER(s, n->tier);
     SER(s, n->rank);
@@ -67,8 +70,8 @@ static i32 free_body(const NearBands *n)
 
 static u8 field_team(const Bands *b, u32 bi) { return (u8)MIN(TEAM_BANDS + b->team[bi], TEAM_FREE - 1); }
 
-// Отряд стал телами: ветераны впереди, новички сзади. Лица и листы — из зерна отряда: каждый раз те же
-static void appear(NearBands *n, Bands *b, People *p, Field *f, u32 bi, GroundFn ground)
+// Лица и листы — из зерна отряда: каждый раз те же
+void near_show(NearBands *n, Bands *b, Persons *ps, Field *f, u32 bi, GroundFn ground)
 {
     u32 men = bands_men(b, bi), shown = 0;
     if (!men) return;
@@ -80,23 +83,26 @@ static void appear(NearBands *n, Bands *b, People *p, Field *f, u32 bi, GroundFn
         for (u32 m = 0; m < b->men[bi][t] && shown < NEAR_PER_BAND; m++) {
             i32 k = free_body(n);
             if (k < 0) break;
-            u32 i = n->first + (u32)k, face = bi * 37u + shown;
+            u32 face = bi * 37u + shown;
             bool female = face % 3 == 1;
             V3 at = rank_pos(n, b, bi, shown);
             at.y = ground(at.x, at.z);
-            people_reset(p, i, ROLE_BAND, at, h, team, FF_ASSIST | FF_AGGRO);
-            sheet_random(&p->sheet[i], &rng, name_next(female), (u32)t, g_weapon_pool[rng_below(&rng, g_weapon_pool_count)]);
-            p->sheet[i].role = "ИЗ ОТРЯДА";
-            p->body[i].gait = GAIT_WALK;
-            p->body[i].phase = rng_f32(&rng);
-            p->variant[i] = female ? BODY_FEMALE : face % 4 == 2 ? BODY_THIN : BODY_MALE;
-            p->seed[i] = rng_range(&rng, 0.0f, 100.0f);
-            p->height[i] = body_scale(p->sheet[i].d.height);
-            p->width[i] = 1.0f + 0.08f * sinf(p->seed[i] * 3.17f + 1.0f);
-            p->look_seed[i] = 30000u + face;
-            people_dress(p, i);
-            p->last[i] = p->body[i];
-            field_reuse(f, i, team, FF_ASSIST | FF_AGGRO);
+            PersonId id = persons_add(ps, ROLE_BAND, at, h, team, FF_ASSIST | FF_AGGRO);
+            if (id == PERSON_NONE) break;
+            u32 i = person_place(id);
+            sheet_random(&ps->sheet[i], &rng, name_next(female), (u32)t, g_weapon_pool[rng_below(&rng, g_weapon_pool_count)]);
+            ps->sheet[i].role = "ИЗ ОТРЯДА";
+            ps->move[i].gait = GAIT_WALK;
+            ps->move[i].phase = rng_f32(&rng);
+            ps->variant[i] = female ? BODY_FEMALE : face % 4 == 2 ? BODY_THIN : BODY_MALE;
+            ps->seed[i] = rng_range(&rng, 0.0f, 100.0f);
+            ps->height[i] = body_scale(ps->sheet[i].d.height);
+            ps->width[i] = 1.0f + 0.08f * sinf(ps->seed[i] * 3.17f + 1.0f);
+            ps->look_seed[i] = 30000u + face;
+            persons_dress(ps, i);
+            ps->last[i] = person_body(ps, i);
+            field_join(f, i, team, FF_ASSIST | FF_AGGRO);
+            n->who[k] = id;
             n->owner[k] = (i16)bi;
             n->tier[k] = (u8)t;
             n->rank[k] = (u8)shown++;
@@ -108,8 +114,8 @@ static void appear(NearBands *n, Bands *b, People *p, Field *f, u32 bi, GroundFn
                                     .n = (i32)shown, .m = (i32)men, .x = b->x[bi], .z = b->z[bi] });
 }
 
-// Отряд снова точка: в нём те, кто остался в живых, и те, кто не стал телами
-static void leave(NearBands *n, Bands *b, People *p, Field *f, u32 bi)
+// В отряде те, кто остался в живых, и те, кто не стал телами
+void near_hide(NearBands *n, Bands *b, Persons *ps, Field *f, u32 bi)
 {
     u16 men[BAND_TIERS];
     u32 was = 0, back = 0;
@@ -119,16 +125,14 @@ static void leave(NearBands *n, Bands *b, People *p, Field *f, u32 bi)
     }
     for (u32 k = 0; k < NEAR_BODIES; k++) {
         if (n->owner[k] != (i16)bi) continue;
-        u32 i = n->first + k;
+        u32 i = person_place(n->who[k]);
         if (f->w.state[i] != FS_DEAD) {
             men[n->tier[k]]++;
             back++;
         }
-        p->role[i] = ROLE_FREE;
-        p->torch[i] = false;
-        p->body[i].moving = false;
-        p->body[i].speed = 0.0f;
+        persons_free(ps, i);
         field_free(f, i);
+        n->who[k] = PERSON_NONE;
         n->owner[k] = -1;
     }
     memset(n->shown[bi], 0, sizeof n->shown[bi]);
@@ -139,13 +143,13 @@ static void leave(NearBands *n, Bands *b, People *p, Field *f, u32 bi)
     bands_set_men(b, bi, men);
 }
 
-static void decide(NearBands *n, Bands *b, People *p, Field *f, const Squad *sq, V3 focus, GroundFn ground)
+static void decide(NearBands *n, Bands *b, Persons *ps, Field *f, const Squad *sq, V3 focus, GroundFn ground)
 {
     V3 at[SQUAD_MAX + 1];
     f32 r[SQUAD_MAX + 1];
     u32 na = 0;
     for (u32 k = 0; k < sq->count; k++) {
-        at[na] = squad_body(sq, k)->pos;
+        at[na] = squad_pos(sq, k);
         r[na++] = NEAR_R;
     }
     at[na] = focus;
@@ -159,29 +163,31 @@ static void decide(NearBands *n, Bands *b, People *p, Field *f, const Squad *sq,
             f32 dx = b->x[bi] - at[k].x, dz = b->z[bi] - at[k].z, rr = r[k] * keep;
             want = dx * dx + dz * dz < rr * rr;
         }
-        if (want && !shown) appear(n, b, p, f, bi, ground);
-        else if (!want && shown) leave(n, b, p, f, bi);
+        if (want && !shown) near_show(n, b, ps, f, bi, ground);
+        else if (!want && shown) near_hide(n, b, ps, f, bi);
     }
 }
 
-void near_tick(NearBands *n, Bands *b, People *p, Field *f, const Squad *sq, V3 focus, f32 dt, GroundFn ground)
+void near_tick(NearBands *n, Bands *b, Persons *ps, Field *f, const Squad *sq, V3 focus, f32 dt, GroundFn ground)
 {
     if (!b->count) return;
-    if (b->phase == 0) decide(n, b, p, f, sq, focus, ground);
+    if (b->phase == 0) decide(n, b, ps, f, sq, focus, ground);
     // Точка ждёт, пока тела дерутся или отстали, а если живых нет — стоит над убитыми, пока отряд не уйдёт
     // из виду. 2 — живых ещё не встретили
     for (u32 k = 0; k < NEAR_BODIES; k++)
         if (n->owner[k] >= 0) b->hold[n->owner[k]] = 2;
     for (u32 k = 0; k < NEAR_BODIES; k++) {
         i16 o = n->owner[k];
-        u32 i = n->first + k;
-        if (o < 0 || f->w.state[i] == FS_DEAD) continue;
+        if (o < 0) continue;
+        u32 i = person_place(n->who[k]);
+        if (f->w.state[i] == FS_DEAD) continue;
         if (b->hold[o] == 2) b->hold[o] = 0;
-        Player *pl = &p->body[i];
+        Player body = person_body(ps, i), *pl = &body;
         // Хозяин тела — поле боя: бьётся или гонится
         if (pl->ctrl != CTRL_FREE) {
             b->hold[o] = 1;
             player_update(pl, dt, ground);
+            person_set_body(ps, i, pl);
             continue;
         }
         band_heading(n, b, (u32)o);
@@ -196,5 +202,6 @@ void near_tick(NearBands *n, Bands *b, People *p, Field *f, const Squad *sq, V3 
             pl->marker = 0.0f;
         }
         player_update(pl, dt, ground);
+        person_set_body(ps, i, pl);
     }
 }

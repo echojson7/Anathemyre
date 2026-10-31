@@ -63,22 +63,22 @@ void sheet_random(CharSheet *c, Rng *rng, const char *name, u32 tier, u8 weapon)
     member_init(c, &m, weapon, rng);
 }
 
-void squad_init(Squad *s, People *p, Rng *rng, V3 origin, f32 heading, GroundFn ground)
+void squad_init(Squad *s, Persons *ps, Rng *rng, V3 origin, f32 heading, GroundFn ground)
 {
     memset(s, 0, sizeof *s);
-    s->people = p;
+    s->ps = ps;
     s->count = ARRAY_COUNT(g_start);
     for (u32 i = 0; i < SQUAD_MAX; i++) s->pick[i] = -1;
     for (u32 i = 0; i < s->count; i++) {
         f32 x = origin.x + (f32)(i % 2) * 1.2f - 0.6f, z = origin.z - (f32)(i / 2) * 1.3f;
-        u32 k = people_add(p, ROLE_SQUAD, v3(x, ground(x, z), z), heading, TEAM_SQUAD, FF_PLAYER | FF_ASSIST);
-        s->member[i] = k;
-        member_init(&p->sheet[k], &g_start[i], def_weapon(g_start[i].weapon), rng);
-        p->variant[k] = g_start[i].body;
-        p->seed[k] = 7.0f + (f32)i * 5.3f;
-        p->height[k] = body_scale(p->sheet[k].d.height);
-        p->look_seed[k] = 1000u + i;
-        people_dress(p, k);
+        s->member[i] = persons_add(ps, ROLE_SQUAD, v3(x, ground(x, z), z), heading, TEAM_SQUAD, FF_PLAYER | FF_ASSIST);
+        u32 k = squad_at(s, i);
+        member_init(&ps->sheet[k], &g_start[i], def_weapon(g_start[i].weapon), rng);
+        ps->variant[k] = g_start[i].body;
+        ps->seed[k] = 7.0f + (f32)i * 5.3f;
+        ps->height[k] = body_scale(ps->sheet[k].d.height);
+        ps->look_seed[k] = 1000u + i;
+        persons_dress(ps, k);
     }
     s->formation = true;
     // Старая рана: левая рука в бинтах, крови меньше
@@ -95,12 +95,10 @@ void squad_place(Squad *s, V3 origin, f32 heading, GroundFn ground)
     for (u32 i = 0; i < s->count; i++) {
         V3 p = v3_add(origin, v3_add(v3_mul(right, ((f32)(i % 2) - 0.5f) * 1.2f), v3_mul(fwd, -(f32)(i / 2) * 1.3f)));
         p.y = ground(p.x, p.z);
-        Player *b = squad_body(s, i);
-        u8 gait = b->gait;
-        i32 slot = b->slot;
-        player_init(b, p, heading);
-        b->gait = gait;
-        b->slot = slot;
+        Player b;
+        player_init(&b, p, heading);
+        b.gait = squad_move(s, i)->gait;
+        person_set_body(s->ps, squad_at(s, i), &b);
     }
     s->order_marker = 0.0f;
 }
@@ -111,7 +109,7 @@ void squad_order_move(Squad *s, V3 target)
     V3 c = v3(0, 0, 0);
     for (u32 i = 0; i < s->count; i++)
         if (s->selected[i]) {
-            c = v3_add(c, squad_body(s, i)->pos);
+            c = v3_add(c, squad_pos(s, i));
             n++;
         }
     if (!n) return;
@@ -129,8 +127,10 @@ void squad_order_move(Squad *s, V3 target)
         u32 row = k / 3, in_row = MIN(3u, n - row * 3);
         f32 col = (f32)(k % 3) - 0.5f * (f32)(in_row - 1);
         V3 p = v3_add(target, v3_add(v3_mul(right, col * FORMATION_STEP), v3_mul(fwd, -(f32)row * FORMATION_STEP)));
-        player_order_move(squad_body(s, i), p);
-        squad_body(s, i)->group = group;
+        Player b = person_body(s->ps, squad_at(s, i));
+        player_order_move(&b, p);
+        b.group = group;
+        person_set_body(s->ps, squad_at(s, i), &b);
         s->pick[i] = -1;
         k++;
     }
@@ -142,7 +142,7 @@ void squad_order_move(Squad *s, V3 target)
 void squad_set_gait(Squad *s, Gait g)
 {
     for (u32 i = 0; i < s->count; i++)
-        if (s->selected[i]) squad_body(s, i)->gait = (u8)g;
+        if (s->selected[i]) squad_move(s, i)->gait = (u8)g;
 }
 
 static f32 leg_factor(const FighterDesc *d, u32 part)
@@ -170,22 +170,22 @@ f32 sheet_speed(const CharSheet *c, Gait g)
 void squad_update(Squad *s, f32 dt, GroundFn ground)
 {
     s->order_marker = fmaxf(0.0f, s->order_marker - dt);
-    for (u32 i = 0; i < s->count; i++) squad_body(s, i)->vmax = squad_member_speed(s, i, (Gait)squad_body(s, i)->gait);
+    for (u32 i = 0; i < s->count; i++) squad_move(s, i)->vmax = squad_member_speed(s, i, (Gait)squad_move(s, i)->gait);
     // Строй: все идущие по одному приказу держат темп самого медленного из них
     if (s->formation) {
         f32 pace[SQUAD_MAX];
         for (u32 i = 0; i < s->count; i++) {
-            const Player *a = squad_body(s, i);
+            const Motion *a = squad_move(s, i);
             pace[i] = a->vmax;
             if (!a->moving) continue;
             for (u32 j = 0; j < s->count; j++) {
-                const Player *b = squad_body(s, j);
+                const Motion *b = squad_move(s, j);
                 if (b->moving && b->group == a->group) pace[i] = fminf(pace[i], b->vmax);
             }
         }
-        for (u32 i = 0; i < s->count; i++) squad_body(s, i)->vmax = pace[i];
+        for (u32 i = 0; i < s->count; i++) squad_move(s, i)->vmax = pace[i];
     }
-    for (u32 i = 0; i < s->count; i++) player_update(squad_body(s, i), dt, ground);
+    for (u32 i = 0; i < s->count; i++) person_walk(s->ps, squad_at(s, i), dt, ground);
 }
 
 i32 squad_primary(const Squad *s)
@@ -212,8 +212,9 @@ void squad_order_pick(Squad *s, i32 k, V3 at)
     i32 i = squad_primary(s);
     if (i < 0) return;
     // Остальные выбранные стоят: за вещью идёт один, как в Kenshi
-    Player *b = squad_body(s, (u32)i);
-    player_order_move(b, at);
-    b->group = 0;
+    Player b = person_body(s->ps, squad_at(s, (u32)i));
+    player_order_move(&b, at);
+    b.group = 0;
+    person_set_body(s->ps, squad_at(s, (u32)i), &b);
     s->pick[i] = k;
 }

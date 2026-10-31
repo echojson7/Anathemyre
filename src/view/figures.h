@@ -1,4 +1,4 @@
-// Фигуры кадра: люди из таблицы (People) и бойцы арены. Кто нужен кадру (сам или его тень в пирамиде
+// Фигуры кадра: люди из реестра (Persons) и бойцы арены. Кто нужен кадру (сам или его тень в пирамиде
 // видимости), позы — пачкой в пуле потоков, элементы отрисовки, факелы и их свет, портреты, метки приказов.
 // Только читает мир: ни люди, ни поле боя отсюда не меняются
 #ifndef ANA_FIGURES_H
@@ -10,7 +10,7 @@
 #include "../sim/arena_ring.h"
 #include "../sim/field.h"
 #include "../sim/look.h"
-#include "../sim/people.h"
+#include "../sim/persons.h"
 #include "../sim/squad.h"
 
 #define TORCH_LIGHTS_MAX 128
@@ -39,16 +39,16 @@ typedef struct PoseJob {
     M4         look;
 } PoseJob;
 
-#define FIGURES_MAX_JOBS (PEOPLE_MAX + ARENA_MAX_BOUT)
+#define FIGURES_MAX_JOBS (PERSONS_MAX + ARENA_MAX_BOUT)
 #define MARK_SETS (SQUAD_MAX * 2 + 2)
 
 typedef struct Figures {
     // Люди для кадра (figures_view): между двумя шагами мира, бойцы — как их показывает вид боя.
-    // По номеру в таблице, он же слот поля. Читают позы, метки, звук шагов, выбор мышью, камера
-    Player  view[PEOPLE_MAX];
-    f32     slope[PEOPLE_MAX][2]; // уклон земли под бойцом (dy/dx, dy/dz): лежащие ложатся по склону
-    f32     age[PEOPLE_MAX];  // сколько секунд поза не пересчитывалась; < 0 — не было в кадре, считать сразу
-    M4     *bones;            // PEOPLE_MAX наборов костей
+    // По месту в реестре, оно же слот поля. Читают позы, метки, звук шагов, выбор мышью, камера
+    Player  view[PERSONS_MAX];
+    f32     slope[PERSONS_MAX][2]; // уклон земли под бойцом (dy/dx, dy/dz): лежащие ложатся по склону
+    f32     age[PERSONS_MAX];  // сколько секунд поза не пересчитывалась; < 0 — не было в кадре, считать сразу
+    M4     *bones;            // PERSONS_MAX наборов костей
     M4     *arena;            // RING_BONE_SETS наборов: бойцы арены
     M4     *marks;            // MARK_SETS наборов: метки под ногами (одна матрица)
     M4     *portrait;         // 2 набора: миниатюры отряда и крупный портрет
@@ -68,15 +68,15 @@ typedef struct FigureView {
 // Сетки людей в m (m->gear и m->gear_lod уже выделены), кости фигур
 bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const char *data_dir);
 // Люди для кадра: alpha — доля шага мира после последнего (World.alpha), после field_present
-void figures_view(Figures *f, const People *p, const Field *fd, f32 alpha, GroundFn ground);
+void figures_view(Figures *f, const Persons *ps, const Field *fd, f32 alpha, GroundFn ground);
 // Люди и бойцы арены (s == NULL — арены нет): элементы в items, свет факелов в lights после *nl.
 // Позы считаются здесь же, в пуле потоков. Возвращает число элементов
-u32  figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *fd, const ArenaRing *av,
+u32  figures_draw(Figures *f, const CharMeshes *m, const Persons *p, const Field *fd, const ArenaRing *av,
                   const ArenaSession *s, const FigureView *v, DrawItem *items, PointLight *lights, u32 *nl);
 // Метки под ногами: кольца выбранных и их целей, крест приказа, кольцо осматриваемого (look_ring)
 u32  figures_marks(Figures *f, const CharMeshes *m, const Squad *sq, const Field *fd, const V3 *look_ring, DrawItem *items);
-// Портрет человека из таблицы в ячейку атласа slot (size пикселей); перерисовка только при смене
-void figures_portrait(Figures *f, const FrameView *base, const CharMeshes *m, const People *p, u32 i, u32 slot, i32 size,
+// Портрет человека реестра (место i) в ячейку атласа slot (size пикселей); перерисовка только при смене
+void figures_portrait(Figures *f, const FrameView *base, const CharMeshes *m, const Persons *p, u32 i, u32 slot, i32 size,
                       bool focus);
 // Портрет бойца арены по номеру в ростере
 void figures_portrait_arena(Figures *f, const FrameView *base, const CharMeshes *m, const ArenaSession *s, u32 ri, u32 slot,

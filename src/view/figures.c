@@ -65,8 +65,8 @@ static void marks_build(CharMeshes *m, MeshBuilder *mb, Arena *perm)
 bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const char *data_dir)
 {
     memset(f, 0, sizeof *f);
-    for (u32 i = 0; i < PEOPLE_MAX; i++) f->age[i] = -1.0f;
-    f->bones = ARENA_PUSH_ARRAY(perm, M4, (size_t)PEOPLE_MAX * RENDER_MAX_BONES);
+    for (u32 i = 0; i < PERSONS_MAX; i++) f->age[i] = -1.0f;
+    f->bones = ARENA_PUSH_ARRAY(perm, M4, (size_t)PERSONS_MAX * RENDER_MAX_BONES);
     f->arena = ARENA_PUSH_ARRAY(perm, M4, (size_t)RING_BONE_SETS * RENDER_MAX_BONES);
     f->marks = ARENA_PUSH_ARRAY(perm, M4, (size_t)MARK_SETS * RENDER_MAX_BONES);
     f->portrait = ARENA_PUSH_ARRAY(perm, M4, 2 * RENDER_MAX_BONES);
@@ -233,27 +233,26 @@ static u32 arena_figures(Figures *f, const CharMeshes *m, const ArenaRing *v, co
     return n;
 }
 
-void figures_view(Figures *f, const People *p, const Field *fd, f32 alpha, GroundFn ground)
+void figures_view(Figures *f, const Persons *ps, const Field *fd, f32 alpha, GroundFn ground)
 {
-    for (u32 i = 0; i < p->count; i++) {
-        const Player *b = &p->body[i];
-        if (b->slot >= 0 && field_awake(fd, (u32)b->slot)) {
+    for (u32 i = 0; i < ps->count; i++) {
+        Player b = person_body(ps, i);
+        if (field_awake(fd, i)) {
             // В бою: где его показывает вид боя (выпады, отскоки), поворот — сглаженный тик
-            u32 s = (u32)b->slot;
-            f32 x = fd->anim[s].disp_x, z = fd->anim[s].disp_z, h, px, pz;
-            field_pos(fd, s, alpha, &px, &pz, &h);
-            f->view[i] = *b;
+            f32 x = fd->anim[i].disp_x, z = fd->anim[i].disp_z, h, px, pz;
+            field_pos(fd, i, alpha, &px, &pz, &h);
+            f->view[i] = b;
             f->view[i].pos = v3(x, ground(x, z), z);
             f->view[i].heading = f->view[i].move_yaw = h;
             f->slope[i][0] = (ground(x + 0.4f, z) - ground(x - 0.4f, z)) * 1.25f;
             f->slope[i][1] = (ground(x, z + 0.4f) - ground(x, z - 0.4f)) * 1.25f;
         } else {
-            player_lerp(&p->last[i], b, alpha, &f->view[i]);
+            player_lerp(&ps->last[i], &b, alpha, &f->view[i]);
         }
     }
 }
 
-u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *fd, const ArenaRing *av,
+u32 figures_draw(Figures *f, const CharMeshes *m, const Persons *p, const Field *fd, const ArenaRing *av,
                  const ArenaSession *s, const FigureView *v, DrawItem *items, PointLight *lights, u32 *nl)
 {
     PoseCull pc = pose_cull_make(v->view_proj, v->eye, v->light_dir, v->dt);
@@ -269,11 +268,11 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
         const Player *b = &f->view[i];
         const CharSheet *cs = &p->sheet[i];
         f32 lit = torch_lit(p->torch[i], p->seed[i], v->night);
-        bool fight = b->slot >= 0 && field_awake(fd, (u32)b->slot), pose;
+        bool fight = field_awake(fd, i), pose;
         // Свет факела достаёт дальше тела: с горящим факелом проверяем шире
         if (!pose_cull(&pc, b->pos, lit > 0.0f ? 8.0f : 2.5f, fight, &f->age[i], &pose)) continue;
         // Выроненное в бою лежит вещью на земле: его рисует физика
-        bool armed = item_weapon(cs->equip[SLOT_WEAPON]) != COMP_NONE && !(fight && fd->w.gitem[b->slot] != COMBAT_IN_HAND);
+        bool armed = item_weapon(cs->equip[SLOT_WEAPON]) != COMP_NONE && !(fight && fd->w.gitem[i] != COMBAT_IN_HAND);
         u8 wid = item_weapon(cs->equip[SLOT_WEAPON]);
         u32 kind = p->variant[i];
         M4 *bones = &f->bones[(size_t)i * RENDER_MAX_BONES];
@@ -290,7 +289,7 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
             j->fight = false;
             j->bones = bones;
             j->look = p->look[i];
-            if (fight) fight_pose(fd, (u32)b->slot, j, f->slope[i]);
+            if (fight) fight_pose(fd, i, j, f->slope[i]);
         }
         items[n++] = (DrawItem){ .mesh = &m->body[kind], .bones = bones };
         n += push_gear(items + n, m->gear + kind * GEAR_ROW, p->gear[i], p->ngear[i], bones);
@@ -322,18 +321,18 @@ u32 figures_marks(Figures *f, const CharMeshes *m, const Squad *sq, const Field 
     u32 n = 0, set = 0;
     for (u32 i = 0; i < sq->count; i++) {
         if (!sq->selected[i]) continue;
-        const Player *pl = &f->view[sq->member[i]];
+        const Player *pl = &f->view[squad_at(sq, i)];
         M4 *rb = &f->marks[(set++) * RENDER_MAX_BONES];
         rb[0] = m4_translate(pl->pos);
         items[n++] = (DrawItem){ .mesh = &m->ring[0], .bones = rb, .no_shadow = true };
         // Красное кольцо под целью выбранного; у нескольких одна цель — кольцо одно
-        i32 t = field_target(fd, (u32)pl->slot);
+        i32 t = field_target(fd, squad_at(sq, i));
         bool first = t >= 0;
         for (u32 j = 0; j < i && first; j++)
-            if (sq->selected[j] && field_target(fd, (u32)squad_body(sq, j)->slot) == t) first = false;
+            if (sq->selected[j] && field_target(fd, squad_at(sq, j)) == t) first = false;
         if (first) {
             M4 *tb = &f->marks[(set++) * RENDER_MAX_BONES];
-            tb[0] = m4_translate(f->view[t].pos);  // слот поля = номер в таблице
+            tb[0] = m4_translate(f->view[t].pos);  // слот поля = место в реестре
             items[n++] = (DrawItem){ .mesh = &m->ring[2], .bones = tb, .no_shadow = true };
         }
     }
@@ -393,7 +392,7 @@ static void portrait(const FrameView *base, u32 slot, i32 size, u32 kind, const 
     render_portrait(slot, size, &fv, m4_mul(fv.proj, fv.view), items, n);
 }
 
-void figures_portrait(Figures *f, const FrameView *base, const CharMeshes *m, const People *p, u32 i, u32 slot, i32 size,
+void figures_portrait(Figures *f, const FrameView *base, const CharMeshes *m, const Persons *p, u32 i, u32 slot, i32 size,
                       bool focus)
 {
     const CharSheet *cs = &p->sheet[i];
