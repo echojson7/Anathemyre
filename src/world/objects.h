@@ -14,9 +14,9 @@
 #define OBJ_GROUPS 32u        // строк заготовки world: локации
 #define OBJ_GROUP_NONE 255u
 
-enum { OBJF_LIT = 1, OBJF_NO_SHADOW = 2 };
+enum { OBJF_LIT = 1, OBJF_NO_SHADOW = 2, OBJF_BIG = 4 };  // BIG: размер в метрах (больше 327 м)
 
-// 30 байт на экземпляр
+// 32 байта на экземпляр
 typedef struct Objects {
     u32  count;
     u16 *def;
@@ -25,7 +25,8 @@ typedef struct Objects {
     u32 *seed;            // оттенок, износ, выбор варианта
     V3  *pos;
     u16 *yaw;             // 0..65535 — полный оборот
-    i16 (*size)[3];       // см; 0 0 0 — размер объекта
+    i16 (*size)[3];       // см (с OBJF_BIG — м); 0 по оси — размер объекта
+    u8  (*var)[2];        // числа формы из put var
     u8  (*mat)[OBJ_MATS]; // номер в g_mats; 255 — материал объекта
     u32 *chunk;           // OBJ_SIDE² + 1: начало чанка в массивах
     u32  lit_count;

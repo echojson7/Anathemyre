@@ -17,6 +17,7 @@ typedef struct ShapeCtx {
     const MatDef *mat[OBJ_MATS];
     f32           tint;
     u32           arg;     // вариант у общих генераторов (вид прилавка, что висит на проводе)
+    u8            var[2];  // числа экземпляра (put var): смысл у каждой формы свой
 } ShapeCtx;
 
 typedef void (*ShapeFn)(const ShapeCtx *c);
@@ -30,6 +31,17 @@ typedef struct Shape {
 // Генераторы локаций: таблицы в своих файлах
 extern const Shape g_town_shapes[];
 extern const u32   g_town_shape_count;
+extern const Shape g_hall_shapes[];
+extern const u32   g_hall_shape_count;
+extern const Shape g_ring_shapes[];
+extern const u32   g_ring_shape_count;
+extern const Shape g_ostov_shapes[];
+extern const u32   g_ostov_shape_count;
+
+// Сложную форму удобно строить в осях экземпляра от нуля: вершины с v0 переносятся в мир осями L
+void shape_to_world(MeshBuilder *mb, u32 v0, M4 L);
+// var как знаковое число (наклон в градусах)
+static inline f32 shape_deg(u8 v) { return (f32)(i8)v * (PI_F / 180.0f); }
 
 // Имена форм всех объектов найдены. false — ошибка в журнале
 bool shapes_bind(void);

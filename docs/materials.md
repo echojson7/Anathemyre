@@ -48,6 +48,7 @@ material concrete_pale     # выбеленный бетон Остова
 | Скудель | window (свет в окнах), sign_paint (охра знаков торговцев) | |
 | Мерильня | paint_pale (полосы на стенах), iron_dark, lamp_sodium (натрий) | |
 | арена | rust_dark, arena_floor, glyph_dim, lamp_white | |
+| зал и горизонт | rust_tank, rust_box (бак, контейнеры), concrete_far, rust_far (мост и труба вдали), lamp_red, lamp_amber (сигнальные огни) | заготовки hall, horizon |
 | лом | rust_deep, concrete_chip | вещи на земле (scrap.c) |
 | оружие | iron_black, iron_soot, blade_steel, brass, wire, leather, leather_dark, leather_worn, grip_cloth, tape_black | `paint имя` в weapons.txt |
 

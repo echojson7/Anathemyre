@@ -1,20 +1,14 @@
-// Зал и пустошь вокруг: бруталистский зал с оружейной, обломки, мегаструктуры вдали. Люди зала — world/crowd.c
+// Зал и пустошь вокруг: бруталистский зал с оружейной, обломки, мегаструктуры вдали. Раскладка — заготовки
+// hall и horizon (data/defs/prefabs.txt), формы стоек и ламп — hall.c. Люди зала — world/crowd.c
 #ifndef ANA_HALL_H
 #define ANA_HALL_H
 
-#include "../core/mesh.h"
-#include "../core/rng.h"
+#include "../core/math3d.h"
 
-// Лампы над стойками с оружием: горят всегда (свет — view/scene.c)
-#define HALL_LAMPS 5
+// Колпак лампы над стойкой смотрит сюда (свет — объект hall_lamp)
 #define HALL_LAMP_DIR v3(0.0f, -0.88f, -0.47f)
-extern const V3 g_hall_lamp[HALL_LAMPS];
 #define HALL_FLOOR_Y 0.1f
 
-// Зал и обломки: отбрасывают тени
-void hall_build_near(MeshBuilder *mb, Rng *rng);
-// Мегаструктуры у горизонта: тени не отбрасывают, в теневую карту не попадают
-void hall_build_far(MeshBuilder *mb, Rng *rng);
 // Точка на плите пола зала (верх HALL_FLOOR_Y)
 bool hall_floor(f32 x, f32 z);
 
