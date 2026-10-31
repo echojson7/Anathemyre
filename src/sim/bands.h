@@ -11,7 +11,7 @@
 #include "../world/places.h"
 
 #define BANDS_MAX 4096
-#define BAND_TIERS 3      // выучка: новички, бойцы, ветераны (как tier у sheet_random)
+#define BAND_TIERS 3      // выучка: новички, бойцы, ветераны (как tier у person_random)
 #define BAND_TEAMS 31     // команды; метка сетки 31 — рассеянные
 #define BAND_STEP_S 1.0f  // шаг отряда, с
 

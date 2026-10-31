@@ -110,7 +110,7 @@ void town_folk_add(People *p, const Town *t, Rng *r, u32 walkers, u32 variants, 
         Rng sr;
         rng_seed(&sr, 0x70C0u + k, 93);
         u8 weapon = def_weapon(ps->variant[i] % 2 ? "sekach" : "ressora");
-        sheet_random(c, &sr, name_next(ps->variant[i] % BODY_KIND_COUNT == BODY_FEMALE), armed ? 1 : 0, weapon);
+        person_random(ps, i, &sr, name_next(ps->variant[i] % BODY_KIND_COUNT == BODY_FEMALE), armed ? 1 : 0, weapon);
         if (!armed) {
             ItemStack old;
             sheet_equip(c, SLOT_WEAPON, (ItemStack){ 0 }, &old);

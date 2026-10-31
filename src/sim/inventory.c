@@ -103,11 +103,11 @@ bool sheet_equip(CharSheet *c, u8 slot, ItemStack it, ItemStack *old)
     // Бой видит только своё: броню по слотам и оружие
     if (slot == SLOT_WEAPON) {
         if (item_weapon(it) != COMP_NONE) {
-            c->d.weapon = item_weapon(it);
-            c->d.weapon_q = it.quality;
+            c->weapon = item_weapon(it);
+            c->weapon_q = it.quality;
         }
     } else {
-        c->d.armor[slot] = item_armor(it) == COMP_NONE ? ARMOR_NONE : item_armor(it);
+        c->armor[slot] = item_armor(it) == COMP_NONE ? ARMOR_NONE : item_armor(it);
     }
     return true;
 }
@@ -119,9 +119,9 @@ f32 sheet_load(const CharSheet *c)
     return w;
 }
 
-f32 sheet_carry_max(const CharSheet *c)
+f32 sheet_carry_max(const CharSheet *c, f32 strength)
 {
-    f32 m = 20.0f + 0.6f * c->d.skill[SK_STRENGTH];
+    f32 m = 20.0f + 0.6f * strength;
     for (u32 s = 0; s < SLOT_COUNT; s++)
         m += item_def(c->equip[s])->carry;
     return m;

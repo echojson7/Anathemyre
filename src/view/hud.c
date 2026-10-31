@@ -75,7 +75,7 @@ typedef struct LookData {
     const char *name, *role, *state;
     f32 hp[PART_COUNT], blood, blood_max, bleed, height, mass;
     u8  fracture, severed;
-    const f32 *skill;
+    f32 skill[SK_COUNT];
     ItemStack equip[SLOT_COUNT + 1];
     CharSheet *sheet;   // свои: вещи можно перекладывать
     const Motion *body; // свои: режим шага
@@ -284,6 +284,19 @@ static bool foe_of_squad(const HudWorld *w, u32 slot)
     return w->squad->count && field_hostile(w->field, squad_at(w->squad, 0), slot);
 }
 
+// Тело из реестра: раны, кровь, сложение, навыки
+static void look_person(LookData *o, const Persons *ps, u32 i)
+{
+    for (u32 p = 0; p < PART_COUNT; p++) o->hp[p] = ps->hp[p][i];
+    o->blood = ps->blood[i];
+    o->blood_max = 100.0f * ps->mass[i] / 75.0f;
+    o->height = ps->stature[i];
+    o->mass = ps->mass[i];
+    o->fracture = ps->fracture[i];
+    o->severed = ps->severed[i];
+    for (u32 k = 0; k < SK_COUNT; k++) o->skill[k] = ps->skill[k][i];
+}
+
 static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
 {
     memset(o, 0, sizeof *o);
@@ -296,14 +309,7 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
         o->body = squad_move(w->squad, look);
         o->state = move_state(w->field, at);
         if (field_awake(w->field, at)) o->bleed = w->field->w.bleed[at];
-        memcpy(o->hp, c->d.hp, sizeof o->hp);
-        o->blood = c->d.blood;
-        o->blood_max = 100.0f * c->d.mass / 75.0f;
-        o->height = c->d.height;
-        o->mass = c->d.mass;
-        o->fracture = c->d.fracture;
-        o->severed = c->d.severed;
-        o->skill = c->d.skill;
+        look_person(o, w->field->ps, at);
         memcpy(o->equip, c->equip, sizeof o->equip);
         o->sheet = c;
         return true;
@@ -317,14 +323,7 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
         o->role = foe_of_squad(w, look) ? "ВРАГ" : c->role ? c->role : "ПРОХОЖИЙ";
         o->state = move_state(fd, look);
         if (field_awake(fd, look)) o->bleed = fd->w.bleed[look];
-        memcpy(o->hp, c->d.hp, sizeof o->hp);
-        o->blood = c->d.blood;
-        o->blood_max = 100.0f * c->d.mass / 75.0f;
-        o->height = c->d.height;
-        o->mass = c->d.mass;
-        o->fracture = c->d.fracture;
-        o->severed = c->d.severed;
-        o->skill = c->d.skill;
+        look_person(o, fd->ps, look);
         memcpy(o->equip, c->equip, sizeof o->equip);
         return true;
     }
@@ -337,7 +336,7 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
     o->height = f->d.height;
     o->mass = f->d.mass;
     o->blood_max = 100.0f * f->d.mass / 75.0f;
-    o->skill = f->d.skill;
+    memcpy(o->skill, f->d.skill, sizeof o->skill);
     if (i >= 0) {
         // На ринге: живое состояние из боя
         const CombatWorld *cw = &s->w;
@@ -997,9 +996,11 @@ static void draw_card(const Hud *h, const HudWorld *w, const Layout *L, u32 i)
     } else {
         text_fit(x + 4, y + 80, CARD_W - 8, C_DIM, pl->ctrl == CTRL_CHASE ? "К ЦЕЛИ" : (pl->moving ? (pl->gait == GAIT_RUN ? "БЕЖИТ" : "ИДЁТ") : "СТОИТ"));
     }
-    f32 r = vital_ratio(c->d.hp);
+    f32 hp[PART_COUNT];
+    for (u32 p = 0; p < PART_COUNT; p++) hp[p] = fd->ps->hp[p][at];
+    f32 r = vital_ratio(hp);
     bar(x + 4, y + 91, CARD_W - 8, 3, r, health_color(r));
-    bar(x + 4, y + 96, CARD_W - 8, 2, c->d.blood / (100.0f * c->d.mass / 75.0f), C_BLOOD);
+    bar(x + 4, y + 96, CARD_W - 8, 2, fd->ps->blood[at] / (100.0f * fd->ps->mass[at] / 75.0f), C_BLOOD);
     if (sq->selected[i]) brackets(x - 1, y - 1, CARD_W + 2, BOTTOM_H + 2, 8, C_SEL);
     else if (hot) brackets(x - 1, y - 1, CARD_W + 2, BOTTOM_H + 2, 8, C_TEXT);
 }
@@ -1088,7 +1089,7 @@ static void draw_inventory(const Hud *h, const Layout *L, const HudWorld *w)
             draw_item_cell(L->ix + inv->x[i] * CELL, L->iy + inv->y[i] * CELL, iw * CELL - 1, ih * CELL - 1,
                            inv->item[i], (i32)i == hover ? C_TEXT : C_EDGE);
         }
-        f32 load = sheet_load(d.sheet), cap = sheet_carry_max(d.sheet);
+        f32 load = sheet_load(d.sheet), cap = sheet_carry_max(d.sheet, d.skill[SK_STRENGTH]);
         f32 nx = L->ix + INV_W * CELL + 6, ny = L->iy;
         small_label(nx, ny, "НОША");
         snprintf(buf, sizeof buf, "%.1f/%.0f", (f64)load, (f64)cap);

@@ -20,8 +20,14 @@ void field_init(Field *f, Arena *a, Persons *ps, u64 seed)
     memset(f, 0, sizeof *f);
     f->ps = ps;
     combat_init(&f->w, a, FIELD_MAX, 4096);
-    // Место и курс бойца — столбцы реестра
-    combat_bind_place(&f->w, ps->x, ps->z, ps->heading);
+    // Место, тело, навыки и действие бойца — столбцы реестра: копий нет, раны пишутся сразу человеку
+    CombatBody b = { .x = ps->x, .z = ps->z, .heading = ps->heading, .blood = ps->blood, .mass = ps->mass,
+                     .height = ps->stature, .morale_base = ps->morale_base, .fracture = ps->fracture,
+                     .severed = ps->severed, .act = ps->act, .act_flags = ps->act_flags, .act_t = ps->act_t,
+                     .act_t0 = ps->act_t0, .act_dur = ps->act_dur };
+    for (u32 p = 0; p < PART_COUNT; p++) b.hp[p] = ps->hp[p];
+    for (u32 s = 0; s < SK_COUNT; s++) b.skill[s] = ps->skill[s];
+    combat_bind_body(&f->w, &b);
     combat_reset(&f->w, seed);
     fighter_ai_init(&f->ai, a, FIELD_MAX);
     // Лежачих не добивают, сдачу принимают. Вражды нет, пока её не начнут
@@ -29,22 +35,11 @@ void field_init(Field *f, Arena *a, Persons *ps, u64 seed)
     memset(f->w.foe, 0, sizeof f->w.foe);
 }
 
-// Описание бойца из реестра: лист, команда, где стоит
-static FighterDesc desc_of(const Field *f, u32 i, u8 team)
-{
-    const Persons *ps = f->ps;
-    FighterDesc d = ps->sheet[i].d;
-    d.team = team;
-    d.pos = person_pos(ps, i);
-    d.heading = ps->heading[i];
-    return d;
-}
-
 void field_join(Field *f, u32 i, u8 team, u8 flags)
 {
     CombatWorld *w = &f->w;
     if (i > w->count || i >= FIELD_MAX) return;
-    FighterDesc d = desc_of(f, i, team);
+    FighterDesc d = person_fighter(f->ps, i, team);
     if (i == w->count) {
         combat_add(w, &d);
         w->idle[i] = 1;
@@ -172,12 +167,12 @@ void field_cancel(Field *f, u32 who, bool leave)
     if (f->ps->move[who].ctrl == CTRL_CHASE) f->ps->move[who].ctrl = CTRL_FREE;
 }
 
-// Слот просыпается: тело, раны и оружие из листа, место — где стоит тело
+// Слот просыпается: тело и раны — свои столбцы реестра, оружие из листа
 static void wake(Field *f, u32 i)
 {
     CombatWorld *w = &f->w;
     if (!w->idle[i]) return;
-    FighterDesc d = desc_of(f, i, w->team[i]);
+    FighterDesc d = person_fighter(f->ps, i, w->team[i]);
     combat_load(w, i, &d);
     w->disarmed[i] = !armed(f, i);
     w->idle[i] = 0;
@@ -200,12 +195,11 @@ static void wake(Field *f, u32 i)
     f->fights++;  // до пересчёта в конце тика
 }
 
-// Слот засыпает: раны в лист, тело снова у ходьбы
+// Слот засыпает: тело снова у ходьбы; раны и навыки уже у человека
 static void sleep_slot(Field *f, u32 i, GroundFn ground)
 {
     CombatWorld *w = &f->w;
     if (w->idle[i]) return;
-    combat_store(w, i, &f->ps->sheet[i].d);
     w->idle[i] = 1;
     w->target[i] = -1;
     w->mvx[i] = w->mvz[i] = 0.0f;
@@ -339,7 +333,6 @@ static void rules_tick(Field *f, GroundFn ground)
 
         u8 s = w->state[i];
         if (s == FS_DEAD) continue;  // тело остаётся лежать
-        combat_store(w, i, &f->ps->sheet[i].d);
         bool free = s == FS_READY || s == FS_RETREAT;
         if (f->leave[i] && free) {
             sleep_slot(f, i, ground);
@@ -409,13 +402,10 @@ void field_tick(Field *f, GroundFn ground)
         if (o >= 0) {
             // Бежит к цели своим шагом; чужие гонятся бегом
             p->target = person_pos(ps, (u32)o);
-            // Так было до реестра: цель с бо́льшим номером, что в бою, — где стояла до этого тика.
-            // Держим ради боя бит в бит; уберётся с одним миром боя (шаг 2д, PR 2), суммы тогда сдвинутся
-            if ((u32)o > i && !w->idle[o]) p->target = v3(f->px[o], ps->y[o], f->pz[o]);
             p->moving = true;
             p->ctrl = CTRL_CHASE;
             p->marker = 0.0f;
-            if (!(f->flags[i] & FF_PLAYER)) p->vmax = sheet_speed(&ps->sheet[i], GAIT_RUN);
+            if (!(f->flags[i] & FF_PLAYER)) p->vmax = person_speed(ps, i, GAIT_RUN);
         } else if (p->ctrl == CTRL_CHASE) {
             // Погоня окончена: стоит, где догнал
             p->ctrl = CTRL_FREE;

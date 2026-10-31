@@ -29,7 +29,7 @@ void crowd_add(People *p, Rng *rng, u32 count, GroundFn ground)
         // Свой поток случайных чисел: расстановка фигур та же, что без листов
         Rng sr;
         rng_seed(&sr, 0xC0DEu + k, 91);
-        sheet_random(&ps->sheet[i], &sr, g_crowd_names[k], k % 4 == 1 ? 1 : 0, g_weapon_pool[k % g_weapon_pool_count]);
+        person_random(ps, i, &sr, g_crowd_names[k], k % 4 == 1 ? 1 : 0, g_weapon_pool[k % g_weapon_pool_count]);
         ps->move[i].phase = rng_f32(rng);
         ps->move[i].gait = GAIT_WALK;
         p->wait[q] = rng_range(rng, 0.0f, 3.0f);
@@ -80,7 +80,7 @@ void watchers_add(People *p, V3 center, f32 floor_y, u32 count, u8 team, GroundF
         rng_seed(&sr, 0x5EE0u + k, 92);
         bool armed = k % 3 == 0;
         u8 weapon = def_weapon(k % 2 ? "sekach" : "ressora");
-        sheet_random(&ps->sheet[i], &sr, name_next(ps->variant[i] == BODY_FEMALE), k % 5 == 2 ? 1 : 0, weapon);
+        person_random(ps, i, &sr, name_next(ps->variant[i] == BODY_FEMALE), k % 5 == 2 ? 1 : 0, weapon);
         if (!armed) {
             ItemStack old;
             sheet_equip(&ps->sheet[i], SLOT_WEAPON, (ItemStack){ 0 }, &old);
@@ -161,16 +161,20 @@ void mobs_add(People *p, Rng *rng, GroundFn ground)
     for (u32 k = 0; k < n; k++) {
         const MobDef *d = &g_mob_defs[k];
         // Персонаж раньше места: так шли случайные числа и прежде
+        FighterDesc fd;
+        arena_random_fighter(&fd, rng, d->tier);
+        for (u32 s = 0; s < SLOT_COUNT; s++) fd.armor[s] = ARMOR_NONE;
+        for (u32 q = 0; q < PART_COUNT; q++) fd.hp[q] = g_part_hp[q];
+        fd.blood = 100.0f * fd.mass / 75.0f;
+        fd.weapon = def_weapon(d->weapon);
         CharSheet c;
         memset(&c, 0, sizeof c);
         c.name = d->name;
-        arena_random_fighter(&c.d, rng, d->tier);
-        for (u32 s = 0; s < SLOT_COUNT; s++) c.d.armor[s] = ARMOR_NONE;
-        for (u32 q = 0; q < PART_COUNT; q++) c.d.hp[q] = g_part_hp[q];
-        c.d.blood = 100.0f * c.d.mass / 75.0f;
+        c.weapon = fd.weapon;
+        c.weapon_q = fd.weapon_q;
+        memcpy(c.armor, fd.armor, sizeof c.armor);
         ItemStack old;
-        c.d.weapon = def_weapon(d->weapon);
-        sheet_equip(&c, SLOT_WEAPON, item_of_weapon(c.d.weapon, Q_WORN), &old);
+        sheet_equip(&c, SLOT_WEAPON, item_of_weapon(fd.weapon, Q_WORN), &old);
         for (u32 a = 0; a < 3 && d->armor[a]; a++) {
             ItemStack it = item_of_armor(def_armor(d->armor[a]), Q_WORN);
             sheet_equip(&c, item_slot(it), it, &old);
@@ -185,13 +189,14 @@ void mobs_add(People *p, Rng *rng, GroundFn ground)
         u32 q = people_add(p, ROLE_MOB, v3(x, ground(x, z), z), atan2f(b.x - a.x, b.y - a.y), TEAM_MOBS, FF_ASSIST);
         u32 i = people_place(p, q);
         Persons *ps = p->ps;
+        person_set_fighter(ps, i, &fd);
         ps->sheet[i] = c;
         ps->move[i].gait = d->gait;
         ps->move[i].phase = rng_f32(rng);
         p->node[q] = (u8)((at + 1) % MOB_ROUTE);
         ps->variant[i] = (u8)(k % 4 % BODY_KIND_COUNT);
         ps->seed[i] = rng_range(rng, 0.0f, 100.0f);
-        ps->height[i] = body_scale(c.d.height);
+        ps->height[i] = body_scale(fd.height);
         ps->width[i] = 1.0f + 0.08f * sinf(ps->seed[i] * 3.17f + 1.0f);
         ps->look_seed[i] = 2000u + k;
         // Ночью шайка ходит с огнём: первый и последний, у них вторая рука свободна
@@ -216,7 +221,7 @@ void mob_step(People *pp, u32 i, Rng *rng, f32 dt, GroundFn ground)
         return;
     }
     bool was = p->moving;
-    p->vmax = g_gait_speed[p->gait] * (0.9f + 0.002f * pp->ps->sheet[at].d.skill[SK_ATHLETICS]);
+    p->vmax = g_gait_speed[p->gait] * (0.9f + 0.002f * pp->ps->skill[SK_ATHLETICS][at]);
     if (!p->moving && (pp->wait[i] -= dt) <= 0.0f) {
         V2 t = g_route[pp->node[i]];
         // Не точно в точку: каждый круг немного иначе

@@ -1035,7 +1035,8 @@ void defs_remap_item(ItemStack *it, const DefMap *m)
 
 void defs_remap_sheet(CharSheet *c, const DefMap *m)
 {
-    defs_remap_desc(&c->d, m);
+    c->weapon = (u8)m->to[DK_WEAPON][c->weapon];
+    for (u32 s = 0; s < SLOT_COUNT; s++) c->armor[s] = to_armor(m, c->armor[s]);
     for (u32 s = 0; s <= SLOT_COUNT; s++) defs_remap_item(&c->equip[s], m);
     for (u32 i = 0; i < c->inv.n && i < INV_MAX; i++) defs_remap_item(&c->inv.item[i], m);
 }

@@ -1052,16 +1052,17 @@ void combat_ser(Ser *s, CombatWorld *w)
     SER(s, w->foe);
     u32 n = w->count;
 #define C(name) SER_N(s, w->name, n)
-    if (!w->place_ext) {
+    if (!w->body_ext) {
         C(x); C(z); C(heading);
+        for (u32 p = 0; p < PART_COUNT; p++) C(hp[p]);
+        C(blood); C(morale_base); C(mass); C(height); C(fracture); C(severed);
+        C(act); C(act_flags); C(act_t); C(act_t0); C(act_dur);
+        for (u32 k = 0; k < SK_COUNT; k++) C(skill[k]);
     }
     C(state); C(team); C(attack); C(react); C(aim_x); C(aim_y); C(aim_s);
     C(timer); C(dur); C(pause); C(target); C(since_hit); C(mvx); C(mvz); C(idle); C(order);
-    for (u32 p = 0; p < PART_COUNT; p++) C(hp[p]);
-    C(blood); C(blood_max); C(bleed); C(shock); C(morale); C(morale_base); C(mass); C(height);
-    C(fracture); C(severed); C(disarmed); C(fall); C(prone); C(loose); C(gitem);
-    C(act); C(act_flags); C(act_t); C(act_t0); C(act_dur);
-    for (u32 k = 0; k < SK_COUNT; k++) C(skill[k]);
+    C(blood_max); C(bleed); C(shock); C(morale);
+    C(disarmed); C(fall); C(prone); C(loose); C(gitem);
     C(weapon); C(weapon_q);
     for (u32 k = 0; k < SLOT_COUNT; k++) C(armor[k]);
     C(grid_tag); C(sep_x); C(sep_z); C(strikes);
@@ -1073,10 +1074,16 @@ void combat_ser(Ser *s, CombatWorld *w)
     grid_ser(s, &w->grid);
 }
 
-void combat_bind_place(CombatWorld *w, f32 *x, f32 *z, f32 *heading)
+void combat_bind_body(CombatWorld *w, const CombatBody *b)
 {
-    w->x = x, w->z = z, w->heading = heading;
-    w->place_ext = true;
+    w->x = b->x, w->z = b->z, w->heading = b->heading;
+    for (u32 p = 0; p < PART_COUNT; p++) w->hp[p] = b->hp[p];
+    w->blood = b->blood, w->mass = b->mass, w->height = b->height, w->morale_base = b->morale_base;
+    w->fracture = b->fracture, w->severed = b->severed;
+    for (u32 s = 0; s < SK_COUNT; s++) w->skill[s] = b->skill[s];
+    w->act = b->act, w->act_flags = b->act_flags;
+    w->act_t = b->act_t, w->act_t0 = b->act_t0, w->act_dur = b->act_dur;
+    w->body_ext = true;
 }
 
 void combat_reset(CombatWorld *w, u64 seed)
