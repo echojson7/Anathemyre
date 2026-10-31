@@ -1,5 +1,7 @@
 #include "figures.h"
 #include "../content/weapon.h"
+#include "../defs/defs.h"
+#include "lights.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -167,19 +169,6 @@ static f32 torch_lit(bool has, f32 seed, f32 night)
     return t * t * (3.0f - 2.0f * t);
 }
 
-// Свет факела по костям b: пламя пляшет, яркость дрожит от двух частот и случайных провалов
-static void torch_light(const M4 *b, f32 lit, f32 seed, f32 time, PointLight *l)
-{
-    f32 fl = 0.80f + 0.10f * sinf(time * 17.0f + seed) + 0.07f * sinf(time * 29.3f + seed * 3.1f) +
-             0.05f * sinf(time * 47.0f + seed * 7.7f);
-    l->pos = torch_flame_pos(b);
-    l->radius = 8.0f;
-    l->color = v3_mul(v3(1.0f, 0.50f, 0.18f), 2.6f * lit * fl);
-    l->cone = -1.0f;
-    l->dir = v3(0, -1, 0);
-    l->glow = 0.0025f;
-}
-
 // Вещи поверх тела: те же кости, что у тела
 static u32 push_gear(DrawItem *items, const GpuMesh *row, const u8 *gear, u32 n, const M4 *bones)
 {
@@ -318,11 +307,12 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
     if (s) n += arena_figures(f, m, av, s, v->time, items + n);
     prof_zone(PZ_POSES);
     jobs_for(f->jobs, POSE_GRAIN, pose_job, f->job);
-    // Свет факелов — по готовым костям, в том же порядке, что и люди
-    for (u32 i = 0; lit_any && i < p->count && *nl < TORCH_LIGHTS_MAX; i++) {
+    // Свет факелов — компонент light вещи torch, по готовым костям, в том же порядке, что и люди
+    u8 tl = g_items[def_item("torch")].light;
+    for (u32 i = 0; lit_any && tl != COMP_NONE && i < p->count && *nl < TORCH_LIGHTS_MAX; i++) {
         f32 lit = torch_lit(p->torch[i], p->seed[i], v->night);
         if (lit < 0.05f || f->age[i] < 0.0f) continue;
-        torch_light(&f->bones[(size_t)i * RENDER_MAX_BONES], lit, p->seed[i], v->time, &lights[(*nl)++]);
+        lights[(*nl)++] = lights_item(&g_lights[tl], torch_flame_pos(&f->bones[(size_t)i * RENDER_MAX_BONES]), lit, p->seed[i], v->time);
     }
     return n;
 }

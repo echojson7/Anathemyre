@@ -8,6 +8,7 @@
 #include "../sim/combat_tune.h"
 #include "deftext.h"
 #include "material.h"
+#include "objects.h"
 #include "bodydef.h"
 
 #define ARMOR_CAP ARMOR_NONE  // 255 — «пусто»
@@ -56,7 +57,7 @@ enum { NEED_WEAPON, NEED_ARMOR, NEED_ITEM, NEED_COUNT };
 static const char *const g_need[NEED_COUNT][16] = {
     [NEED_WEAPON] = { "ressora", "sekach", "bagor", "balka" },
     [NEED_ARMOR] = { "rags", "jacket", "quilt", "plate", "bucket", "greaves", "pants" },
-    [NEED_ITEM] = { "water", "rusk", "meat", "bandage", "scrap", "part", "fuel", "token", "wrap", "boots", "mitts", "pack", "belt" },
+    [NEED_ITEM] = { "water", "rusk", "meat", "bandage", "scrap", "part", "fuel", "token", "wrap", "boots", "mitts", "pack", "belt", "torch" },
 };
 
 // Номер вещи по имени; 0 — запись «ничего», по имени не находится
@@ -888,6 +889,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
 {
     g_weapon_count = g_armor_count = g_mat_count = g_gear_count = 0;
     s_light_count = s_container_count = s_phys_count = 0;
+    objdefs_reset();
     memset(s_part_mat, 0, sizeof s_part_mat);
     memset(&g_mat, 0, sizeof g_mat);
     // Запись 0 — «ничего»: пустой слот, пустая стопка
@@ -910,10 +912,16 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
     Block b = { .kind = -1 };
     bool bad = false, ok = true;
     while (deftext_next(&s_text, &l, &bad)) {
+        i32 obj = 0;
         if (def_word(&l.tok[0], g_kinds, ARRAY_COUNT(g_kinds)) >= 0) {
+            objdefs_end();
             ok = header(&l, &b, mem);
+        } else if ((obj = objdefs_line(&l, mem)) != 0) {
+            // Объекты и заготовки (objects.c)
+            ok = obj > 0;
+            b.kind = -1;
         } else if (b.kind < 0) {
-            def_error(&l, "поле вне записи: сначала item, attack, quality, material, tuning или body");
+            def_error(&l, "поле вне записи: сначала item, attack, quality, material, tuning, body, object или prefab");
             ok = false;
         } else {
             b.lines++;
@@ -929,7 +937,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
         }
         if (!ok) break;
     }
-    if (bad || !ok || !check() || !bodydef_check()) return false;
+    if (bad || !ok || !check() || !objdefs_check() || !bodydef_check()) return false;
     g_weapon_pool_count = 0;
     for (u32 i = 0; i < g_weapon_count; i++)
         if (s_weapons[i].common) g_weapon_pool[g_weapon_pool_count++] = (u8)i;
@@ -941,9 +949,10 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
     memset(g_gear_hides, 0, sizeof g_gear_hides);
     for (u32 i = 1; i < g_item_count; i++)
         if (s_items[i].look < g_gear_count) g_gear_hides[s_items[i].look] |= s_items[i].hides;
-    log_info("ОПИСАНИЯ: вещей %u (оружия %u, брони %u, света %u), сеток %u, материалов %u, файлов %u, модов %u",
-             g_item_count - 1, g_weapon_count, g_armor_count, s_light_count, g_gear_count, g_mat_count, s_text.files,
-             s_text.mods);
+    log_info("ОПИСАНИЯ: вещей %u (оружия %u, брони %u, света %u), сеток %u, материалов %u, объектов %u, заготовок %u, "
+             "файлов %u, модов %u",
+             g_item_count - 1, g_weapon_count, g_armor_count, s_light_count, g_gear_count, g_mat_count, g_object_count,
+             g_prefab_count, s_text.files, s_text.mods);
     return true;
 }
 

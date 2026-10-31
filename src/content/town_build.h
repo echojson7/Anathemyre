@@ -3,12 +3,10 @@
 #ifndef ANA_TOWN_BUILD_H
 #define ANA_TOWN_BUILD_H
 
-#include "../core/mesh.h"
-#include "../core/rng.h"
 #include "../world/town.h"
 
-// Геометрия посёлка (отбрасывает тени) и места жителей
-void town_build(MeshBuilder *mb, Rng *rng, Town *t);
+// Места жителей. Сам посёлок — объекты по заготовке skudel (data/defs/prefabs.txt), формы частей — town_build.c
+void town_spots(Town *t);
 // Высота яруса под точкой, если она в посёлке; иначе base
 f32  town_ground(f32 x, f32 z, f32 base);
 
