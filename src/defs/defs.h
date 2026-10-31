@@ -30,5 +30,6 @@ void defs_ser(Ser *s, DefMap *map);
 void defs_remap_desc(FighterDesc *d, const DefMap *m);
 void defs_remap_sheet(CharSheet *c, const DefMap *m);
 void defs_remap_combat(CombatWorld *w, const DefMap *m);
+void defs_remap_item(Item *it, const DefMap *m);
 
 #endif

@@ -159,11 +159,18 @@ static inline f32 char_run_from_speed(f32 v) { return clampf((v - 1.6f) / 3.2f, 
 void character_pose(const CharPose *p, const CharAction *act, M4 *out_bones);
 // Капсулы боевой стойки (g_body_hit_guard) с позы guard = 1 с одноручным. После body_hit_build
 void anim_bake_hit_guard(void);
-// Матрицы для оружия, брошенного на землю: рукоять в точке pos
-void weapon_ground_pose(V3 pos, f32 yaw, M4 *out_bones);
 
 // Оружие отдельной сеткой; кости — слот CHAR_BONE_WEAPON, рукоять в начале координат, острие по +Y
-void weapon_build(MeshBuilder *mb, u8 weapon);
+// Вид оружия по качеству: хлам, ходовое, добротное и выше; уникальное всегда последнее
+#define WEAPON_LOOKS 3
+static inline u32 weapon_look(u8 quality) { return quality < WEAPON_LOOKS ? quality : WEAPON_LOOKS - 1; }
+static inline u32 weapon_mesh(u8 weapon, u8 quality) { return (u32)weapon * WEAPON_LOOKS + weapon_look(quality); }
+void weapon_build(MeshBuilder *mb, u8 weapon, u8 look, u8 bone);
+// Готовые формы из Blender (model в описании): data/meshes/weapons/<model>.mesh, один раз до мира.
+// Нет файла — оружие собирается из частей описания
+void weapon_models_load(Arena *perm, const char *data_dir);
+// То же неподвижной деталью сцены (стойки): сразу в мировых координатах, без кости
+void weapon_build_xf(MeshBuilder *mb, u8 weapon, u8 look, M4 xf);
 // Факел: древко с обмоткой (flame = false) или пламя отдельной сеткой; слот CHAR_BONE_TORCH
 void torch_build(MeshBuilder *mb, bool flame);
 // Где пламя факела в мире по костям позы
