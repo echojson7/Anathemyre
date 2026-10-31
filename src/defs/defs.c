@@ -1,9 +1,11 @@
 #include "defs.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #include "../sim/look.h"
 #include "../core/mesh.h"
+#include "../sim/combat_tune.h"
 #include "deftext.h"
 #include "material.h"
 
@@ -102,11 +104,22 @@ typedef struct Block {
     const char *mat_ref;  // paint по имени материала
 } Block;
 
-enum { BK_ITEM, BK_ATTACK, BK_QUALITY, BK_MATERIAL };
-static const char *const g_kinds[] = { "item", "attack", "quality", "material" };
+enum { BK_ITEM, BK_ATTACK, BK_QUALITY, BK_MATERIAL, BK_TUNING };
+static const char *const g_kinds[] = { "item", "attack", "quality", "material", "tuning" };
 // Компоненты вещи: строка с этим словом открывает его поля
 enum { SEC_ITEM, SEC_WEAPON, SEC_ARMOR, SEC_WEAR, SEC_LIGHT, SEC_CONTAINER, SEC_PHYS, SEC_COUNT };
 static const char *const g_sect_word[SEC_COUNT] = { "", "weapon", "armor", "wear", "light", "container", "phys" };
+
+// Числа боя: ключ — имя поля CombatTune. Каждое должно быть в файлах, мод правит любое
+#define TUNE_KEY(n) #n,
+#define TUNE_OFF(n) offsetof(CombatTune, n),
+static const char *const g_tune_key[] = { COMBAT_TUNE(TUNE_KEY) };
+static const size_t g_tune_off[] = { COMBAT_TUNE(TUNE_OFF) };
+#undef TUNE_KEY
+#undef TUNE_OFF
+#define TUNE_COUNT ARRAY_COUNT(g_tune_key)
+static bool s_tune_set[TUNE_COUNT];
+static const char *const g_tuning_word[] = { "combat" };
 
 static bool args(const DefLine *l, u32 n)
 {
@@ -598,6 +611,17 @@ static bool quality_field(const DefLine *l, Block *b, Arena *mem)
     return false;
 }
 
+static bool tuning_field(const DefLine *l)
+{
+    i32 k = def_word(&l->tok[0], g_tune_key, TUNE_COUNT);
+    if (k < 0) {
+        def_error(l, "у tuning combat нет числа %.*s", (int)l->tok[0].n, l->tok[0].s);
+        return false;
+    }
+    s_tune_set[k] = true;
+    return num(l, (f32 *)((char *)&g_tune + g_tune_off[k]));
+}
+
 static bool material_field(const DefLine *l, Block *b)
 {
     MatDef *d = &s_mats[b->id];
@@ -642,6 +666,12 @@ static bool header(const DefLine *l, Block *b, Arena *mem)
         return false;
     }
     const DefTok *t = &l->tok[1];
+    if (kind == BK_TUNING) {
+        u8 w;
+        if (!word(l, 1, g_tuning_word, ARRAY_COUNT(g_tuning_word), &w)) return false;
+        b->id = w;
+        return true;
+    }
     if (kind == BK_ATTACK || kind == BK_QUALITY) {
         u8 w;
         if (!word(l, 1, kind == BK_ATTACK ? g_attack_word : g_quality_word, kind == BK_ATTACK ? ATK_COUNT : Q_COUNT, &w))
@@ -806,6 +836,11 @@ static bool check(void)
             log_error("ОПИСАНИЯ: качества %s нет", g_quality_word[i]);
             ok = false;
         }
+    for (u32 i = 0; i < TUNE_COUNT; i++)
+        if (!s_tune_set[i]) {
+            log_error("ОПИСАНИЯ: в tuning combat нет числа %s", g_tune_key[i]);
+            ok = false;
+        }
     for (u32 i = 0; i < g_mat_count; i++)
         if (s_mats[i].surface == 255 || s_mats[i].impact == 255 || !s_mats[i].tones) {
             log_error("ОПИСАНИЯ: материалу %s не хватает surface, impact или color", s_mats[i].id);
@@ -859,6 +894,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
     s_item_mat[0] = NULL;
     g_item_count = 1;
     g_items = s_items;
+    memset(s_tune_set, 0, sizeof s_tune_set);
     g_weapons = s_weapons;
     g_weapon_parts = s_parts;
     g_weapon_pts = s_pts;
@@ -874,7 +910,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
         if (def_word(&l.tok[0], g_kinds, ARRAY_COUNT(g_kinds)) >= 0) {
             ok = header(&l, &b, mem);
         } else if (b.kind < 0) {
-            def_error(&l, "поле вне записи: сначала item, attack, quality или material");
+            def_error(&l, "поле вне записи: сначала item, attack, quality, material или tuning");
             ok = false;
         } else {
             b.lines++;
@@ -883,6 +919,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
                 case BK_ITEM: ok = item_field(&l, &b, mem); break;
                 case BK_ATTACK: ok = attack_field(&l, &b, mem); break;
                 case BK_MATERIAL: ok = material_field(&l, &b); break;
+                case BK_TUNING: ok = tuning_field(&l); break;
                 default: ok = quality_field(&l, &b, mem); break;
                 }
         }

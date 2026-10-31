@@ -7,6 +7,7 @@
 #   4) ошибка в файле мода: файл и строка в журнале, игра не стартует
 #   5) мод правит материал (цвет, impact) и добавляет свой; оружие с несуществующим материалом не стартует
 #   6) неизвестный класс impact у материала мода: файл и строка в журнале, игра не стартует
+#   7) мод правит числа боя (tuning combat): бой арены идёт иначе; неизвестное число — файл и строка, не стартует
 # Код выхода прогонов с окном не смотрим (под ASan драйвер Vulkan оставляет утечку), только журнал.
 # ./tools/defs_check.sh [бинарник] [папка], на Linux без экрана — под xvfb-run
 set -e
@@ -17,9 +18,10 @@ DIR=${2:-build}
 DEFS=data/defs
 CAM="--cam 1026 249 2.0 0.3 9"
 sum() { grep "МИР: шаг" | tail -1 | sed 's/.*сумма //'; }
-rm -rf "$DIR/defs_rot" "$DIR/mods_ok" "$DIR/mods_bad" "$DIR/mods_bad2" "$DIR/mods_bad3" "$DIR/mods_none"
+rm -rf "$DIR/defs_rot" "$DIR/mods_ok" "$DIR/mods_bad" "$DIR/mods_bad2" "$DIR/mods_bad3" "$DIR/mods_none" "$DIR/mods_boj" \
+    "$DIR/mods_boj_bad"
 mkdir -p "$DIR/defs_rot" "$DIR/mods_ok/proba" "$DIR/mods_bad/slom" "$DIR/mods_bad2/kraska" "$DIR/mods_bad3/zvuk" \
-    "$DIR/mods_none"
+    "$DIR/mods_none" "$DIR/mods_boj/boj" "$DIR/mods_boj_bad/boj"
 cp $DEFS/*.txt "$DIR/defs_rot/"
 # Заголовки раньше всех файлов: номера вещей и их оружия и брони идут задом наперёд, поля заполняются из обычных файлов
 cat > "$DIR/defs_rot/0order.txt" <<'END'
@@ -82,6 +84,8 @@ END
 printf 'material rust\n    impact plastic\n' > "$DIR/mods_bad3/zvuk/materials.txt"
 printf 'item kosa_kraska\n    parent sekach\n    weapon\n    paint nosuch\n    rod 0 0.5 0.02 0\n' > "$DIR/mods_bad2/kraska/weapons.txt"
 printf 'item kosa_slom\n    parent sekach\n    weapon\n    damage 30 много 0\n' > "$DIR/mods_bad/slom/weapons.txt"
+printf 'tuning combat\n    morale_flee 60\n    speed_ready 2\n' > "$DIR/mods_boj/boj/combat.txt"
+printf 'tuning combat\n    morale_flee 60\n    nosuch 1\n' > "$DIR/mods_boj_bad/boj/combat.txt"
 
 a=$($BIN --bands-test $CAM --warp 775 --save "$DIR/defs1.sav" --sum-after 60 2>&1 | tee "$DIR/defs1.txt" | sum)
 $BIN --mods "$DIR/mods_none" --defs "$DIR/defs_rot" $CAM --load "$DIR/defs1.sav" --save "$DIR/defs2.sav" --sum-after 0 > "$DIR/defs2.txt" 2>&1 || true
@@ -108,4 +112,11 @@ if $BIN --mods "$DIR/mods_bad2" --bench arena 1 > "$DIR/defs7.txt" 2>&1; then ex
 grep -q "kosa_kraska красится материалом nosuch" "$DIR/defs7.txt"
 if $BIN --mods "$DIR/mods_bad3" --bench arena 1 > "$DIR/defs8.txt" 2>&1; then exit 1; fi
 grep -q "zvuk/materials.txt:2: неизвестное слово: plastic" "$DIR/defs8.txt"
-echo "моды: правка и parent читаются, материал мода читается, сохранение без мода отклонено, ошибки указаны"
+# Числа боя мода: другой бой арены; неизвестное число не пускает игру
+c0=$($BIN --mods "$DIR/mods_none" --bench arena 20 2>&1 | tail -1)
+c1=$($BIN --mods "$DIR/mods_boj" --bench arena 20 2>&1 | tail -1)
+echo "бой арены: без мода — $c0, с модом чисел — $c1"
+test -n "$c0" && test "$c0" != "$c1"
+if $BIN --mods "$DIR/mods_boj_bad" --bench arena 1 > "$DIR/defs9.txt" 2>&1; then exit 1; fi
+grep -q "boj/combat.txt:3: у tuning combat нет числа nosuch" "$DIR/defs9.txt"
+echo "моды: правка и parent читаются, материал мода читается, сохранение без мода отклонено, числа боя правятся, ошибки указаны"
