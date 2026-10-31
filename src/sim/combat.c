@@ -608,6 +608,27 @@ static void grant_swing(CombatWorld *w, u32 i, f32 opp, u32 t)
         gain(w, i, SK_DEXTERITY, g_tune.gain_dex, sk(w, t, SK_DEXTERITY));
 }
 
+// Стойка цели под новые замахи прохода. Ставится после всех замахов: свой замах цели этого же
+// прохода не затирается. Блок важнее уворота, держится до самого долгого замаха — от порядка не зависит.
+static void seal_guards(CombatWorld *w)
+{
+    u32 n = w->count;
+    for (u32 i = 0; i < n; i++) {
+        if (!w->swing_due[i]) continue;
+        u8 r = w->react[i];
+        i32 ti = w->target[i];
+        if ((r != REACT_BLOCK && r != REACT_DODGE) || ti < 0 || (u32)ti >= n) continue;
+        u32 t = (u32)ti;
+        u8 s = w->state[t];
+        if (s != FS_READY && s != FS_RETREAT && s != FS_RECOVER && s != FS_BLOCK && s != FS_DODGE) continue;
+        u8 want = r == REACT_BLOCK ? FS_BLOCK : FS_DODGE;
+        if (s == FS_BLOCK && want == FS_DODGE) continue;
+        f32 hold = w->dur[i] + act_of(w, t, r == REACT_BLOCK ? ACT_BLOCK : ACT_DODGE)->time;
+        if (s == want && w->timer[t] >= hold) continue;
+        combat_set_state(w, t, want, hold);
+    }
+}
+
 // Опыт за новые замахи прохода. Защита цели снята до записей, чтобы чужой опыт
 // не менял снимок. Повторно не выдаём: контратака конца тика ещё «свежая» в следующем мышлении.
 void combat_grant_swings(CombatWorld *w)
@@ -626,6 +647,7 @@ void combat_grant_swings(CombatWorld *w)
         grant_swing(w, i, w->swing_opp[i], ti >= 0 ? (u32)ti : n);
         w->swing_paid[i] = 1;
     }
+    seal_guards(w);
 }
 
 static u8 best_counter_kind(const CombatWorld *w, u32 i)
@@ -709,11 +731,9 @@ static void plan_strike(CombatWorld *w, u32 i, u32 *nh)
             r = REACT_NONE;
         } else if (t == main_t) {
             r = w->react[i];
-            // Свой замах отменяет чужой блок: иначе тот, кто вышел из паузы на тик раньше,
-            // запирает копию в стойке и добивает контратакой
-            if ((r == REACT_BLOCK || r == REACT_DODGE) &&
-                (w->state[t] == FS_WINDUP || w->state[t] == FS_STRIKE))
-                r = REACT_NONE;
+            // Защита только из стойки: свой замах, ошеломление или падение её снимают
+            if (r == REACT_BLOCK && w->state[t] != FS_BLOCK) r = REACT_NONE;
+            if (r == REACT_DODGE && w->state[t] != FS_DODGE) r = REACT_NONE;
         } else {
             r = roll_react(w, t, i, kind, 0.0f);
         }
@@ -944,10 +964,9 @@ static void tick_body(CombatWorld *w, u32 i)
 static void tick_state(CombatWorld *w, u32 i, u32 *strikes, u32 *ns)
 {
     u8 s = w->state[i];
-    if (s == FS_READY) {
-        w->pause[i] -= COMBAT_DT;
-        return;
-    }
+    // Пауза до своего удара идёт и в стойке: иначе кто вышел из паузы раньше, запирает копию в блоке
+    if (s == FS_READY || s == FS_BLOCK || s == FS_DODGE) w->pause[i] -= COMBAT_DT;
+    if (s == FS_READY) return;
     if (w->dur[i] <= 0.0f) return;  // бессрочные состояния
     w->timer[i] -= COMBAT_DT;
     if (w->timer[i] > 0.0f) return;
@@ -972,6 +991,10 @@ static void tick_state(CombatWorld *w, u32 i, u32 *strikes, u32 *ns)
     case FS_PICKUP:
         w->loose[i] = 0;
         enter_ready(w, i);
+        break;
+    case FS_BLOCK: case FS_DODGE:
+        // Из стойки — в готовность с той же паузой: она шла всё время стойки
+        combat_set_state(w, i, FS_READY, 0.0f);
         break;
     default:
         enter_ready(w, i);
