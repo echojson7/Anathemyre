@@ -39,7 +39,7 @@ void people_look_random(People *p, u32 i, u32 look_seed, u32 gear_seed)
     p->width[i] = ws;
     p->look_seed[i] = look_seed;
     CharLook *lk = &p->lk[i];
-    look_make(lk, p->variant[i], look_seed, 72.0f * hs * hs * ws * ws, 1.8f * hs, 30.0f + 25.0f * sinf(s * 2.1f));
+    look_make(lk, p->variant[i], look_seed, 72.0f * hs * hs * ws * ws, g_body.height * hs, 30.0f + 25.0f * sinf(s * 2.1f));
     p->look[i] = look_matrix(lk, p->variant[i]);
     p->ngear[i] = (u8)gear_random(gear_seed, p->gear[i]);
     p->ngear[i] += (u8)look_hair(lk, p->gear[i], p->ngear[i]);

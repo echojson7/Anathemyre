@@ -76,7 +76,7 @@ void squad_init(Squad *s, People *p, Rng *rng, V3 origin, f32 heading, GroundFn 
         member_init(&p->sheet[k], &g_start[i], def_weapon(g_start[i].weapon), rng);
         p->variant[k] = g_start[i].body;
         p->seed[k] = 7.0f + (f32)i * 5.3f;
-        p->height[k] = p->sheet[k].d.height / 1.8f;
+        p->height[k] = body_scale(p->sheet[k].d.height);
         p->look_seed[k] = 1000u + i;
         people_dress(p, k);
     }

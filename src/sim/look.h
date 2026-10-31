@@ -16,7 +16,7 @@ extern const char *const g_body_file[BODY_KIND_COUNT];
 // Суставы каждого тела в позе привязки: по ним вращаются кости, иначе у женщины бёдра и плечи
 // крутились бы вокруг мужских суставов. Читаются из data/meshes/<тело>.skel (пишет tools/humanconv)
 extern V3 g_body_joints[BODY_KIND_COUNT][BONE_COUNT];
-// Читает скелеты всех тел и ставит мужской общим (g_body_bones). Вызывать до первого кадра
+// Читает скелеты всех тел внешности (общий скелет боя — body_load). Вызывать до первого кадра
 bool look_load_skeletons(const char *data_dir);
 
 // Морфы, порядок как MORPHS в tools/humanconv. Лицо — только местные морфы: нос, разрез глаз, челюсть, губы

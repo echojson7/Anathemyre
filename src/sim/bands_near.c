@@ -91,7 +91,7 @@ static void appear(NearBands *n, Bands *b, People *p, Field *f, u32 bi, GroundFn
             p->body[i].phase = rng_f32(&rng);
             p->variant[i] = female ? BODY_FEMALE : face % 4 == 2 ? BODY_THIN : BODY_MALE;
             p->seed[i] = rng_range(&rng, 0.0f, 100.0f);
-            p->height[i] = p->sheet[i].d.height / 1.8f;
+            p->height[i] = body_scale(p->sheet[i].d.height);
             p->width[i] = 1.0f + 0.08f * sinf(p->seed[i] * 3.17f + 1.0f);
             p->look_seed[i] = 30000u + face;
             people_dress(p, i);
