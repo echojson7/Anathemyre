@@ -1,8 +1,8 @@
 # Свет ночью: факелы, фонари, прожекторы
 
 Состояние на 2026-10-29. Код: `src/render/render.c` (stream_lights), `data/shaders/scene.frag`,
-`data/shaders/atmos.frag` (light_glow), `src/game/arena_view.c` (arena_view_lights), `src/main.c` (torch_draw),
-`src/game/weapon.c` (torch_build), `src/world/sky.c` (луна, Sky.night).
+`data/shaders/atmos.frag` (light_glow), `src/view/scene.c` (scene_ring_lights, scene_hall_lights), `src/app/main.c` (torch_draw),
+`src/content/weapon.c` (torch_build), `src/world/sky.c` (луна, Sky.night).
 
 ## Как устроено
 - Сутки 240 с (`DAY_LENGTH_S`). `Sky.night` 0..1 — по нему зажигают огонь, каждый источник в свой момент.

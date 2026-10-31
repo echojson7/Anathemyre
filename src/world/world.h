@@ -8,19 +8,17 @@
 #include "../core/arena.h"
 #include "../core/rng.h"
 #include "../io/chronicle.h"
-#include "../render/render.h"
 #include "../sim/bands.h"
 #include "places.h"
 #include "../sim/arena.h"
 #include "../sim/arena_ring.h"
 #include "../sim/bands_near.h"
 #include "../sim/field.h"
-#include "../view/loot.h"
+#include "../sim/loot.h"
 #include "../sim/people.h"
-#include "../view/scrap.h"
+#include "../sim/scrap.h"
 #include "../sim/squad.h"
-#include "../content/town_build.h"
-#include "../view/valley_view.h"
+#include "town.h"
 
 #define DAY_LENGTH_S 240.0f  // полные сутки, с; пока быстро, чтобы смену было видно
 // Шаг мира: все — люди, отряд, бой, арена, сутки — на одном тике с боем
@@ -35,27 +33,25 @@
 typedef struct World {
     u64           seed;
     Rng           rng, town_rng;
-    Town          town;
+    GroundFn      floor;         // высота под ногами (app/ground.c): земля карты, полы построек
     People       *people;
     Squad         squad;
     Field        *field;
     ArenaSession *arena;
-    ArenaView     aview;
-    ValleyView   *valley;        // долина у реки на карте: вода, руины, растения
+    ArenaRing     ring;
+    V3            valley_spawn;  // где отряд появляется в долине у реки, и куда смотрит
+    f32           valley_heading;
     Places        places;        // места и дороги: зал, Скудель, долина
     Bands        *bands;         // отряды вдали; в мире их нет, пробные — кнопкой в НАСТРОЙКАХ
     NearBands    *near;          // отряды вдали рядом: тела
     Chronicle    *chron;         // журнал событий мира
     Phys         *phys;          // вещи с физикой: лом, потом оружие на земле и тела (docs/physics.md)
-    ScrapView     scrap;
     u32           phys_drop;     // просьба меню: бросить столько лома у точки взгляда на следующем шаге
     Ground       *ground;        // вещи на земле: брошенное, выроненное в бою (loot.c)
-    LootView      loot;
     GroundAsks    ground_ask;    // просьбы интерфейса бросить вещь из мешка: исполняет шаг мира
     u32           loot_drop;     // просьба меню: бросить столько вещей у точки взгляда
     char         *strings;       // пул строк сохранения: имена и роли после загрузки
     V3            focus;         // точка взгляда камеры: рядом с ней отряды становятся телами
-    GpuMesh       hall, far, town_mesh, ostov;  // статика лагеря: зал и обломки, мегаструктуры, посёлок, руина Остов
     u64           tick;          // шагов мира с начала
     f32           acc;           // игровое время после последнего шага, с (< TICK_DT)
     f32           alpha;         // acc / TICK_DT: где кадр между прошлым и текущим шагом
@@ -64,7 +60,8 @@ typedef struct World {
     bool          day_run;
 } World;
 
-bool world_init(World *w, Arena *perm, MeshBuilder *mb, u64 seed, f32 tod, bool day_run);
+// Карта (map_init) уже есть; town — места жителей Скудели из её постройки (view/scene.c)
+bool world_init(World *w, Arena *perm, u64 seed, f32 tod, bool day_run, const Town *town, GroundFn ground);
 // Прошло dt игрового времени (кадр с учётом скорости): сделать столько шагов мира, сколько набралось.
 // Шаг: люди, отряд, арена, поле боя, отряды вдали, сутки
 void world_update(World *w, f32 dt);
@@ -74,8 +71,6 @@ void world_present(World *w, f32 dt);
 f32  world_time(const World *w);
 // Время суток для кадра: между шагами плавно
 f32  world_tod(const World *w);
-// Высота под ногами: земля карты (map.h), пол зала, ярусы посёлка, плита арены
-f32  world_ground(f32 x, f32 z);
 // Главный в отряде стоит в долине
 bool world_squad_in_valley(const World *w);
 // Перенести отряд из лагеря в долину или обратно (отладка: пешком ~1.6 км). false — отряд в бою

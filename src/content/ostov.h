@@ -6,10 +6,6 @@
 #define ANA_OSTOV_H
 
 #include "../core/mesh.h"
-#include "../view/camera.h"
-
-// Камера внутри павильона: лицом к пролому и каньону (кнопка КАМЕРА: В ОСТОВ в меню НАСТРОЙКИ)
-#define OSTOV_CAM ((RtsCamera){ .target = { -80.0f, 0.0f, 8.0f }, .yaw = 0.0f, .pitch = 0.2f, .dist = 6.0f })
 
 // Геометрия руины (отбрасывает тени), своя сетка: вне кадра и вне области теней отсекается целиком
 void ostov_build(MeshBuilder *mb);

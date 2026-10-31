@@ -1,5 +1,5 @@
 // Сетки оружия по описаниям: в своей системе — рукоять в начале координат, острие по +Y, лезвие по +Z
-#include "../sim/anim.h"
+#include "weapon.h"
 
 #include <stdio.h>
 #include <string.h>

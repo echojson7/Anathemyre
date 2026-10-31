@@ -198,7 +198,7 @@ static bool project(M4 vp, V3 p, f32 *sx, f32 *sy)
     return true;
 }
 
-i32 hud_arena_fighter(const ArenaView *v, const ArenaSession *s, u32 roster)
+i32 hud_arena_fighter(const ArenaRing *v, const ArenaSession *s, u32 roster)
 {
     if (!v->in_bout) return -1;
     for (u32 i = 0; i < s->n && i < s->w.count; i++)
@@ -206,7 +206,7 @@ i32 hud_arena_fighter(const ArenaView *v, const ArenaSession *s, u32 roster)
     return -1;
 }
 
-bool hud_arena_pos(const ArenaView *v, const ArenaSession *s, u32 roster, V3 *out)
+bool hud_arena_pos(const ArenaRing *v, const ArenaSession *s, u32 roster, V3 *out)
 {
     i32 i = hud_arena_fighter(v, s, roster);
     if (i < 0) return false;
@@ -238,10 +238,10 @@ static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 
             if (field_awake(fd, s) && fs_lying(fd->w.state[s])) tall = 0.4f;
         } else {
             u32 i = k - w->squad->count;
-            if (!w->aview->in_bout || i >= w->arena->n) continue;
+            if (!w->ring->in_bout || i >= w->arena->n) continue;
             kd = LOOK_ARENA;
             idx = w->arena->idx[i];
-            hud_arena_pos(w->aview, w->arena, idx, &pos);
+            hud_arena_pos(w->ring, w->arena, idx, &pos);
             if (fs_lying(w->arena->w.state[i])) tall = 0.4f;
         }
         f32 fx, fy, hx, hy;
@@ -329,7 +329,7 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
     if (kind != LOOK_ARENA || look >= ARENA_ROSTER) return false;
     const ArenaSession *s = w->arena;
     const ArenaFighter *f = &s->roster[look];
-    i32 i = hud_arena_fighter(w->aview, s, look);
+    i32 i = hud_arena_fighter(w->ring, s, look);
     o->name = arena_roster_name(s, look);
     o->role = "БОЕЦ АРЕНЫ";
     o->height = f->d.height;

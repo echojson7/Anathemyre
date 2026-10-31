@@ -1,7 +1,7 @@
 # Сохранения и журнал событий мира
 
 Состояние на 2026-10-30 (этап 6: имена описаний, вид бойцов не пишется). Код: `src/core/ser.c` (обход), `src/io/save.c` (файл), `src/io/chronicle.c`
-(журнал событий), функции `xxx_ser` у каждой таблицы, `src/game/world.c` (`world_save`, `world_load`,
+(журнал событий), функции `xxx_ser` у каждой таблицы, `src/world/world.c` (`world_save`, `world_load`,
 `world_checksum`), проверка — `tools/save_check.sh`.
 
 ## Что это

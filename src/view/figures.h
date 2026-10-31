@@ -22,9 +22,9 @@
 typedef struct CharMeshes {
     GpuMesh  body[BODY_KIND_COUNT];
     GpuMesh  body_lod[BODY_KIND_COUNT][CHAR_LODS - 1];
-    GpuMesh *gear;       // CHAR_GEAR_MESHES; выделяет вызывающий: место в памяти задаёт порядок отрисовки
+    GpuMesh *gear;       // CHAR_GEAR_MESHES; выделяет вызывающий
     GpuMesh *gear_lod;   // по CHAR_LODS - 1 на вещь
-    GpuMesh  weapon[WEAPON_CAP * WEAPON_LOOKS];  // по weapon_mesh: вещь × вид качества  // внутри: рендер раскладывает по адресам сеток
+    GpuMesh  weapon[WEAPON_CAP * WEAPON_LOOKS];  // по weapon_mesh: вещь × вид качества
     GpuMesh  torch[2];   // древко, пламя
     GpuMesh  marker;
     GpuMesh  ring[3];
@@ -49,7 +49,7 @@ typedef struct Figures {
     f32     slope[PEOPLE_MAX][2]; // уклон земли под бойцом (dy/dx, dy/dz): лежащие ложатся по склону
     f32     age[PEOPLE_MAX];  // сколько секунд поза не пересчитывалась; < 0 — не было в кадре, считать сразу
     M4     *bones;            // PEOPLE_MAX наборов костей
-    M4     *arena;            // AV_BONE_SETS наборов: бойцы арены
+    M4     *arena;            // RING_BONE_SETS наборов: бойцы арены
     M4     *marks;            // MARK_SETS наборов: метки под ногами (одна матрица)
     M4     *portrait;         // 2 набора: миниатюры отряда и крупный портрет
     PoseJob job[FIGURES_MAX_JOBS];
@@ -71,7 +71,7 @@ bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const
 void figures_view(Figures *f, const People *p, const Field *fd, f32 alpha, GroundFn ground);
 // Люди и бойцы арены (s == NULL — арены нет): элементы в items, свет факелов в lights после *nl.
 // Позы считаются здесь же, в пуле потоков. Возвращает число элементов
-u32  figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *fd, const ArenaView *av,
+u32  figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *fd, const ArenaRing *av,
                   const ArenaSession *s, const FigureView *v, DrawItem *items, PointLight *lights, u32 *nl);
 // Метки под ногами: кольца выбранных и их целей, крест приказа, кольцо осматриваемого (look_ring)
 u32  figures_marks(Figures *f, const CharMeshes *m, const Squad *sq, const Field *fd, const V3 *look_ring, DrawItem *items);

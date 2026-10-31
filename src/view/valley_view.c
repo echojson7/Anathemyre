@@ -564,9 +564,6 @@ bool valley_view_build(ValleyView *v, Arena *perm, u64 seed)
     perm->used = mark;
     render_upload_instances(v->inst, v->inst_count);
 
-    // Отряд появляется на восточном берегу, ниже акведука, лицом вверх по течению
-    v->spawn = v3_add(valley_spawn(), VALLEY_ORIGIN);
-    v->spawn_heading = PI_F;
     v->built = true;
     log_stat("ДОЛИНА: деревьев и кустов %u, камней и мелочей %u, пучков травы %u, групп %u", n_trees, n_solid - n_trees,
              pl.n - n_solid, v->group_count);

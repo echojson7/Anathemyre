@@ -1,22 +1,22 @@
-// Арена на экране: ринг у зала, бои из ArenaSession в реальном времени, вид бойцов, места зрителей.
-// Только читает состояние боя; позы бойцов и отрисовка — в figures.c. Симуляция ничего не знает о графике.
-#ifndef ANA_ARENA_VIEW_H
-#define ANA_ARENA_VIEW_H
+// Ринг арены у зала: бои из ArenaSession в реальном времени на шаге мира, вид бойцов, места зрителей.
+// Геометрия ринга — content/ring.c, позы бойцов и отрисовка — view/figures.c
+#ifndef ANA_ARENA_RING_H
+#define ANA_ARENA_RING_H
 
-#include "../render/render.h"
 #include "arena.h"
 #include "anim.h"
 #include "look.h"
 #include "fight_anim.h"
 
 // Зрители — обычные люди из таблицы (People, ROLE_WATCHER): арена только расставляет их за оградой
-#define AV_SPECTATORS 14
+#define RING_SPECTATORS 14
+// Ринг у зала, перед его открытым краем; верх песка
+#define ARENA_CENTER v3(14.0f, 0.0f, 34.0f)
+#define RING_FLOOR_Y 0.125f
 // Сколько наборов костей нужно бойцам арены; рисует их figures.c
-#define AV_BONE_SETS ARENA_MAX_BOUT
-// Свет арены: два прожектора и две лампы на воротах
-#define AV_LIGHTS 4
+#define RING_BONE_SETS ARENA_MAX_BOUT
 
-typedef struct ArenaView {
+typedef struct ArenaRing {
     V3  center;
     f32 floor_y;
     f32 alpha;      // для кадра: доля шага мира после последнего тика боя
@@ -26,24 +26,20 @@ typedef struct ArenaView {
     FightAnim fa[ARENA_MAX_BOUT];
 
     // Места зрителей за оградой: точка в мире, куда смотрит, зерно позы
-    V3  spos[AV_SPECTATORS];
-    f32 sh[AV_SPECTATORS], sseed[AV_SPECTATORS];
-} ArenaView;
+    V3  spos[RING_SPECTATORS];
+    f32 sh[RING_SPECTATORS], sseed[RING_SPECTATORS];
+} ArenaRing;
 
-// Ринг, ограда, прожекторы, круг знаков: статика с тенями
-void arena_view_build(MeshBuilder *mb, V3 center);
-void arena_view_init(ArenaView *v, V3 center, f32 floor_y);
+void arena_ring_init(ArenaRing *v, V3 center, f32 floor_y);
 // Тик арены (шаг мира): бой идёт, между боями ищется следующий
-void arena_view_tick(ArenaView *v, ArenaSession *s);
+void arena_ring_tick(ArenaRing *v, ArenaSession *s);
 // Сохранение: идёт ли бой. Вид бойцов не пишется
-void arena_view_ser(Ser *s, ArenaView *v);
+void arena_ring_ser(Ser *s, ArenaRing *v);
 // После чтения: вид бойцов заново, сразу в нынешнем состоянии боя
-void arena_view_restore(ArenaView *v, const ArenaSession *s);
+void arena_ring_restore(ArenaRing *v, const ArenaSession *s);
 // Вид бойцов для кадра: alpha — доля шага после тика, dt — игровое время кадра
-void arena_view_present(ArenaView *v, const ArenaSession *s, f32 alpha, f32 dt);
+void arena_ring_present(ArenaRing *v, const ArenaSession *s, f32 alpha, f32 dt);
 // Внешность бойца ростера ri (матрица слота RENDER_LOOK_SLOT)
-M4  arena_view_look(const ArenaSession *s, u32 ri, CharLook *lk);
-// Свет арены: зажигается с темнотой night (Sky.night), в out — до AV_LIGHTS источников
-u32 arena_view_lights(const ArenaView *v, f32 night, f32 time, PointLight *out);
+M4  arena_ring_look(const ArenaSession *s, u32 ri, CharLook *lk);
 
 #endif

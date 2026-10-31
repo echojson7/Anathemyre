@@ -138,7 +138,7 @@ void bench_stages_report(const BenchResult *r, u32 n, const char *const *names)
         log_stat("ЭТАПЫ: %2u %s | %.3f | %5.0f | %+.3f | %s | %.3f | %.3f | %.3f", i, name, r[i].frame_ms, r[i].fps,
                  i ? r[i].frame_ms - r[i - 1].frame_ms : 0.0, gpu, r[i].logic_ms, r[i].submit_ms, r[i].swap_ms);
     }
-    // CPU по проходам: сбор и отправка вызовов GL каждого прохода
+    // CPU по проходам: сбор и запись команд каждого прохода
     log_stat("ЭТАПЫ CPU, мс: этап | сбор | тени | глубина | сцена | атмосфера | свет | стиль | интерфейс");
     for (u32 i = 0; i < n; i++) {
         const f64 *c = r[i].cpu_ms;

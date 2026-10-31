@@ -45,7 +45,7 @@ typedef struct Hud {
     f32  grab_x, grab_y;        // где взяли относительно угла окна
     f32  inv_x, inv_y;          // углы окон; < 0 — место по умолчанию
     f32  char_x, char_y;
-    bool win_look;              // окно ВНЕШНОСТЬ (K): редактор, src/game/editor.c
+    bool win_look;              // окно ВНЕШНОСТЬ (K): редактор, view/editor.c
     // Отладочное меню (кнопка слева вверху)
     struct {
         HudForm f;
@@ -60,7 +60,7 @@ typedef struct Hud {
 typedef struct HudWorld {
     Squad              *squad;
     const ArenaSession *arena;
-    const ArenaView    *aview;
+    const ArenaRing    *ring;
     const Field        *field;
     const Player       *view;       // люди такими, какими их показал кадр (Figures.view), по номеру в таблице
     M4                  view_proj;
@@ -116,7 +116,7 @@ bool hud_debug_slider(Hud *h, const char *label, f32 *v, f32 lo, f32 hi, const c
 void hud_debug_text(Hud *h, const char *label, const char *value);
 bool hud_debug_end(Hud *h);
 // Боец арены по номеру в ростере: номер в текущем бою или -1, позиция на ринге
-i32  hud_arena_fighter(const ArenaView *v, const ArenaSession *s, u32 roster);
-bool hud_arena_pos(const ArenaView *v, const ArenaSession *s, u32 roster, V3 *out);
+i32  hud_arena_fighter(const ArenaRing *v, const ArenaSession *s, u32 roster);
+bool hud_arena_pos(const ArenaRing *v, const ArenaSession *s, u32 roster, V3 *out);
 
 #endif

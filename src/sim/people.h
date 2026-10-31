@@ -70,7 +70,7 @@ void people_update(People *p, Rng *rng, Rng *town_rng, f32 dt, GroundFn ground);
 // k-й человек с ролью role или -1
 i32  people_nth(const People *p, Role role, u32 k);
 
-// Поведение ролей (testroom.c, town.c): шаг одного
+// Поведение ролей (world/crowd.c, world/town.c): шаг одного
 void crowd_step(People *p, u32 i, Rng *rng, f32 dt, GroundFn ground);
 void mob_step(People *p, u32 i, Rng *rng, f32 dt, GroundFn ground);
 void town_folk_step(People *p, u32 i, Rng *rng, f32 dt, GroundFn ground);

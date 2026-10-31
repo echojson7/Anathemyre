@@ -6,28 +6,22 @@
 #include "../world/map.h"
 #include "../world/valley.h"
 #include "../content/hall.h"
+#include "../content/ring.h"
 #include "../content/town_build.h"
 
 #define STEP_MIN_SPEED 0.25f
-// Пол зала (как в testroom_ground) и плита арены: бетон
-#define HALL_X 32.0f
-#define HALL_Z0 -28.0f
-#define HALL_Z1 24.0f
-#define ARENA_SLAB_R 8.5f
 
 // Броня, по которой удар звенит железом
 static bool armor_metal(u8 a) { return g_armors[a].metal; }
 
-static bool in_hall(f32 x, f32 z) { return fabsf(x) <= HALL_X && z >= HALL_Z0 && z <= HALL_Z1; }
-
-static u8 surface(const WorldSound *s, f32 x, f32 z)
+static u8 surface(f32 x, f32 z)
 {
     if (map_valley(x, z) > 0.5f) {
         f32 lx = x - VALLEY_ORIGIN.x, lz = z - VALLEY_ORIGIN.z;
         return valley_river_dist(lx, lz) < valley_river_w(lz) ? SFX_STEP_WATER : SFX_STEP_GRASS;
     }
-    f32 dx = x - s->arena_center.x, dz = z - s->arena_center.z;
-    if (in_hall(x, z) || dx * dx + dz * dz < ARENA_SLAB_R * ARENA_SLAB_R) return SFX_STEP_CONCRETE;
+    // Пол зала и плита арены: бетон
+    if (hall_floor(x, z) || ring_ground(x, z, -1e9f) > -1e8f) return SFX_STEP_CONCRETE;
     // Мостовая посёлка
     if (town_ground(x, z, -1e9f) > -1e8f) return SFX_STEP_CONCRETE;
     return SFX_STEP_SAND;
@@ -50,7 +44,7 @@ static void step(WorldSound *s, f32 *prev, f32 phase, f32 walk, f32 speed, V3 po
     if (dist2(pos, s->lis) > 22.0f * 22.0f) return;
     // Бег громче шага, тяжёлый шаг ниже
     f32 run = clampf((speed - 1.6f) / 3.2f, 0.0f, 1.0f);
-    audio_play(surface(s, pos.x, pos.z), pos, 0.45f + 0.55f * run, 1.0f - 0.08f * run, 0.0f);
+    audio_play(surface(pos.x, pos.z), pos, 0.45f + 0.55f * run, 1.0f - 0.08f * run, 0.0f);
 }
 
 static void sfx_on_events(void *user, const CombatWorld *w);
@@ -83,7 +77,7 @@ void sfx_listener(WorldSound *s, V3 eye, V3 target, f32 yaw)
         V3 o = VALLEY_ORIGIN;
         f32 lz = lis.z - o.z, rx = valley_river_x(lz), w = valley_river_w(lz), dx = lis.x - o.x - rx;
         sc.river_pos = v3_add(o, v3(rx + (dx < 0.0f ? -1.0f : 1.0f) * fminf(w, fabsf(dx)), valley_water_y(lz), lz));
-    } else if (in_hall(target.x, target.z)) {
+    } else if (hall_floor(target.x, target.z)) {
         // Под сводом зала: ветер глуше, эхо от бетона сильнее
         sc = (AudioScene){ .wind = 0.5f + 0.3f * zoom, .hum = 1.0f, .room = 0.85f, .far = 0.8f };
     } else {
@@ -113,6 +107,9 @@ static f32 roll01(SfxFight *f) { return (f32)(hash32(++f->roll * 0x9E3779B9u) >>
 
 // У каждого бойца своя высота оружия (±7%): два одинаковых секача звенят по-разному
 static f32 own_pitch(const SfxFight *f, u32 i) { return 0.93f + 0.14f * (f32)(hash32((i + 1) * 0x85EBCA6Bu ^ f->salt) & 1023u) / 1023.0f; }
+
+_Static_assert(SFX_WPN_BALKA - SFX_WPN_RESSORA == VOICE_BALKA && SFX_WPN_HOOK - SFX_WPN_RESSORA == VOICE_HOOK,
+               "голоса железа: SFX_WPN_* в порядке WeaponVoice");
 
 // Чем оружие отвечает на удар: чем закрылись — древко багра деревянное, а бьют им крюком или пикой
 static u8 weapon_voice(u32 w, bool striking)
@@ -277,7 +274,7 @@ void sfx_field(WorldSound *s, const Field *f, const Player *view)
     }
 }
 
-void sfx_arena(WorldSound *s, const ArenaView *v, const ArenaSession *a)
+void sfx_arena(WorldSound *s, const ArenaRing *v, const ArenaSession *a)
 {
     SfxFight *f = &s->arena;
     const CombatWorld *w = &a->w;

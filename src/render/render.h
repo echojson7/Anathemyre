@@ -36,6 +36,7 @@ typedef struct GpuMesh {
     // pool_vbase и первого индекса pool_ibase, морфы — с pool_moff (в uint)
     bool pooled;
     u32  pool_vbase, pool_ibase, pool_moff, pool_vcount;
+    u32  order;         // порядок отрисовки: номер загрузки. Раньше загружена — раньше рисуется
 } GpuMesh;
 
 // Экземпляр статической сетки (32 байта, InstRec в scene.vert): деревья, трава, камни
@@ -183,7 +184,7 @@ void render_set_groups(const InstGroup *groups, const InstCluster *clusters, u32
 void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const RenderSettings *rs, i32 win_w, i32 win_h);
 // Конец кадра GPU: после портретов и интерфейса, перед swap
 void render_frame_end(void);
-// Ждать кадровую развёртку: в GL — интервал swap, в Vulkan — режим показа (FIFO или IMMEDIATE)
+// Ждать кадровую развёртку: режим показа FIFO или IMMEDIATE
 void render_set_vsync(bool on);
 // Портрет в ячейку slot атласа (size x size от левого нижнего угла ячейки), после render_frame:
 // тот же свет и тени, фон прозрачный. cam_pos во fv — глаз портретной камеры

@@ -4,15 +4,9 @@
 
 #include <string.h>
 
-#include "../sim/arena.h"
-#include "../sim/anim.h"
-#include "../sim/look.h"
-#include "../sim/names.h"
-#include "ostov.h"
-#include "../view/showhall.h"
-#include "../sim/squad.h"
-#include "town_build.h"
 #include "../world/map.h"
+#include "ostov.h"
+#include "weapon.h"
 
 // Цвета поверхностей (альбедо, линейные)
 
@@ -235,10 +229,8 @@ static void rack_wall(MeshBuilder *mb, f32 x0, f32 x1, f32 wall_z, f32 y0, f32 y
 }
 
 // Лампы над стойками: кронштейн из стены под трубами, колпак наклонён к стойке
-#define RACK_LAMPS 5
-static const V3 g_rack_lamp[RACK_LAMPS] = { { 5.1f, 3.25f, -19.3f }, { 8.9f, 3.25f, -19.3f }, { -8.75f, 3.25f, -19.2f },
+const V3 g_hall_lamp[HALL_LAMPS] = { { 5.1f, 3.25f, -19.3f }, { 8.9f, 3.25f, -19.3f }, { -8.75f, 3.25f, -19.2f },
                                             { -4.4f, 3.25f, -19.2f }, { 23.6f, 3.25f, -18.9f } };
-#define RACK_LAMP_DIR v3(0.0f, -0.88f, -0.47f)
 
 static void rack_lamp(MeshBuilder *mb, V3 p, f32 wall_z)
 {
@@ -246,21 +238,11 @@ static void rack_lamp(MeshBuilder *mb, V3 p, f32 wall_z)
     mb_cylinder(mb, v3(p.x, p.y + 0.32f, wall_z), v3(p.x, p.y + 0.32f, p.z), 0.02f, 6);
     mb_cylinder(mb, v3(p.x, p.y + 0.32f, p.z), v3(p.x, p.y + 0.2f, p.z), 0.015f, 6);
     static const V2 shade[] = { { 0.0f, 0.05f }, { 0.07f, 0.07f }, { 0.17f, 0.17f }, { 0.25f, 0.24f }, { 0.26f, 0.23f } };
-    V3 d = RACK_LAMP_DIR;
+    V3 d = HALL_LAMP_DIR;
     prop_mat(mb, g_mat.rust);
     mb_lathe(mb, v3_sub(p, v3_mul(d, 0.25f)), v3_add(p, v3_mul(d, 0.01f)), shade, ARRAY_COUNT(shade), 12, 1.0f, 1.0f);
     mb_set(mb, v3(1.0f, 0.78f, 0.45f), MAT_EMISSIVE, BONE_NONE);
     mb_capsule(mb, v3_sub(p, v3_mul(d, 0.06f)), v3_sub(p, v3_mul(d, 0.02f)), 0.06f, 0.06f, 8, 1.0f, 1.0f);
-}
-
-u32 testroom_lights(PointLight *out, u32 max)
-{
-    u32 n = 0;
-    for (u32 k = 0; k < RACK_LAMPS && n < max; k++)
-        out[n++] = (PointLight){ .pos = v3_add(g_rack_lamp[k], v3_mul(RACK_LAMP_DIR, 0.05f)), .radius = 6.0f,
-                                 .color = v3_mul(v3(1.0f, 0.70f, 0.36f), 1.5f), .cone = 0.45f, .dir = RACK_LAMP_DIR,
-                                 .glow = 0.0009f };
-    return n;
 }
 
 // Оружейная у задней стены зала: одноручное на доске, двуручное и древковое в напольных стойках.
@@ -279,7 +261,7 @@ static void weapon_racks(MeshBuilder *mb)
     static const char *const pole[] = { "bagor", "bagor", "bagor", "kosa", "kosa", "kosa", "vereteno", "truba", "truba", "truba" };
     static const u8 pole_q[] = { Q_JUNK, Q_WORN, Q_SOUND, Q_JUNK, Q_WORN, Q_SOUND, Q_SOUND, Q_JUNK, Q_WORN, Q_SOUND };
     rack_stand(mb, 21.6f, 25.6f, wall + 0.75f, 2.6f, pole, pole_q, ARRAY_COUNT(pole), false);
-    for (u32 k = 0; k < RACK_LAMPS; k++) rack_lamp(mb, g_rack_lamp[k], wall);
+    for (u32 k = 0; k < HALL_LAMPS; k++) rack_lamp(mb, g_hall_lamp[k], wall);
 }
 
 // Мегаструктуры у горизонта: стена, башня, пилоны, мост
@@ -310,214 +292,14 @@ static void megastructures(MeshBuilder *mb, Rng *rng)
     mb_cylinder(mb, v3(-1500.0f, 60.0f, -600.0f), v3(1500.0f, 90.0f, -650.0f), 32.0f, 24);
 }
 
-void testroom_build_near(MeshBuilder *mb, Rng *rng)
+void hall_build_near(MeshBuilder *mb, Rng *rng)
 {
     hall(mb, rng);
 }
 
-void testroom_build_far(MeshBuilder *mb, Rng *rng)
+void hall_build_far(MeshBuilder *mb, Rng *rng)
 {
     megastructures(mb, rng);
 }
 
-f32 testroom_ground(f32 x, f32 z)
-{
-    // Плита пола зала: верх на 0.1
-    if (fabsf(x) <= 32.0f && z >= -28.0f && z <= 24.0f) return 0.1f;
-    f32 h = showhall_ground(x, z, ostov_ground(x, z, town_ground(x, z, map_height(x, z))));
-    // Плита арены
-    f32 dx = x - ARENA_CENTER.x, dz = z - ARENA_CENTER.z;
-    if (dx * dx + dz * dz < 8.5f * 8.5f) h = fmaxf(h, 0.125f);
-    return h;
-}
-
-static const char *g_crowd_names[] = {
-    "ЧУРИЛА", "ВЕЛИМИР", "ФЕОДУЛ", "ГОСТЯТА", "КАЛЛИСТ", "ТУЛЛ", "НЕЖДАН", "ПРОКЛ",
-    "МАМЕРК", "ДОМАСЛАВ", "ЕВТИХ", "СЕВЕР", "ИЗЯСЛАВ", "ПАНКРАТ", "РУФ", "ВЫШЕСЛАВ",
-};
-
-void crowd_add(People *p, Rng *rng, u32 count)
-{
-    count = MIN(count, (u32)ARRAY_COUNT(g_crowd_names));
-    u32 first = p->count;
-    for (u32 k = 0; k < count; k++) {
-        f32 x = rng_range(rng, -8.0f, 8.0f), z = rng_range(rng, -12.0f, 14.0f);
-        // Каждый сам по себе: своя команда, за чужого не вступается
-        u32 i = people_add(p, ROLE_WANDER, v3(x, testroom_ground(x, z), z), rng_range(rng, 0, 2 * PI_F), (u8)(TEAM_WANDER + k), 0);
-        // Большинство новички с ломом в руках, изредка бывалый.
-        // Свой поток случайных чисел: расстановка фигур та же, что без листов
-        Rng sr;
-        rng_seed(&sr, 0xC0DEu + k, 91);
-        sheet_random(&p->sheet[i], &sr, g_crowd_names[k], k % 4 == 1 ? 1 : 0, g_weapon_pool[k % g_weapon_pool_count]);
-        p->body[i].phase = rng_f32(rng);
-        p->body[i].gait = GAIT_WALK;
-        p->wait[i] = rng_range(rng, 0.0f, 3.0f);
-        p->seed[i] = rng_range(rng, 0, 100.0f);
-        p->variant[i] = (u8)(k % 4 % BODY_KIND_COUNT);
-        p->stand[i] = k % 4 == 3;
-        // Факел — у кого вторая рука свободна
-        u8 wc = g_weapons[g_weapon_pool[k % g_weapon_pool_count]].wclass;
-        p->torch[i] = k % 3 == 1 && wc != WC_POLEARM && wc != WC_HEAVY;
-        people_look_random(p, i, k * 7919u + 101u, k * 131u + 9u);
-    }
-    // Первый всегда идёт к камере: сразу видно ходьбу
-    if (count > 0) {
-        Player *b = &p->body[first];
-        player_init(b, v3(3.0f, testroom_ground(3.0f, 0.0f), 0.0f), 0.0f);
-        player_order_move(b, v3(3.0f, 0.0f, 16.0f));
-        b->marker = 0.0f;
-        p->wait[first] = 0;
-        p->stand[first] = false;
-    }
-}
-
-void watchers_add(People *p, const V3 *pos, const f32 *heading, const f32 *seed, u32 count, u8 team)
-{
-    for (u32 k = 0; k < count; k++) {
-        // Одна толпа: не вступаются, только отбиваются
-        u32 i = people_add(p, ROLE_WATCHER, v3(pos[k].x, testroom_ground(pos[k].x, pos[k].z), pos[k].z), heading[k], team, 0);
-        p->variant[i] = (u8)((k + 2) % BODY_KIND_COUNT);
-        // Глазеть на бои ходят с чем попало: у одних лом, у других ничего, у кого-то факел
-        Rng sr;
-        rng_seed(&sr, 0x5EE0u + k, 92);
-        bool armed = k % 3 == 0;
-        u8 weapon = def_weapon(k % 2 ? "sekach" : "ressora");
-        sheet_random(&p->sheet[i], &sr, name_next(p->variant[i] == BODY_FEMALE), k % 5 == 2 ? 1 : 0, weapon);
-        if (!armed) {
-            Item old;
-            sheet_equip(&p->sheet[i], SLOT_WEAPON, (Item){ 0 }, &old);
-        }
-        p->sheet[i].role = "ЗРИТЕЛЬ АРЕНЫ";
-        p->body[i].phase = rng_f32(&sr);
-        p->body[i].gait = GAIT_WALK;
-        p->seed[i] = seed[k];
-        p->stand[i] = true;
-        p->torch[i] = k % 5 == 1;
-        people_look_random(p, i, k * 7919u + 5000u, 7000u + k);
-    }
-}
-
-void crowd_step(People *pp, u32 i, Rng *rng, f32 dt, GroundFn ground)
-{
-    Player *p = &pp->body[i];
-    if (p->ctrl != CTRL_FREE) {
-        // Бой или погоня: поле боя ведёт тело, после — постоит и пойдёт дальше
-        pp->wait[i] = rng_range(rng, 3.0f, 8.0f);
-        player_update(p, dt, ground);
-        return;
-    }
-    bool was = p->moving;
-    if (!pp->stand[i] && !p->moving && (pp->wait[i] -= dt) <= 0.0f) {
-        player_order_move(p, v3(rng_range(rng, -14.0f, 14.0f), 0.0f, rng_range(rng, -16.0f, 18.0f)));
-        p->marker = 0.0f;
-    }
-    if (pp->stand[i] && !p->moving) {
-        // Стоящий после боя возвращается на своё место и поворачивается как стоял
-        V3 d = v3_sub(pp->home[i], p->pos);
-        if (d.x * d.x + d.z * d.z > 0.5f * 0.5f) {
-            if ((pp->wait[i] -= dt) <= 0.0f) {
-                player_order_move(p, pp->home[i]);
-                p->marker = 0.0f;
-            }
-        } else {
-            f32 dh = pp->home_h[i] - p->heading;
-            while (dh > PI_F) dh -= 2.0f * PI_F;
-            while (dh < -PI_F) dh += 2.0f * PI_F;
-            p->heading += dh * fminf(1.0f, dt * 1.5f);
-        }
-    }
-    p->vmax = 1.15f;
-    player_update(p, dt, ground);
-    if (was && !p->moving) pp->wait[i] = rng_range(rng, 2.0f, 7.0f);
-}
-
-// ---------------------------------------------------------------- мобы
-
-// Маршрут вокруг зала и арены, против часовой
-#define MOB_ROUTE 6
-static const V2 g_route[MOB_ROUTE] = {
-    { -36.0f, -33.0f }, { 0.0f, -36.0f }, { 37.0f, -32.0f }, { 38.0f, 30.0f }, { 14.0f, 50.0f }, { -37.0f, 32.0f },
-};
-
-// Оружие и броня — имена описаний (data/defs), NULL — конец
-typedef struct MobDef {
-    const char *name;
-    u8 tier, gait;
-    const char *weapon, *armor[3];
-} MobDef;
-
-static const MobDef g_mob_defs[] = {
-    { "ВЫШАТА", 1, GAIT_WALK, "ressora", { "rags", "jacket" } },
-    { "ФЕОКТИСТ", 1, GAIT_JOG, "bagor", { "quilt" } },
-    { "ГОРДИАН", 2, GAIT_WALK, "balka", { "quilt", "plate", "bucket" } },
-    { "МИЛОНЕГ", 0, GAIT_RUN, "sekach", { "rags" } },
-    { "КАССИЙ", 1, GAIT_JOG, "sekach", { "jacket", "greaves" } },
-};
-
-void mobs_add(People *p, Rng *rng)
-{
-    u32 n = ARRAY_COUNT(g_mob_defs);
-    for (u32 k = 0; k < n; k++) {
-        const MobDef *d = &g_mob_defs[k];
-        // Персонаж раньше места: так шли случайные числа и прежде
-        CharSheet c;
-        memset(&c, 0, sizeof c);
-        c.name = d->name;
-        arena_random_fighter(&c.d, rng, d->tier);
-        for (u32 s = 0; s < SLOT_COUNT; s++) c.d.armor[s] = ARMOR_NONE;
-        for (u32 q = 0; q < PART_COUNT; q++) c.d.hp[q] = g_part_hp[q];
-        c.d.blood = 100.0f * c.d.mass / 75.0f;
-        Item old;
-        c.d.weapon = def_weapon(d->weapon);
-        sheet_equip(&c, SLOT_WEAPON, item_make(IK_WEAPON, c.d.weapon, Q_WORN, 1), &old);
-        for (u32 a = 0; a < 3 && d->armor[a]; a++) {
-            Item it = item_make(IK_ARMOR, def_armor(d->armor[a]), Q_WORN, 1);
-            sheet_equip(&c, item_slot(it), it, &old);
-        }
-        sheet_equip(&c, SLOT_BACK, item_make(IK_GOODS, def_goods("pack"), Q_WORN, 1), &old);
-        sheet_equip(&c, SLOT_PANTS, item_make(IK_ARMOR, def_armor("pants"), Q_WORN, 1), &old);
-        // Разнесены по кругу, у каждого своя точка старта. Одна шайка: вступаются друг за друга
-        u32 at = (k * 7u + 1u) % MOB_ROUTE;
-        V2 a = g_route[at], b = g_route[(at + 1) % MOB_ROUTE];
-        f32 t = rng_range(rng, 0.1f, 0.8f);
-        f32 x = lerpf(a.x, b.x, t), z = lerpf(a.y, b.y, t);
-        u32 i = people_add(p, ROLE_MOB, v3(x, testroom_ground(x, z), z), atan2f(b.x - a.x, b.y - a.y), TEAM_MOBS, FF_ASSIST);
-        p->sheet[i] = c;
-        p->body[i].gait = d->gait;
-        p->body[i].phase = rng_f32(rng);
-        p->node[i] = (u8)((at + 1) % MOB_ROUTE);
-        p->variant[i] = (u8)(k % 4 % BODY_KIND_COUNT);
-        p->seed[i] = rng_range(rng, 0.0f, 100.0f);
-        p->height[i] = c.d.height / 1.8f;
-        p->width[i] = 1.0f + 0.08f * sinf(p->seed[i] * 3.17f + 1.0f);
-        p->look_seed[i] = 2000u + k;
-        // Ночью шайка ходит с огнём: первый и последний, у них вторая рука свободна
-        p->torch[i] = k == 0 || k == n - 1;
-        player_order_move(&p->body[i], v3(b.x, 0.0f, b.y));
-        p->body[i].marker = 0.0f;
-        people_dress(p, i);
-    }
-}
-
-void mob_step(People *pp, u32 i, Rng *rng, f32 dt, GroundFn ground)
-{
-    Player *p = &pp->body[i];
-    if (p->ctrl != CTRL_FREE) {
-        // Бой или погоня: поле боя ведёт тело, после — постоит и пойдёт дальше по кругу
-        pp->wait[i] = rng_range(rng, 4.0f, 10.0f);
-        player_update(p, dt, ground);
-        return;
-    }
-    bool was = p->moving;
-    p->vmax = g_gait_speed[p->gait] * (0.9f + 0.002f * pp->sheet[i].d.skill[SK_ATHLETICS]);
-    if (!p->moving && (pp->wait[i] -= dt) <= 0.0f) {
-        V2 t = g_route[pp->node[i]];
-        // Не точно в точку: каждый круг немного иначе
-        player_order_move(p, v3(t.x + rng_range(rng, -2.0f, 2.0f), 0.0f, t.y + rng_range(rng, -2.0f, 2.0f)));
-        p->marker = 0.0f;
-        pp->node[i] = (u8)((pp->node[i] + 1) % MOB_ROUTE);
-    }
-    player_update(p, dt, ground);
-    // Дошёл: иногда стоит, переводит дух, иногда сразу дальше
-    if (was && !p->moving) pp->wait[i] = rng_f32(rng) < 0.55f ? rng_range(rng, 6.0f, 16.0f) : 0.0f;
-}
+bool hall_floor(f32 x, f32 z) { return fabsf(x) <= 32.0f && z >= -28.0f && z <= 24.0f; }

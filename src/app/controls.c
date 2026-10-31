@@ -1,4 +1,5 @@
 #include "controls.h"
+#include "ground.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -8,8 +9,10 @@
 #include "../render/ui.h"
 #include "../world/map.h"
 #include "../view/figures.h"
-#include "../content/ostov.h"
 #include "../view/showhall.h"
+
+// Камера внутри павильона Остова: лицом к пролому и каньону (кнопка КАМЕРА: В ОСТОВ)
+#define OSTOV_CAM ((RtsCamera){ .target = { -80.0f, 0.0f, 8.0f }, .yaw = 0.0f, .pitch = 0.2f, .dist = 6.0f })
 
 const char *const g_stage_name[STAGE_COUNT] = {
     "ПУСТО", "ТЕНИ", "НЕБО И ТУМАН", "ЛУЧИ", "AO", "ПИКСЕЛЬНОСТЬ", "ФИЛЬТР", "РАСТЕНИЯ", "СВЕТ", "ШАГ МИРА", "ЛЮДИ", "СУТКИ И ОГНИ", "ПОЛНАЯ",
@@ -265,7 +268,7 @@ void orders_input(const Hud *h, const Input *in, const Input *hin, const HudWorl
             f32 nx = 2.0f * ((f32)in->mouse_x + 0.5f) / (f32)ww - 1.0f;
             f32 ny = 1.0f - 2.0f * ((f32)in->mouse_y + 0.5f) / (f32)wh;
             V3 hit;
-            if (camera_pick_ground(hw->view_proj, eye, nx, ny, world_ground, &hit)) {
+            if (camera_pick_ground(hw->view_proj, eye, nx, ny, app_ground, &hit)) {
                 for (u32 i = 0; i < sq->count; i++)
                     if (sq->selected[i]) field_cancel(fd, (u32)squad_body(sq, i)->slot, true);
                 // За край карты не уйти

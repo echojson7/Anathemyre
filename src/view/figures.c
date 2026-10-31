@@ -1,4 +1,5 @@
 #include "figures.h"
+#include "../content/weapon.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -58,22 +59,29 @@ bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const
     memset(f, 0, sizeof *f);
     for (u32 i = 0; i < PEOPLE_MAX; i++) f->age[i] = -1.0f;
     f->bones = ARENA_PUSH_ARRAY(perm, M4, (size_t)PEOPLE_MAX * RENDER_MAX_BONES);
-    f->arena = ARENA_PUSH_ARRAY(perm, M4, (size_t)AV_BONE_SETS * RENDER_MAX_BONES);
+    f->arena = ARENA_PUSH_ARRAY(perm, M4, (size_t)RING_BONE_SETS * RENDER_MAX_BONES);
     f->marks = ARENA_PUSH_ARRAY(perm, M4, (size_t)MARK_SETS * RENDER_MAX_BONES);
     f->portrait = ARENA_PUSH_ARRAY(perm, M4, 2 * RENDER_MAX_BONES);
 
-    // Тела людей и одежда; грубые уровни лежат отдельно: остальной код видит только полный уровень
+    // Одежда и причёски, затем тела; грубые уровни лежат отдельно: остальной код видит только полный уровень.
+    // Порядок загрузки — порядок отрисовки: одежда раньше тел (одежда после тел — проход сцены на ~13 % дольше)
     size_t mark = perm->used;
-    for (u32 k = 0; k < BODY_KIND_COUNT; k++) {
-        char stem[96];
-        if (!load_lods(&m->body[k], m->body_lod[k], mb, perm, data_dir, g_body_file[k], 1.0f)) return false;
+    for (u32 k = 0; k < BODY_KIND_COUNT; k++)
         for (u32 g = 0; g < GEAR_ROW; g++) {
-            // Вещь переключает LOD на той же дальности, что и тело: порог по отношению сфер. За вещами — причёски
             if (g >= GEAR_COUNT && !g_hair_file[k][g - GEAR_COUNT]) continue;
+            char stem[96];
             if (g < GEAR_COUNT) snprintf(stem, sizeof stem, "gear/%s_%s", g_body_file[k], g_gear_file[g]);
             else snprintf(stem, sizeof stem, "hair/%s_%s", g_body_file[k], g_hair_file[k][g - GEAR_COUNT]);
+            if (!load_lods(&m->gear[k * GEAR_ROW + g], &m->gear_lod[(k * GEAR_ROW + g) * (CHAR_LODS - 1)], mb, perm,
+                           data_dir, stem, 0.0f))
+                return false;
+        }
+    for (u32 k = 0; k < BODY_KIND_COUNT; k++) {
+        if (!load_lods(&m->body[k], m->body_lod[k], mb, perm, data_dir, g_body_file[k], 1.0f)) return false;
+        // Вещь переключает LOD на той же дальности, что и тело: порог по отношению сфер
+        for (u32 g = 0; g < GEAR_ROW; g++) {
+            if (g >= GEAR_COUNT && !g_hair_file[k][g - GEAR_COUNT]) continue;
             GpuMesh *gm = &m->gear[k * GEAR_ROW + g], *gl = &m->gear_lod[(k * GEAR_ROW + g) * (CHAR_LODS - 1)];
-            if (!load_lods(gm, gl, mb, perm, data_dir, stem, 0.0f)) return false;
             f32 ratio = gm->bound.w / m->body[k].bound.w;
             for (u32 l = 0; l + 1 < CHAR_LODS; l++) (l ? &gl[l - 1] : gm)->lod_px = g_char_lod_px[l] * ratio;
         }
@@ -202,7 +210,7 @@ static void fight_pose(const Field *fd, u32 i, PoseJob *j, const f32 slope[2])
 }
 
 // Бойцы текущего боя арены: позы от её боя, внешность из ростера
-static u32 arena_figures(Figures *f, const CharMeshes *m, const ArenaView *v, const ArenaSession *s, f32 time,
+static u32 arena_figures(Figures *f, const CharMeshes *m, const ArenaRing *v, const ArenaSession *s, f32 time,
                          DrawItem *items)
 {
     const CombatWorld *w = &s->w;
@@ -218,7 +226,7 @@ static u32 arena_figures(Figures *f, const CharMeshes *m, const ArenaView *v, co
         M4 *b = &f->arena[(set++) * RENDER_MAX_BONES];
         j->bones = b;
         CharLook lk;
-        j->look = arena_view_look(s, ri, &lk);
+        j->look = arena_ring_look(s, ri, &lk);
         items[n++] = (DrawItem){ .mesh = &m->body[kind], .bones = b };
         u8 worn[GEAR_MAX_WORN];
         u32 nw = gear_from_armor(s->roster[ri].d.armor, worn);
@@ -250,7 +258,7 @@ void figures_view(Figures *f, const People *p, const Field *fd, f32 alpha, Groun
     }
 }
 
-u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *fd, const ArenaView *av,
+u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *fd, const ArenaRing *av,
                  const ArenaSession *s, const FigureView *v, DrawItem *items, PointLight *lights, u32 *nl)
 {
     PoseCull pc = pose_cull_make(v->view_proj, v->eye, v->light_dir, v->dt);
@@ -407,7 +415,7 @@ void figures_portrait_arena(Figures *f, const FrameView *base, const CharMeshes 
     u8 gear[GEAR_MAX_WORN];
     u32 ng = gear_from_armor(d->armor, gear), kind = ri % BODY_KIND_COUNT;
     CharLook lk;
-    M4 lm = arena_view_look(s, ri, &lk);
+    M4 lm = arena_ring_look(s, ri, &lk);
     ng += look_hair(&lk, gear, ng);
     portrait(base, slot, size, kind, &m->body[kind], &m->weapon[weapon_mesh(d->weapon, d->weapon_q)], d->weapon, seed,
              d->height / 1.8f, 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), lm, m->gear + kind * GEAR_ROW, gear, ng,

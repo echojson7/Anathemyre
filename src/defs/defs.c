@@ -2,7 +2,6 @@
 
 #include <string.h>
 
-#include "../audio/audio.h"
 #include "../sim/look.h"
 #include "../core/mesh.h"
 #include "deftext.h"
@@ -36,9 +35,8 @@ static const char *const g_slot_word[SLOT_COUNT] = { "head", "face", "shirt", "a
 static const char *const g_part_word[PART_COUNT] = { "head", "chest", "stomach", "arm_l", "arm_r", "leg_l", "leg_r" };
 static const char *const g_mat_word[] = { "concrete", "rust", "sand", "cloth", "leather", "glyph", "emissive", "skin", "metal",
                                           "terrain", "rock", "water", "bark", "leaf", "grass", "steel" };
-static const char *const g_voice_word[] = { "ressora", "sekach", "armatura", "bagor", "hook", "balka" };
+static const char *const g_voice_word[VOICE_COUNT] = { "ressora", "sekach", "armatura", "bagor", "hook", "balka" };
 _Static_assert(MAT_METAL == 8 && MAT_GLYPH == 5 && MAT_STEEL == 15, "g_mat_word по номерам MAT_*");
-_Static_assert(SFX_WPN_BALKA - SFX_WPN_RESSORA == 5 && SFX_WPN_HOOK - SFX_WPN_RESSORA == 4, "g_voice_word по SFX_WPN_*");
 
 // Имена, которые ставит сам код: свой отряд, наборы арены, тестовые сцены. Переедут в файлы с фракциями
 static const char *const g_need[DK_COUNT][16] = {

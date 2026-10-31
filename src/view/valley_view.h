@@ -27,8 +27,6 @@ typedef struct ValleyView {
     u32        group_count;
     InstCluster clusters[20 * 20];   // участки 32 м
     u32        cluster_count;
-    V3  spawn;          // где появляется отряд, на карте мира
-    f32 spawn_heading;
 } ValleyView;
 
 // Строит всё один раз; подробная карта высот (valley_init) — тоже здесь. Данные экземпляров живут в perm

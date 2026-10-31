@@ -190,7 +190,7 @@ def mat_tape(name, col):
     return m
 
 # ---------------------------------------------------------------- выгрузка в игру
-# Сетка AMSH 1 (src/render/mesh.h): Vertex = pos 3f, nrm 3f, color 4B (альфа — параметр материала), mat, bone, tint, pad.
+# Сетка AMSH 1 (src/core/mesh.h): Vertex = pos 3f, nrm 3f, color 4B (альфа — параметр материала), mat, bone, tint, pad.
 # Оси игры: острие по +Y, лезвие по +Z, толщина по X, кулак правой руки в начале координат.
 # Здесь: острие по +X, лезвие по -Z, толщина по Y. pad — номер части (игра по нему раскладывает ржавчину и обнуляет)
 GAME_MAT = {'concrete': 0, 'rust': 1, 'cloth': 3, 'leather': 4, 'glyph': 5, 'metal': 8, 'steel': 15}

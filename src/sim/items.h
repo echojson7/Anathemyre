@@ -7,6 +7,9 @@
 typedef enum WeaponClass { WC_BLADE, WC_CLEAVER, WC_BLUNT, WC_POLEARM, WC_HEAVY, WC_COUNT } WeaponClass;
 typedef enum AttackKind { ATK_OVERHEAD, ATK_SWING, ATK_THRUST, ATK_COUNT } AttackKind;
 
+// Голос железа при ударе: звук — view/sfx.c (SFX_WPN_* в том же порядке)
+typedef enum WeaponVoice { VOICE_RESSORA, VOICE_SEKACH, VOICE_ARMATURA, VOICE_BAGOR, VOICE_HOOK, VOICE_BALKA, VOICE_COUNT } WeaponVoice;
+
 typedef struct WeaponDef {
     const char *id;   // имя в описаниях: по нему моды правят запись, сохранение сверяет номера
     const char *name;
@@ -21,7 +24,7 @@ typedef struct WeaponDef {
     f32 knock;        // сила сбивания
     f32 pen;          // пробой брони уколом, 0..1
     u8  size_w, size_h;  // клетки инвентаря
-    u8  voice, voice_strike;  // голос железа (SFX_WPN_* по порядку): закрылся им и ударил им
+    u8  voice, voice_strike;  // голос железа (WeaponVoice): закрылся им и ударил им
     u16 part, parts;  // форма: части в g_weapon_parts
     const char *model;  // готовая форма data/meshes/weapons/<model>.mesh (tools/weaponconv), части — запасные
     bool common;      // в общем запасе: отряды, арена, толпа берут случайное оружие отсюда

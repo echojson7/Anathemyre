@@ -1,8 +1,8 @@
 # Этапы сцены: разбор производительности с нуля
 
-Состояние на 2026-10-31. Код: `src/game/controls.h` (`SceneStage`, `stage_render`), `src/main.c` (что
+Состояние на 2026-10-31. Код: `src/app/controls.h` (`SceneStage`, `stage_render`), `src/app/main.c` (что
 выключено до какого этапа), `src/render/render.c` (флаги `RenderSettings.shadows/atmos/rays/ao/flora`),
-`src/game/bench.c` (замер по этапам). Общее устройство кадра — [performance.md](performance.md).
+`src/app/bench.c` (замер по этапам). Общее устройство кадра — [performance.md](performance.md).
 
 Зачем: увидеть, сколько стоит голая местность и сколько добавляет каждая система. Код систем не удалён:
 этап только выключает их на время. Выключенный проход не идёт вовсе (ни вызовов, ни сбора на CPU).

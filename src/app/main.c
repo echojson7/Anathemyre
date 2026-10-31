@@ -28,7 +28,9 @@
 #include "../view/showhall.h"
 #include "../view/stand.h"
 #include "../view/sfx.h"
-#include "../content/hall.h"
+#include "../view/scene.h"
+#include "ground.h"
+#include "../content/weapon.h"
 #include "../world/world.h"
 #include "../platform/platform.h"
 #include "../render/render.h"
@@ -107,7 +109,7 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
     FILE *f = fopen(path, "wb");
     if (!f) return false;
     fprintf(f, "P6\n%d %d\n255\n", w, h);
-    // GL отдаёт снизу вверх
+    // Кадр лежит строкой 0 внизу (render/rb.h), PPM пишется сверху
     for (i32 y = h - 1; y >= 0; y--) fwrite(rgb + (size_t)y * (size_t)w * 3, 1, (size_t)w * 3, f);
     fclose(f);
     return true;
@@ -316,13 +318,14 @@ int main(int argc, char **argv)
     if (!jobs_init(opt.threads)) log_error("ПОТОКИ: пул не запущен, всё в главном потоке");
     log_info("ПОТОКИ: %u", jobs_threads());
 
-    // Мир, затем сетки людей; ряд людей для сравнения строится при первом показе.
-    // Рендер раскладывает вызовы по адресам сеток: одежда в памяти раньше статики мира, тела и оружие — после.
-    // Так было и до таблицы людей; одежда после тел — проход сцены на программном GL на ~13% дольше
+    // Карта, статика и виды (scene), мир, затем сетки людей; ряд людей для сравнения строится при первом показе.
+    // Рендер рисует сетки в порядке загрузки (GpuMesh.order): figures_init грузит одежду раньше тел
     MeshBuilder mb;
     GpuMesh *gear = ARENA_PUSH_ARRAY(&perm, GpuMesh, CHAR_GEAR_MESHES);
     GpuMesh *gear_lod = ARENA_PUSH_ARRAY(&perm, GpuMesh, CHAR_GEAR_MESHES * (CHAR_LODS - 1));
     World *world = ARENA_PUSH_ARRAY(&perm, World, 1);
+    Scene *scene = ARENA_PUSH_ARRAY(&perm, Scene, 1);
+    Town town;
     CharMeshes *cm = ARENA_PUSH_ARRAY(&perm, CharMeshes, 1);
     cm->gear = gear;
     cm->gear_lod = gear_lod;
@@ -330,26 +333,32 @@ int main(int argc, char **argv)
     HumansRow *humans = ARENA_PUSH_ARRAY(&perm, HumansRow, 1);
     Stand *stand = ARENA_PUSH_ARRAY(&perm, Stand, 1);
     ShowHall *hall = ARENA_PUSH_ARRAY(&perm, ShowHall, 1);
-    // Формы оружия — до мира: стойки зала собираются из них в world_init
+    // Формы оружия — до статики: стойки зала собираются из них
     weapon_models_load(&perm, data_dir);
-    if (!world_init(world, &perm, &mb, opt.seed, opt.tod, !opt.day_stop) || !figures_init(fig, cm, &mb, &perm, data_dir)) {
+    f64 map_t0 = time_now();
+    bool built = map_init(&perm, opt.seed);
+    if (built) log_stat("МИР: карта %.2f с", time_now() - map_t0);
+    built = built && scene_init(scene, &mb, &perm, opt.seed, &town) &&
+            world_init(world, &perm, opt.seed, opt.tod, !opt.day_stop, &town, app_ground) &&
+            figures_init(fig, cm, &mb, &perm, data_dir);
+    if (!built) {
         jobs_shutdown();
         render_shutdown();
         platform_shutdown();
         return 1;
     }
-    figures_view(fig, world->people, world->field, world->alpha, world_ground);
-    humans_row_init(humans, &perm, world_ground);
+    figures_view(fig, world->people, world->field, world->alpha, app_ground);
+    humans_row_init(humans, &perm, app_ground);
     stand_init(stand, &perm);
     showhall_init(hall, &mb, &perm);
     hall->t_off = opt.hall_t;
     // Рельеф карты и растения долины — на весь сеанс
     render_set_terrain(map_fill, NULL);
-    render_set_groups(world->valley->groups, world->valley->clusters, world->valley->cluster_count);
+    render_set_groups(scene->valley->groups, scene->valley->clusters, scene->valley->cluster_count);
     bool humans_flip = opt.humans;
     Squad *squad = &world->squad;
     Field *field = world->field;
-    ValleyView *valley = world->valley;
+    ValleyView *valley = scene->valley;
 
     PointLight *lights = ARENA_PUSH_ARRAY(&perm, PointLight, TORCH_LIGHTS_MAX);
     DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, RENDER_MAX_ITEMS);
@@ -375,7 +384,7 @@ int main(int argc, char **argv)
     // Звук: слушатель у камеры, шаги, бой поля и арены. Без звука снимки кадров и --mute.
     // Банк собирается в своём потоке при старте; устройство открывается, только если звук включён
     WorldSound *wsound = ARENA_PUSH_ARRAY(&perm, WorldSound, 1);
-    sfx_init(wsound, field, world->arena, ARENA_CENTER, world_ground);
+    sfx_init(wsound, field, world->arena, ARENA_CENTER, app_ground);
     set.sound_ok = !opt.shot_path && audio_init(&perm);
     set.sound_on = set.sound_ok && !opt.mute;
     if (set.sound_on) audio_start();
@@ -438,7 +447,7 @@ int main(int argc, char **argv)
     // Снимок вблизи (--cam с дистанцией меньше 4 м): камера как у стенда, кружит над точкой взгляда
     if (opt.cam_set && opt.cam.dist < 4.0f) camera_close(true);
     // Точка взгляда идёт по земле (сглаженно); --cam-y — подъём над ней
-    f32 cam_lift = opt.cam.target.y, cam_y = world_ground(cam.target.x, cam.target.z);
+    f32 cam_lift = opt.cam.target.y, cam_y = app_ground(cam.target.x, cam.target.z);
     Input in;
     memset(&in, 0, sizeof in);
     in.quit = quit_now;
@@ -470,11 +479,11 @@ int main(int argc, char **argv)
         }
         if (humans_flip) {
             humans_flip = false;
-            humans_row_toggle(humans, &mb, &perm, data_dir, world_ground);
+            humans_row_toggle(humans, &mb, &perm, data_dir, app_ground);
         }
         if (set.stand_moved) {
             set.stand_moved = false;
-            stand_show(stand, set.stand, set.stand_row, &mb, &perm, world_ground, &cam);
+            stand_show(stand, set.stand, set.stand_row, &mb, &perm, app_ground, &cam);
             // --stand N --cam ...: снимок стенда своей камерой (крупно голову и т. п.), --cam-y тут — высота над морем
             if (opt.cam_set && opt.stand > 0) {
                 cam = opt.cam;
@@ -482,7 +491,7 @@ int main(int argc, char **argv)
             }
             // Высоту взгляда над плитами задаёт стенд: держать её над землёй, пока он открыт
             if (set.stand) {
-                cam_y = world_ground(cam.target.x, cam.target.z);
+                cam_y = app_ground(cam.target.x, cam.target.z);
                 cam_lift = cam.target.y - cam_y;
             } else cam_lift = opt.cam.target.y;
         }
@@ -491,8 +500,8 @@ int main(int argc, char **argv)
         if (set.travel) {
             set.travel = false;
             if ((jumped = world_travel(world))) {
-                cam = !world_squad_in_valley(world) || opt.cam_set ? opt.cam : VALLEY_BENCH_CAM(valley->spawn);
-                cam_y = world_ground(cam.target.x, cam.target.z);
+                cam = !world_squad_in_valley(world) || opt.cam_set ? opt.cam : VALLEY_BENCH_CAM(world->valley_spawn);
+                cam_y = app_ground(cam.target.x, cam.target.z);
                 if (hud.look_kind != LOOK_SQUAD) hud_look(&hud, LOOK_SQUAD, 0);
             }
         }
@@ -507,8 +516,8 @@ int main(int argc, char **argv)
         if (bench_request && !bench.on) {
             bench_request = false;
             restore = (BenchRestore){ cam, world->tod, world->day_run, set.vsync, set.follow };
-            cam = world_squad_in_valley(world) ? VALLEY_BENCH_CAM(valley->spawn) : BENCH_CAM;
-            cam_y = world_ground(cam.target.x, cam.target.z);
+            cam = world_squad_in_valley(world) ? VALLEY_BENCH_CAM(world->valley_spawn) : BENCH_CAM;
+            cam_y = app_ground(cam.target.x, cam.target.z);
             world->tod = BENCH_TOD;
             world->day_run = set.follow = set.vsync = false;
             render_set_vsync(false);
@@ -550,12 +559,12 @@ int main(int argc, char **argv)
         }
         cam.target.x = clampf(cam.target.x, -MAP_HALF, MAP_HALF);
         cam.target.z = clampf(cam.target.z, -MAP_HALF, MAP_HALF);
-        cam_y += (world_ground(cam.target.x, cam.target.z) - cam_y) * fminf(1.0f, real_dt * 6.0f);
+        cam_y += (app_ground(cam.target.x, cam.target.z) - cam_y) * fminf(1.0f, real_dt * 6.0f);
         cam.target.y = cam_y + cam_lift;
         f32 valley_k = map_valley(cam.target.x, cam.target.z);
         FrameView fv;
         fv.cam_pos = camera_eye(&cam);
-        fv.cam_pos.y = fmaxf(fv.cam_pos.y, world_ground(fv.cam_pos.x, fv.cam_pos.z) + 1.5f);
+        fv.cam_pos.y = fmaxf(fv.cam_pos.y, app_ground(fv.cam_pos.x, fv.cam_pos.z) + 1.5f);
         fv.cam_pos = showhall_clamp_eye(cam.target, fv.cam_pos);
         fv.view = m4_look_at(fv.cam_pos, v3_add(cam.target, v3(0, 1.0f, 0)), v3(0, 1, 0));
         fv.proj = m4_perspective(CAM_FOV, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
@@ -577,13 +586,13 @@ int main(int argc, char **argv)
             jumped = true;
             V3 lp = squad_body(squad, (u32)MAX(0, squad_primary(squad)))->pos;
             cam.target = v3(lp.x, cam.target.y, lp.z);
-            cam_y = world_ground(cam.target.x, cam.target.z);
+            cam_y = app_ground(cam.target.x, cam.target.z);
             for (u32 i = 0; i < PEOPLE_MAX; i++) fig->age[i] = -1.0f;
             figures_portraits_reset();
             hud_look(&hud, LOOK_NONE, 0);
         }
         set.humans = set.bench = set.bands_test = set.save = set.load = false;
-        HudWorld hw = { .squad = squad, .arena = world->arena, .aview = &world->aview, .field = field, .view = fig->view,
+        HudWorld hw = { .squad = squad, .arena = world->arena, .ring = &world->ring, .field = field, .view = fig->view,
                         .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day,
                         .ground = world->ground, .phys = world->phys, .ground_ask = &world->ground_ask, .alpha = world->alpha };
         bool ui_busy = hud_input(&hud, &hin, &hw);
@@ -613,14 +622,14 @@ int main(int argc, char **argv)
         prof_zone(PZ_FIGURES);
         if (st_live) {
             world_present(world, dt);
-            figures_view(fig, world->people, field, world->alpha, world_ground);
+            figures_view(fig, world->people, field, world->alpha, app_ground);
         }
         f32 wtime = world_time(world);
         prof_zone(PZ_SOUND);
         if (set.sound_on && st_full) {
             sfx_listener(wsound, fv.cam_pos, cam.target, cam.yaw);
             sfx_field(wsound, field, fig->view);
-            sfx_arena(wsound, &world->aview, world->arena);
+            sfx_arena(wsound, &world->ring, world->arena);
         }
 
         // Список кадра: статика, люди и бойцы арены, метки, ряд людей; свет — фонари арены и факелы
@@ -628,27 +637,23 @@ int main(int argc, char **argv)
         Sky sky;
         // До этапа СУТКИ свет утра, как при замере кадра
         sky_at(st_day ? world_tod(world) : BENCH_TOD, &sky);
-        u32 nl = arena_view_lights(&world->aview, sky.night, wtime, lights);
-        u32 n = 0;
-        items[n++] = (DrawItem){ .mesh = &world->hall };
-        items[n++] = (DrawItem){ .mesh = &world->far, .no_shadow = true };
-        items[n++] = (DrawItem){ .mesh = &world->town_mesh };
-        items[n++] = (DrawItem){ .mesh = &world->ostov };
+        u32 nl = scene_ring_lights(&world->ring, sky.night, wtime, lights);
+        u32 n = scene_statics(scene, items);
         // Мерильня: лампы горят всегда, фигуры — когда камера рядом
         nl += showhall_lights(wtime, lights + nl, TORCH_LIGHTS_MAX - nl);
-        nl += testroom_lights(lights + nl, TORCH_LIGHTS_MAX - nl);
+        nl += scene_hall_lights(lights + nl, TORCH_LIGHTS_MAX - nl);
         if (st_people) n += showhall_draw(hall, cm, fv.cam_pos, wtime, st_live ? dt : 0.0f, items + n);
         else items[n++] = (DrawItem){ .mesh = &hall->mesh };
         n += valley_view_draw(valley, fv.cam_pos, items + n);
-        n += scrap_draw(&world->scrap, world->phys, world->alpha, fv.cam_pos, items + n, RENDER_MAX_ITEMS / 8);
-        n += loot_draw(&world->loot, world->ground, world->phys, cm->weapon, world->alpha, fv.cam_pos, items + n,
+        n += scrap_draw(&scene->scrap, world->phys, world->alpha, fv.cam_pos, items + n, RENDER_MAX_ITEMS / 8);
+        n += loot_draw(&scene->loot, world->ground, world->phys, cm->weapon, world->alpha, fv.cam_pos, items + n,
                        RENDER_MAX_ITEMS / 8);
         prof_zone(PZ_FIGURES);
         if (st_people) {
             people_dress_live(world->people);
             FigureView fview = { .view_proj = hw.view_proj, .eye = fv.cam_pos, .light_dir = sky.light_dir, .dt = real_dt,
                                  .time = wtime, .night = sky.night };
-            n += figures_draw(fig, cm, world->people, field, &world->aview, world->arena, &fview, items + n, lights, &nl);
+            n += figures_draw(fig, cm, world->people, field, &world->ring, world->arena, &fview, items + n, lights, &nl);
         }
         if (!st_day) nl = 0;
         u32 posed = st_people ? fig->jobs : 0;
@@ -656,7 +661,7 @@ int main(int argc, char **argv)
         V3 look_pos;
         bool look_field = hud.look_kind == LOOK_FIELD && hud.look < field->w.count;
         if (look_field) look_pos = fig->view[hud.look].pos;  // слот поля = номер в таблице
-        bool look_ring = look_field || (hud.look_kind == LOOK_ARENA && hud_arena_pos(&world->aview, world->arena, hud.look, &look_pos));
+        bool look_ring = look_field || (hud.look_kind == LOOK_ARENA && hud_arena_pos(&world->ring, world->arena, hud.look, &look_pos));
         if (st_people) {
             n += figures_marks(fig, cm, squad, field, look_ring ? &look_pos : NULL, items + n);
             n += humans_row_draw(humans, cm, items + n);

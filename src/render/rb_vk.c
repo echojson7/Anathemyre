@@ -1608,9 +1608,9 @@ static void desc_formats(const RbPipeDesc *d, VkFormat *col, u32 *n, VkFormat *d
     *depth = d->depth_fmt != RB_FMT_NONE ? tex_fmt(d->depth_fmt) : VK_FORMAT_UNDEFINED;
 }
 
-// Графический конвейер под форматы целей прохода. Конвейер GL не знает целей, поэтому здесь
-// по варианту на набор форматов: первый — по объявленным в RbPipeDesc, остальные — при первом вызове
-// и на наличие карты частоты в проходе (в проходе с картой Vulkan требует конвейер с флагом)
+// Графический конвейер под форматы целей прохода: RbPipeDesc целей не знает, поэтому вариант на набор
+// форматов и на наличие карты частоты (в проходе с картой Vulkan требует конвейер с флагом). Первый —
+// по объявленным в RbPipeDesc, остальные — при первом вызове
 static VkPipeline variant_get(Pipe *p, const VkFormat *col, u32 ncol, VkFormat depth, bool rate)
 {
     for (u32 i = 0; i < p->nvar; i++) {

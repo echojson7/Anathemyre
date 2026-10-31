@@ -18,7 +18,7 @@
 typedef struct BenchResult {
     f64 frame_ms, fps, gpu_ms, logic_ms, submit_ms, swap_ms;
     f64 pass_ms[PASS_COUNT], gap_ms;   // GPU по проходам и между кадрами
-    f64 prep_ms, cpu_ms[PASS_COUNT];   // CPU: сбор и вызовы GL по проходам
+    f64 prep_ms, cpu_ms[PASS_COUNT];   // CPU: сбор и запись команд по проходам
 } BenchResult;
 
 typedef struct Bench {
