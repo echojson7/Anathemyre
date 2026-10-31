@@ -15,7 +15,7 @@ void ground_init(Ground *g, Arena *perm)
 static PhysDesc weapon_desc(const WeaponDef *wd)
 {
     f32 len = clampf(wd->length, 0.2f, 3.0f);
-    PhysDesc d = { .mass = fmaxf(wd->weight, 0.3f), .friction = 0.6f, .bounce = 0.15f };
+    PhysDesc d = { .mass = fmaxf(wd->weight, 0.3f) };
     switch (wd->wclass) {
     case WC_BLADE:
         d.part[0] = (PhysPart){ PP_CAPSULE, { 0, -0.12f, 0 }, { 0, 0.06f, 0 }, 0.018f };
@@ -46,7 +46,7 @@ PhysDesc ground_desc(Item it)
     item_size(it, &w, &h);
     f32 hx = clampf(0.07f * (f32)w, 0.08f, 0.3f), hz = clampf(0.07f * (f32)h, 0.08f, 0.3f);
     return (PhysDesc){ .part = { { PP_BOX, { 0, 0, 0 }, { hx, 0.06f, hz }, 0 } }, .parts = 1,
-                       .mass = fmaxf(item_weight(it), 0.3f), .friction = 0.9f, .bounce = 0.02f };
+                       .mass = fmaxf(item_weight(it), 0.3f) };
 }
 
 i32 ground_drop(Ground *g, Phys *p, Item it, M4 xf, V3 vel, V3 angvel, u16 owner)

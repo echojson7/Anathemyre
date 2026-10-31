@@ -66,6 +66,11 @@ static const SfxDef g_def[SFX_COUNT] = {
     // Обломки на ветру: где-то рядом, тихо
     [SFX_WIND_RATTLE]   = { 8.0f, 120.0f, 0.22f, 0.50f, 0.10f },
     [SFX_WIND_CREAK]    = { 8.0f, 120.0f, 0.16f, 0.50f, 0.12f },
+    // Вещи падают и бьются: тише боя, громкость ещё от скорости удара (view/sfx.c)
+    [SFX_IMPACT_METAL]  = { 2.0f, 55.0f, 0.42f, 0.35f, 0.10f },
+    [SFX_IMPACT_WOOD]   = { 2.0f, 40.0f, 0.40f, 0.25f, 0.10f },
+    [SFX_IMPACT_STONE]  = { 2.0f, 45.0f, 0.48f, 0.25f, 0.10f },
+    [SFX_IMPACT_SOFT]   = { 1.5f, 25.0f, 0.36f, 0.10f, 0.12f },
 };
 
 typedef struct Cmd {
@@ -798,6 +803,12 @@ int audio_demo(const char *wav_path)
         { 15.5f, SFX_UI_TICK, 0, 0, 1 }, { 16.0f, SFX_UI_ORDER, 0, 0, 1 },
         { 3.0f, SFX_FAR_GROAN, -300, -200, 1 }, { 17.0f, SFX_FAR_BANG, 400, -100, 1 }, { 19.5f, SFX_FAR_RADIO, -80, 120, 1 },
         { 18.0f, SFX_WIND_RATTLE, 20, -25, 1 }, { 21.5f, SFX_WIND_CREAK, -25, 10, 1 },
+        // Вещи: лом падает на бетон (удар, отскок), обломок бетона, лом на песок (глуше, с подложкой),
+        // удар по железу, стук дерева, свёрток
+        { 0.8f, SFX_IMPACT_METAL, 2, -2, 1 }, { 1.02f, SFX_IMPACT_METAL, 2.1f, -2, 0.4f },
+        { 1.4f, SFX_IMPACT_STONE, -2, -2, 1 },
+        { 1.9f, SFX_IMPACT_METAL, 2, -3, 0.5f }, { 1.9f, SFX_IMPACT_SOFT, 2, -3, 0.6f },
+        { 2.3f, SFX_IMPACT_METAL, 1, -2, 1.2f }, { 2.6f, SFX_IMPACT_WOOD, -1, -2, 1 }, { 2.8f, SFX_IMPACT_SOFT, 1, -2, 1 },
     };
     bool fired[ARRAY_COUNT(cues)] = { 0 };
     f64 mix_s = 0.0;

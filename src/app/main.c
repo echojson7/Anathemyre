@@ -630,6 +630,7 @@ int main(int argc, char **argv)
             sfx_listener(wsound, fv.cam_pos, cam.target, cam.yaw);
             sfx_field(wsound, field, fig->view);
             sfx_arena(wsound, &world->ring, world->arena);
+            sfx_phys(wsound, world->phys, world->ground);
         }
 
         // Список кадра: статика, люди и бойцы арены, метки, ряд людей; свет — фонари арены и факелы

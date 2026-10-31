@@ -2,6 +2,8 @@
 #
 # surface — как поверхность шейдится: concrete, rust, sand, cloth, leather, glyph, emissive, skin, metal,
 #   terrain, rock, water, bark, leaf, grass, steel (render/mesh.h, scene.frag).
+# impact — чем звучит удар и падение: metal, wood, stone, soft (view/sfx.c, docs/sound.md).
+#   Физики у материала нет: трение и отскок одни на мир (docs/physics.md).
 # color r g b — цвет (альбедо, линейный). Несколько строк color — набор оттенков: предмет берёт один по зерну.
 # Новый материал — только если иначе выглядит вблизи; оттенок одной вещи — разброс в коде, не новая запись.
 
@@ -9,6 +11,7 @@
 
 material concrete
     surface concrete
+    impact stone
     color 0.42 0.40 0.37
 
 material concrete_dark
@@ -17,49 +20,59 @@ material concrete_dark
 
 material rust
     surface rust
+    impact metal
     color 0.42 0.24 0.13
 
 material sand
     surface sand
+    impact stone
     color 0.40 0.34 0.26
 
 # Листовое железо, ящики, бочки
 material metal
     surface metal
+    impact metal
     color 0.22 0.21 0.20
 
 # Литое и кованое железо: хомуты, кронштейны, лом
 material iron
     surface metal
+    impact metal
     color 0.20 0.19 0.18
 
 # Тёплый свет ламп и фонарей
 material lamp
     surface emissive
+    impact metal
     color 0.55 0.34 0.11
 
 # Редкие яркие знаки — только для важного
 material glyph_red
     surface glyph
+    impact stone
     color 0.95 0.18 0.10
 
 material glyph_green
     surface glyph
+    impact stone
     color 0.25 1.0 0.40
 
 # Тьма проёмов: свет внутрь не заходит
 material hollow
     surface emissive
+    impact stone
     color 0.004 0.0035 0.003
 
 # Кабель в резине
 material cable
     surface leather
+    impact soft
     color 0.05 0.05 0.05
 
 # Ткани: навесы, тряпки, мешки, ковры
 material cloth
     surface cloth
+    impact soft
     color 0.45 0.32 0.15
     color 0.40 0.14 0.10
     color 0.50 0.47 0.40
@@ -71,6 +84,7 @@ material cloth
 # Листы: обшивка, заборы, лом
 material sheet
     surface rust
+    impact metal
     color 0.34 0.21 0.13
     color 0.27 0.18 0.12
     color 0.23 0.24 0.20
@@ -96,11 +110,13 @@ material rust_pale
 # Свет в окнах
 material window
     surface emissive
+    impact metal
     color 0.16 0.09 0.03
 
 # Знаки торговцев: выцветшая охра
 material sign_paint
     surface glyph
+    impact stone
     color 0.42 0.25 0.08
 
 # ---- Мерильня ----
@@ -108,6 +124,7 @@ material sign_paint
 # Краска полос на стенах цеха
 material paint_pale
     surface concrete
+    impact stone
     color 0.52 0.47 0.33
 
 material iron_dark
@@ -117,6 +134,7 @@ material iron_dark
 # Натрий: болезненно-жёлтый
 material lamp_sodium
     surface emissive
+    impact metal
     color 1.0 0.70 0.36
 
 # ---- Арена ----
@@ -128,6 +146,7 @@ material rust_dark
 # Утоптанная земля ринга
 material arena_floor
     surface sand
+    impact stone
     color 0.36 0.31 0.24
 
 material glyph_dim
@@ -136,6 +155,7 @@ material glyph_dim
 
 material lamp_white
     surface emissive
+    impact metal
     color 0.95 0.82 0.45
 
 # ---- Лом на земле ----
@@ -153,6 +173,7 @@ material concrete_chip
 # Чёрное кованое железо: обухи, крестовины, навершия
 material iron_black
     surface metal
+    impact metal
     color 0.15 0.15 0.16
 
 material iron_soot
@@ -162,20 +183,24 @@ material iron_soot
 # Сталь клинков: зерно, окалина, ржавчина пятнами по качеству
 material blade_steel
     surface steel
+    impact metal
     color 0.24 0.24 0.25
 
 # Латунь: заклёпки, штифты, накладки
 material brass
     surface metal
+    impact metal
     color 0.33 0.25 0.13
 
 # Проволочная обмотка
 material wire
     surface metal
+    impact metal
     color 0.24 0.23 0.22
 
 material leather
     surface leather
+    impact soft
     color 0.26 0.19 0.12
 
 material leather_dark
@@ -189,9 +214,11 @@ material leather_worn
 # Обмотка рукояти
 material grip_cloth
     surface cloth
+    impact soft
     color 0.3 0.26 0.2
 
 # Чёрная лента внахлёст
 material tape_black
     surface cloth
+    impact soft
     color 0.08 0.08 0.08
