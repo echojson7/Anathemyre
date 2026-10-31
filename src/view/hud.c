@@ -418,58 +418,88 @@ i32 hud_pick_item(const Hud *h, const Input *in, const HudWorld *w)
     return L.my < L.bottom_top ? ground_item_under(w, L.mx, L.my) : -1;
 }
 
-// Вещь с курсора обратно в мешок; некуда — false, окно не закрывается
-static bool drop_held(Hud *h, Squad *sq)
+// Вещь с курсора отпущена: она и не уходила со своего места
+static void drop_held(Hud *h) { h->held = (ItemStack){ 0 }; }
+
+// Откуда взята вещь на курсоре; на месте уже не она (её сняли в шаге мира) — IP_NONE
+static ItemPlace held_from(const Hud *h, CharSheet *c, u32 who)
 {
-    if (!h->held.def) return true;
-    if (h->look_kind != LOOK_SQUAD || !inv_add(&squad_sheet(sq, h->look)->inv, h->held)) return false;
-    h->held = (ItemStack){ 0 };
-    return true;
+    ItemPlace from = h->held_slot == ASK_BAG ? place_bag(c, who, inv_at(&c->inv, h->held_x, h->held_y)) : place_body(c, who, h->held_slot);
+    bool ok = from.kind == IP_BAG ? from.at >= 0 && c->inv.x[from.at] == h->held_x && c->inv.y[from.at] == h->held_y
+                                  : from.slot < SLOT_COUNT;
+    if (!ok || !item_same(item_at(NULL, &from), h->held)) from.kind = IP_NONE;
+    return from;
 }
 
-// Персонаж и инвентарь открываются и закрываются вместе; закрыть нельзя, пока вещь в руке
-static void windows_set(Hud *h, Squad *sq, bool open)
+static void hold(Hud *h, ItemStack it, u8 slot, u8 x, u8 y)
 {
-    if (!open && !drop_held(h, sq)) return;
+    h->held = it;
+    h->held_slot = slot;
+    h->held_x = x;
+    h->held_y = y;
+}
+
+// Надеть в слот с заменой: прежнее — в мешок (первое свободное место); не вышло — всё как было
+static bool equip_swap(CharSheet *c, u32 who, const ItemPlace *from, u8 slot)
+{
+    ItemPlace body = place_body(c, who, slot), bag = place_bag(c, who, -1);
+    if (from->kind == IP_BODY && from->slot == slot) return false;
+    if (!c->equip[slot].def) return item_move(NULL, NULL, from, &body) >= 0;
+    ItemStack it = item_at(NULL, from);
+    if (item_slot(it) != slot) return false;
+    // Сначала освободить слот; вещь из мешка ищем заново — номера в мешке после переезда сдвигаются
+    u8 fx = from->kind == IP_BAG ? c->inv.x[from->at] : 0, fy = from->kind == IP_BAG ? c->inv.y[from->at] : 0;
+    if (item_move(NULL, NULL, &body, &bag) < 0) return false;
+    ItemPlace src = *from;
+    if (src.kind == IP_BAG) src.at = inv_at(&c->inv, fx, fy);
+    // Слот свободен и вещь ему подходит: не выйти может только порченый лист — тогда обе вещи в мешке
+    return item_move(NULL, NULL, &src, &body) >= 0;
+}
+
+// Персонаж и инвентарь открываются и закрываются вместе; закрыли — вещь с курсора остаётся на своём месте
+static void windows_set(Hud *h, bool open)
+{
+    if (!open) drop_held(h);
     h->win_inv = h->win_char = open;
 }
 
-static void look_at(Hud *h, Squad *sq, u8 kind, u32 index)
+static void look_at(Hud *h, u8 kind, u32 index)
 {
     if (h->look_kind == kind && h->look == index) return;
-    if (!drop_held(h, sq)) return;
+    drop_held(h);
     hud_look(h, kind, index);
 }
 
-// Перекладывание вещей в окне своего персонажа
-static void inventory_input(Hud *h, const Layout *L, CharSheet *c, bool lmb, bool rmb)
+// Перекладывание вещей в окне своего персонажа: взять — только запомнить откуда, отпустить — item_move.
+// who — номер человека в реестре (для журнала вещей)
+static void inventory_input(Hud *h, const Layout *L, CharSheet *c, u32 who, bool lmb, bool rmb)
 {
     i32 gx, gy, slot = slot_under(L);
     bool in_cell = cell_under(L, &gx, &gy);
-    ItemStack old;
     if (lmb && !h->held.def) {
         i32 at = in_cell ? inv_at(&c->inv, gx, gy) : -1;
-        if (at >= 0) h->held = inv_take(&c->inv, at);
-        else if (slot >= 0 && c->equip[slot].def) {
-            h->held = c->equip[slot];
-            sheet_equip(c, (u8)slot, (ItemStack){ 0 }, &old);
-        }
+        if (at >= 0) hold(h, c->inv.item[at], ASK_BAG, c->inv.x[at], c->inv.y[at]);
+        else if (slot >= 0 && c->equip[slot].def) hold(h, c->equip[slot], (u8)slot, 0, 0);
     } else if (lmb) {
-        if (in_cell && inv_put(&c->inv, h->held, gx, gy)) h->held = (ItemStack){ 0 };
-        else if (slot >= 0 && sheet_equip(c, (u8)slot, h->held, &old)) h->held = old;
+        ItemPlace from = held_from(h, c, who);
+        if (from.kind == IP_NONE) {
+            h->held = (ItemStack){ 0 };
+        } else if (in_cell) {
+            ItemPlace to = place_bag(c, who, -1);
+            to.x = (u8)gx, to.y = (u8)gy;
+            if (item_move(NULL, NULL, &from, &to) >= 0) h->held = (ItemStack){ 0 };
+        } else if (slot >= 0 && (equip_swap(c, who, &from, (u8)slot) || (from.kind == IP_BODY && from.slot == slot))) {
+            h->held = (ItemStack){ 0 };
+        }
     } else if (rmb && !h->held.def) {
-        // ПКМ: надеть из мешка или снять в мешок
+        // ПКМ: надеть из мешка (прежнее — в мешок) или снять в мешок
         i32 at = in_cell ? inv_at(&c->inv, gx, gy) : -1;
         if (at >= 0 && item_slot(c->inv.item[at]) != SLOT_NONE) {
-            ItemStack it = inv_take(&c->inv, at);
-            u8 sl = item_slot(it);
-            sheet_equip(c, sl, it, &old);
-            if (old.def && !inv_add(&c->inv, old)) {
-                sheet_equip(c, sl, old, &it);
-                inv_add(&c->inv, it);
-            }
-        } else if (slot >= 0 && c->equip[slot].def && inv_add(&c->inv, c->equip[slot])) {
-            sheet_equip(c, (u8)slot, (ItemStack){ 0 }, &old);
+            ItemPlace from = place_bag(c, who, at);
+            equip_swap(c, who, &from, item_slot(c->inv.item[at]));
+        } else if (slot >= 0 && c->equip[slot].def) {
+            ItemPlace from = place_body(c, who, (u8)slot), to = place_bag(c, who, -1);
+            item_move(NULL, NULL, &from, &to);
         }
     }
 }
@@ -504,10 +534,10 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
     }
 
     bool has_look = h->look_kind != LOOK_NONE;
-    if ((in->key_pressed[KEY_I] || in->key_pressed[KEY_P]) && (hud_window_open(h) || has_look)) windows_set(h, sq, !hud_window_open(h));
+    if ((in->key_pressed[KEY_I] || in->key_pressed[KEY_P]) && (hud_window_open(h) || has_look)) windows_set(h, !hud_window_open(h));
     if (in->key_pressed[KEY_K] && h->can_look && (h->win_look || has_look)) h->win_look = !h->win_look;
     if (in->key_pressed[KEY_ESCAPE]) {
-        windows_set(h, sq, false);
+        windows_set(h, false);
         h->win_look = false;
     }
     if (in->key_pressed[KEY_SPACE]) {
@@ -538,16 +568,16 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
             h->grab_x = L.mx - L.iwx;
             h->grab_y = L.my - L.iwy;
         } else if (lmb && close_hot(&L, L.iwx, L.iwy, INV_WIN_W)) {
-            windows_set(h, sq, false);
+            windows_set(h, false);
         } else if (h->look_kind == LOOK_SQUAD && h->look < sq->count) {
-            inventory_input(h, &L, squad_sheet(sq, h->look), lmb, rmb);
+            inventory_input(h, &L, squad_sheet(sq, h->look), squad_at(sq, h->look), lmb, rmb);
         }
         lmb = rmb = false;
     }
     if (h->win_char && inside(L.mx, L.my, L.cwx, L.cwy, CHAR_WIN_W, CHAR_WIN_H)) {
         over = true;
         if (lmb && close_hot(&L, L.cwx, L.cwy, CHAR_WIN_W)) {
-            windows_set(h, sq, false);
+            windows_set(h, false);
         } else if (lmb && L.my < L.cwy + WIN_HEAD_H) {
             h->win_drag = 2;
             h->grab_x = L.mx - L.cwx;
@@ -588,7 +618,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
     if (inside(L.mx, L.my, L.btn_x, L.btn_y, BTN_W, 3 * BTN_H + 2 * 4)) {
         over = true;
         if (lmb && has_look) {
-            if (L.my < win_btn_y(&L, 2)) windows_set(h, sq, !hud_window_open(h));
+            if (L.my < win_btn_y(&L, 2)) windows_set(h, !hud_window_open(h));
             else if (h->can_look) h->win_look = !h->win_look;
         }
         lmb = false;
@@ -604,7 +634,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
         h->last_click_t = w->time;
         if (shift) sq->selected[i] = !sq->selected[i];
         else select_only(sq, i);
-        if (sq->selected[i]) look_at(h, sq, LOOK_SQUAD, i);
+        if (sq->selected[i]) look_at(h, LOOK_SQUAD, i);
         lmb = false;
         break;
     }
@@ -616,6 +646,9 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
         const Player *b = &w->view[squad_at(sq, h->look)];
         f32 hs = sinf(b->heading), hc = cosf(b->heading);
         ask->it[ask->n] = h->held;
+        ask->slot[ask->n] = h->held_slot;
+        ask->x[ask->n] = h->held_x;
+        ask->y[ask->n] = h->held_y;
         ask->at[ask->n] = v3_add(b->pos, v3(hs * 0.35f, 1.1f, hc * 0.35f));
         ask->yaw[ask->n] = b->heading;
         ask->who[ask->n] = (u8)h->look;
@@ -650,7 +683,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
                 else if (!shift) sq->selected[i] = false;
             }
             i32 p = squad_primary(sq);
-            if (p >= 0 && (h->look_kind != LOOK_SQUAD || !sq->selected[h->look])) look_at(h, sq, LOOK_SQUAD, (u32)p);
+            if (p >= 0 && (h->look_kind != LOOK_SQUAD || !sq->selected[h->look])) look_at(h, LOOK_SQUAD, (u32)p);
         } else {
             u8 kind;
             u32 idx;
@@ -658,18 +691,17 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
             if (!pick_at(w, L.mx, L.my, &kind, &idx, &head)) {
                 if (!shift) {
                     memset(sq->selected, 0, sizeof sq->selected);
-                    if (drop_held(h, sq)) {
-                        h->look_kind = LOOK_NONE;
-                        h->win_inv = h->win_char = false;
-                    }
+                    drop_held(h);
+                    h->look_kind = LOOK_NONE;
+                    h->win_inv = h->win_char = false;
                 }
             } else if (kind == LOOK_SQUAD) {
                 if (shift) sq->selected[idx] = !sq->selected[idx];
                 else select_only(sq, idx);
-                if (sq->selected[idx]) look_at(h, sq, LOOK_SQUAD, idx);
+                if (sq->selected[idx]) look_at(h, LOOK_SQUAD, idx);
             } else {
                 // Чужого можно только осмотреть
-                look_at(h, sq, kind, idx);
+                look_at(h, kind, idx);
             }
         }
     }
@@ -1053,7 +1085,9 @@ static void draw_inventory(const Hud *h, const Layout *L, const HudWorld *w)
         slot_rect(L, k, &sx, &sy);
         bool fits = h->held.def && item_slot(h->held) == sl;
         u32 edge = fits ? C_SEL : (hover_slot == sl ? C_TEXT : C_EDGE);
-        if (d.equip[sl].def) {
+        // Взятая на курсор вещь ещё на месте: место показано пустым
+        bool taken = h->held.def && h->held_slot == sl;
+        if (d.equip[sl].def && !taken) {
             draw_item_cell(sx, sy, SLOT_W, SLOT_H, d.equip[sl], edge);
             ui_text(sx + 2, sy + SLOT_H - 9, C_DIM, g_slot_name[sl]);
         } else {
@@ -1078,12 +1112,17 @@ static void draw_inventory(const Hud *h, const Layout *L, const HudWorld *w)
             // Куда ляжет вещь с курсора
             u8 iw, ih;
             item_size(h->held, &iw, &ih);
-            bool ok = inv_fits(inv, h->held, hx, hy);
+            // Своя прежняя клетка не мешает: проба на мешке без взятой вещи
+            Inventory probe = *inv;
+            i32 own = h->held_slot == ASK_BAG ? inv_at(&probe, h->held_x, h->held_y) : -1;
+            if (own >= 0) inv_take(&probe, own);
+            bool ok = inv_fits(&probe, h->held, hx, hy);
             ui_rect(L->ix + hx * CELL, L->iy + hy * CELL, iw * CELL - 1, ih * CELL - 1,
                     ok ? UI_RGBA(60, 110, 66, 150) : UI_RGBA(120, 40, 30, 150));
         }
         i32 hover = in_cell ? inv_at(inv, hx, hy) : -1;
         for (u32 i = 0; i < inv->n; i++) {
+            if (h->held.def && h->held_slot == ASK_BAG && inv->x[i] == h->held_x && inv->y[i] == h->held_y) continue;
             u8 iw, ih;
             item_size(inv->item[i], &iw, &ih);
             draw_item_cell(L->ix + inv->x[i] * CELL, L->iy + inv->y[i] * CELL, iw * CELL - 1, ih * CELL - 1,

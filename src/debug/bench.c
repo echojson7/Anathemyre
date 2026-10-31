@@ -42,6 +42,7 @@ int debug_bench(const char *data_dir, const char *name, char **args, u32 nargs, 
     if (!strcmp(kind, "battle") || !strcmp(kind, "verify"))
         return battle_bench((u32)v[0], (u32)v[1], seed, threads, kind[0] == 'v');
     if (!strcmp(kind, "field")) return field_bench((u32)v[0], seed);
+    if (!strcmp(kind, "people")) return people_bench((u32)v[0], (u32)v[1], seed, threads);
     if (!strcmp(kind, "bands")) return bands_bench((u32)v[0], (f32)v[1], seed, TICK_HZ, (u32)v[2]);
     if (!strcmp(kind, "frame")) return DEBUG_BENCH_FRAME;
     if (!strcmp(kind, "stages")) return DEBUG_BENCH_STAGES;

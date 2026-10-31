@@ -12,7 +12,8 @@
 #include "persons.h"
 #include "squad.h"
 
-#define NEAR_BODIES 48     // мест под людей отрядов вдали
+#define NEAR_BODIES 256    // мест под людей отрядов вдали: половина реестра (бой 256 на 256)
+_Static_assert(NEAR_BODIES <= PERSONS_MAX / 2, "людям отрядов вдали — не больше половины реестра");
 #define NEAR_PER_BAND 16   // больше тел от одного отряда не бывает; остальные идут числом
 #define NEAR_R 200.0f      // м от своего человека
 #define NEAR_CAM_R 400.0f  // м от точки взгляда камеры

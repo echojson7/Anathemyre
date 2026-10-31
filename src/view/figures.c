@@ -62,7 +62,7 @@ static void marks_build(CharMeshes *m, MeshBuilder *mb, Arena *perm)
     }
 }
 
-bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const char *data_dir)
+void figures_bones(Figures *f, Arena *perm)
 {
     memset(f, 0, sizeof *f);
     for (u32 i = 0; i < PERSONS_MAX; i++) f->age[i] = -1.0f;
@@ -70,6 +70,11 @@ bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const
     f->arena = ARENA_PUSH_ARRAY(perm, M4, (size_t)RING_BONE_SETS * RENDER_MAX_BONES);
     f->marks = ARENA_PUSH_ARRAY(perm, M4, (size_t)MARK_SETS * RENDER_MAX_BONES);
     f->portrait = ARENA_PUSH_ARRAY(perm, M4, 2 * RENDER_MAX_BONES);
+}
+
+bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const char *data_dir)
+{
+    figures_bones(f, perm);
 
     // Одежда и причёски, затем тела; грубые уровни лежат отдельно: остальной код видит только полный уровень.
     // Порядок загрузки — порядок отрисовки: одежда раньше тел (одежда после тел — проход сцены на ~13 % дольше)

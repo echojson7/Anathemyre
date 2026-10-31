@@ -111,14 +111,17 @@ static bool notable(const ItemPlace *from, const ItemPlace *to)
 i32 item_move(Ground *g, Phys *p, const ItemPlace *from, const ItemPlace *to)
 {
     ItemStack it = item_at(g, from);
-    if (!item_live(it) || from->kind >= IP_COUNT || to->kind == IP_NONE || !fits(g, to, it)) return -1;
+    // Внутри одного мешка на клетку: вещь может лечь поверх своего же прежнего места — проба после того, как взяли
+    bool rebag = from->kind == IP_BAG && to->kind == IP_BAG && from->sheet == to->sheet && to->x != 255;
+    if (!item_live(it) || from->kind >= IP_COUNT || to->kind == IP_NONE || (!rebag && !fits(g, to, it))) return -1;
+    u8 ox = rebag ? from->sheet->inv.x[from->at] : 255, oy = rebag ? from->sheet->inv.y[from->at] : 0;
     V3 at = from->kind == IP_GROUND ? ground_pos(g, p, (u32)from->at) : to->kind == IP_GROUND ? v3(to->xf.m[12], to->xf.m[13], to->xf.m[14]) : v3(0, 0, 0);
     it = take(g, p, from);
     i32 k = put(g, p, to, it);
     if (k < 0) {
-        // Физика полна: вещь возвращается на место (в мешок — в первое свободное)
+        // Некуда (физика полна, клетка занята): вещь возвращается — в мешке на свою клетку или в первое свободное
         ItemPlace back = *from;
-        if (back.kind == IP_BAG) back.x = 255;
+        if (back.kind == IP_BAG) back.x = ox, back.y = oy;
         if (back.kind != IP_GROUND && back.kind != IP_NONE) put(g, p, &back, it);
         return -1;
     }

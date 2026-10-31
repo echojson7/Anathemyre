@@ -26,12 +26,16 @@ typedef struct Ground {
 } Ground;
 
 // Просьбы интерфейса бросить вещь из мешка: исполняет шаг мира (мир меняется только в шаге)
+#define ASK_BAG 255
+
 typedef struct GroundAsks {
     u32  n;
-    ItemStack it[GROUND_ASKS];
+    ItemStack it[GROUND_ASKS];  // что бросают: на месте уже другое — просьба не исполняется
+    u8   slot[GROUND_ASKS];  // откуда: слот тела (SLOT_*) или ASK_BAG — клетка мешка x, y
+    u8   x[GROUND_ASKS], y[GROUND_ASKS];
     V3   at[GROUND_ASKS];   // откуда летит: из рук бросающего
     f32  yaw[GROUND_ASKS];  // куда смотрит бросающий
-    u8   who[GROUND_ASKS];  // номер в отряде: некуда положить — вещь возвращается ему в мешок
+    u8   who[GROUND_ASKS];  // номер в отряде: чей мешок или тело; некуда положить — вещь остаётся на месте
 } GroundAsks;
 
 void ground_init(Ground *g, Arena *perm);

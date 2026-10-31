@@ -223,6 +223,9 @@ static void world_ser(Ser *s, void *user)
     ground_ser(s, w->ground);
     ser_count(s, &w->ground_ask.n, GROUND_ASKS);
     SER(s, w->ground_ask.it);
+    SER(s, w->ground_ask.slot);
+    SER(s, w->ground_ask.x);
+    SER(s, w->ground_ask.y);
     SER(s, w->ground_ask.at);
     SER(s, w->ground_ask.yaw);
     SER(s, w->ground_ask.who);
