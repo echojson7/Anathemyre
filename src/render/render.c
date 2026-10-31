@@ -31,6 +31,12 @@ enum {
     // Свет кадра (docs/lighting.md): экспозиция (SSBO), источник ступени свечения, кадр для замера яркости, свечение
     B_EXPO = 27, B_BLOOM_SRC = 28, B_EXPO_SRC = 29, B_BLOOM = 30,
     B_SKY = 31,       // сетка неба (sky.glsl); глубина запекания — на 29 (B_EXPO_SRC до экспозиции свободна)
+    // Тени СВЕТА (shadow_sun.glsl): каскады, блок Shade, контактные тени, карта каскада 0 без сравнения
+    B_CASC = 32, B_SHADE = 33, B_CONTACT = 34, B_SHADOW_RAW = 35,
+    // Углы СВЕТА: GTAO после размытия (сцена) и до него (размытие)
+    B_GTAO = 36, B_GTAO_RAW = 37,
+    // ЗОНДЫ: блок Probes, клетки сцены, зонды (probes.glsl)
+    B_PROBES = 38, B_VOX = 39, B_PROBE_BUF = 40, B_PROBE_DIST = 41,
 };
 #define SKIN_STATIC 0
 #define SKIN_BONES 1
@@ -163,6 +169,37 @@ _Static_assert(sizeof(ScenePush) == RB_PUSH_BYTES, "ScenePush — весь u_pus
 #define SKY_R 92.0f
 #define SKY_UP 300.0f
 
+// Каскады теней 1 и 2 (каскад 0 — прежняя карта ±SHADOW_EXTENT): полуразмеры, м
+static const f32 g_casc_ext[2] = { 180.0f, 700.0f };
+
+// Блок Shade (shadow_sun.glsl) в std140
+typedef struct GpuShade {
+    f32 casc_vp[2][16];
+    f32 scene_vp[16];
+    f32 ext[4];
+    i32 shade[4];
+} GpuShade;
+_Static_assert(sizeof(GpuShade) == 224, "GpuShade — как блок Shade в shadow_sun.glsl");
+
+// ЗОНДЫ (probes.glsl): клетки 1 м на том же углу, что сетка неба, зонды через 4 м
+#define VOX_NX 128
+#define VOX_NY 32
+#define VOX_NZ 128
+#define VOX_CELL 1.0f
+#define VOX_PX 2          // пикселей прохода на клетку: тонкие стены не проваливаются между пикселями
+#define PROBE_NX 32
+#define PROBE_NY 8
+#define PROBE_NZ 32
+#define PROBE_COUNT (PROBE_NX * PROBE_NY * PROBE_NZ)
+#define PROBE_VEC 5
+#define PROBE_RAYS 64
+#define PROBE_PASSES 8    // за столько кадров обновляются все зонды
+typedef struct GpuProbes {
+    f32 vox_origin[4];
+    i32 probe[4];
+} GpuProbes;
+_Static_assert(sizeof(GpuProbes) == 32, "GpuProbes — как блок Probes в probes.glsl");
+
 // Цель: цвет и глубина (по желанию) одного размера
 typedef struct Target {
     RbTex color, depth;
@@ -172,7 +209,7 @@ typedef struct Target {
 // Раскладки вершин сеток: обычная (вершины и веса костей), общий буфер (и запись экземпляра), без вершин (рельеф)
 enum { LAY_MESH, LAY_POOL, LAY_NONE, LAYS };
 // Наборы конвейеров сеток по проходам
-enum { PS_SHADOW, PS_DEPTH, PS_SCENE, PS_PORTRAIT, PSETS };
+enum { PS_SHADOW, PS_DEPTH, PS_SCENE, PS_PORTRAIT, PS_VOXEL, PSETS };
 
 static struct {
     Arena *scratch;
@@ -190,6 +227,24 @@ static struct {
     i32    sky_cur;       // готовая сетка, -1 — ещё нет
     u32    sky_acc, sky_dir;  // запекаемая и сколько направлений в неё уже легло (SKY_DIRS — не запекается)
     u32    sky_key;       // отпечаток постоянной части сцены: сменилась — запекается заново
+    RbPipe pipe_contact;
+    RbTex  casc_tex;      // каскады 1 и 2: слои массива глубины
+    M4     casc_vp[2];    // матрицы, с которыми слои нарисованы (обновляются по очереди)
+    u32    casc_ready;    // биты: слой нарисован
+    RbBuf  shade_buf;     // блоки Shade: кольцо кадров
+    u32    shade_step;
+    Target contact;       // контактные тени (R8), contact.frag
+    RbPipe pipe_gtao, pipe_gtao_blur;
+    Target gtao[2];       // GTAO в половинном разрешении: 0 — сырое, 1 — размытое (R — открытость, G — дальность)
+    RbPipe pipe_vox_clear, pipe_probes;
+    RbBuf  vox_buf, probe_buf, probe_dist, probes_ubo;
+    u32    probes_step;
+    Target vox_rt;        // цель прохода клеток: цвет не пишется, нужна только площадь
+    V3     vox_origin;
+    u32    vox_key;
+    bool   vox_ready;
+    u32    probe_pass;    // обходов всех зондов с последней очистки
+    u32    probe_tick;    // кадров обновления зондов
     u32    pset;      // набор текущего прохода
     RbTex  noise_tex; // значения hash13 в узлах решётки NOISE_N³: noise3 одной выборкой (common.glsl)
     RbTex  shadow_tex;
@@ -251,10 +306,10 @@ static struct {
 // Данные кадра на CPU: размер постоянный, выделяются один раз
 static V4   g_sphere[RENDER_MAX_ITEMS];
 static u32  g_pose[RENDER_MAX_ITEMS];
-// Списки проходов: тени, сцена, запекание неба
-static Inst g_inst[3][RENDER_MAX_ITEMS];
-static u32  g_inst_pose[3 * RENDER_MAX_ITEMS + 3 * RENDER_MAX_VIS_INST];
-static InstDraw g_idraw[3][MAX_INST_MESHES];
+// Списки проходов: тени, сцена, запекание неба, каскад
+static Inst g_inst[4][RENDER_MAX_ITEMS];
+static u32  g_inst_pose[4 * RENDER_MAX_ITEMS + 4 * RENDER_MAX_VIS_INST];
+static InstDraw g_idraw[4][MAX_INST_MESHES];
 static V3   g_sky_dir[SKY_DIRS];  // направления на небо, по косинусу: каждое весит одинаково
 static u32  g_vis_id[RENDER_MAX_VIS_INST];
 static u16  g_vis_bucket[RENDER_MAX_VIS_INST];
@@ -310,7 +365,9 @@ static RbPipe pipe_mesh(u32 set, u32 lay, bool two_sided)
         d.fs[0] = "frame.glsl";
         d.fs[1] = "common.glsl";
         d.fs[2] = "sky.glsl";
-        d.fs[3] = "scene.frag";
+        d.fs[3] = "shadow_sun.glsl";
+        d.fs[4] = "probes.glsl";
+        d.fs[5] = "scene.frag";
         // Портрет — та же программа, только без карты частоты: размер блока там 1
         d.frag_size = R.vrs;
         d.vrs = R.vrs && set == PS_SCENE;
@@ -323,7 +380,17 @@ static RbPipe pipe_mesh(u32 set, u32 lay, bool two_sided)
         d.color[0] = RB_FMT_NONE;
         d.depth_fmt = RB_FMT_D24;
     }
-    d.no_color = set == PS_DEPTH;
+    if (set == PS_VOXEL) {
+        // Клетки: без глубины и отсечения, каждый пиксель поверхности пишет свою клетку
+        d.defines = "#define VOXEL_PASS\n";
+        d.cull = RB_CULL_NONE;
+        d.depth = RB_DEPTH_OFF;
+        d.depth_write = false;
+        d.depth_fmt = RB_FMT_NONE;
+        d.color[0] = RB_FMT_R8;
+        d.frag_size = d.vrs = false;
+    }
+    d.no_color = set == PS_DEPTH || set == PS_VOXEL;
     return rb_pipe_make(&d);
 }
 
@@ -334,7 +401,8 @@ static void pipes_free(void)
             for (u32 c = 0; c < 2; c++) rb_pipe_free(&R.mesh_pipe[s][l][c]);
     RbPipe *full[] = { &R.pipe_rays, &R.pipe_atmos, &R.pipe_ao, &R.pipe_style, &R.pipe_src_map,
                        &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max, &R.pipe_skin,
-                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky };
+                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky, &R.pipe_contact,
+                       &R.pipe_gtao, &R.pipe_gtao_blur, &R.pipe_vox_clear, &R.pipe_probes };
     for (u32 i = 0; i < ARRAY_COUNT(full); i++) rb_pipe_free(full[i]);
 }
 
@@ -382,9 +450,20 @@ static bool pipes_make(void)
     R.pipe_bloom_up = rb_pipe_make(&(RbPipeDesc){ .vs = { "fullscreen.vert" }, .fs = { "bloom_up.frag" }, .name = "свечение вверх",
                                                   .color = { RB_FMT_RGBA16F }, .blend = RB_BLEND_ADD });
     R.pipe_sky = rb_pipe_make(&(RbPipeDesc){ .cs = { "sky.glsl", "sky_bake.comp" }, .name = "сетка неба" });
+    const char *contact_fs[RB_SHADER_FILES] = { "frame.glsl", "common.glsl", "contact.frag" };
+    R.pipe_contact = pipe_full("контактные тени", contact_fs, RB_FMT_R8, NULL, false);
+    const char *gtao_fs[RB_SHADER_FILES] = { "frame.glsl", "common.glsl", "ao.glsl", "gtao.frag" };
+    R.pipe_gtao = pipe_full("GTAO", gtao_fs, RB_FMT_RG16F, NULL, false);
+    const char *gtao_blur_fs[RB_SHADER_FILES] = { "gtao_blur.frag" };
+    R.pipe_gtao_blur = pipe_full("GTAO: размытие", gtao_blur_fs, RB_FMT_RG16F, NULL, false);
+    R.pipe_vox_clear = rb_pipe_make(&(RbPipeDesc){ .cs = { "probes.glsl", "vox_clear.comp" }, .name = "ЗОНДЫ: очистка",
+                                                   .defines = "#define PROBE_WRITE\n" });
+    R.pipe_probes = rb_pipe_make(&(RbPipeDesc){ .cs = { "frame.glsl", "sky.glsl", "shadow_sun.glsl", "probes.glsl", "probes.comp" },
+                                                .name = "ЗОНДЫ", .defines = "#define PROBE_WRITE\n" });
     if (!R.pipe_rays || !R.pipe_atmos || !R.pipe_ao || !R.pipe_style || !R.pipe_src_map || !R.pipe_vrs_block ||
         !R.pipe_vrs || !R.pipe_level || !R.pipe_level_max || !R.pipe_skin || !R.pipe_expo || !R.pipe_bloom_down ||
-        !R.pipe_bloom_up || !R.pipe_sky) {
+        !R.pipe_bloom_up || !R.pipe_sky || !R.pipe_contact || !R.pipe_gtao || !R.pipe_gtao_blur ||
+        !R.pipe_vox_clear || !R.pipe_probes) {
         pipes_free();
         return false;
     }
@@ -396,7 +475,8 @@ bool render_reload_shaders(void)
     // Старые конвейеры живут, пока новые не собраны целиком
     RbPipe *full[] = { &R.pipe_rays, &R.pipe_atmos, &R.pipe_ao, &R.pipe_style, &R.pipe_src_map,
                        &R.pipe_vrs_block, &R.pipe_vrs, &R.pipe_level, &R.pipe_level_max, &R.pipe_skin,
-                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky };
+                       &R.pipe_expo, &R.pipe_bloom_down, &R.pipe_bloom_up, &R.pipe_sky, &R.pipe_contact,
+                       &R.pipe_gtao, &R.pipe_gtao_blur, &R.pipe_vox_clear, &R.pipe_probes };
     RbPipe old_mesh[PSETS][LAYS][2], old_full[ARRAY_COUNT(full)];
     memcpy(old_mesh, R.mesh_pipe, sizeof old_mesh);
     memset(R.mesh_pipe, 0, sizeof R.mesh_pipe);
@@ -524,7 +604,20 @@ bool render_init(Arena *scratch, const char *data_dir)
         f32 u = ((f32)i + 0.5f) / SKY_DIRS, r = sqrtf(u), a = (f32)i * 2.39996323f;
         g_sky_dir[i] = v3(r * cosf(a), sqrtf(1.0f - u), r * sinf(a));
     }
-    if (!R.shadow_tex || !R.frame_buf || !R.expo_buf || !R.sky_depth || !R.sky_buf[0] || !R.sky_buf[1]) return false;
+    R.casc_tex = rb_tex_make(&(RbTexDesc){ .kind = RB_TEX_2D_ARRAY, .fmt = RB_FMT_D24, .w = SHADOW_SIZE, .h = SHADOW_SIZE, .d = 2,
+                                           .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
+    R.shade_step = (u32)((sizeof(GpuShade) + caps->ubo_align - 1) / caps->ubo_align * caps->ubo_align);
+    R.shade_buf = rb_buf_make((size_t)R.shade_step * STREAM_FRAMES, RB_BUF_UNIFORM | RB_BUF_DYNAMIC, NULL);
+    R.vox_buf = rb_buf_make((size_t)VOX_NX * VOX_NY * VOX_NZ * sizeof(u32), RB_BUF_STORAGE, NULL);
+    R.probe_buf = rb_buf_make((size_t)PROBE_COUNT * PROBE_VEC * 4 * sizeof(f32), RB_BUF_STORAGE, NULL);
+    R.probe_dist = rb_buf_make((size_t)PROBE_COUNT * PROBE_RAYS * 2 * sizeof(f32), RB_BUF_STORAGE, NULL);
+    R.probes_step = (u32)((sizeof(GpuProbes) + caps->ubo_align - 1) / caps->ubo_align * caps->ubo_align);
+    R.probes_ubo = rb_buf_make((size_t)R.probes_step * STREAM_FRAMES, RB_BUF_UNIFORM | RB_BUF_DYNAMIC, NULL);
+    if (!R.vox_buf || !R.probe_buf || !R.probe_dist || !R.probes_ubo || !target_make(&R.vox_rt, VOX_NX * VOX_PX, VOX_NZ * VOX_PX, RB_FMT_R8, false))
+        return false;
+    if (!R.shadow_tex || !R.frame_buf || !R.expo_buf || !R.sky_depth || !R.sky_buf[0] || !R.sky_buf[1] || !R.casc_tex ||
+        !R.shade_buf)
+        return false;
     return target_make(&R.portrait, RENDER_PORTRAIT_PX * RENDER_PORTRAIT_SLOTS, RENDER_PORTRAIT_PX, RB_FMT_RGBA16F, true);
 }
 
@@ -539,6 +632,11 @@ void render_shutdown(void)
     rb_tex_free(&R.noise_tex);
     rb_tex_free(&R.shadow_tex);
     rb_tex_free(&R.sky_depth);
+    rb_tex_free(&R.casc_tex);
+    target_free(&R.contact);
+    target_free(&R.gtao[0]);
+    target_free(&R.gtao[1]);
+    target_free(&R.vox_rt);
     for (u32 i = 0; i < STREAM_FRAMES; i++) {
         rb_buf_free(&R.bone_buf[i]);
         rb_buf_free(&R.inst_buf[i]);
@@ -546,7 +644,7 @@ void render_shutdown(void)
     }
     RbBuf *bufs[] = { &R.frame_buf, &R.static_inst_buf, &R.pool_vbo, &R.pool_skin, &R.pool_ibo, &R.pool_morph, &R.pool_rec, &R.pool_cmd,
                       &R.skin_out, &R.skin_job, &R.skin_group, &R.expo_buf,
-                      &R.sky_buf[0], &R.sky_buf[1] };
+                      &R.sky_buf[0], &R.sky_buf[1], &R.shade_buf };
     for (u32 i = 0; i < ARRAY_COUNT(bufs); i++) rb_buf_free(bufs[i]);
     pipes_free();
     bool vk = rb_api() == RB_API_VULKAN;
@@ -1355,6 +1453,20 @@ static M4 light_matrix(const FrameView *fv)
                      -c.z - 250.0f, -c.z + 250.0f);
     return m4_mul(lp, lv);
 }
+// Матрица каскада: как light_matrix, полуразмер ext, глубина не меньше ±250 м
+static M4 casc_matrix(const FrameView *fv, f32 ext)
+{
+    V3 L = v3_norm(fv->sun_dir);
+    V3 up = fabsf(L.y) > 0.95f ? v3(0, 0, 1) : v3(0, 1, 0);
+    M4 lv = m4_look_at(v3(0, 0, 0), v3_mul(L, -1.0f), up);
+    V3 c = m4_point(lv, fv->shadow_center);
+    f32 texel = 2.0f * ext / SHADOW_SIZE, depth = MAX(250.0f, ext);
+    c.x = floorf(c.x / texel) * texel;
+    c.y = floorf(c.y / texel) * texel;
+    M4 lp = m4_ortho(c.x - ext, c.x + ext, c.y - ext, c.y + ext, -c.z - depth, -c.z + depth);
+    return m4_mul(lp, lv);
+}
+
 // Свет кадра: видимые источники, ближайшие к камере (по краю сферы), не больше RENDER_MAX_LIGHTS
 static void stream_lights(const FrameView *fv, const Frustum *fr)
 {
@@ -1414,10 +1526,74 @@ static M4 sky_matrix(V3 d, V3 c)
     return m4_mul(m4_ortho(q.x - SKY_R, q.x + SKY_R, q.y - SKY_R, q.y + SKY_R, -q.z - SKY_UP, -q.z + SKY_R), lv);
 }
 
+// ЗОНДЫ: мир в клетку → клип. Ось axis смотрит вдоль себя, две другие — на экран; глубина — по той же оси
+static M4 vox_matrix(u32 axis, V3 o)
+{
+    static const u32 scr[3][2] = { { 2, 1 }, { 0, 2 }, { 0, 1 } };
+    const f32 size[3] = { VOX_NX, VOX_NY, VOX_NZ }, org[3] = { o.x, o.y, o.z };
+    u32 rows[3] = { scr[axis][0], scr[axis][1], axis };
+    M4 m;
+    memset(&m, 0, sizeof m);
+    for (u32 r = 0; r < 3; r++) {
+        u32 k = rows[r];
+        m.m[k * 4 + r] = 2.0f / (size[k] * VOX_CELL);
+        m.m[12 + r] = -2.0f * org[k] / (size[k] * VOX_CELL) - 1.0f;
+    }
+    m.m[15] = 1.0f;
+    return m;
+}
+
+// Клетки сцены заново (новый угол или сменилась постоянная часть сцены): очистка и три прохода вдоль осей,
+// зонды при этом копят свет заново. Люди не входят, как в сетке неба
+// Блок Probes этого кадра: on — сцена читает зонды; first, n — какие зонды обновляются
+static void probes_ubo(bool on, u32 first, u32 n)
+{
+    GpuProbes g = { .vox_origin = { R.vox_origin.x, R.vox_origin.y, R.vox_origin.z, R.vox_ready ? 1.0f : 0.0f },
+                    .probe = { on, (i32)first, (i32)n, (i32)(R.probe_tick / PROBE_PASSES) } };
+    size_t off = (size_t)R.stream * R.probes_step;
+    rb_buf_write(R.probes_ubo, off, sizeof g, &g);
+    rb_bind_ubo(B_PROBES, R.probes_ubo, off, sizeof g);
+}
+
+static void vox_build(const DrawItem *items, u32 count, bool flora, V3 o)
+{
+    R.vox_origin = o;
+    R.vox_ready = true;
+    R.probe_pass = 0;
+    probes_ubo(false, 0, 0);
+    rb_bind_ssbo(B_VOX, R.vox_buf, 0, 0);
+    rb_bind_ssbo(B_PROBE_BUF, R.probe_buf, 0, 0);
+    rb_bind_ssbo(B_PROBE_DIST, R.probe_dist, 0, 0);
+    rb_bind_pipe(R.pipe_vox_clear);
+    rb_dispatch((VOX_NX * VOX_NY * VOX_NZ + 63) / 64, 1, 1);
+    M4 box = vox_matrix(1, o);
+    PassView pv = { .fr = frustum_from(box), .px_k = VOX_PX / VOX_CELL, .inst_lod_k = 0.3f };
+    u32 n = gather(items, count, &pv, true, g_inst[2]), ns = 0;
+    for (u32 i = 0; i < n; i++)
+        if (g_inst[2][i].pose == NO_POSE) g_inst[2][ns++] = g_inst[2][i];
+    u32 base = stream_insts(g_inst[2], &ns);
+    u32 ng = flora ? gather_groups(&pv, true, g_idraw[2]) : 0;
+    static const i32 vw[3][2] = { { VOX_NZ, VOX_NY }, { VOX_NX, VOX_NZ }, { VOX_NX, VOX_NY } };
+    R.pset = PS_VOXEL;
+    for (u32 a = 0; a < 3; a++) {
+        rb_pass_begin(&(RbPass){ .color = { { .tex = R.vox_rt.color } } });
+        rb_viewport(0, 0, vw[a][0] * VOX_PX, vw[a][1] * VOX_PX);
+        push_view_proj(vox_matrix(a, o));
+        draw_insts(g_inst[2], ns, base, 2);
+        draw_groups(g_idraw[2], ng, 2);
+        u32 draws = 0;
+        f64 tris = 0;
+        use_pipe(LAY_NONE, false);
+        terrain_draw(pv.fr.p, 1, 0.25f, &draws, &tris);
+        rb_pass_end();
+    }
+    log_info("СВЕТ: клетки для зондов у (%.0f, %.0f, %.0f)", (f64)o.x, (f64)o.y, (f64)o.z);
+}
+
 // Сетка неба: по направлению за кадр, пока не лягут все SKY_DIRS; затем она становится готовой. Заново —
 // когда камера ушла на SKY_STEP (сетка сдвигается) или сменилась постоянная часть сцены. Люди не входят:
 // сетка про постройки, рельеф и деревья
-static void sky_bake(const FrameView *fv, const DrawItem *items, u32 count, bool flora)
+static void sky_bake(const FrameView *fv, const DrawItem *items, u32 count, bool flora, bool probes)
 {
     V3 c = fv->shadow_center;
     V3 o = v3(floorf((c.x - SKY_NX * SKY_CELL * 0.5f) / SKY_STEP) * SKY_STEP, floorf((c.y - 8.0f) / SKY_STEP) * SKY_STEP,
@@ -1425,6 +1601,10 @@ static void sky_bake(const FrameView *fv, const DrawItem *items, u32 count, bool
     u32 statics = 0;
     for (u32 i = 0; i < count; i++) statics += !items[i].bones && !items[i].no_shadow;
     u32 key = statics * 2654435761u ^ R.inst_total * 40503u ^ R.cluster_count;
+    if (probes && (!R.vox_ready || !sky_same(o, R.vox_origin) || key != R.vox_key)) {
+        R.vox_key = key;
+        vox_build(items, count, flora, o);
+    }
     if (R.sky_dir == SKY_DIRS) {
         if (R.sky_cur >= 0 && sky_same(o, R.sky_origin[R.sky_cur]) && key == R.sky_key) return;
         R.sky_acc = R.sky_cur >= 0 ? (u32)(1 - R.sky_cur) : 0u;
@@ -1495,6 +1675,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         target_make(&R.src_map, iw, ih, RB_FMT_RG16UI, false);
         target_make(&R.level, iw, ih, RB_FMT_R8UI, false);
         target_make(&R.level_max, (iw + 7) / 8, (ih + 7) / 8, RB_FMT_R8UI, false);
+        target_make(&R.contact, iw, ih, RB_FMT_R8, false);
+        for (u32 i = 0; i < 2; i++) target_make(&R.gtao[i], (iw + 1) / 2, (ih + 1) / 2, RB_FMT_RG16F, false);
         for (i32 i = 0, bw = iw, bh = ih; i < BLOOM_LEVELS; i++) {
             bw = MAX((bw + 1) / 2, 1);
             bh = MAX((bh + 1) / 2, 1);
@@ -1546,6 +1728,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     u32 ng_shadow = rs->shadows && rs->flora ? gather_groups(&shadow_view, true, g_idraw[0]) : 0;
     u32 ng_scene = rs->flora ? gather_groups(&scene_view, false, g_idraw[1]) : 0;
     bool atmos = rs->atmos, rays = atmos && rs->rays && rs->shadows, ao = atmos && rs->ao;
+    // GTAO гасит рассеянный свет в сцене, прежнее AO атмосферы при нём не идёт
+    bool gtao = ao && rs->light_ao == LIGHT_AO_GTAO;
     // Размер пикселя на дальности 1 м; s^P = (px_m / d)^P = PIXEL_K * px_m^P * (1/d)^P
     f32 px_k = rs->pixel ? PIXEL_K * powf(fv->proj.m[5] * 0.5f * (f32)ih, PIXEL_P) : 0.0f;
     bool vrs = R.vrs && rs->vrs && rs->pixel;
@@ -1573,7 +1757,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     memcpy(f->pix, (f32[4]){ px_k, PIXEL_P, fv->proj.m[10], fv->proj.m[14] }, sizeof f->pix);
     f->post = rs->post ? 1 : 0;
     f->ao_half = rs->ao_half ? 1 : 0;
-    f->parts = (rays ? 1 : 0) | (ao ? 2 : 0);
+    f->parts = (rays ? 1 : 0) | (ao && !gtao ? 2 : 0);
     f->tile[0] = R.vrs_tile[0] / 4;
     f->tile[1] = R.vrs_tile[1] / 4;
     f->light[0] = rs->light_mat;
@@ -1592,7 +1776,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         memcpy(f->room_door, (f32[4]){ rm->door.x, rm->door.y, rm->door.z, 0.0f }, sizeof f->room_door);
         memcpy(f->room_fill, (f32[4]){ rm->fill.x, rm->fill.y, rm->fill.z, 0.0f }, sizeof f->room_fill);
     }
-    f->lightf[3] = rs->light_gi == LIGHT_GI_SKY ? 1.0f : 0.0f;
+    f->lightf[3] = rs->light_gi != LIGHT_GI_SIMPLE ? 1.0f : 0.0f;
     frame_write(0, f);
     R.stat_prep += time_now() - t_prep;
     rb_bind_ssbo(B_BONES, R.bone_buf[R.stream], 0, 0);
@@ -1610,7 +1794,10 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     }
 
     // Сетка неба запекается только при НЕБЕ ПО СЕТКЕ (время — в столбце тени); сцена читает готовую
-    if (rs->light_gi == LIGHT_GI_SKY && R.pipe_sky) sky_bake(fv, items, count, rs->flora);
+    bool probes = rs->light_gi == LIGHT_GI_PROBES && R.pipe_probes;
+    // Блоки Shade и Probes прошлого кадра: проход клеток читает сцену тем же шейдером, привязки должны быть
+    rb_bind_ubo(B_SHADE, R.shade_buf, (size_t)R.stream * R.shade_step, sizeof(GpuShade));
+    if (rs->light_gi != LIGHT_GI_SIMPLE && R.pipe_sky) sky_bake(fv, items, count, rs->flora, probes);
     rb_bind_ssbo(B_SKY, R.sky_buf[R.sky_cur >= 0 ? R.sky_cur : 0], 0, 0);
 
     // 1. Тени. Ветер и прореживание в вершинном шейдере: те же значения во всех проходах (и в проходе глубины)
@@ -1622,6 +1809,68 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         draw_groups(g_idraw[0], ng_shadow, 0);
         draw_terrain(&shadow_view, 0);
         rb_pass_end();
+    }
+    // Каскады 1 и 2 (СВЕТ: КАСКАДЫ): по одному за кадр, пока оба не нарисованы — оба. Люди в дальних
+    // каскадах не нужны: их тень вблизи даёт каскад 0
+    if (rs->shadows && rs->light_casc) {
+        for (u32 c = 0; c < 2; c++) {
+            if ((R.casc_ready & 3u) == 3u && c != (u32)(R.frame_no & 1u)) continue;
+            M4 cvp = casc_matrix(fv, g_casc_ext[c]);
+            PassView cv = { .fr = frustum_from(cvp), .px_k = SHADOW_SIZE / (2.0f * g_casc_ext[c]), .inst_lod_k = 0.3f };
+            u32 n = gather(items, count, &cv, true, g_inst[3]), ns = 0;
+            for (u32 i = 0; i < n; i++)
+                if (g_inst[3][i].pose == NO_POSE) g_inst[3][ns++] = g_inst[3][i];
+            u32 base = stream_insts(g_inst[3], &ns);
+            u32 ng = c == 0 && rs->flora ? gather_groups(&cv, true, g_idraw[3]) : 0;
+            rb_pass_begin(&(RbPass){ .depth = { .tex = R.casc_tex, .layer = (u16)c }, .clear_depth = true });
+            R.pset = PS_SHADOW;
+            push_view_proj(cvp);
+            draw_insts(g_inst[3], ns, base, 2);
+            draw_groups(g_idraw[3], ng, 2);
+            u32 draws = 0;
+            f64 tris = 0;
+            use_pipe(LAY_NONE, false);
+            terrain_draw(cv.fr.p, TERRAIN_LEVELS, 0.25f, &draws, &tris);
+            rb_pass_end();
+            R.casc_vp[c] = cvp;
+            R.casc_ready |= 1u << c;
+        }
+    } else {
+        R.casc_ready = 0;
+    }
+    {
+        GpuShade sd;
+        memset(&sd, 0, sizeof sd);
+        for (u32 c = 0; c < 2; c++) memcpy(sd.casc_vp[c], R.casc_vp[c].m, sizeof sd.casc_vp[c]);
+        memcpy(sd.scene_vp, vp.m, sizeof sd.scene_vp);
+        memcpy(sd.ext, (f32[4]){ SHADOW_EXTENT, g_casc_ext[0], g_casc_ext[1], 500.0f }, sizeof sd.ext);
+        sd.shade[0] = rs->shadows && rs->light_casc && (R.casc_ready & 3u) == 3u;
+        sd.shade[1] = rs->light_soft;
+        sd.shade[2] = rs->shadows && rs->light_contact;
+        sd.shade[3] = gtao;
+        size_t off = (size_t)R.stream * R.shade_step;
+        rb_buf_write(R.shade_buf, off, sizeof sd, &sd);
+        rb_bind_ubo(B_SHADE, R.shade_buf, off, sizeof sd);
+    }
+    rb_bind_tex(B_CASC, R.casc_tex, RB_SMP_SHADOW);
+    rb_bind_tex(B_SHADOW_RAW, R.shadow_tex, RB_SMP_NEAREST);
+    // ЗОНДЫ: восьмая часть за кадр по готовым теням; сцена читает их после первого полного обхода
+    if (probes && R.vox_ready) {
+        u32 per = PROBE_COUNT / PROBE_PASSES, first = (R.probe_tick % PROBE_PASSES) * per;
+        probes_ubo(R.probe_pass > 0, first, per);
+        rb_bind_tex(B_SHADOW, R.shadow_tex, RB_SMP_SHADOW);
+        rb_bind_tex(B_CONTACT, R.contact.color, RB_SMP_NEAREST);
+        rb_bind_ssbo(B_VOX, R.vox_buf, 0, 0);
+        rb_bind_ssbo(B_PROBE_BUF, R.probe_buf, 0, 0);
+        rb_bind_ssbo(B_PROBE_DIST, R.probe_dist, 0, 0);
+        rb_bind_pipe(R.pipe_probes);
+        rb_dispatch(per, 1, 1);
+        if (++R.probe_tick % PROBE_PASSES == 0) R.probe_pass++;
+    } else {
+        probes_ubo(false, 0, 0);
+        rb_bind_ssbo(B_VOX, R.vox_buf, 0, 0);
+        rb_bind_ssbo(B_PROBE_BUF, R.probe_buf, 0, 0);
+        rb_bind_ssbo(B_PROBE_DIST, R.probe_dist, 0, 0);
     }
     pass_mark(1);
     if (timing) mark(1);
@@ -1656,6 +1905,16 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
         draw_full(&R.rate, R.pipe_vrs, 0);
     }
     RbTex rate = vrs ? R.rate.color : 0;
+    // Контактные тени по готовой глубине (время — в столбце глубина)
+    if (rs->shadows && rs->light_contact) draw_full(&R.contact, R.pipe_contact, 0);
+    rb_bind_tex(B_CONTACT, R.contact.color, RB_SMP_NEAREST);
+    // GTAO по той же глубине, затем размытие 4x4 по дальности (время — в столбце глубина)
+    if (gtao) {
+        draw_full(&R.gtao[0], R.pipe_gtao, 0);
+        rb_bind_tex(B_GTAO_RAW, R.gtao[0].color, RB_SMP_NEAREST);
+        draw_full(&R.gtao[1], R.pipe_gtao_blur, 0);
+    }
+    rb_bind_tex(B_GTAO, R.gtao[1].color, RB_SMP_NEAREST);
     pass_mark(2);
     if (timing) mark(2);
     pass_to(&R.scene, false, NULL, rate);

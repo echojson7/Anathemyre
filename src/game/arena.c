@@ -1,4 +1,5 @@
 #include "arena.h"
+#include "../defs/defs.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -37,25 +38,23 @@ void arena_random_fighter(FighterDesc *d, Rng *r, u32 tier)
     d->skill[SK_DEXTERITY] = jitter(r, b * 0.8f + 5.0f, 6.0f);
     d->skill[SK_TOUGHNESS] = jitter(r, b * 0.9f, 5.0f);
     d->skill[SK_ATHLETICS] = jitter(r, b * 0.7f + 5.0f, 5.0f);
-    d->weapon = (u8)rng_below(r, W_COUNT);
-    // Балка только тем, кто её поднимет
-    if (d->weapon == W_BALKA && tier == 0) d->weapon = W_ARMATURA;
+    d->weapon = g_weapon_pool[rng_below(r, g_weapon_pool_count)];
     d->skill[SK_WEAPON + g_weapons[d->weapon].wclass] = jitter(r, b + 5.0f, 5.0f);
     static const u8 q[3][2] = { { Q_JUNK, Q_WORN }, { Q_WORN, Q_SOUND }, { Q_SOUND, Q_MASTER } };
     d->weapon_q = q[tier][rng_below(r, 2)];
     if (tier == 2 && rng_f32(r) < 0.2f) d->weapon_q = Q_ANCIENT;
     for (u32 s = 0; s < SLOT_COUNT; s++) d->armor[s] = ARMOR_NONE;
-    d->armor[SLOT_TORSO_UNDER] = A_RAGS;
-    d->armor[SLOT_PANTS] = A_PANTS;
+    d->armor[SLOT_TORSO_UNDER] = def_armor("rags");
+    d->armor[SLOT_PANTS] = def_armor("pants");
     if (tier >= 1) {
-        d->armor[SLOT_TORSO_UNDER] = rng_f32(r) < 0.5f ? A_QUILT : A_RAGS;
-        d->armor[SLOT_TORSO_ARMOR] = A_JACKET;
-        if (rng_f32(r) < 0.5f) d->armor[SLOT_HEAD] = A_BUCKET;
+        d->armor[SLOT_TORSO_UNDER] = def_armor(rng_f32(r) < 0.5f ? "quilt" : "rags");
+        d->armor[SLOT_TORSO_ARMOR] = def_armor("jacket");
+        if (rng_f32(r) < 0.5f) d->armor[SLOT_HEAD] = def_armor("bucket");
     }
     if (tier == 2) {
-        d->armor[SLOT_TORSO_ARMOR] = rng_f32(r) < 0.6f ? A_PLATE : A_JACKET;
-        d->armor[SLOT_HEAD] = A_BUCKET;
-        if (rng_f32(r) < 0.5f) d->armor[SLOT_LEGS] = A_GREAVES;
+        d->armor[SLOT_TORSO_ARMOR] = def_armor(rng_f32(r) < 0.6f ? "plate" : "jacket");
+        d->armor[SLOT_HEAD] = def_armor("bucket");
+        if (rng_f32(r) < 0.5f) d->armor[SLOT_LEGS] = def_armor("greaves");
     }
     d->mass = rng_range(r, 60.0f, 90.0f);
     d->height = rng_range(r, 1.70f, 1.90f);

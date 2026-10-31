@@ -1300,10 +1300,18 @@ def garments(ctx):
     LINEN, BAND = (0.33, 0.31, 0.26), (0.17, 0.16, 0.13)
     hips = np.isin(bone, [PELVIS, SPINE, TH_L, TH_R])
     if ctx['female']:
-        top, leg = hip + 0.105, crotch + 0.012 + 0.75 * np.maximum(0.0, AX - 0.025)
+        # Слипы (пользователь 2026-10-31): низкая посадка, резинка на 4 см ниже прежней. Вырез по бедру спереди
+        # дугой — от узкой ластовицы круто вверх и полого к боку, сбоку 3 см ткани; сзади вырез идёт наискось
+        # через ягодицу от ластовицы к боку и закрывает её на две трети
+        front = np.clip((Z - Z[mid].mean()) / 0.08 + 0.5, 0.0, 1.0)
+        t = np.clip((AX - 0.018) / 0.15, 0.0, 1.0)
+        top = hip + 0.065
+        leg = crotch + 0.012 + front * 0.155 * (1.0 - (1.0 - t) ** 2) + (1.0 - front) * 0.165 * t
     else:
         top, leg = hip + 0.095, crotch - 0.045 + 0.08 * np.maximum(0.0, AX - 0.06)
-    sb = field(soft(hips), lin(top - Y), lin(Y - leg))
+    # soft() упирается в 0.5 (2 см в единицах lin): на крупных гранях сзади точка среза уезжала с линии, край шёл
+    # лесенкой. Область костей здесь не граница, поэтому её поле с запасом выше
+    sb = field(10.0 * soft(hips), lin(top - Y), lin(Y - leg))
     lb = [(Y - top + 0.017, BAND, MAT_CLOTH, 1), (inside(Y < leg + 0.012, leg + 0.007 - Y), BAND, MAT_CLOTH, 1)]
     t0 = src[0][0]
     # Кожа под лямками: грани LOD0 плеч, груди, спины и шеи
@@ -2006,6 +2014,36 @@ def merge(parts):
     return [c[live] for c in cols] + [remap[T]]
 
 
+# Кости игры (BodyBone в src/sim/body.h) и их родители: стандартный скелет гуманоида
+BONE_ORDER = ['ROOT', 'PELVIS', 'SPINE', 'CHEST', 'NECK', 'HEAD'] \
+    + ['%s_%s' % (k, sd) for sd in 'LR' for k in ('CLAVICLE', 'UPPER_ARM', 'FOREARM', 'HAND')] \
+    + ['%s_%s' % (k, sd) for sd in 'LR' for k in ('THIGH', 'SHIN', 'FOOT')]
+BONE_PARENT = {'ROOT': None, 'PELVIS': 'ROOT', 'SPINE': 'PELVIS', 'CHEST': 'SPINE', 'NECK': 'CHEST', 'HEAD': 'NECK'}
+for _sd in 'LR':
+    BONE_PARENT.update({'CLAVICLE_' + _sd: 'CHEST', 'UPPER_ARM_' + _sd: 'CLAVICLE_' + _sd, 'FOREARM_' + _sd: 'UPPER_ARM_' + _sd,
+                        'HAND_' + _sd: 'FOREARM_' + _sd, 'THIGH_' + _sd: 'PELVIS', 'SHIN_' + _sd: 'THIGH_' + _sd,
+                        'FOOT_' + _sd: 'SHIN_' + _sd})
+
+
+def write_skel(path, J):
+    # ASKL 1: u32 число костей, затем на кость: имя char[16], i32 родитель (номер в файле, -1 — корень),
+    # f32 сустав x y z в позе привязки. Сустав — голова первой кости MH, что ведёт кость игры, с точностью до мм;
+    # правые — зеркало левых
+    jt = {b: J[n + '____head'] for b, n in JOINT_SRC}
+
+    def at(b):
+        if b == 'ROOT':
+            return np.zeros(3)
+        if b.endswith('_R'):
+            return jt[b[:-2] + '_L'] * np.array([-1.0, 1.0, 1.0])
+        return jt[b]
+    with open(path, 'wb') as f:
+        f.write(b'ASKL' + struct.pack('<II', 1, len(BONE_ORDER)))
+        for b in BONE_ORDER:
+            par = BONE_PARENT[b]
+            f.write(struct.pack('<16si3f', b.encode(), BONE_ORDER.index(par) if par else -1, *(np.round(at(b), 3) + 0.0)))
+
+
 def write_mesh(path, V, N, C, M, L, S, D, T):
     # AMSH 3: после индексов поток скиннинга, на вершину u8 кости[4] и u8 веса[4] (сумма 255);
     # затем u32 число морфов и сдвиги: на вершину и морф три u32 = snorm16 пары (dx dy) (dz nx) (ny nz),
@@ -2055,21 +2093,8 @@ def main():
             write_mesh('%s/%s.mesh' % (out, name), *mesh)
             V, T = mesh[0], mesh[-1]
             print('%-15s %5d вершин %6d треугольников' % (name, len(V), len(T)))
-        # Суставы тела для src/game/look.c (g_body_joints, порядок BONE_*): голова первой кости MH, что ведёт кость игры;
-        # мужские — и в src/sim/body.c (g_body_bones). Правые — зеркало левых
-        jt = {b: J[n + '____head'] for b, n in JOINT_SRC}
-        order = ['ROOT', 'PELVIS', 'SPINE', 'CHEST', 'NECK', 'HEAD'] + ['%s_%s' % (k, sd) for sd in 'LR' for k in ('CLAVICLE', 'UPPER_ARM', 'FOREARM', 'HAND')] \
-            + ['%s_%s' % (k, sd) for sd in 'LR' for k in ('THIGH', 'SHIN', 'FOOT')]
-        def at(b):
-            if b == 'ROOT':
-                return np.zeros(3)
-            if b.endswith('_R'):
-                return jt[b[:-2] + '_L'] * np.array([-1.0, 1.0, 1.0])
-            return jt[b]
-        print('  [%s] = {' % p['name'])
-        for i in range(0, len(order), 4):
-            print('    ' + ' '.join('{ %.3ff, %.3ff, %.3ff },' % tuple(np.round(at(b), 3) + 0.0) for b in order[i:i + 4]))
-        print('  },')
+        # Скелет тела рядом с сеткой: суставы, по которым вращаются кости игры (src/sim/body.c читает его при старте)
+        write_skel('%s/%s.skel' % (out, p['name']), J)
 
 if __name__ == '__main__':
     main()

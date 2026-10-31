@@ -24,7 +24,7 @@ typedef struct CharMeshes {
     GpuMesh  body_lod[BODY_KIND_COUNT][CHAR_LODS - 1];
     GpuMesh *gear;       // CHAR_GEAR_MESHES; выделяет вызывающий: место в памяти задаёт порядок отрисовки
     GpuMesh *gear_lod;   // по CHAR_LODS - 1 на вещь
-    GpuMesh  weapon[W_COUNT];
+    GpuMesh  weapon[WEAPON_CAP * WEAPON_LOOKS];  // по weapon_mesh: вещь × вид качества  // внутри: рендер раскладывает по адресам сеток
     GpuMesh  torch[2];   // древко, пламя
     GpuMesh  marker;
     GpuMesh  ring[3];
@@ -49,7 +49,6 @@ typedef struct Figures {
     f32     slope[PEOPLE_MAX][2]; // уклон земли под бойцом (dy/dx, dy/dz): лежащие ложатся по склону
     f32     age[PEOPLE_MAX];  // сколько секунд поза не пересчитывалась; < 0 — не было в кадре, считать сразу
     M4     *bones;            // PEOPLE_MAX наборов костей
-    M4     *drop;             // PEOPLE_MAX наборов: оружие, выпавшее на землю
     M4     *arena;            // AV_BONE_SETS наборов: бойцы арены
     M4     *marks;            // MARK_SETS наборов: метки под ногами (одна матрица)
     M4     *portrait;         // 2 набора: миниатюры отряда и крупный портрет

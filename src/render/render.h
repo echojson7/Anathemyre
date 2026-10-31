@@ -125,12 +125,18 @@ typedef struct RenderSettings {
     bool light_expo;    // автоэкспозиция: глаз привыкает к темноте и к яркому свету
     bool light_bloom;   // слабое свечение ярких мест, как в объективе
     u8   light_gi;      // LIGHT_GI_*: отражённый свет (рассеянный свет неба и земли)
+    bool light_casc;    // каскады теней до 700 м (иначе тени только в ±45 м)
+    bool light_soft;    // мягкий край тени по расстоянию до заслонки (PCSS)
+    bool light_contact; // контактные тени с экрана: щели, ступни, складки
+    u8   light_ao;      // LIGHT_AO_*: затенение углов
 } RenderSettings;
 
 enum { LIGHT_MAT_OLD, LIGHT_MAT_GGX, LIGHT_MAT_COUNT };
 enum { LIGHT_CURVE_ACES, LIGHT_CURVE_AGX, LIGHT_CURVE_NEUTRAL, LIGHT_CURVE_COUNT };
 // ПРОСТОЙ — небо сверху, земля снизу всюду одинаково; НЕБО ПО СЕТКЕ — по доле видимого неба (запекается)
-enum { LIGHT_GI_SIMPLE, LIGHT_GI_SKY, LIGHT_GI_COUNT };
+enum { LIGHT_GI_SIMPLE, LIGHT_GI_SKY, LIGHT_GI_PROBES, LIGHT_GI_COUNT };
+// SSAO — прежнее, поверх всего кадра в атмосфере; GTAO — по горизонтам, гасит только рассеянный свет
+enum { LIGHT_AO_SSAO, LIGHT_AO_GTAO, LIGHT_AO_COUNT };
 
 // Время проходов на GPU, мс, среднее с прошлого render_take_stats
 // глубина — проход глубины и карты пикселей; интерфейс — портреты и HUD после render_frame

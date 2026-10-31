@@ -18,12 +18,13 @@ typedef struct Squad {
     f32       order_marker;         // сколько ещё секунд видна метка
     bool      formation;            // идущие по одному приказу держат темп самого медленного
     u16       next_group;
+    i32       pick[SQUAD_MAX];      // вещь на земле (Ground), за которой идёт подобрать; -1 — нет
 } Squad;
 
 static inline Player    *squad_body(const Squad *s, u32 i) { return &s->people->body[s->member[i]]; }
 static inline CharSheet *squad_sheet(const Squad *s, u32 i) { return &s->people->sheet[s->member[i]]; }
 
-// Лист чужого: случайный боец уровня tier (0 новичок .. 2 ветеран), оружие weapon (W_*), лохмотья
+// Лист чужого: случайный боец уровня tier (0 новичок .. 2 ветеран), оружие weapon (номер описания), лохмотья
 void sheet_random(CharSheet *c, Rng *rng, const char *name, u32 tier, u8 weapon);
 // Стартовый отряд из четырёх у точки origin: люди дописываются в таблицу p
 void squad_init(Squad *s, People *p, Rng *rng, V3 origin, f32 heading, GroundFn ground);
@@ -31,6 +32,8 @@ void squad_init(Squad *s, People *p, Rng *rng, V3 origin, f32 heading, GroundFn 
 void squad_place(Squad *s, V3 origin, f32 heading, GroundFn ground);
 // Выбранные идут к точке строем: ряды по три поперёк направления движения
 void squad_order_move(Squad *s, V3 target);
+// Первый выбранный идёт подобрать вещь k, лежащую в at (подбирает шаг мира, loot.c)
+void squad_order_pick(Squad *s, i32 k, V3 at);
 // Режим передвижения выбранным
 void squad_set_gait(Squad *s, Gait g);
 // Предел скорости персонажа в режиме g: ноги, атлетика, ноша

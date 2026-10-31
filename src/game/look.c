@@ -1,30 +1,24 @@
 #include "look.h"
 
+#include <stdio.h>
+
 #include "../core/hash.h"
 #include "../render/mesh.h"
 
 const char *const g_body_file[BODY_KIND_COUNT] = { "mh_male", "mh_female", "mh_thin" };
 
-// Суставы мужского тела MakeHuman. У худого тот же скелет: худоба — морфами сетки
-#define JOINTS_MH_MALE {                                                                                                  \
-        { 0.000f, 0.000f, 0.000f }, { 0.000f, 0.970f, 0.003f }, { 0.000f, 1.061f, -0.030f }, { 0.000f, 1.197f, -0.030f },   \
-        { 0.000f, 1.555f, 0.012f }, { 0.000f, 1.661f, 0.053f }, { 0.024f, 1.477f, 0.023f }, { 0.195f, 1.446f, 0.019f },     \
-        { 0.228f, 1.141f, 0.019f }, { 0.240f, 0.881f, 0.031f }, { -0.024f, 1.477f, 0.023f }, { -0.195f, 1.446f, 0.019f },   \
-        { -0.228f, 1.141f, 0.019f }, { -0.240f, 0.881f, 0.031f }, { 0.113f, 0.965f, -0.008f }, { 0.136f, 0.529f, 0.010f },  \
-        { 0.159f, 0.075f, 0.029f }, { -0.113f, 0.965f, -0.008f }, { -0.136f, 0.529f, 0.010f }, { -0.159f, 0.075f, 0.029f }, \
-    }
+V3 g_body_joints[BODY_KIND_COUNT][BONE_COUNT];
 
-const V3 g_body_joints[BODY_KIND_COUNT][BONE_COUNT] = {
-    [BODY_MALE] = JOINTS_MH_MALE,
-    [BODY_FEMALE] = {
-        { 0.000f, 0.000f, 0.000f }, { 0.000f, 0.940f, 0.027f }, { 0.000f, 1.022f, -0.025f }, { 0.000f, 1.196f, 0.013f },
-        { 0.000f, 1.530f, -0.001f }, { 0.000f, 1.653f, 0.049f }, { 0.026f, 1.453f, 0.024f }, { 0.165f, 1.436f, 0.024f },
-        { 0.197f, 1.135f, 0.024f }, { 0.209f, 0.882f, 0.036f }, { -0.026f, 1.453f, 0.024f }, { -0.165f, 1.436f, 0.024f },
-        { -0.197f, 1.135f, 0.024f }, { -0.209f, 0.882f, 0.036f }, { 0.097f, 0.928f, 0.020f }, { 0.125f, 0.506f, 0.037f },
-        { 0.153f, 0.077f, 0.054f }, { -0.097f, 0.928f, 0.020f }, { -0.125f, 0.506f, 0.037f }, { -0.153f, 0.077f, 0.054f },
-    },
-    [BODY_THIN] = JOINTS_MH_MALE,
-};
+bool look_load_skeletons(const char *data_dir) {
+    char path[512];
+    for (int k = 0; k < BODY_KIND_COUNT; k++) {
+        snprintf(path, sizeof path, "%s/meshes/%s.skel", data_dir, g_body_file[k]);
+        if (!body_skeleton_load(path, g_body_joints[k])) return false;
+    }
+    // Общий скелет (бой, капсулы, крепления ножен) — мужской: остальные тела ставятся на его кости
+    for (int i = 0; i < BONE_COUNT; i++) g_body_bones[i].joint = g_body_joints[BODY_MALE][i];
+    return true;
+}
 
 const char *const g_gear_file[GEAR_COUNT] = {
     "rags", "quilt", "jacket", "plate", "bucket", "greaves", "wrap", "boots", "mitts", "pack", "belt", "pants",
@@ -38,29 +32,26 @@ const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX] = {
     [BODY_THIN] = HAIR_MH_MALE,
 };
 
+u32 g_gear_hides[GEAR_COUNT];
+
 u32 look_hair(const CharLook *l, u8 *gear, u32 n)
 {
     if (!l->cut) return 0;
     for (u32 i = 0; i < n; i++)
-        if (gear[i] == GEAR_BUCKET) return 0;
+        if (gear[i] < GEAR_COUNT && (g_gear_hides[gear[i]] & GEAR_HIDES_HAIR)) return 0;
     gear[n] = (u8)(GEAR_COUNT + l->cut - 1);
     return 1;
 }
 
-static const u8 g_armor_gear[A_COUNT] = {
-    [A_RAGS] = GEAR_RAGS, [A_JACKET] = GEAR_JACKET, [A_QUILT] = GEAR_QUILT,
-    [A_PLATE] = GEAR_PLATE, [A_BUCKET] = GEAR_BUCKET, [A_GREAVES] = GEAR_GREAVES, [A_PANTS] = GEAR_PANTS,
-};
-
-// Штаны под комбинезоном не рисуются: их закрывает его штанина
+// Закрытое другой вещью не рисуется: штаны под штаниной комбинезона
 static u32 drop_hidden(u8 *out, u32 n)
 {
-    bool quilt = false;
-    for (u32 i = 0; i < n; i++) quilt |= out[i] == GEAR_QUILT;
-    if (!quilt) return n;
+    u32 hidden = 0;
+    for (u32 i = 0; i < n; i++) hidden |= g_gear_hides[out[i]];
+    if (!(hidden & ((1u << GEAR_COUNT) - 1u))) return n;
     u32 m = 0;
     for (u32 i = 0; i < n; i++)
-        if (out[i] != GEAR_PANTS) out[m++] = out[i];
+        if (!(hidden & (1u << out[i]))) out[m++] = out[i];
     return m;
 }
 
@@ -68,7 +59,7 @@ u32 gear_from_armor(const u8 *armor, u8 *out)
 {
     u32 n = 0;
     for (u32 s = 0; s < SLOT_COUNT; s++)
-        if (armor[s] < A_COUNT) out[n++] = g_armor_gear[armor[s]];
+        if (armor[s] < g_armor_count && g_armors[armor[s]].look < GEAR_COUNT) out[n++] = g_armors[armor[s]].look;
     return drop_hidden(out, n);
 }
 
@@ -77,8 +68,8 @@ u32 gear_from_sheet(const CharSheet *cs, u8 *out)
     u32 n = 0;
     for (u32 s = 0; s < SLOT_COUNT; s++) {
         const Item *it = &cs->equip[s];
-        if (it->kind == IK_ARMOR && it->id < A_COUNT) out[n++] = g_armor_gear[it->id];
-        else if (it->kind == IK_GOODS && it->id >= G_WRAP && it->id <= G_BELT) out[n++] = (u8)(GEAR_WRAP + (it->id - G_WRAP));
+        u8 g = it->kind == IK_ARMOR ? g_armors[it->id].look : it->kind == IK_GOODS ? g_goods[it->id].look : GEAR_NONE;
+        if (g < GEAR_COUNT) out[n++] = g;
     }
     return drop_hidden(out, n);
 }
@@ -95,7 +86,7 @@ u32 gear_random(u32 seed, u8 *out)
     if (hash01(&s) < 0.25f) out[n++] = GEAR_PACK;
     if (hash01(&s) < 0.4f) out[n++] = GEAR_BELT;
     // Штаны почти у всех; под комбинезоном их не видно
-    if (hash01(&s) < 0.85f && out[0] != GEAR_QUILT) out[n++] = GEAR_PANTS;
+    if (hash01(&s) < 0.85f && !(g_gear_hides[out[0]] & (1u << GEAR_PANTS))) out[n++] = GEAR_PANTS;
     return n;
 }
 
@@ -130,7 +121,7 @@ void look_make(CharLook *l, u32 body, u32 seed, f32 mass, f32 height, f32 streng
     l->morph[LOOK_OLD] = a < 0.86f ? 0.3f * a : 0.35f + 2.0f * (a - 0.86f);
     l->morph[LOOK_NOSE] = 1.2f * (hash01(&s) - 0.5f);
     l->morph[LOOK_EYES] = 1.2f * (hash01(&s) - 0.5f);
-    l->morph[LOOK_JAW] = body == BODY_FEMALE ? 0.8f * hash01(&s) - 0.6f : 1.2f * hash01(&s) - 0.4f;
+    l->morph[LOOK_JAW] = body == BODY_FEMALE ? 0.8f * hash01(&s) - 0.6f : 0.9f * hash01(&s) - 0.4f;  // челюсть не выше +50, как в редакторе
     l->skin_t = (f32)((u32)(hash01(&s) * (f32)ARRAY_COUNT(g_skin)) % ARRAY_COUNT(g_skin)) / (f32)(ARRAY_COUNT(g_skin) - 1);
     // Волосы почти у всех тёмные, седина со старостью
     f32 hr = hash01(&s);
@@ -182,4 +173,3 @@ M4 look_matrix(const CharLook *l, u32 body)
     return m;
 }
 _Static_assert(LOOK_MORPHS <= MESH_MAX_MORPHS && MESH_MAX_MORPHS <= 10, "морфы внешности не влезают в матрицу");
-_Static_assert(GEAR_BELT - GEAR_WRAP == G_BELT - G_WRAP, "вещи G_WRAP..G_BELT идут подряд, как GEAR_WRAP..GEAR_BELT");

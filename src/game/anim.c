@@ -2196,7 +2196,7 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     static const CharAction none = { 0 };
     const CharAction *a = act ? act : &none;
     g_joints = p->joints;
-    const bool armed = p->weapon > 0 && p->weapon <= W_COUNT;
+    const bool armed = p->weapon > 0 && p->weapon <= g_weapon_count;
     const u8 wpn = armed ? (u8)(p->weapon - 1) : 0;
     f32 guard = clampf(a->guard, 0.0f, 1.0f);
     f32 walk = clampf(p->walk, 0.0f, 1.0f);
@@ -2589,5 +2589,24 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         stub.t = v3_sub(stub.t, xf_dir(&stub, joint(b0)));
         Xf w = xf_mul(&root, &stub);
         for (int k = 0; k < 3; k++) out[limb_bones[part][k]] = xf_m4(&w);
+    }
+}
+
+// Капсулы стойки — с той же позы, что рисуется: правка стойки сразу меняет, куда приходят удары.
+// Округление до миллиметра — чтобы бой не зависел от последних битов sinf разных libm
+void anim_bake_hit_guard(void)
+{
+    u32 w = 0;
+    while (w + 1 < g_weapon_count && (g_weapons[w].wclass == WC_POLEARM || g_weapons[w].wclass == WC_HEAVY)) w++;
+    CharPose p = { .calm = true, .weapon = (u8)(w + 1) };
+    CharAction a = { .guard = 1.0f, .wield = 1.0f };
+    M4 bones[CHAR_BONES];
+    character_pose(&p, &a, bones);
+    for (u32 c = 0; c < g_body_hit_count; c++) {
+        HitCapsule h = g_body_hit[c];
+        V3 pa = m4_point(bones[h.bone], h.a), pb = m4_point(bones[h.bone], h.b);
+        h.a = v3(roundf(pa.x * 1000.0f) / 1000.0f, roundf(pa.y * 1000.0f) / 1000.0f, roundf(pa.z * 1000.0f) / 1000.0f);
+        h.b = v3(roundf(pb.x * 1000.0f) / 1000.0f, roundf(pb.y * 1000.0f) / 1000.0f, roundf(pb.z * 1000.0f) / 1000.0f);
+        g_body_hit_guard[c] = h;
     }
 }

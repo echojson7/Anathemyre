@@ -58,7 +58,6 @@ bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const
     memset(f, 0, sizeof *f);
     for (u32 i = 0; i < PEOPLE_MAX; i++) f->age[i] = -1.0f;
     f->bones = ARENA_PUSH_ARRAY(perm, M4, (size_t)PEOPLE_MAX * RENDER_MAX_BONES);
-    f->drop = ARENA_PUSH_ARRAY(perm, M4, (size_t)PEOPLE_MAX * RENDER_MAX_BONES);
     f->arena = ARENA_PUSH_ARRAY(perm, M4, (size_t)AV_BONE_SETS * RENDER_MAX_BONES);
     f->marks = ARENA_PUSH_ARRAY(perm, M4, (size_t)MARK_SETS * RENDER_MAX_BONES);
     f->portrait = ARENA_PUSH_ARRAY(perm, M4, 2 * RENDER_MAX_BONES);
@@ -79,9 +78,9 @@ bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const
             for (u32 l = 0; l + 1 < CHAR_LODS; l++) (l ? &gl[l - 1] : gm)->lod_px = g_char_lod_px[l] * ratio;
         }
     }
-    for (u32 k = 0; k < W_COUNT; k++) {
-        mb_init(mb, perm, 4000, 12000);
-        weapon_build(mb, (u8)k);
+    for (u32 k = 0; k < g_weapon_count * WEAPON_LOOKS; k++) {
+        mb_init(mb, perm, 8000, 24000);
+        weapon_build(mb, (u8)(k / WEAPON_LOOKS), (u8)(k % WEAPON_LOOKS), CHAR_BONE_WEAPON);
         gpu_mesh_upload_pooled(&m->weapon[k], mb);
         perm->used = mark;
     }
@@ -187,14 +186,11 @@ static void pose_job(void *ctx, u32 b, u32 e)
     }
 }
 
-// Человек i в бою: поза от поля боя, сложение и оружие — от владельца тела. true — оружие выпало (drop)
-static bool fight_pose(const Field *fd, u32 i, PoseJob *j, M4 *drop, const f32 slope[2])
+// Человек i в бою: поза от поля боя, сложение и оружие — от владельца тела
+static void fight_pose(const Field *fd, u32 i, PoseJob *j, const f32 slope[2])
 {
     CharPose walk = j->p;
-    V3 dp;
-    f32 dy;
-    bool dropped = fight_anim_pose(&fd->anim[i], &fd->w, i, fd->alpha, v3(0, 0, 0), walk.pos.y, walk.time, &j->p,
-                                   &j->act, &dp, &dy);
+    fight_anim_pose(&fd->anim[i], &fd->w, i, fd->alpha, v3(0, 0, 0), walk.pos.y, walk.time, &j->p, &j->act);
     j->p.seed = walk.seed;
     j->p.height = walk.height;
     j->p.width = walk.width;
@@ -203,10 +199,6 @@ static bool fight_pose(const Field *fd, u32 i, PoseJob *j, M4 *drop, const f32 s
     j->p.slope_x = slope[0];
     j->p.slope_z = slope[1];
     j->fight = true;
-    // Выпавшее оружие лежит на склоне, а не на высоте ног
-    dp.y += slope[0] * (dp.x - walk.pos.x) + slope[1] * (dp.z - walk.pos.z);
-    if (dropped) weapon_ground_pose(dp, dy, drop);
-    return dropped;
 }
 
 // Бойцы текущего боя арены: позы от её боя, внешность из ростера
@@ -220,9 +212,7 @@ static u32 arena_figures(Figures *f, const CharMeshes *m, const ArenaView *v, co
     for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++) {
         u32 ri = s->idx[i], kind = ri % BODY_KIND_COUNT;
         PoseJob *j = &f->job[f->jobs++];
-        V3 dp;
-        f32 dyaw;
-        bool dropped = fight_anim_pose(&v->fa[i], w, i, alpha, v->center, v->floor_y, time, &j->p, &j->act, &dp, &dyaw);
+        bool dropped = fight_anim_pose(&v->fa[i], w, i, alpha, v->center, v->floor_y, time, &j->p, &j->act);
         j->p.joints = g_body_joints[kind];
         j->fight = true;
         M4 *b = &f->arena[(set++) * RENDER_MAX_BONES];
@@ -234,12 +224,8 @@ static u32 arena_figures(Figures *f, const CharMeshes *m, const ArenaView *v, co
         u32 nw = gear_from_armor(s->roster[ri].d.armor, worn);
         nw += look_hair(&lk, worn, nw);
         n += push_gear(items + n, m->gear + kind * GEAR_ROW, worn, nw, b);
-        if (dropped) {
-            M4 *wb = &f->arena[(set++) * RENDER_MAX_BONES];
-            weapon_ground_pose(dp, dyaw, wb);
-            b = wb;
-        }
-        items[n++] = (DrawItem){ .mesh = &m->weapon[w->weapon[i]], .bones = b };
+        // Выроненное лежит вещью на земле: его рисует физика
+        if (!dropped) items[n++] = (DrawItem){ .mesh = &m->weapon[weapon_mesh(w->weapon[i], w->weapon_q[i])], .bones = b };
     }
     return n;
 }
@@ -283,10 +269,11 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
         bool fight = b->slot >= 0 && field_awake(fd, (u32)b->slot), pose;
         // Свет факела достаёт дальше тела: с горящим факелом проверяем шире
         if (!pose_cull(&pc, b->pos, lit > 0.0f ? 8.0f : 2.5f, fight, &f->age[i], &pose)) continue;
-        bool armed = cs->equip[SLOT_WEAPON].kind == IK_WEAPON;
+        // Выроненное в бою лежит вещью на земле: его рисует физика
+        bool armed = cs->equip[SLOT_WEAPON].kind == IK_WEAPON && !(fight && fd->w.gitem[b->slot] != COMBAT_IN_HAND);
         u8 wid = cs->equip[SLOT_WEAPON].id;
         u32 kind = p->variant[i];
-        M4 *bones = &f->bones[(size_t)i * RENDER_MAX_BONES], *wb = bones;
+        M4 *bones = &f->bones[(size_t)i * RENDER_MAX_BONES];
         if (pose) {
             PoseJob *j = &f->job[f->jobs++];
             j->p = (CharPose){
@@ -300,13 +287,11 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
             j->fight = false;
             j->bones = bones;
             j->look = p->look[i];
-            M4 *drop = &f->drop[(size_t)i * RENDER_MAX_BONES];
-            // Вне боя оружие не выпадает: всё на костях прошлой позы
-            if (fight && fight_pose(fd, (u32)b->slot, j, drop, f->slope[i])) wb = drop;
+            if (fight) fight_pose(fd, (u32)b->slot, j, f->slope[i]);
         }
         items[n++] = (DrawItem){ .mesh = &m->body[kind], .bones = bones };
         n += push_gear(items + n, m->gear + kind * GEAR_ROW, p->gear[i], p->ngear[i], bones);
-        if (armed) items[n++] = (DrawItem){ .mesh = &m->weapon[wid], .bones = wb };
+        if (armed) items[n++] = (DrawItem){ .mesh = &m->weapon[weapon_mesh(wid, cs->equip[SLOT_WEAPON].quality)], .bones = bones };
         if (p->torch[i]) {
             items[n++] = (DrawItem){ .mesh = &m->torch[0], .bones = bones };
             if (lit >= 0.05f) {
@@ -408,7 +393,7 @@ void figures_portrait(Figures *f, const FrameView *base, const CharMeshes *m, co
                       bool focus)
 {
     const CharSheet *cs = &p->sheet[i];
-    const GpuMesh *wm = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? &m->weapon[cs->equip[SLOT_WEAPON].id] : NULL;
+    const GpuMesh *wm = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? &m->weapon[weapon_mesh(cs->equip[SLOT_WEAPON].id, cs->equip[SLOT_WEAPON].quality)] : NULL;
     u32 kind = p->variant[i];
     portrait(base, slot, size, kind, &m->body[kind], wm, cs->equip[SLOT_WEAPON].id, p->seed[i], p->height[i], p->width[i],
              p->look[i], m->gear + kind * GEAR_ROW, p->gear[i], p->ngear[i], f->portrait + (focus ? RENDER_MAX_BONES : 0));
@@ -424,7 +409,7 @@ void figures_portrait_arena(Figures *f, const FrameView *base, const CharMeshes 
     CharLook lk;
     M4 lm = arena_view_look(s, ri, &lk);
     ng += look_hair(&lk, gear, ng);
-    portrait(base, slot, size, kind, &m->body[kind], &m->weapon[d->weapon], d->weapon, seed,
+    portrait(base, slot, size, kind, &m->body[kind], &m->weapon[weapon_mesh(d->weapon, d->weapon_q)], d->weapon, seed,
              d->height / 1.8f, 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), lm, m->gear + kind * GEAR_ROW, gear, ng,
              f->portrait + RENDER_MAX_BONES);
 }

@@ -8,14 +8,14 @@ layout(location = 4) in vec3 v_local;
 layout(location = 5) flat in mat3 v_rot;
 layout(location = 8) flat in vec3 v_tint;
 
-layout(binding = 6) uniform sampler2DShadow u_shadow;
 layout(std430, binding = 31) readonly buffer SkyGrid { vec4 g_sky_origin; uint g_sky[]; };
 
 layout(location = 0) out vec4 o_color;
 
 const uint MAT_CONCRETE = 0u, MAT_RUST = 1u, MAT_SAND = 2u, MAT_CLOTH = 3u, MAT_LEATHER = 4u,
            MAT_GLYPH = 5u, MAT_EMISSIVE = 6u, MAT_SKIN = 7u, MAT_METAL = 8u,
-           MAT_TERRAIN = 9u, MAT_ROCK = 10u, MAT_WATER = 11u, MAT_BARK = 12u, MAT_LEAF = 13u, MAT_GRASS = 14u;
+           MAT_TERRAIN = 9u, MAT_ROCK = 10u, MAT_WATER = 11u, MAT_BARK = 12u, MAT_LEAF = 13u, MAT_GRASS = 14u,
+           MAT_STEEL = 15u;
 
 const float TEXEL = 1.0 / 10.0;  // «пиксель» на поверхностях, м
 
@@ -79,6 +79,26 @@ vec3 ggx_spec(vec3 N, vec3 V, vec3 L, float a2, vec3 F0)
     return D * vis * F * nl;
 }
 
+// УГЛЫ: GTAO из половинного разрешения (gtao.frag): из четырёх соседей — близкие по дальности, как AO атмосферы
+layout(binding = 36) uniform sampler2D u_gtao;
+float gtao_at(float dist)
+{
+    vec2 uv = gl_FragCoord.xy / (vec2(textureSize(u_gtao, 0)) * 2.0);
+    vec2 t = fract(uv * vec2(textureSize(u_gtao, 0)) - 0.5);
+    vec4 ao = textureGather(u_gtao, uv, 0), dd = textureGather(u_gtao, uv, 1);  // порядок: (0,1) (1,1) (1,0) (0,0)
+    vec4 wb = vec4((1.0 - t.x) * t.y, t.x * t.y, t.x * (1.0 - t.y), (1.0 - t.x) * (1.0 - t.y));
+    vec4 w = wb / (0.02 + abs(dd - dist) / dist);
+    return dot(ao, w) / max(dot(w, vec4(1.0)), 1e-6);
+}
+
+// Поправка на переотражения (Jimenez 2016): светлая поверхность в углу отдаёт часть света обратно
+float multibounce(float v, vec3 albedo)
+{
+    float alb = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+    float ka = 2.0404 * alb - 0.3324, kb = -4.7951 * alb + 0.6417, kc = 2.7552 * alb + 0.6903;
+    return max(v, ((v * ka + kb) * v + kc) * v);
+}
+
 float sun_shadow(vec3 p, vec3 n)
 {
     vec3 off = p + n * 0.06 + u_sun_dir * 0.03;
@@ -91,6 +111,18 @@ float sun_shadow(vec3 p, vec3 n)
         for (int x = -1; x <= 1; x++)
             sum += texture(u_shadow, vec3(s.xy + vec2(x, y) * texel * 1.2, s.z));
     return sum / 9.0;
+}
+
+// Солнце с учётом частей СВЕТ: без них — прежняя карта ±45 м как была
+float sun_light(vec3 p, vec3 n)
+{
+    if (u_shade.x == 0 && u_shade.y == 0) return sun_shadow(p, n);
+    float w0 = casc0_weight(p);
+    float s0 = w0 > 0.0 ? (u_shade.y != 0 ? sun_shadow_soft(p, n) : sun_shadow(p, n)) : 1.0;
+    if (u_shade.x == 0 || w0 >= 1.0) return s0;
+    float w1 = casc1_weight(p);
+    float s12 = w1 >= 1.0 ? casc_shadow(0, p, n) : mix(casc_shadow(1, p, n), casc_shadow(0, p, n), w1);
+    return mix(s12, s0, w0);
 }
 
 // Знаки на неизвестном языке пиксельным шрифтом: ячейка 6x8 квадратов TEXEL (знак 5x7 и зазор),
@@ -141,6 +173,8 @@ void main()
     // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
     bool bones = u_skinned == 1 || u_skinned >= 4;
     float base = bones ? TEXEL * 0.5 : TEXEL;
+    // Сталь клинков: квадрат вчетверо мельче, иначе узкая фаска и дол тонут в одном квадрате
+    if (v_mat == MAT_STEEL) base = TEXEL * 0.25;
     bool snap = mpp < base * u_texel_on;
     vec3 dl = snap ? texel_snap(v_local, Nl, base) : vec3(0.0);
     vec3 P = v_local + dl;           // материал: прилипает к телу
@@ -221,6 +255,20 @@ void main()
         albedo *= 0.7 + 0.5 * m;
         spec = 0.6;
         gloss = 40.0;
+    } else if (v_mat == MAT_STEEL) {
+        // Сталь клинка: мелкое зерно и риски, ржавчина пятнами; альфа цвета — чистота (1 — без ржавчины)
+        // Сетка у стоек запечена в мир, ось клинка шейдеру неизвестна: зерно без направления, плюс разводы окалины
+        float grain = noise3(P * 160.0);
+        albedo *= (0.85 + 0.25 * grain + 0.06 * fine) * (0.75 + 0.4 * fbm3(P * 6.0));
+        // Ржавчина: мелкие пятна и точки коррозии, у края пятна — бурый налёт
+        float rust = fbm3(P * 26.0 + 7.3) + 0.3 * (noise3(P * 140.0) - 0.5);
+        float r = smoothstep(v_color.a - 0.03, v_color.a + 0.03, rust);
+        float stain = smoothstep(v_color.a - 0.12, v_color.a, rust) * 0.45;
+        albedo = mix(albedo, albedo * vec3(0.7, 0.6, 0.5), stain);
+        albedo = mix(albedo, vec3(0.12, 0.066, 0.04) * (0.7 + 0.6 * fine), r * 0.9);
+        spec = mix(0.9, 0.05, r);
+        gloss = mix(70.0, 8.0, r);
+        texel_mat = r > 0.5 ? MAT_RUST : MAT_STEEL;
     } else if (v_mat == MAT_GLYPH) {
         // Знаки на плите; цвет вершины — цвет свечения
         // На стене строки идут по высоте, на полу — по плоскости XZ
@@ -310,9 +358,19 @@ void main()
     // Разброс яркости от квадрата к квадрату: поверхность читается как текстура низкого разрешения
     if (snap) albedo *= 0.95 + 0.10 * hash13(floor(P / base) + float(texel_mat) * 17.0);
 
+#ifdef VOXEL_PASS
+    // ЗОНДЫ: в клетку пишется цвет поверхности (корнем), признак «занято» — старший байт
+    ivec3 vc = vox_cell(v_world - N * 0.05);
+    if (vox_inside(vc)) {
+        uvec3 q = uvec3(sqrt(clamp(albedo, 0.0, 1.0)) * 255.0 + 0.5);
+        atomicMax(g_vox[vox_index(vc)], q.r | (q.g << 8u) | (q.b << 16u) | 0xff000000u);
+    }
+    o_color = vec4(0.0);
+    return;
+#endif
     // Листва и трава просвечивают: свет заходит и на обратную сторону
     float ndl = foliage ? 0.25 + 0.5 * max(dot(N, L), 0.0) + 0.25 * abs(dot(N, L)) : max(dot(N, L), 0.0);
-    float sh = ndl > 0.0 ? (u_shadow_on != 0 ? sun_shadow(W, N) : 1.0) : 0.0;
+    float sh = ndl > 0.0 ? (u_shadow_on != 0 ? sun_light(W, N) * contact_shadow(ivec2(gl_FragCoord.xy)) : 1.0) : 0.0;
 
     // Небо и отражённый от песка свет (0.6 — тени темнее, решение пользователя 2026-10-29)
     vec3 ambient = mix(u_ground_amb, u_sky_amb, N.y * 0.5 + 0.5) * 0.6;
@@ -325,11 +383,16 @@ void main()
     // Свет от земли закрыт слабее: он идёт от освещённого солнцем песка у горизонта и в проёмах
     float skyv = sky_vis(W, N);
     if (skyv < 1.0) {
-        float alb = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
-        float ka = 2.0404 * alb - 0.3324, kb = -4.7951 * alb + 0.6417, kc = 2.7552 * alb + 0.6903;
-        skyv = max(skyv, ((skyv * ka + kb) * skyv + kc) * skyv);
+        skyv = multibounce(skyv, albedo);
         vec3 sky_part = u_sky_amb * (N.y * 0.5 + 0.5) * 0.6;
         ambient = sky_part * skyv + (ambient - sky_part) * mix(skyv, 1.0, 0.4);
+    }
+    // ЗОНДЫ: свет от земли и отражённый — из зондов, небо — по сетке неба. Зонды не дошли — как без них
+    if (u_probe.x != 0 && u_unlit == 0) {
+        float pw;
+        vec3 pl = probe_light(W, N, true, pw);
+        vec3 sky_part = u_sky_amb * (N.y * 0.5 + 0.5) * 0.6 * skyv;
+        ambient = mix(ambient, sky_part + pl, clamp(pw * 4.0, 0.0, 1.0));
     }
     // В помещении без неба небо светит только от входа, остальное — рассеянный свет ламп
     float sky_k = 1.0, inside = u_unlit == 0 ? room_inside(W) : 0.0;
@@ -340,6 +403,9 @@ void main()
         ambient = ambient * sky_k + u_room_fill.rgb * inside;
     }
 
+    // УГЛЫ: GTAO гасит только рассеянный свет и отражение неба, солнце и огни — нет (docs/lighting.md)
+    if (u_shade.w != 0 && u_unlit == 0) ao *= multibounce(gtao_at(length(W - u_cam_pos)), albedo);
+
     vec3 col;
     bool ggx = u_light.x == 1;
     // GGX (СВЕТ: МАТЕРИАЛЫ GGX): шероховатость из прежней остроты блика, у матовых 0.9; металл без своего рассеяния
@@ -348,7 +414,7 @@ void main()
     if (ggx) {
         float rough = spec > 0.0 ? sqrt(sqrt(2.0 / (gloss + 2.0))) : 0.9;
         if (v_mat == MAT_WATER) F0 = vec3(0.02);
-        if (v_mat == MAT_METAL) {
+        if (v_mat == MAT_METAL || (v_mat == MAT_STEEL && spec > 0.5)) {
             F0 = mix(F0, albedo * 1.6, 0.7);
             albedo *= 0.3;
         }

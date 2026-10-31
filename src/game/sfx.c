@@ -16,7 +16,7 @@
 #define ARENA_SLAB_R 8.5f
 
 // Броня, по которой удар звенит железом
-static bool armor_metal(u8 a) { return a == A_PLATE || a == A_BUCKET || a == A_GREAVES; }
+static bool armor_metal(u8 a) { return g_armors[a].metal; }
 
 static bool in_hall(f32 x, f32 z) { return fabsf(x) <= HALL_X && z >= HALL_Z0 && z <= HALL_Z1; }
 
@@ -94,7 +94,7 @@ void sfx_listener(WorldSound *s, V3 eye, V3 target, f32 yaw)
 
 static const WeaponDef *weapon_of(const CombatWorld *w, u32 i)
 {
-    return w->disarmed[i] || w->weapon[i] >= W_COUNT ? NULL : &g_weapons[w->weapon[i]];
+    return w->disarmed[i] || w->weapon[i] >= g_weapon_count ? NULL : &g_weapons[w->weapon[i]];
 }
 
 static bool weapon_heavy(const WeaponDef *d) { return d && (d->wclass == WC_HEAVY || d->wclass == WC_POLEARM || d->weight >= 6.5f); }
@@ -117,13 +117,8 @@ static f32 own_pitch(const SfxFight *f, u32 i) { return 0.93f + 0.14f * (f32)(ha
 // Чем оружие отвечает на удар: чем закрылись — древко багра деревянное, а бьют им крюком или пикой
 static u8 weapon_voice(u32 w, bool striking)
 {
-    switch (w) {
-    case W_RESSORA:  return SFX_WPN_RESSORA;
-    case W_SEKACH:   return SFX_WPN_SEKACH;
-    case W_ARMATURA: return SFX_WPN_ARMATURA;
-    case W_BAGOR:    return striking ? SFX_WPN_HOOK : SFX_WPN_BAGOR;
-    default:         return SFX_WPN_BALKA;
-    }
+    const WeaponDef *d = &g_weapons[w];
+    return (u8)(SFX_WPN_RESSORA + (striking ? d->voice_strike : d->voice));
 }
 
 static bool weapon_edged(const WeaponDef *d) { return d && (d->wclass == WC_BLADE || d->wclass == WC_CLEAVER); }
@@ -245,8 +240,7 @@ static void fighter(WorldSound *s, SfxFight *f, u32 i, const FightAnim *a, V3 fo
     f->wield[i] = a->wield;
     bool near = dist2(p, s->lis) < 30.0f * 30.0f;
     if (a->dropped && !f->dropped[i]) {
-        V3 dp = v3(a->drop_pos.x + f->origin.x, p.y - 1.0f, a->drop_pos.z + f->origin.z);
-        audio_play(SFX_DROP_METAL, dp, 1.0f, 1.0f, 0.4f);  // падает из руки 0.4 с
+        audio_play(SFX_DROP_METAL, foot, 1.0f, 1.0f, 0.4f);  // падает из руки ~0.4 с
     } else if (near && !a->dropped) {
         if (w0 < 0.3f && a->wield >= 0.3f) audio_play(SFX_DRAW, p, 1.0f, 1.0f, 0.0f);
         if (w0 > 0.7f && a->wield <= 0.7f) audio_play(SFX_SHEATH, p, 1.0f, 1.0f, 0.0f);

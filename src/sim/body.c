@@ -1,65 +1,123 @@
 #include "body.h"
 
-#define HX BODY_HIP_X
+#include <stdio.h>
+#include <string.h>
 
-// Суставы мужского тела MakeHuman в позе привязки (tools/humanconv печатает их при сборке сеток)
-const BoneDef g_body_bones[BONE_COUNT] = {
-    [BONE_ROOT]        = { -1, { 0.0f, 0.0f, 0.0f } },
-    [BONE_PELVIS]      = { BONE_ROOT, { 0.0f, 0.970f, 0.003f } },
-    [BONE_SPINE]       = { BONE_PELVIS, { 0.0f, 1.061f, -0.030f } },
-    [BONE_CHEST]       = { BONE_SPINE, { 0.0f, 1.197f, -0.030f } },
-    [BONE_NECK]        = { BONE_CHEST, { 0.0f, 1.555f, 0.012f } },
-    [BONE_HEAD]        = { BONE_NECK, { 0.0f, 1.661f, 0.053f } },
-    [BONE_CLAVICLE_L]  = { BONE_CHEST, { 0.024f, 1.477f, 0.023f } },
-    [BONE_UPPER_ARM_L] = { BONE_CLAVICLE_L, { 0.195f, 1.446f, 0.019f } },
-    [BONE_FOREARM_L]   = { BONE_UPPER_ARM_L, { 0.227f, 1.140f, 0.019f } },
-    [BONE_HAND_L]      = { BONE_FOREARM_L, { 0.240f, 0.880f, 0.031f } },
-    [BONE_CLAVICLE_R]  = { BONE_CHEST, { -0.024f, 1.477f, 0.023f } },
-    [BONE_UPPER_ARM_R] = { BONE_CLAVICLE_R, { -0.195f, 1.446f, 0.019f } },
-    [BONE_FOREARM_R]   = { BONE_UPPER_ARM_R, { -0.227f, 1.140f, 0.019f } },
-    [BONE_HAND_R]      = { BONE_FOREARM_R, { -0.240f, 0.880f, 0.031f } },
-    [BONE_THIGH_L]     = { BONE_PELVIS, { HX, BODY_HIP_Y, -0.008f } },
-    [BONE_SHIN_L]      = { BONE_THIGH_L, { 0.136f, BODY_KNEE_Y, 0.010f } },
-    [BONE_FOOT_L]      = { BONE_SHIN_L, { 0.159f, BODY_ANKLE_Y, 0.029f } },
-    [BONE_THIGH_R]     = { BONE_PELVIS, { -HX, BODY_HIP_Y, -0.008f } },
-    [BONE_SHIN_R]      = { BONE_THIGH_R, { -0.136f, BODY_KNEE_Y, 0.010f } },
-    [BONE_FOOT_R]      = { BONE_SHIN_R, { -0.159f, BODY_ANKLE_Y, 0.029f } },
+#include "../core/log.h"
+
+// Стандартный скелет гуманоида: родители костей. Суставы — мужское тело MakeHuman, читаются при старте
+// из data/meshes/mh_male.skel (look_load_skeletons)
+BoneDef g_body_bones[BONE_COUNT] = {
+    [BONE_ROOT] = { -1, { 0 } },
+    [BONE_PELVIS] = { BONE_ROOT, { 0 } },
+    [BONE_SPINE] = { BONE_PELVIS, { 0 } },
+    [BONE_CHEST] = { BONE_SPINE, { 0 } },
+    [BONE_NECK] = { BONE_CHEST, { 0 } },
+    [BONE_HEAD] = { BONE_NECK, { 0 } },
+    [BONE_CLAVICLE_L] = { BONE_CHEST, { 0 } },
+    [BONE_UPPER_ARM_L] = { BONE_CLAVICLE_L, { 0 } },
+    [BONE_FOREARM_L] = { BONE_UPPER_ARM_L, { 0 } },
+    [BONE_HAND_L] = { BONE_FOREARM_L, { 0 } },
+    [BONE_CLAVICLE_R] = { BONE_CHEST, { 0 } },
+    [BONE_UPPER_ARM_R] = { BONE_CLAVICLE_R, { 0 } },
+    [BONE_FOREARM_R] = { BONE_UPPER_ARM_R, { 0 } },
+    [BONE_HAND_R] = { BONE_FOREARM_R, { 0 } },
+    [BONE_THIGH_L] = { BONE_PELVIS, { 0 } },
+    [BONE_SHIN_L] = { BONE_THIGH_L, { 0 } },
+    [BONE_FOOT_L] = { BONE_SHIN_L, { 0 } },
+    [BONE_THIGH_R] = { BONE_PELVIS, { 0 } },
+    [BONE_SHIN_R] = { BONE_THIGH_R, { 0 } },
+    [BONE_FOOT_R] = { BONE_SHIN_R, { 0 } },
 };
+
+// Имена костей в файле .skel (tools/humanconv BONE_ORDER): по ним кость файла находит свою роль
+const char *const g_bone_name[BONE_COUNT] = {
+    "ROOT", "PELVIS", "SPINE", "CHEST", "NECK", "HEAD",
+    "CLAVICLE_L", "UPPER_ARM_L", "FOREARM_L", "HAND_L", "CLAVICLE_R", "UPPER_ARM_R", "FOREARM_R", "HAND_R",
+    "THIGH_L", "SHIN_L", "FOOT_L", "THIGH_R", "SHIN_R", "FOOT_R",
+};
+
+#define SKEL_MAX_BONES 64
+_Static_assert(BONE_COUNT < 32, "маска ролей в body_skeleton_load — u32");
+
+bool body_skeleton_load(const char *path, V3 *joints)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        log_error("СКЕЛЕТ: нет файла %s", path);
+        return false;
+    }
+    char magic[4];
+    u32 head[2];
+    bool ok = fread(magic, 4, 1, f) == 1 && fread(head, sizeof head, 1, f) == 1 && !memcmp(magic, "ASKL", 4) &&
+              head[0] == 1 && head[1] <= SKEL_MAX_BONES;
+    char name[SKEL_MAX_BONES][16];
+    i32 parent[SKEL_MAX_BONES];
+    f32 pos[SKEL_MAX_BONES][3];
+    for (u32 i = 0; ok && i < head[1]; i++)
+        ok = fread(name[i], 16, 1, f) == 1 && fread(&parent[i], 4, 1, f) == 1 && fread(pos[i], 4, 3, f) == 3;
+    fclose(f);
+    if (!ok) {
+        log_error("СКЕЛЕТ: файл %s повреждён", path);
+        return false;
+    }
+    // Кость файла -> роль. Роль без кости или кость, чей родитель не тот, что у роли, — ошибка
+    i32 role_of[SKEL_MAX_BONES];
+    u32 found = 0; // маска ролей: повтор имени не закрывает недостающую кость
+    for (u32 i = 0; i < head[1]; i++) {
+        role_of[i] = -1;
+        for (u32 b = 0; b < BONE_COUNT; b++)
+            if (!strncmp(name[i], g_bone_name[b], 16)) role_of[i] = (i32)b;
+    }
+    for (u32 i = 0; i < head[1]; i++) {
+        i32 b = role_of[i];
+        if (b < 0) continue;
+        i32 want = g_body_bones[b].parent, got = parent[i] >= 0 && parent[i] < (i32)head[1] ? role_of[parent[i]] : -1;
+        if (want != got) {
+            log_error("СКЕЛЕТ: %s: у кости %s родитель не по стандарту", path, g_bone_name[b]);
+            return false;
+        }
+        joints[b] = v3(pos[i][0], pos[i][1], pos[i][2]);
+        found |= 1u << b;
+    }
+    if (found != (1u << BONE_COUNT) - 1) {
+        log_error("СКЕЛЕТ: %s: не хватает костей стандарта", path);
+        return false;
+    }
+    return true;
+}
 
 const BodyClass g_body_classes[BODY_CLASS_COUNT] = {
     [BODY_H] = { 1.68f, 1.92f, 55.0f, 95.0f, 1.0f, 0.30f, 1.15f, 1.0f },
 };
 
-const HitCapsule g_body_hit[BODY_MAX_HIT_CAPSULES] = {
-    { PART_HEAD, BONE_HEAD, { 0.0f, 1.69f, 0.03f }, { 0.0f, 1.69f, 0.03f }, 0.11f },
-    { PART_CHEST, BONE_CHEST, { 0.0f, 1.25f, 0.0f }, { 0.0f, 1.40f, 0.0f }, 0.16f },
-    { PART_STOMACH, BONE_SPINE, { 0.0f, 0.98f, 0.0f }, { 0.0f, 1.12f, 0.0f }, 0.15f },
-    { PART_ARM_L, BONE_UPPER_ARM_L, { 0.195f, 1.446f, 0.019f }, { 0.227f, 1.140f, 0.019f }, 0.06f },
-    { PART_ARM_L, BONE_FOREARM_L, { 0.227f, 1.140f, 0.019f }, { 0.243f, 0.80f, 0.04f }, 0.05f },
-    { PART_ARM_R, BONE_UPPER_ARM_R, { -0.195f, 1.446f, 0.019f }, { -0.227f, 1.140f, 0.019f }, 0.06f },
-    { PART_ARM_R, BONE_FOREARM_R, { -0.227f, 1.140f, 0.019f }, { -0.243f, 0.80f, 0.04f }, 0.05f },
-    { PART_LEG_L, BONE_THIGH_L, { HX, BODY_HIP_Y, -0.008f }, { 0.136f, BODY_KNEE_Y, 0.010f }, 0.08f },
-    { PART_LEG_L, BONE_SHIN_L, { 0.136f, BODY_KNEE_Y, 0.010f }, { 0.158f, BODY_ANKLE_Y, 0.04f }, 0.07f },
-    { PART_LEG_R, BONE_THIGH_R, { -HX, BODY_HIP_Y, -0.008f }, { -0.136f, BODY_KNEE_Y, 0.010f }, 0.08f },
-    { PART_LEG_R, BONE_SHIN_R, { -0.136f, BODY_KNEE_Y, 0.010f }, { -0.158f, BODY_ANKLE_Y, 0.04f }, 0.07f },
+// Шаблон капсул: сдвиги от суставов, у правой стороны x зеркальный
+const HitDef g_body_hit_def[BODY_MAX_HIT_CAPSULES] = {
+    { PART_HEAD, BONE_HEAD, BONE_HEAD, BONE_HEAD, { 0.0f, 0.029f, -0.023f }, { 0.0f, 0.029f, -0.023f }, 0.11f },
+    { PART_CHEST, BONE_CHEST, BONE_CHEST, BONE_CHEST, { 0.0f, 0.053f, 0.030f }, { 0.0f, 0.203f, 0.030f }, 0.16f },
+    { PART_STOMACH, BONE_SPINE, BONE_SPINE, BONE_SPINE, { 0.0f, -0.081f, 0.030f }, { 0.0f, 0.059f, 0.030f }, 0.15f },
+    { PART_ARM_L, BONE_UPPER_ARM_L, BONE_UPPER_ARM_L, BONE_FOREARM_L, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.06f },
+    { PART_ARM_L, BONE_FOREARM_L, BONE_FOREARM_L, BONE_HAND_L, { 0.0f, 0.0f, 0.0f }, { 0.003f, -0.081f, 0.009f }, 0.05f },
+    { PART_ARM_R, BONE_UPPER_ARM_R, BONE_UPPER_ARM_R, BONE_FOREARM_R, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.06f },
+    { PART_ARM_R, BONE_FOREARM_R, BONE_FOREARM_R, BONE_HAND_R, { 0.0f, 0.0f, 0.0f }, { -0.003f, -0.081f, 0.009f }, 0.05f },
+    { PART_LEG_L, BONE_THIGH_L, BONE_THIGH_L, BONE_SHIN_L, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.08f },
+    { PART_LEG_L, BONE_SHIN_L, BONE_SHIN_L, BONE_FOOT_L, { 0.0f, 0.0f, 0.0f }, { -0.001f, 0.0f, 0.011f }, 0.07f },
+    { PART_LEG_R, BONE_THIGH_R, BONE_THIGH_R, BONE_SHIN_R, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.08f },
+    { PART_LEG_R, BONE_SHIN_R, BONE_SHIN_R, BONE_FOOT_R, { 0.0f, 0.0f, 0.0f }, { 0.001f, 0.0f, 0.011f }, 0.07f },
 };
 const u32 g_body_hit_count = 11;
 
-// Те же капсулы в боевой стойке с одноручным (снято с позы character_pose, guard = 1):
-// руки вперёд, левая нога впереди. По ним считается, куда пришёлся удар по стоящему
-const HitCapsule g_body_hit_guard[BODY_MAX_HIT_CAPSULES] = {
-    { PART_HEAD, BONE_HEAD, { 0.003f, 1.607f, 0.160f }, { 0.003f, 1.607f, 0.160f }, 0.11f },
-    { PART_CHEST, BONE_CHEST, { 0.007f, 1.173f, 0.041f }, { 0.003f, 1.320f, 0.072f }, 0.16f },
-    { PART_STOMACH, BONE_SPINE, { 0.008f, 0.909f, -0.003f }, { 0.004f, 1.047f, 0.018f }, 0.15f },
-    { PART_ARM_L, BONE_UPPER_ARM_L, { 0.198f, 1.359f, 0.082f }, { 0.208f, 1.158f, 0.215f }, 0.06f },
-    { PART_ARM_L, BONE_FOREARM_L, { 0.208f, 1.158f, 0.215f }, { 0.121f, 1.344f, 0.482f }, 0.05f },
-    { PART_ARM_R, BONE_UPPER_ARM_R, { -0.184f, 1.339f, 0.135f }, { -0.161f, 1.118f, 0.227f }, 0.06f },
-    { PART_ARM_R, BONE_FOREARM_R, { -0.161f, 1.118f, 0.227f }, { 0.006f, 1.160f, 0.516f }, 0.05f },
-    { PART_LEG_L, BONE_THIGH_L, { 0.111f, 0.889f, 0.026f }, { 0.182f, 0.532f, 0.260f }, 0.08f },
-    { PART_LEG_L, BONE_SHIN_L, { 0.182f, 0.532f, 0.260f }, { 0.236f, 0.082f, 0.244f }, 0.07f },
-    { PART_LEG_R, BONE_THIGH_R, { -0.105f, 0.889f, -0.041f }, { -0.173f, 0.469f, 0.041f }, 0.08f },
-    { PART_LEG_R, BONE_SHIN_R, { -0.173f, 0.469f, 0.041f }, { -0.216f, 0.063f, -0.156f }, 0.07f },
-};
+HitCapsule g_body_hit[BODY_MAX_HIT_CAPSULES];
+HitCapsule g_body_hit_guard[BODY_MAX_HIT_CAPSULES];
+
+void body_hit_build(void)
+{
+    for (u32 c = 0; c < g_body_hit_count; c++) {
+        const HitDef *d = &g_body_hit_def[c];
+        g_body_hit[c] = (HitCapsule){ d->part, d->bone, v3_add(g_body_bones[d->from].joint, d->da),
+                                      v3_add(g_body_bones[d->to].joint, d->db), d->r };
+    }
+}
 
 const SocketDef g_body_sockets[SOCKET_COUNT] = {
     [SOCKET_HAND_R] = { BONE_HAND_R, { -0.258f, 0.792f, 0.05f } },

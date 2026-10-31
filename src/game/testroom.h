@@ -4,6 +4,7 @@
 
 #include "../core/rng.h"
 #include "../render/mesh.h"
+#include "../render/render.h"
 #include "../sim/inventory.h"
 #include "people.h"
 #include "player.h"
@@ -15,6 +16,8 @@
 void testroom_build_near(MeshBuilder *mb, Rng *rng);
 // Мегаструктуры у горизонта: тени не отбрасывают, в теневую карту не попадают
 void testroom_build_far(MeshBuilder *mb, Rng *rng);
+// Лампы над стойками с оружием в зале: горят всегда
+u32  testroom_lights(PointLight *out, u32 max);
 // Высота поверхности под ногами: пол зала, ярусы посёлка, плита арены или земля карты (без обломков)
 f32  testroom_ground(f32 x, f32 z);
 // Бродящие по залу (People, ROLE_WANDER): ходят шагом от точки к точке, у каждого лист и оружие —

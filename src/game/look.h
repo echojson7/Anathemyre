@@ -13,9 +13,11 @@
 // Сетки тел (data/meshes, tools/humanconv)
 typedef enum BodyKind { BODY_MALE, BODY_FEMALE, BODY_THIN, BODY_KIND_COUNT } BodyKind;
 extern const char *const g_body_file[BODY_KIND_COUNT];
-// Суставы каждого тела в позе привязки (печатает tools/humanconv): по ним вращаются кости, иначе
-// у женщины бёдра и плечи крутились бы вокруг мужских суставов
-extern const V3 g_body_joints[BODY_KIND_COUNT][BONE_COUNT];
+// Суставы каждого тела в позе привязки: по ним вращаются кости, иначе у женщины бёдра и плечи
+// крутились бы вокруг мужских суставов. Читаются из data/meshes/<тело>.skel (пишет tools/humanconv)
+extern V3 g_body_joints[BODY_KIND_COUNT][BONE_COUNT];
+// Читает скелеты всех тел и ставит мужской общим (g_body_bones). Вызывать до первого кадра
+bool look_load_skeletons(const char *data_dir);
 
 // Морфы, порядок как MORPHS в tools/humanconv. Лицо — только местные морфы: нос, разрез глаз, челюсть, губы
 enum { LOOK_FAT, LOOK_LEAN, LOOK_STRONG, LOOK_OLD, LOOK_NOSE, LOOK_EYES, LOOK_JAW, LOOK_LIPS, LOOK_MORPHS };
@@ -37,6 +39,8 @@ typedef enum GearId {
 } GearId;
 #define GEAR_MAX_WORN 11  // по вещи на слот и причёска
 extern const char *const g_gear_file[GEAR_COUNT];
+// Какие сетки закрывает вещь: биты GEAR_*, GEAR_HIDES_HAIR — причёску. Заполняют описания (hides)
+extern u32 g_gear_hides[GEAR_COUNT];
 
 // Причёски (data/meshes/hair): рисуются как вещи, в ряду сеток тела после вещей. NULL — вида нет
 #define HAIR_MAX 7
@@ -45,9 +49,9 @@ extern const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX];
 // Причёска в список вещей gear[0..n) (номер в ряду): возвращает 0 или 1. Под кожухом причёски нет
 u32 look_hair(const CharLook *l, u8 *gear, u32 n);
 
-// Видимые вещи: из брони по слотам (A_*, ARMOR_NONE — пусто); возвращает число
+// Видимые вещи: из брони по слотам (номера описаний, ARMOR_NONE — пусто); возвращает число
 u32 gear_from_armor(const u8 *armor, u8 *out);
-// Из надетого листа персонажа: броня и вещи (G_*)
+// Из надетого листа персонажа: броня и вещи
 u32 gear_from_sheet(const CharSheet *cs, u8 *out);
 // Случайная одежда прохожего
 u32 gear_random(u32 seed, u8 *out);

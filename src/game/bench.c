@@ -44,7 +44,7 @@ static void gpu_line(char *out, size_t size, const RenderStats *st)
 // CPU одной строкой: логика (сим — ввод и мир, позы — люди и список кадра), отправка (сбор и вызовы GL по проходам), swap; мс на кадр
 static void cpu_line(char *out, size_t size, const f64 *z, f64 k, const RenderStats *st, bool swap_late)
 {
-    f64 sim = (z[PZ_INPUT] + z[PZ_PEOPLE] + z[PZ_ARENA] + z[PZ_FIELD] + z[PZ_SOUND]) * k;
+    f64 sim = (z[PZ_INPUT] + z[PZ_PEOPLE] + z[PZ_ARENA] + z[PZ_FIELD] + z[PZ_PHYS] + z[PZ_SOUND]) * k;
     f64 pose = (z[PZ_FIGURES] + z[PZ_POSES] + z[PZ_SCENE]) * k;
     const f64 *c = st->cpu_ms;
     snprintf(out, size,
@@ -79,7 +79,7 @@ static void report(Bench *b, f64 seconds, i32 ww, i32 wh, bool swap_late)
     f64 k = 1000.0 / b->cpu_frames;
     b->last = (BenchResult){
         .frame_ms = sum / n, .fps = n / seconds, .gpu_ms = st.samples && st.gpu_total_ms > 0.0 ? st.gpu_total_ms : -1.0,
-        .logic_ms = (z[PZ_INPUT] + z[PZ_PEOPLE] + z[PZ_ARENA] + z[PZ_FIELD] + z[PZ_SOUND] + z[PZ_FIGURES] + z[PZ_POSES] + z[PZ_SCENE]) * k,
+        .logic_ms = (z[PZ_INPUT] + z[PZ_PEOPLE] + z[PZ_ARENA] + z[PZ_FIELD] + z[PZ_PHYS] + z[PZ_SOUND] + z[PZ_FIGURES] + z[PZ_POSES] + z[PZ_SCENE]) * k,
         .submit_ms = (z[PZ_SUBMIT] + z[PZ_UI]) * k, .swap_ms = z[PZ_SWAP] * k, .gap_ms = st.gap_ms,
     };
     for (u32 p = 0; p < PASS_COUNT; p++) {

@@ -1,0 +1,116 @@
+// ЗОНДЫ: обновление части зондов за кадр. Группа — зонд, поток — луч по клеткам до 64 м. Попал — свет в точке
+// попадания: солнце (с тенью), небо (по сетке неба) и свет зондов там же (так копятся переотражения);
+// не попал вниз — дальний песок, вверх — ничего (небо сцена берёт по сетке неба сама)
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 31) readonly buffer SkyGrid { vec4 g_sky_origin; uint g_sky[]; };
+
+const int RAYS = 64;
+const int MAX_STEPS = 64;
+shared vec3 s_sh[RAYS][4];
+shared vec3 s_pos;
+shared bool s_ok;
+
+float sky_open(vec3 p)
+{
+    if (g_sky_origin.w < 0.5) return 1.0;
+    ivec3 c = ivec3(floor((p - g_sky_origin.xyz) / SKY_CELL));
+    if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, SKY_N))) return 1.0;
+    return float((g_sky[sky_index(c)] >> (uint(c.x & 3) * 8u)) & 255u) / SKY_DIRS;
+}
+
+// Тень солнца в точке: ближняя карта, дальше каскады (если готовы)
+float sun_vis(vec3 p, vec3 n)
+{
+    vec4 lp = u_light_vp * vec4(p + n * 0.3, 1.0);
+    vec3 s = lp.xyz / lp.w * 0.5 + 0.5;
+    if (all(greaterThan(s.xy, vec2(0.02))) && all(lessThan(s.xy, vec2(0.98)))) return texture(u_shadow, s);
+    return u_shade.x != 0 ? casc_shadow(0, p, n) : 1.0;
+}
+
+void main()
+{
+    int pi = u_probe.y + int(gl_WorkGroupID.x);
+    int t = int(gl_LocalInvocationID.x);
+    ivec3 pc = ivec3(pi % PROBE_N.x, (pi / PROBE_N.x) % PROBE_N.y, pi / (PROBE_N.x * PROBE_N.y));
+    // Зонд в стене или в земле сдвигается в ближнюю пустую клетку; не нашлось — зонд негоден
+    if (t == 0) {
+        vec3 c = probe_center(pc);
+        s_ok = false;
+        s_pos = c;
+        const vec3 TRY[7] = vec3[](vec3(0), vec3(0, 1.5, 0), vec3(1.5, 0, 0), vec3(-1.5, 0, 0), vec3(0, 0, 1.5),
+                                   vec3(0, 0, -1.5), vec3(0, -1.5, 0));
+        for (int k = 0; k < 7 && !s_ok; k++)
+            if (vox_at(c + TRY[k]) == 0u) { s_pos = c + TRY[k]; s_ok = true; }
+    }
+    barrier();
+    vec3 o = s_pos;
+    bool fresh = g_probe[pi * PROBE_VEC].w < 0.5;
+    // Луч — клетка 8×8 октаэдрической развёртки, в клетке каждый обход новая точка: за несколько обходов
+    // лучи заполняют сферу, а накопление гасит шум
+    vec2 jit = fract(vec2(0.754878, 0.569840) * float(u_probe.w) + 0.5);
+    vec3 d = oct_decode((vec2(t & 7, t >> 3) + jit) / float(PROBE_OCT) * 2.0 - 1.0);
+    float dist = 64.0 * VOX_CELL;
+
+    vec3 L = vec3(0.0);
+    if (s_ok) {
+        // Шаги по клеткам (Amanatides, Woo 1987)
+        ivec3 c = vox_cell(o);
+        vec3 inv = 1.0 / max(abs(d), vec3(1e-6));
+        ivec3 st = ivec3(sign(d));
+        vec3 next = (vec3(c) + max(vec3(st), vec3(0.0)) - (o - u_vox_origin.xyz) / VOX_CELL) * sign(d);
+        vec3 tmax = next * inv * VOX_CELL, tdel = inv * VOX_CELL;
+        int axis = -1;
+        float tt = 0.0;
+        bool hit = false;
+        uint v = 0u;
+        for (int s = 0; s < MAX_STEPS; s++) {
+            if (tmax.x < tmax.y && tmax.x < tmax.z) { axis = 0; tt = tmax.x; c.x += st.x; tmax.x += tdel.x; }
+            else if (tmax.y < tmax.z) { axis = 1; tt = tmax.y; c.y += st.y; tmax.y += tdel.y; }
+            else { axis = 2; tt = tmax.z; c.z += st.z; tmax.z += tdel.z; }
+            if (!vox_inside(c)) break;
+            v = g_vox[vox_index(c)];
+            if (v != 0u) { hit = true; break; }
+        }
+        if (hit) {
+            dist = tt;
+            vec3 n = vec3(0.0);
+            n[axis] = -float(st[axis]);
+            vec3 hp = o + d * tt;
+            vec3 a = vox_albedo(v);
+            vec3 e = u_sun_color * max(dot(n, u_sun_dir), 0.0) * sun_vis(hp, n);
+            e += u_sky_amb * (n.y * 0.5 + 0.5) * 0.6 * sky_open(hp + n * 0.6);
+            float wb;
+            e += probe_light(hp + n * 0.5, n, false, wb);
+            L = a * e;
+        } else if (d.y < 0.0) {
+            L = u_ground_amb * 0.6;
+        }
+    }
+    // Расстояния копятся так же, но быстрее: стена, которую поставили рядом, видна сразу
+    {
+        int di = pi * RAYS + t;
+        vec2 m = vec2(dist, dist * dist);
+        g_pdist[di] = fresh ? m : mix(g_pdist[di], m, 0.3);
+    }
+    float k = 4.0 * 3.1415927 / float(RAYS);
+    s_sh[t][0] = L * (0.282095 * k);
+    s_sh[t][1] = L * (0.488603 * d.y * k);
+    s_sh[t][2] = L * (0.488603 * d.z * k);
+    s_sh[t][3] = L * (0.488603 * d.x * k);
+    barrier();
+    for (int s = RAYS / 2; s > 0; s >>= 1) {
+        if (t < s)
+            for (int j = 0; j < 4; j++) s_sh[t][j] += s_sh[t + s][j];
+        barrier();
+    }
+    if (t < 4) {
+        int i = pi * PROBE_VEC;
+        vec4 old = g_probe[i + t];
+        // Накопление: новый обход даёт 15 %, так шум лучей и смена направлений не видны
+        vec3 c = fresh ? s_sh[0][t] : mix(old.rgb, s_sh[0][t], 0.15);
+        float w = t == 0 ? (s_ok ? 1.0 : 0.0) : 0.0;
+        g_probe[i + t] = vec4(c, w);
+        if (t == 0) g_probe[i + 4] = vec4(s_pos, 0.0);
+    }
+}

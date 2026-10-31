@@ -12,6 +12,8 @@
 #include "core/log.h"
 #include "core/math3d.h"
 #include "core/prof.h"
+#include "defs/defs.h"
+#include "game/anim.h"
 #include "game/arena.h"
 #include "game/battle.h"
 #include "game/bench.h"
@@ -22,6 +24,7 @@
 #include "game/figures.h"
 #include "game/hud.h"
 #include "game/humans_row.h"
+#include "game/look.h"
 #include "game/showhall.h"
 #include "game/stand.h"
 #include "game/sfx.h"
@@ -48,9 +51,12 @@ typedef struct Options {
     bool        editor;      // выбрать первого из отряда и открыть ВНЕШНОСТЬ (для снимков)
     i32         look_slot;   // для снимков: осмотреть чужого в слоте поля look_slot−1
     bool        bands_test;  // пробные отряды вдали сразу при старте
+    u32         phys_drop;   // куча лома у точки камеры на первом шаге (проверка физики)
+    u32         loot_drop;   // вещи (оружие, товар) у точки камеры на первом шаге
     f32         warp;        // для снимков: прогнать столько секунд мира до первого кадра
     const char *save_path;   // записать мир после прогона (--warp)
     const char *load_path;   // прочитать мир до прогона
+    const char *defs_dir, *mods_dir;  // описания вещей и моды вместо data/defs и mods
     f32         sum_after;   // проверка сохранений: ещё столько секунд мира, сумма мира в консоль и выход
     bool        sum_set;
     u32         arena_bench; // прогнать N боёв арены без окна
@@ -75,7 +81,7 @@ typedef struct Options {
     bool        no_mdi;      // люди по вызову на сетку (сравнение с одним вызовом на проход)
     bool        no_skin_cache; // позы людей в каждом проходе (сравнение с кешем поз)
     i32         light_preset;  // набор СВЕТ на старте (LightPreset)
-    i32         light[5];      // части СВЕТ на старте: материалы, кривая, экспозиция, свечение, отражённый; -1 — из набора
+    i32         light[9];      // части СВЕТ на старте: материалы, кривая, экспозиция, свечение, отражённый, каскады, мягкий край, контактные, углы; -1 — из набора
     bool        fullscreen;  // окно без рамки на весь монитор
     bool        day_stop;    // сутки стоят на --tod
     bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
@@ -115,9 +121,10 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--warp S] [--threads N] [--hall-t S]");
-    puts("anathemyre [--light 0..2] [--light-parts МАТЕРИАЛЫ КРИВАЯ ЭКСПОЗИЦИЯ СВЕЧЕНИЕ ОТРАЖЁННЫЙ]   свет на старте: набор ПРЕЖНИЙ/БЫСТРЫЙ/РЕАЛИСТИЧНЫЙ или части (docs/lighting.md)");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--phys-drop N] [--loot-drop N] [--warp S] [--threads N] [--hall-t S]");
+    puts("anathemyre [--light 0..2] [--light-parts МАТЕРИАЛЫ КРИВАЯ ЭКСПОЗИЦИЯ СВЕЧЕНИЕ ОТРАЖЁННЫЙ КАСКАДЫ МЯГКИЙ КОНТАКТ УГЛЫ]   свет на старте: набор ПРЕЖНИЙ/БЫСТРЫЙ/РЕАЛИСТИЧНЫЙ или части (docs/lighting.md)");
     puts("anathemyre [--load file.sav] [--warp S] [--save file.sav] [--sum-after S]   сохранение без меню: прочитать, прогнать, записать; сумма мира через S секунд и выход");
+    puts("anathemyre [--defs DIR] [--mods DIR]   описания вещей и моды из других папок (по умолчанию data/defs и mods, docs/content.md)");
     puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
     puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
     puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
@@ -142,9 +149,13 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--editor")) o->editor = true;
         else if (!strcmp(a, "--look-slot") && i + 1 < argc) o->look_slot = atoi(argv[++i]) + 1;
         else if (!strcmp(a, "--bands-test")) o->bands_test = true;
+        else if (!strcmp(a, "--phys-drop") && i + 1 < argc) o->phys_drop = (u32)atoi(argv[++i]);
+        else if (!strcmp(a, "--loot-drop") && i + 1 < argc) o->loot_drop = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--warp") && i + 1 < argc) o->warp = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--save") && i + 1 < argc) o->save_path = argv[++i];
         else if (!strcmp(a, "--load") && i + 1 < argc) o->load_path = argv[++i];
+        else if (!strcmp(a, "--defs") && i + 1 < argc) o->defs_dir = argv[++i];
+        else if (!strcmp(a, "--mods") && i + 1 < argc) o->mods_dir = argv[++i];
         else if (!strcmp(a, "--sum-after") && i + 1 < argc) {
             o->sum_after = strtof(argv[++i], NULL);
             o->sum_set = true;
@@ -167,8 +178,8 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--no-mdi")) o->no_mdi = true;
         else if (!strcmp(a, "--no-skin-cache")) o->no_skin_cache = true;
         else if (!strcmp(a, "--light") && i + 1 < argc) o->light_preset = (i32)((u32)atoi(argv[++i]) % LIGHT_PRESET_COUNT);
-        else if (!strcmp(a, "--light-parts") && i + 5 < argc)
-            for (u32 k = 0; k < 5; k++) o->light[k] = atoi(argv[++i]);
+        else if (!strcmp(a, "--light-parts") && i + 9 < argc)
+            for (u32 k = 0; k < 9; k++) o->light[k] = atoi(argv[++i]);
         else if (!strcmp(a, "--fullscreen")) o->fullscreen = true;
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
@@ -312,10 +323,30 @@ int main(int argc, char **argv)
     time_init();
     Options opt = {
         .tod = 0.31f, .shot_frames = 90, .stage = STAGE_FULL, .bands_hours = 1.0f, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
-        .light = { -1, -1, -1, -1, -1 },
+        .light = { -1, -1, -1, -1, -1, -1, -1, -1, -1 },
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f }, .api = -1,
     };
     if (!parse_args(argc, argv, &opt)) return 1;
+
+    char data_dir[512];
+    if (!find_data_dir(data_dir, sizeof data_dir)) {
+        log_error("ДАННЫЕ: папка data/shaders не найдена");
+        return 1;
+    }
+    // Описания вещей — до всего, что берёт оружие и вещи, и до замеров без окна. Моды — рядом с data
+    static Arena defs_mem;
+    char defs_dir[600], mods_dir[600];
+    snprintf(defs_dir, sizeof defs_dir, "%s/defs", data_dir);
+    snprintf(mods_dir, sizeof mods_dir, "%s/../mods", data_dir);
+    if (!arena_init(&defs_mem, DEFS_MEM) ||
+        !defs_load(&defs_mem, opt.defs_dir ? opt.defs_dir : defs_dir, opt.mods_dir ? opt.mods_dir : mods_dir)) {
+        log_error("ОПИСАНИЯ: не прочитаны, игра не запускается");
+        return 1;
+    }
+    // Скелет и капсулы тела — после описаний (стойка берёт оружие) и тоже до замеров боя
+    if (!look_load_skeletons(data_dir)) return 1;
+    body_hit_build();
+    anim_bake_hit_guard();
     if (opt.move_bench) return player_bench(opt.move_trace);
     if (opt.field_bench) return field_bench(opt.field_bench - 1, opt.seed);
     if (opt.sound_demo) return audio_demo(opt.sound_demo);
@@ -326,12 +357,6 @@ int main(int argc, char **argv)
     // Дальше в консоль — только к/с, замеры и сбои; остальное в журнал на экране
     log_set_echo(false);
     log_info("АНАТЕМАЙР. ЭТАП 0. ЗЕРНО МИРА %llu", (unsigned long long)opt.seed);
-
-    char data_dir[512];
-    if (!find_data_dir(data_dir, sizeof data_dir)) {
-        log_error("ДАННЫЕ: папка data/shaders не найдена");
-        return 1;
-    }
 
     // Вся память выделяется здесь, один раз
     Arena perm, scratch;
@@ -362,6 +387,8 @@ int main(int argc, char **argv)
     HumansRow *humans = ARENA_PUSH_ARRAY(&perm, HumansRow, 1);
     Stand *stand = ARENA_PUSH_ARRAY(&perm, Stand, 1);
     ShowHall *hall = ARENA_PUSH_ARRAY(&perm, ShowHall, 1);
+    // Формы оружия — до мира: стойки зала собираются из них в world_init
+    weapon_models_load(&perm, data_dir);
     if (!world_init(world, &perm, &mb, opt.seed, opt.tod, !opt.day_stop) || !figures_init(fig, cm, &mb, &perm, data_dir)) {
         jobs_shutdown();
         render_shutdown();
@@ -400,6 +427,10 @@ int main(int argc, char **argv)
     if (opt.light[2] >= 0) set.rs.light_expo = opt.light[2] != 0;
     if (opt.light[3] >= 0) set.rs.light_bloom = opt.light[3] != 0;
     if (opt.light[4] >= 0) set.rs.light_gi = (u8)(opt.light[4] % LIGHT_GI_COUNT);
+    if (opt.light[5] >= 0) set.rs.light_casc = opt.light[5] != 0;
+    if (opt.light[6] >= 0) set.rs.light_soft = opt.light[6] != 0;
+    if (opt.light[7] >= 0) set.rs.light_contact = opt.light[7] != 0;
+    if (opt.light[8] >= 0) set.rs.light_ao = (u8)(opt.light[8] % LIGHT_AO_COUNT);
     // Звук: слушатель у камеры, шаги, бой поля и арены. Без звука снимки кадров и --mute.
     // Банк собирается в своём потоке при старте; устройство открывается, только если звук включён
     WorldSound *wsound = ARENA_PUSH_ARRAY(&perm, WorldSound, 1);
@@ -431,6 +462,11 @@ int main(int argc, char **argv)
         field_attack(field, (u32)squad_body(squad, i)->slot, (u32)victim);
     }
     if (opt.bands_test) world_bands_test(world);
+    if (opt.phys_drop || opt.loot_drop) {
+        world->focus = opt.cam.target;
+        world->phys_drop = opt.phys_drop;
+        world->loot_drop = opt.loot_drop;
+    }
     // Сохранение в папке saves рядом с data
     char save_path[600];
     snprintf(save_path, sizeof save_path, "%s/../saves", data_dir);
@@ -458,6 +494,8 @@ int main(int argc, char **argv)
     if (opt.shot_path) shot_buf = arena_push(&perm, (size_t)opt.width * (size_t)opt.height * 3, 1);
 
     RtsCamera cam = opt.cam;
+    // Снимок вблизи (--cam с дистанцией меньше 4 м): камера как у стенда, кружит над точкой взгляда
+    if (opt.cam_set && opt.cam.dist < 4.0f) camera_close(true);
     // Точка взгляда идёт по земле (сглаженно); --cam-y — подъём над ней
     f32 cam_lift = opt.cam.target.y, cam_y = world_ground(cam.target.x, cam.target.z);
     Input in;
@@ -610,7 +648,8 @@ int main(int argc, char **argv)
         }
         set.humans = set.bench = set.bands_test = set.save = set.load = false;
         HudWorld hw = { .squad = squad, .arena = world->arena, .aview = &world->aview, .field = field, .view = fig->view,
-                        .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day };
+                        .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day,
+                        .ground = world->ground, .phys = world->phys, .ground_ask = &world->ground_ask, .alpha = world->alpha };
         bool ui_busy = hud_input(&hud, &hin, &hw);
         if (hud.focus >= 0 && !jumped) {
             V3 fp = fig->view[squad->member[hud.focus]].pos;
@@ -661,9 +700,13 @@ int main(int argc, char **argv)
         items[n++] = (DrawItem){ .mesh = &world->ostov };
         // Мерильня: лампы горят всегда, фигуры — когда камера рядом
         nl += showhall_lights(wtime, lights + nl, TORCH_LIGHTS_MAX - nl);
+        nl += testroom_lights(lights + nl, TORCH_LIGHTS_MAX - nl);
         if (st_people) n += showhall_draw(hall, cm, fv.cam_pos, wtime, st_live ? dt : 0.0f, items + n);
         else items[n++] = (DrawItem){ .mesh = &hall->mesh };
         n += valley_view_draw(valley, fv.cam_pos, items + n);
+        n += scrap_draw(&world->scrap, world->phys, world->alpha, fv.cam_pos, items + n, RENDER_MAX_ITEMS / 8);
+        n += loot_draw(&world->loot, world->ground, world->phys, cm->weapon, world->alpha, fv.cam_pos, items + n,
+                       RENDER_MAX_ITEMS / 8);
         prof_zone(PZ_FIGURES);
         if (st_people) {
             people_dress_live(world->people);

@@ -1,4 +1,5 @@
 #include "squad.h"
+#include "../defs/defs.h"
 
 #include <string.h>
 
@@ -9,28 +10,27 @@
 typedef struct MemberDef {
     const char *name;
     u8 body;            // 0 мужчина, 1 женщина, 2 худой (main.c, g_body_file)
-    u8 tier, weapon, weapon_q;
-    u8 armor[4];        // A_*, ARMOR_NONE — конец
-    u8 gear[4];         // G_* для слотов лица, ног, рук, спины, пояса; G_COUNT — конец
-    Item inv[6];
+    u8 tier, weapon_q;
+    const char *weapon;  // имена описаний (data/defs); NULL — конец списка
+    const char *armor[4];
+    const char *gear[4]; // вещи для слотов лица, ног, рук, спины, пояса
+    struct { u8 kind; const char *id; u8 count; } inv[6];
 } MemberDef;
 
-#define END_A ARMOR_NONE
-#define END_G G_COUNT
-#define GOODS(id, n) { IK_GOODS, id, Q_SOUND, n }
+#define GOODS(id, n) { IK_GOODS, id, n }
 
 static const MemberDef g_start[] = {
-    { "ГОСТОМЫСЛ", 0, 1, W_RESSORA, Q_SOUND, { A_RAGS, A_JACKET, A_PANTS, END_A }, { G_WRAP, G_BOOTS, G_PACK, END_G },
-      { GOODS(G_WATER, 1), GOODS(G_RUSK, 6), GOODS(G_BANDAGE, 4), GOODS(G_TOKEN, 1) } },
-    { "НИКАНДР", 0, 1, W_BAGOR, Q_WORN, { A_QUILT, A_BUCKET, A_PANTS, END_A }, { G_MITTS, G_BELT, END_G },
-      { GOODS(G_WATER, 1), GOODS(G_MEAT, 3), GOODS(G_SCRAP, 2) } },
-    { "АППИЙ", 2, 0, W_ARMATURA, Q_JUNK, { A_RAGS, A_PANTS, END_A }, { G_BOOTS, END_G },
-      { GOODS(G_FUEL, 1), GOODS(G_PART, 1), GOODS(G_RUSK, 3) } },
-    { "КИНСЛАВА", 1, 2, W_SEKACH, Q_MASTER, { A_QUILT, A_PLATE, A_GREAVES, A_PANTS }, { G_BOOTS, G_MITTS, G_PACK, END_G },
-      { GOODS(G_WATER, 1), GOODS(G_BANDAGE, 6), GOODS(G_MEAT, 5), { IK_WEAPON, W_RESSORA, Q_WORN, 1 } } },
+    { "ГОСТОМЫСЛ", 0, 1, Q_SOUND, "ressora", { "rags", "jacket", "pants" }, { "wrap", "boots", "pack" },
+      { GOODS("water", 1), GOODS("rusk", 6), GOODS("bandage", 4), GOODS("token", 1) } },
+    { "НИКАНДР", 0, 1, Q_WORN, "bagor", { "quilt", "bucket", "pants" }, { "mitts", "belt" },
+      { GOODS("water", 1), GOODS("meat", 3), GOODS("scrap", 2) } },
+    { "АППИЙ", 2, 0, Q_JUNK, "sekach", { "rags", "pants" }, { "boots" },
+      { GOODS("fuel", 1), GOODS("part", 1), GOODS("rusk", 3) } },
+    { "КИНСЛАВА", 1, 2, Q_MASTER, "sekach", { "quilt", "plate", "greaves", "pants" }, { "boots", "mitts", "pack" },
+      { GOODS("water", 1), GOODS("bandage", 6), GOODS("meat", 5), { IK_WEAPON, "ressora", 1 } } },
 };
 
-static void member_init(CharSheet *c, const MemberDef *m, Rng *rng)
+static void member_init(CharSheet *c, const MemberDef *m, u8 weapon, Rng *rng)
 {
     memset(c, 0, sizeof *c);
     c->name = m->name;
@@ -38,27 +38,29 @@ static void member_init(CharSheet *c, const MemberDef *m, Rng *rng)
     for (u32 s = 0; s < SLOT_COUNT; s++) c->d.armor[s] = ARMOR_NONE;
     for (u32 p = 0; p < PART_COUNT; p++) c->d.hp[p] = g_part_hp[p];
     c->d.blood = 100.0f * c->d.mass / 75.0f;
-    c->d.skill[SK_WEAPON + g_weapons[m->weapon].wclass] = fminf(100.0f, c->d.skill[SK_ATTACK] + 5.0f);
+    c->d.skill[SK_WEAPON + g_weapons[weapon].wclass] = fminf(100.0f, c->d.skill[SK_ATTACK] + 5.0f);
 
     Item old;
-    sheet_equip(c, SLOT_WEAPON, item_make(IK_WEAPON, m->weapon, m->weapon_q, 1), &old);
-    for (u32 k = 0; k < 4 && m->armor[k] != END_A; k++) {
-        Item it = item_make(IK_ARMOR, m->armor[k], Q_WORN, 1);
+    sheet_equip(c, SLOT_WEAPON, item_make(IK_WEAPON, weapon, m->weapon_q, 1), &old);
+    for (u32 k = 0; k < 4 && m->armor[k]; k++) {
+        Item it = item_make(IK_ARMOR, def_armor(m->armor[k]), Q_WORN, 1);
         sheet_equip(c, item_slot(it), it, &old);
     }
-    for (u32 k = 0; k < 4 && m->gear[k] != END_G; k++) {
-        Item it = item_make(IK_GOODS, m->gear[k], Q_WORN, 1);
+    for (u32 k = 0; k < 4 && m->gear[k]; k++) {
+        Item it = item_make(IK_GOODS, def_goods(m->gear[k]), Q_WORN, 1);
         sheet_equip(c, item_slot(it), it, &old);
     }
-    for (u32 k = 0; k < 6 && m->inv[k].kind; k++) inv_add(&c->inv, m->inv[k]);
+    for (u32 k = 0; k < 6 && m->inv[k].kind; k++) {
+        u8 id = m->inv[k].kind == IK_WEAPON ? def_weapon(m->inv[k].id) : def_goods(m->inv[k].id);
+        inv_add(&c->inv, item_make(m->inv[k].kind, id, m->inv[k].kind == IK_WEAPON ? Q_WORN : Q_SOUND, m->inv[k].count));
+    }
 }
 
 void sheet_random(CharSheet *c, Rng *rng, const char *name, u32 tier, u8 weapon)
 {
-    MemberDef m = { .name = name, .tier = (u8)tier, .weapon = weapon, .weapon_q = tier ? Q_WORN : Q_JUNK,
-                    .armor = { A_RAGS, A_PANTS, END_A, END_A }, .gear = { END_G, END_G, END_G, END_G } };
-    if (tier >= 2) m.armor[2] = A_QUILT;
-    member_init(c, &m, rng);
+    MemberDef m = { .name = name, .tier = (u8)tier, .weapon_q = tier ? Q_WORN : Q_JUNK, .armor = { "rags", "pants" } };
+    if (tier >= 2) m.armor[2] = "quilt";
+    member_init(c, &m, weapon, rng);
 }
 
 void squad_init(Squad *s, People *p, Rng *rng, V3 origin, f32 heading, GroundFn ground)
@@ -66,11 +68,12 @@ void squad_init(Squad *s, People *p, Rng *rng, V3 origin, f32 heading, GroundFn 
     memset(s, 0, sizeof *s);
     s->people = p;
     s->count = ARRAY_COUNT(g_start);
+    for (u32 i = 0; i < SQUAD_MAX; i++) s->pick[i] = -1;
     for (u32 i = 0; i < s->count; i++) {
         f32 x = origin.x + (f32)(i % 2) * 1.2f - 0.6f, z = origin.z - (f32)(i / 2) * 1.3f;
         u32 k = people_add(p, ROLE_SQUAD, v3(x, ground(x, z), z), heading, TEAM_SQUAD, FF_PLAYER | FF_ASSIST);
         s->member[i] = k;
-        member_init(&p->sheet[k], &g_start[i], rng);
+        member_init(&p->sheet[k], &g_start[i], def_weapon(g_start[i].weapon), rng);
         p->variant[k] = g_start[i].body;
         p->seed[k] = 7.0f + (f32)i * 5.3f;
         p->height[k] = p->sheet[k].d.height / 1.8f;
@@ -128,6 +131,7 @@ void squad_order_move(Squad *s, V3 target)
         V3 p = v3_add(target, v3_add(v3_mul(right, col * FORMATION_STEP), v3_mul(fwd, -(f32)row * FORMATION_STEP)));
         player_order_move(squad_body(s, i), p);
         squad_body(s, i)->group = group;
+        s->pick[i] = -1;
         k++;
     }
     // Метка там, куда щёлкнули, а не на месте первого в строю
@@ -200,4 +204,16 @@ void squad_ser(Ser *s, Squad *sq)
     SER(s, sq->order_marker);
     SER(s, sq->formation);
     SER(s, sq->next_group);
+    SER(s, sq->pick);
+}
+
+void squad_order_pick(Squad *s, i32 k, V3 at)
+{
+    i32 i = squad_primary(s);
+    if (i < 0) return;
+    // Остальные выбранные стоят: за вещью идёт один, как в Kenshi
+    Player *b = squad_body(s, (u32)i);
+    player_order_move(b, at);
+    b->group = 0;
+    s->pick[i] = k;
 }

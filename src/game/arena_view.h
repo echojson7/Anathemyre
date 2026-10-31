@@ -11,8 +11,8 @@
 
 // Зрители — обычные люди из таблицы (People, ROLE_WATCHER): арена только расставляет их за оградой
 #define AV_SPECTATORS 14
-// Сколько наборов костей нужно бойцам арены (с выпавшим оружием); рисует их figures.c
-#define AV_BONE_SETS (ARENA_MAX_BOUT * 2)
+// Сколько наборов костей нужно бойцам арены; рисует их figures.c
+#define AV_BONE_SETS ARENA_MAX_BOUT
 // Свет арены: два прожектора и две лампы на воротах
 #define AV_LIGHTS 4
 
@@ -35,8 +35,10 @@ void arena_view_build(MeshBuilder *mb, V3 center);
 void arena_view_init(ArenaView *v, V3 center, f32 floor_y);
 // Тик арены (шаг мира): бой идёт, между боями ищется следующий
 void arena_view_tick(ArenaView *v, ArenaSession *s);
-// Сохранение: идёт ли бой и вид бойцов (его тоже пишет шаг мира)
+// Сохранение: идёт ли бой. Вид бойцов не пишется
 void arena_view_ser(Ser *s, ArenaView *v);
+// После чтения: вид бойцов заново, сразу в нынешнем состоянии боя
+void arena_view_restore(ArenaView *v, const ArenaSession *s);
 // Вид бойцов для кадра: alpha — доля шага после тика, dt — игровое время кадра
 void arena_view_present(ArenaView *v, const ArenaSession *s, f32 alpha, f32 dt);
 // Внешность бойца ростера ri (матрица слота RENDER_LOOK_SLOT)

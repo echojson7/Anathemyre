@@ -85,7 +85,7 @@ static void appear(NearBands *n, Bands *b, People *p, Field *f, u32 bi, GroundFn
             V3 at = rank_pos(n, b, bi, shown);
             at.y = ground(at.x, at.z);
             people_reset(p, i, ROLE_BAND, at, h, team, FF_ASSIST | FF_AGGRO);
-            sheet_random(&p->sheet[i], &rng, name_next(female), (u32)t, (u8)rng_below(&rng, W_COUNT));
+            sheet_random(&p->sheet[i], &rng, name_next(female), (u32)t, g_weapon_pool[rng_below(&rng, g_weapon_pool_count)]);
             p->sheet[i].role = "ИЗ ОТРЯДА";
             p->body[i].gait = GAIT_WALK;
             p->body[i].phase = rng_f32(&rng);
