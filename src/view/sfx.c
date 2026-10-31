@@ -12,8 +12,8 @@
 
 #define STEP_MIN_SPEED 0.25f
 
-// Броня, по которой удар звенит железом
-static bool armor_metal(u8 a) { return g_armors[a].metal; }
+// Броня, по которой удар звенит железом: материал вещи звучит металлом
+static bool armor_metal(u8 a) { return mat_impact(&g_mats[g_items[g_armors[a].item].mat]) == IMP_METAL; }
 
 static u8 surface(f32 x, f32 z)
 {
@@ -110,14 +110,18 @@ static f32 roll01(SfxFight *f) { return (f32)(hash32(++f->roll * 0x9E3779B9u) >>
 // У каждого бойца своя высота оружия (±7%): два одинаковых секача звенят по-разному
 static f32 own_pitch(const SfxFight *f, u32 i) { return 0.93f + 0.14f * (f32)(hash32((i + 1) * 0x85EBCA6Bu ^ f->salt) & 1023u) / 1023.0f; }
 
-_Static_assert(SFX_WPN_BALKA - SFX_WPN_RESSORA == VOICE_BALKA && SFX_WPN_HOOK - SFX_WPN_RESSORA == VOICE_HOOK,
-               "голоса железа: SFX_WPN_* в порядке WeaponVoice");
+// Голоса железа по имени (sound в описании оружия), в порядке SFX_WPN_*
+static const char *const g_voice_name[] = { "ressora", "sekach", "armatura", "bagor", "hook", "balka" };
+_Static_assert(SFX_WPN_BALKA - SFX_WPN_RESSORA == 5 && SFX_WPN_HOOK - SFX_WPN_RESSORA == 4, "голоса железа: SFX_WPN_* по порядку имён");
 
-// Чем оружие отвечает на удар: чем закрылись — древко багра деревянное, а бьют им крюком или пикой
+// Чем оружие отвечает на удар: чем закрылись — древко багра деревянное, а бьют им крюком или пикой.
+// Неизвестное имя (мод) — голос рессоры
 static u8 weapon_voice(u32 w, bool striking)
 {
-    const WeaponDef *d = &g_weapons[w];
-    return (u8)(SFX_WPN_RESSORA + (striking ? d->voice_strike : d->voice));
+    const char *name = striking ? g_weapons[w].sound_strike : g_weapons[w].sound;
+    for (u32 i = 0; name && i < ARRAY_COUNT(g_voice_name); i++)
+        if (!strcmp(name, g_voice_name[i])) return (u8)(SFX_WPN_RESSORA + i);
+    return SFX_WPN_RESSORA;
 }
 
 static bool weapon_edged(const WeaponDef *d) { return d && (d->wclass == WC_BLADE || d->wclass == WC_CLEAVER); }
@@ -307,12 +311,12 @@ u8 impact_sfx(u8 impact)
     return impact < IMP_COUNT ? t[impact] : SFX_IMPACT_STONE;
 }
 
-// Из чего тело с физикой. Вещи на земле — до одной записи item (шаг 2в): оружие железное, остальное свёрток
+// Из чего тело с физикой: обломок — его материал, вещь на земле — материал её стопки
 static const MatDef *body_mat(u16 user, const Ground *g)
 {
     if (user >= SCRAP_USER && user < SCRAP_USER + SCRAP_COUNT) return scrap_mat(user - SCRAP_USER);
     if (user >= GROUND_USER && user < GROUND_USER + GROUND_MAX && g && user - GROUND_USER < g->count)
-        return g->item[user - GROUND_USER].kind == IK_WEAPON ? g_mat.iron : g_mat.cloth;
+        return &g_mats[g->item[user - GROUND_USER].mat];
     return g_mat.iron;
 }
 

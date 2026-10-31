@@ -24,40 +24,52 @@ rm -rf "$DIR/defs_rot" "$DIR/mods_ok" "$DIR/mods_bad" "$DIR/mods_bad2" "$DIR/mod
 mkdir -p "$DIR/defs_rot" "$DIR/mods_ok/proba" "$DIR/mods_bad/slom" "$DIR/mods_bad2/kraska" "$DIR/mods_bad3/zvuk" \
     "$DIR/mods_none" "$DIR/mods_boj/boj" "$DIR/mods_boj_bad/boj" "$DIR/mods_telo/telo"
 cp $DEFS/*.txt "$DIR/defs_rot/"
-# Заголовки раньше всех файлов: номера идут задом наперёд, поля заполняются из обычных файлов
+# Заголовки раньше всех файлов: номера вещей и их оружия и брони идут задом наперёд, поля заполняются из обычных файлов
 cat > "$DIR/defs_rot/0order.txt" <<'END'
-weapon balka
-weapon bagor
-weapon sekach
-weapon ressora
-armor pants
-armor greaves
-armor bucket
-armor plate
-armor quilt
-armor jacket
-armor rags
-goods belt
-goods pack
-goods mitts
-goods boots
-goods wrap
-goods token
-goods fuel
-goods part
-goods scrap
-goods bandage
-goods meat
-goods rusk
-goods water
+item balka
+    weapon
+item bagor
+    weapon
+item sekach
+    weapon
+item ressora
+    weapon
+item pants
+    armor
+item greaves
+    armor
+item bucket
+    armor
+item plate
+    armor
+item quilt
+    armor
+item jacket
+    armor
+item rags
+    armor
+item belt
+item pack
+item mitts
+item boots
+item wrap
+item token
+item fuel
+item part
+item scrap
+item bandage
+item meat
+item rusk
+item water
 END
 cat > "$DIR/mods_ok/proba/weapons.txt" <<'END'
 # Проба: секач потяжелее и рессора из лучшей стали
-weapon sekach
+item sekach
     weight 8
-weapon ressora_stal
+item ressora_stal
     parent ressora
     name "СТАЛЬНАЯ РЕССОРА"
+    weapon
     common yes
     damage 28 4 14
 END
@@ -71,10 +83,10 @@ material proba_stal
     color 0.3 0.3 0.31
 END
 printf 'material rust\n    impact plastic\n' > "$DIR/mods_bad3/zvuk/materials.txt"
-printf 'weapon kosa_kraska\n    parent sekach\n    paint nosuch\n    rod 0 0.5 0.02 0\n' > "$DIR/mods_bad2/kraska/weapons.txt"
+printf 'item kosa_kraska\n    parent sekach\n    weapon\n    paint nosuch\n    rod 0 0.5 0.02 0\n' > "$DIR/mods_bad2/kraska/weapons.txt"
+printf 'item kosa_slom\n    parent sekach\n    weapon\n    damage 30 много 0\n' > "$DIR/mods_bad/slom/weapons.txt"
 printf 'tuning combat\n    morale_flee 60\n    speed_ready 2\n' > "$DIR/mods_boj/boj/combat.txt"
 printf 'tuning combat\n    morale_flee 60\n    nosuch 1\n' > "$DIR/mods_boj_bad/boj/combat.txt"
-printf 'weapon kosa_slom\n    parent sekach\n    damage 30 много 0\n' > "$DIR/mods_bad/slom/weapons.txt"
 
 a=$($BIN --bands-test $CAM --warp 775 --save "$DIR/defs1.sav" --sum-after 60 2>&1 | tee "$DIR/defs1.txt" | sum)
 $BIN --mods "$DIR/mods_none" --defs "$DIR/defs_rot" $CAM --load "$DIR/defs1.sav" --save "$DIR/defs2.sav" --sum-after 0 > "$DIR/defs2.txt" 2>&1 || true
@@ -85,7 +97,7 @@ test -n "$a" && test "$a" = "$b"
 
 # Мод: секач 8 кг, новая рессора от прежней; в общем запасе — попадёт в мир
 $BIN --mods "$DIR/mods_ok" --bands-test $CAM --warp 1 --save "$DIR/defs_mod.sav" --sum-after 0 > "$DIR/defs4.txt" 2>&1 || true
-n=$(grep -c "^weapon " $DEFS/weapons.txt)
+n=$(grep -c "^ *weapon$" $DEFS/weapons.txt)
 grep -q "оружия $((n + 1)), .* модов 1" "$DIR/defs4.txt"
 m=$(grep -c "^material " $DEFS/materials.txt)
 grep -q "материалов $((m + 1))," "$DIR/defs4.txt"
@@ -96,7 +108,7 @@ grep -q "ressora_stal" "$DIR/defs5.txt"
 grep -q "мир не тронут" "$DIR/defs5.txt"
 # Ошибка в файле мода
 if $BIN --mods "$DIR/mods_bad" --bench arena 1 > "$DIR/defs6.txt" 2>&1; then exit 1; fi
-grep -q "slom/weapons.txt:3: не число" "$DIR/defs6.txt"
+grep -q "slom/weapons.txt:4: не число" "$DIR/defs6.txt"
 if $BIN --mods "$DIR/mods_bad2" --bench arena 1 > "$DIR/defs7.txt" 2>&1; then exit 1; fi
 grep -q "kosa_kraska красится материалом nosuch" "$DIR/defs7.txt"
 if $BIN --mods "$DIR/mods_bad3" --bench arena 1 > "$DIR/defs8.txt" 2>&1; then exit 1; fi

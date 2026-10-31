@@ -31,25 +31,20 @@ typedef struct CharLook {
     u8  cut;           // причёска: 0 — нет (щетина), иначе вид 1..HAIR_MAX у этого тела
 } CharLook;
 
-// Одежда и броня: сетки поверх тела (data/meshes/gear, tools/humanconv GEAR), на том же наборе костей
-typedef enum GearId {
-    GEAR_RAGS, GEAR_QUILT, GEAR_JACKET, GEAR_PLATE, GEAR_BUCKET, GEAR_GREAVES,
-    GEAR_WRAP, GEAR_BOOTS, GEAR_MITTS, GEAR_PACK, GEAR_BELT, GEAR_PANTS,
-    GEAR_COUNT
-} GearId;
+// Одежда и броня: сетки поверх тела (data/meshes/gear, tools/humanconv GEAR), на том же наборе костей.
+// Имена сеток — из описаний вещей (look), таблица g_gear_file в items.h
 #define GEAR_MAX_WORN 11  // по вещи на слот и причёска
-extern const char *const g_gear_file[GEAR_COUNT];
-// Какие сетки закрывает вещь: биты GEAR_*, GEAR_HIDES_HAIR — причёску. Заполняют описания (hides)
-extern u32 g_gear_hides[GEAR_COUNT];
+// Какие сетки закрывает вещь: биты номеров сеток, GEAR_HIDES_HAIR — причёску. Заполняют описания (hides)
+extern u32 g_gear_hides[GEAR_CAP];
 
 // Причёски (data/meshes/hair): рисуются как вещи, в ряду сеток тела после вещей. NULL — вида нет
 #define HAIR_MAX 7
-#define GEAR_ROW (GEAR_COUNT + HAIR_MAX)
+#define GEAR_ROW (GEAR_CAP + HAIR_MAX)  // сетки вещей, затем причёски с GEAR_CAP
 extern const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX];
 // Причёска в список вещей gear[0..n) (номер в ряду): возвращает 0 или 1. Под кожухом причёски нет
 u32 look_hair(const CharLook *l, u8 *gear, u32 n);
 
-// Видимые вещи: из брони по слотам (номера описаний, ARMOR_NONE — пусто); возвращает число
+// Видимые вещи: из брони по слотам (номера компонентов брони, ARMOR_NONE — пусто); возвращает число
 u32 gear_from_armor(const u8 *armor, u8 *out);
 // Из надетого листа персонажа: броня и вещи
 u32 gear_from_sheet(const CharSheet *cs, u8 *out);

@@ -104,7 +104,7 @@ static void build(Stand *s, MeshBuilder *mb, Arena *perm, GroundFn ground)
             for (u32 v = 0; v < STAND_HAIR_VIEWS; v++) {
                 f32 x = STAND_X + HAIR_DX * ((f32)(h * STAND_HAIR_VIEWS + v) + 0.5f);
                 rest(s->bones + (size_t)n * RENDER_MAX_BONES, v3(x, y, z), g_view_yaw[v], 1.0f, b);
-                s->hair[n] = (u8)(GEAR_COUNT + c);
+                s->hair[n] = (u8)(GEAR_CAP + c);
                 s->body[n++] = (u8)b;
             }
     gpu_mesh_upload(&s->board, mb);
