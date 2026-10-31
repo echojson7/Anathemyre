@@ -141,3 +141,100 @@ int people_bench(u32 side_a, u32 side_b, u64 seed, u32 threads)
     arena_free(&mem);
     return 0;
 }
+
+// Один бой копий. fear: мораль, отход и сдача как в игре. Иначе только раны.
+static int mirror_once(u32 side, u64 seed, u32 threads, bool fear, u32 out[2])
+{
+    u32 n = side * 2, ticks = PB_SECONDS * COMBAT_HZ;
+    Arena mem;
+    if (!arena_init(&mem, MB(16) + sizeof(Persons) + sizeof(Field))) return 1;
+    if (!jobs_init(threads)) {
+        arena_free(&mem);
+        return 1;
+    }
+    Persons *ps = ARENA_PUSH_ARRAY(&mem, Persons, 1);
+    persons_init(ps);
+    Field *f = ARENA_PUSH_ARRAY(&mem, Field, 1);
+    field_init(f, &mem, ps, seed);
+    f->w.fear = fear;
+    for (u32 i = 0; i < n; i++) {
+        u8 half = i >= side;
+        u32 k = half ? i - side : i, row = k / PB_RANK;
+        u8 sd = half;
+        Rng one;
+        rng_seed(&one, seed, 1000u + k);
+        f32 x = ((f32)(k % PB_RANK) - (PB_RANK - 1) * 0.5f) * 1.4f + rng_range(&one, -0.2f, 0.2f);
+        f32 z = (sd ? 1.0f : -1.0f) * (12.0f + (f32)row * 1.7f);
+        u8 ff = FF_ASSIST | FF_AGGRO;
+        u32 at = person_place(persons_add(ps, ROLE_WANDER, v3(x, 0, z), sd ? PI_F : 0.0f, sd, ff));
+        ps->move[at].gait = GAIT_RUN;
+        f32 roll = rng_f32(&one);
+        person_random(ps, at, &one, sd ? "ЧУЖОЙ" : "СВОЙ", roll < 0.5f ? 0 : (roll < 0.85f ? 1 : 2), g_weapon_pool[0]);
+        ps->seed[at] = rng_f32(&one) * 100.0f;
+        ps->variant[at] = (u8)(k % BODY_KIND_COUNT);
+        ps->height[at] = ps->width[at] = 1.0f;
+        persons_dress(ps, at);
+        field_join(f, at, sd, ff);
+    }
+    log_set_echo(false);
+    for (u32 k = 0; k < side; k++) {
+        field_attack(f, k, side + k);
+        field_attack(f, side + k, k);
+    }
+    for (u32 t = 0; t < ticks; t++) {
+        persons_keep_last(ps);
+        for (u32 i = 0; i < n; i++) {
+            if (ps->move[i].ctrl == CTRL_FREE) ps->move[i].vmax = g_gait_speed[GAIT_RUN];
+            person_walk(ps, i, COMBAT_DT, flat_ground);
+        }
+        field_tick(f, flat_ground);
+    }
+    log_set_echo(true);
+    out[0] = out[1] = 0;
+    for (u32 i = 0; i < n; i++)
+        if (fs_out(f->w.state[i])) out[i >= side]++;
+    jobs_shutdown();
+    arena_free(&mem);
+    return 0;
+}
+
+// Без морали, одно зерно: разница потерь не больше 10% стороны.
+int mirror_bench(u32 side, u64 seed, u32 threads)
+{
+    if (side == 0 || side * 2 > PERSONS_MAX) {
+        printf("ЗЕРКАЛО: сторона от 1 до %u\n", PERSONS_MAX / 2);
+        return 1;
+    }
+    u32 out[2];
+    if (mirror_once(side, seed, threads, false, out)) return 1;
+    u32 diff = out[0] > out[1] ? out[0] - out[1] : out[1] - out[0];
+    u32 allow = side / 10;
+    int bad = diff > allow;
+    printf("ЗЕРКАЛО БЕЗ МОРАЛИ %u × %u, SEED %llu: выбыло %u и %u, разница %u, допуск %u — %s\n",
+           side, side, (unsigned long long)seed, out[0], out[1], diff, allow, bad ? "ПЕРЕКОС" : "РОВНО");
+    return bad ? 2 : 0;
+}
+
+// С моралью, 16 зерён 1337..1352. Каждая сторона побеждает 5..11 раз. Сумма потерь не критерий.
+int mirror_fear_bench(u32 side, u64 seed, u32 threads)
+{
+    (void)seed;
+    if (side == 0 || side * 2 > PERSONS_MAX) {
+        printf("ЗЕРКАЛО: сторона от 1 до %u\n", PERSONS_MAX / 2);
+        return 1;
+    }
+    enum { N = 16, SEED0 = 1337 };
+    u32 wins[2] = { 0, 0 };
+    for (u32 k = 0; k < N; k++) {
+        u32 out[2];
+        u64 s = SEED0 + k;
+        if (mirror_once(side, s, threads, true, out)) return 1;
+        if (out[0] < out[1]) wins[0]++;
+        else if (out[1] < out[0]) wins[1]++;
+        printf("ЗЕРКАЛО С МОРАЛЬЮ seed %llu: выбыло %u и %u\n", (unsigned long long)s, out[0], out[1]);
+    }
+    int bad = wins[0] < 5 || wins[0] > 11 || wins[1] < 5 || wins[1] > 11;
+    printf("ЗЕРКАЛО С МОРАЛЬЮ зёрна %u..%u: победы %u и %u — %s\n",
+           SEED0, SEED0 + N - 1, wins[0], wins[1], bad ? "ПЕРЕКОС" : "РОВНО");
+    return bad ? 2 : 0;
+}

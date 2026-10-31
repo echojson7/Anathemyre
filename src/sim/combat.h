@@ -23,6 +23,9 @@
 #define TAGS_ALIVE (~TAG_BIT(TAG_DEAD))
 #define TAGS_FIGHTING (~(TAG_BIT(TAG_DEAD) | TAG_BIT(TAG_OUT)))
 
+// При равном счёте кого взять. Хеш от ищущего и кандидата, не «меньший номер».
+bool combat_prefer(u32 seeker, u32 a, u32 b);
+
 typedef enum Skill {
     SK_ATTACK, SK_DEFENSE, SK_DODGE,
     SK_STRENGTH, SK_DEXTERITY, SK_TOUGHNESS, SK_ATHLETICS,
@@ -114,6 +117,8 @@ typedef struct FighterDesc {
 // Наблюдатель журнала (звук): получает события до очистки, сам бой о нём ничего не знает
 struct CombatWorld;
 typedef void (*CombatSink)(void *user, const struct CombatWorld *w);
+// План одного попадания за тик. Живёт только в combat.c, в сохранение не идёт.
+typedef struct CombatHit CombatHit;
 
 #define COMBAT_IN_HAND (-1)
 #define COMBAT_GONE    (-2)
@@ -124,6 +129,7 @@ typedef struct CombatWorld {
     u32 tick;
     bool mercy;      // выбывших не добивают, сдачу принимают
     bool halted;     // бой остановлен: ИИ больше не атакует
+    bool fear;       // мораль, отход и сдача; замер копий может выключить. В сохранение не идёт
     f32 fence_r;     // > 0: бой внутри круга этого радиуса
     u32 foe[COMBAT_MAX_TEAMS];  // с кем враждует команда: биты команд; по умолчанию со всеми чужими
 
@@ -131,6 +137,7 @@ typedef struct CombatWorld {
     f32 *x, *z, *heading;
     bool body_ext;   // место, тело, навыки и действие — столбцы реестра людей: пишет в сохранение он
     u8  *state, *team, *attack, *react;  // react — ответ цели на текущий удар, REACT_*
+    u8  *swing_paid; // опыт за нынешний замах уже записан; сброс в начале замаха. В сохранение
     f32 *aim_x, *aim_y, *aim_s;  // куда идёт удар: точка на цели в плоскости взгляда (м, поза привязки) и наклон следа
     f32 *timer;      // осталось в состоянии, с
     f32 *dur;        // полная длительность состояния
@@ -174,7 +181,19 @@ typedef struct CombatWorld {
     u8  *grid_tag;       // метка в сетке, TAG_*
     f32 *sep_x, *sep_z;  // сдвиг расталкивания за тик
     u32 *strikes;        // кто наносит удар в этом тике
+    // План ударов тика и снимки под него. Пишутся после чтения прошлого состояния.
+    // В сохранение не идут: каждый массив про своё, чужие данные в них не кладутся.
+    CombatHit *hits;
+    u32 hit_cap;
+    f32 *swing_opp;    // защита цели до записи опыта за замах
+    u8  *swing_due;    // этому замаху опыт ещё не выдан, снимок уже снят
+    u8  *hit_def;      // по этому бойцу в тике есть попадание
+    u8  *counter_kind; // вид намеченной контратаки
 } CombatWorld;
+
+// Фаза решения: хеш слота и зерна, не номер. Иначе младшие думают на несколько тиков раньше пары.
+u32 combat_think_phase(u64 seed, u32 slot);
+bool combat_thinks(const CombatWorld *w, u32 slot);
 
 // Враждует ли боец i с бойцом j (по командам)
 static inline bool combat_hostile(const CombatWorld *w, u32 i, u32 j) { return (w->foe[w->team[i]] >> w->team[j]) & 1u; }
@@ -200,8 +219,11 @@ u32  combat_add(CombatWorld *w, const FighterDesc *d);
 void combat_load(CombatWorld *w, u32 i, const FighterDesc *d);
 // Вражда двух команд в обе стороны
 void combat_set_foes(CombatWorld *w, u8 a, u8 b, bool on);
-// Начать удар (вызывает ИИ): замах, бросок реакции цели
+// Начать удар (вызывает ИИ): замах и бросок реакции по состоянию до этого прохода.
+// Опыт за замах сюда не пишется: его ставит combat_grant_swings, когда замахнулись уже все.
+// swing_paid сбрасывается здесь, чтобы контратака конца тика не получила опыт ещё раз в следующем.
 void combat_begin_attack(CombatWorld *w, u32 i, u8 kind, u32 target, bool counter);
+void combat_grant_swings(CombatWorld *w);
 void combat_tick(CombatWorld *w);
 // Журнал прочитан: показать его наблюдателю (если есть) и очистить
 void combat_events_done(CombatWorld *w);
