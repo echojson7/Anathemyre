@@ -32,7 +32,6 @@ extern const char *const g_stage_name[STAGE_COUNT];
 typedef struct Settings {
     RenderSettings rs;
     bool vsync, fullscreen;
-    bool swap_late;          // показ кадра после логики следующего (без vsync)
     bool follow;             // камера следует за своим персонажем
     f32  ui_user, ui_user_text;  // ползунки размера интерфейса
     bool sound_ok, sound_on, music_on;
@@ -42,7 +41,6 @@ typedef struct Settings {
     u32  stage;              // SceneStage
     bool stand, stand_moved;  // стенд фигур: показан; показать ряд stand_row или убрать
     u32  stand_row;
-    bool render_gl, render_save;  // РЕНДЕР: GL со следующего запуска (для сравнения); записать выбор
 } Settings;
 
 // Наборы группы СВЕТ (docs/lighting.md): от прежнего света к самому полному

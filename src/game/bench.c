@@ -41,17 +41,17 @@ static void gpu_line(char *out, size_t size, const RenderStats *st)
         snprintf(out, size, "GPU: драйвер не отдаёт метки времени");
 }
 
-// CPU одной строкой: логика (сим — ввод и мир, позы — люди и список кадра), отправка (сбор и вызовы GL по проходам), swap; мс на кадр
-static void cpu_line(char *out, size_t size, const f64 *z, f64 k, const RenderStats *st, bool swap_late)
+// CPU одной строкой: логика (сим — ввод и мир, позы — люди и список кадра), отправка (сбор и вызовы по проходам), swap (отправка кадра на GPU и показ, rb_frame_end); мс на кадр
+static void cpu_line(char *out, size_t size, const f64 *z, f64 k, const RenderStats *st)
 {
     f64 sim = (z[PZ_INPUT] + z[PZ_PEOPLE] + z[PZ_ARENA] + z[PZ_FIELD] + z[PZ_PHYS] + z[PZ_SOUND]) * k;
     f64 pose = (z[PZ_FIGURES] + z[PZ_POSES] + z[PZ_SCENE]) * k;
     const f64 *c = st->cpu_ms;
     snprintf(out, size,
              "логика %.3f (сим %.3f, позы %.3f: %.0f шт.), отправка %.3f (сбор %.3f; тени %.3f, глубина %.3f, сцена %.3f, "
-             "атмосфера %.3f, свет %.3f, стиль %.3f, интерфейс %.3f), swap %.3f%s",
+             "атмосфера %.3f, свет %.3f, стиль %.3f, интерфейс %.3f), swap %.3f",
              sim + pose, sim, pose, st->poses, (z[PZ_SUBMIT] + z[PZ_UI]) * k, st->prep_ms, c[PASS_SHADOW], c[PASS_DEPTH],
-             c[PASS_SCENE], c[PASS_ATMOS], c[PASS_LIGHT], c[PASS_STYLE], c[PASS_UI], z[PZ_SWAP] * k, swap_late ? " после логики" : "");
+             c[PASS_SCENE], c[PASS_ATMOS], c[PASS_LIGHT], c[PASS_STYLE], c[PASS_UI], z[PZ_SWAP] * k);
 }
 
 // Все зоны подряд, мс на кадр
@@ -65,7 +65,7 @@ static void zones_line(char *out, size_t size, const f64 *z, f64 k, f64 posed)
     }
 }
 
-static void report(Bench *b, f64 seconds, i32 ww, i32 wh, bool swap_late)
+static void report(Bench *b, f64 seconds, i32 ww, i32 wh)
 {
     RenderStats st;
     render_take_stats(&st);
@@ -91,7 +91,7 @@ static void report(Bench *b, f64 seconds, i32 ww, i32 wh, bool swap_late)
              ww, wh, n, seconds, sum / n, n / seconds, b->frame_ms[n / 2], b->frame_ms[MIN(n - 1, n * 99 / 100)]);
     char gpu[256], cpu[512], zones[512];
     gpu_line(gpu, sizeof gpu, &st);
-    cpu_line(cpu, sizeof cpu, z, k, &st, swap_late);
+    cpu_line(cpu, sizeof cpu, z, k, &st);
     zones_line(zones, sizeof zones, z, k, b->posed / b->cpu_frames);
     log_stat("ЗАМЕР: CPU %s | %s", cpu, gpu);
     log_stat("ЗАМЕР: CPU %s", zones);
@@ -100,7 +100,7 @@ static void report(Bench *b, f64 seconds, i32 ww, i32 wh, bool swap_late)
              st.vrs ? "да" : "нет");
 }
 
-bool bench_frame(Bench *b, f64 now, u32 posed, i32 ww, i32 wh, bool swap_late)
+bool bench_frame(Bench *b, f64 now, u32 posed, i32 ww, i32 wh)
 {
     // Время кадра — от начала прошлого кадра до начала этого; счётчики — с начала замера
     if (b->last_now == 0) {
@@ -114,7 +114,7 @@ bool bench_frame(Bench *b, f64 now, u32 posed, i32 ww, i32 wh, bool swap_late)
     }
     b->last_now = now;
     if (now - b->measure_from < b->measure_s) return false;
-    report(b, now - b->measure_from, ww, wh, swap_late);
+    report(b, now - b->measure_from, ww, wh);
     b->on = false;
     return true;
 }
@@ -166,7 +166,7 @@ void stats_reset(FrameStats *s, f64 now)
     prof_take(z);
 }
 
-void stats_frame(FrameStats *s, f64 now, u32 posed, bool swap_late)
+void stats_frame(FrameStats *s, f64 now, u32 posed)
 {
     s->frames++;
     s->fps_frames++;
@@ -185,7 +185,7 @@ void stats_frame(FrameStats *s, f64 now, u32 posed, bool swap_late)
     f64 k = 1000.0 / s->frames;
     char gpu[256], cpu[512];
     gpu_line(gpu, sizeof gpu, &st);
-    cpu_line(cpu, sizeof cpu, z, k, &st, swap_late);
+    cpu_line(cpu, sizeof cpu, z, k, &st);
     log_stat("КАДР: %.2f мс, %.0f к/с | CPU: %s | %s", (now - s->t) * k, s->frames / (now - s->t), cpu, gpu);
     log_stat("ОТРИСОВКА: элементов %u | сцена: видно %.0f, вызовов %.0f, треугольников %.0fk | тени: видно %.0f, вызовов %.0f, треугольников %.0fk | кеш поз: %.0fk вершин",
              st.items, st.visible[1], st.draws[1], st.tris[1] / 1000.0, st.visible[0], st.draws[0], st.tris[0] / 1000.0,

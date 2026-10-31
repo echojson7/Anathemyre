@@ -10,7 +10,6 @@ vert -DNOISE_HASH fullscreen.vert
 frag -DNOISE_HASH frame.glsl common.glsl rays.frag
 vert fullscreen.vert
 frag frame.glsl common.glsl ao.glsl atmos.frag
-frag frame.glsl common.glsl ao.glsl ao.frag
 frag frame.glsl common.glsl pixel.glsl style.frag
 frag frame.glsl pixel.glsl src_map.frag
 frag vrs_block.frag

@@ -24,8 +24,8 @@ float noise3(vec3 p)
     vec3 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
 #ifndef NOISE_HASH
-    if (u_noise_tex != 0) return textureLod(u_noise, (mod(i, 128.0) + f + 0.5) / 128.0, 0.0).r;
-#endif
+    return textureLod(u_noise, (mod(i, 128.0) + f + 0.5) / 128.0, 0.0).r;
+#else
     float a = hash13(i);
     float b = hash13(i + vec3(1, 0, 0));
     float c = hash13(i + vec3(0, 1, 0));
@@ -36,6 +36,7 @@ float noise3(vec3 p)
     float k = hash13(i + vec3(1, 1, 1));
     return mix(mix(mix(a, b, f.x), mix(c, d, f.x), f.y),
                mix(mix(e, g, f.x), mix(h, k, f.x), f.y), f.z);
+#endif
 }
 
 float fbm3(vec3 p)

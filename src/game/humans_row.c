@@ -32,12 +32,12 @@ void humans_row_toggle(HumansRow *h, MeshBuilder *mb, Arena *perm, const char *d
         if (lod) snprintf(suf, sizeof suf, "_lod%u", lod);
         snprintf(path, sizeof path, "%s/meshes/%s%s.mesh", data_dir, g_body_file[body], suf);
         if (!mb_load(mb, perm, path)) continue;
-        gpu_mesh_upload(&h->mesh[h->count], mb);
+        gpu_mesh_upload_pooled(&h->mesh[h->count], mb);
         log_info("ЧЕЛОВЕК %u: %u вершин, %u треугольников", k, mb->vcount, mb->icount / 3);
         perm->used = mark;
         snprintf(path, sizeof path, "%s/meshes/hair/%s_%s%s.mesh", data_dir, g_body_file[body], g_hair_file[body][0], suf);
         h->has_hair[h->count] = body != BODY_THIN && mb_load(mb, perm, path);
-        if (h->has_hair[h->count]) gpu_mesh_upload(&h->hair[h->count], mb);
+        if (h->has_hair[h->count]) gpu_mesh_upload_pooled(&h->hair[h->count], mb);
         perm->used = mark;
         f32 x = 0.3f + (0.7f * CHAR_LODS + 0.3f) * (f32)body + 0.7f * (f32)lod;
         M4 *b = &h->bones[h->count * RENDER_MAX_BONES];

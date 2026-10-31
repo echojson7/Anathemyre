@@ -86,7 +86,7 @@ run-debug: debug
 shot: release
 	xvfb-run -a -s "-screen 0 1280x720x24" ./$(REL_BIN) --shot build/shot.ppm --frames 120
 
-VK_SRC := tools/vkcheck/vkcheck.c src/render/rb.c src/render/rb_vk.c src/render/rb_gl.c src/render/gl.c src/core/arena.c src/core/clock.c src/core/log.c $(PLATFORM)
+VK_SRC := tools/vkcheck/vkcheck.c src/render/rb.c src/render/rb_vk.c src/core/arena.c src/core/clock.c src/core/log.c $(PLATFORM)
 VK_OBJ := $(VK_SRC:%.c=$(DBG_DIR)/%.o)
 VK_BIN := build/vkcheck$(EXE)
 

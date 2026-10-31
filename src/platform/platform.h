@@ -1,4 +1,4 @@
-// Платформенный слой: окно, ввод, GL-контекст или окно для Vulkan. Реализация на каждую ОС отдельно
+// Платформенный слой: окно для Vulkan, ввод, потоки, звук. Реализация на каждую ОС отдельно
 #ifndef ANA_PLATFORM_H
 #define ANA_PLATFORM_H
 
@@ -29,18 +29,14 @@ typedef void (*PlatformProc)(void);
 
 // До всего остального: настройка консоли и т.п.
 void         platform_preinit(void);
-bool         platform_init(const char *title, i32 width, i32 height, bool gl_debug);
+bool         platform_init(const char *title, i32 width, i32 height);
 void         platform_shutdown(void);
 void         platform_poll(Input *in);
-void         platform_swap(void);
-void         platform_set_vsync(bool on);
 // Окно без рамки на весь монитор и обратно
 void         platform_set_fullscreen(bool on);
 void         platform_window_size(i32 *w, i32 *h);
-PlatformProc platform_gl_proc(const char *name);
 
-// Vulkan: до platform_init — окно без GL-контекста; swap и vsync тогда делает rb_vk.c
-void         platform_use_vulkan(bool on);
+// Показ кадра и vsync делает rb_vk.c
 // Хэндлы окна для поверхности: Display* и Window на X11, HINSTANCE и HWND на Windows
 typedef struct PlatformNative { void *display; u64 window; } PlatformNative;
 PlatformNative platform_native(void);

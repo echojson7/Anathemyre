@@ -57,9 +57,7 @@ int main(int argc, char **argv)
     time_init();
     Arena scratch;
     if (!arena_init(&scratch, MB(4))) return 1;
-    platform_use_vulkan(true);
-    rb_select(RB_API_VULKAN);
-    if (!platform_init("Anathemyre — Vulkan", w, h, false)) return 1;
+    if (!platform_init("Anathemyre — Vulkan", w, h)) return 1;
     if (!rb_init(&scratch, "data")) {
         platform_shutdown();
         return 1;

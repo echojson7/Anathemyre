@@ -30,8 +30,4 @@ make -j"$JOBS" TARGET_OS="$TARGET"
 if [ "$TARGET" = windows ]; then
     exec ./build/anathemyre.exe "$@"
 fi
-# WSL2 без mingw: без этого Mesa рисует на процессоре (llvmpipe), а не на видеокарте
-if [ -e /dev/dxg ] && [ -z "$GALLIUM_DRIVER" ]; then
-    export GALLIUM_DRIVER=d3d12
-fi
 exec ./build/anathemyre "$@"

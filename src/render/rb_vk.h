@@ -1,4 +1,4 @@
-// Vulkan-бэкенд слоя рендера: то, чего нет в rb.h. Остальное — rb.h после rb_select(RB_API_VULKAN)
+// Vulkan-слой рендера: то, чего нет в rb.h
 #ifndef ANA_RB_VK_H
 #define ANA_RB_VK_H
 
