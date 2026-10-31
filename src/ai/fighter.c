@@ -242,9 +242,8 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
     }
 }
 
-// Применение решения. Идёт по номерам в одном потоке: замах меняет состояние цели,
-// поэтому каждое намерение перепроверяется по тому, что сделали бойцы с меньшим номером
-static void apply(FighterAI *ai, CombatWorld *w, u32 i)
+// Своё состояние. Чужих не трогает: замах соседа в этом же проходе ещё не начат.
+static void apply_self(FighterAI *ai, CombatWorld *w, u32 i)
 {
     if (w->idle[i]) return;
     w->target[i] = ai->target[i];
@@ -259,16 +258,20 @@ static void apply(FighterAI *ai, CombatWorld *w, u32 i)
     if ((act & ACT_RETREAT) && s == FS_READY) {
         combat_set_state(w, i, FS_RETREAT, 0.0f);
         combat_event(w, EV_RETREAT, i, i);
-        s = FS_RETREAT;
     } else if ((act & ACT_RALLY) && s == FS_RETREAT) {
         combat_set_state(w, i, FS_READY, 0.0f);
-        s = FS_READY;
     }
-    if (!(act & ACT_ATTACK) || (s != FS_READY && s != FS_RETREAT)) return;
-    u32 tt = (u32)ai->target[i];
-    if (!valid_target(w, i, tt)) return;
-    if (w->state[tt] == FS_WINDUP && w->target[tt] == (i32)i) return;
-    combat_begin_attack(w, i, ai->kind[i], tt, false);
+}
+
+// Замах по решению, принятому до этого прохода. Замах с меньшим номером его не отменяет.
+static void apply_attack(FighterAI *ai, CombatWorld *w, u32 i)
+{
+    if (w->idle[i] || !(ai->act[i] & ACT_ATTACK)) return;
+    u8 s = w->state[i];
+    if (s != FS_READY && s != FS_RETREAT) return;
+    i32 tt = ai->target[i];
+    if (tt < 0 || !valid_target(w, i, (u32)tt)) return;
+    combat_begin_attack(w, i, ai->kind[i], (u32)tt, false);
 }
 
 typedef struct ThinkCtx {
@@ -280,7 +283,7 @@ static void decide_job(void *p, u32 b, u32 e)
 {
     ThinkCtx *c = p;
     for (u32 i = b; i < e; i++)
-        if ((i + c->w->tick) % COMBAT_THINK_TICKS == 0) decide(c->ai, c->w, i);
+        if (c->w->tick % COMBAT_THINK_TICKS == 0) decide(c->ai, c->w, i);
 }
 
 void fighter_ai_init(FighterAI *ai, Arena *a, u32 cap)
@@ -326,8 +329,16 @@ void fighter_think_all(FighterAI *ai, CombatWorld *w)
             ai->cx[t] /= (f32)ai->cn[t];
             ai->cz[t] /= (f32)ai->cn[t];
         }
-    ThinkCtx c = { ai, w };
-    jobs_for(w->count, 16, decide_job, &c);
+    // Все думают в одни тики. Фаза от номера слота давала младшим замах раньше старших.
+    if (w->tick % COMBAT_THINK_TICKS == 0) {
+        ThinkCtx c = { ai, w };
+        jobs_for(w->count, 16, decide_job, &c);
+        // Сначала своё состояние у всех, потом все замахи.
+        // Иначе меньший номер успевает закрыть цель блоком до её собственного удара.
+        for (u32 i = 0; i < w->count; i++) apply_self(ai, w, i);
+        for (u32 i = 0; i < w->count; i++) apply_attack(ai, w, i);
+    }
     for (u32 i = 0; i < w->count; i++)
-        if ((i + w->tick) % COMBAT_THINK_TICKS == 0) apply(ai, w, i);
+        if (w->state[i] == FS_WINDUP && w->timer[i] == w->dur[i] && w->dur[i] > 0.0f) combat_swing_xp(w, i);
+    combat_seal_guards(w);
 }

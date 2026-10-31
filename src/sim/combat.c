@@ -382,16 +382,8 @@ static u8 apply_damage(CombatWorld *w, u32 t, u32 part, f32 cut, f32 blunt, f32 
             flags |= EVF_SEVER;
         }
     }
-    u8 s = w->state[t];
-    bool standing = !fs_lying(s) && !fs_out(s);
-    // Резкий скачок шока валит с ног; стойкость поднимает порог
-    if (standing && dshock > g_tune.knock_shock * (1.0f + sk(w, t, SK_TOUGHNESS) / 100.0f)) {
-        go_down(w, t, FS_KNOCKED, act_time(w, t, w->fall[t] == FALL_FRONT ? ACT_FALL_FRONT : ACT_FALL_BACK, 0.0f), 0.0f, 0);
-        combat_event(w, EV_FALL, t, t);
-    } else if (standing && blunt > g_tune.stagger_blunt * (1.0f + sk(w, t, SK_TOUGHNESS) / 100.0f)) {
-        combat_set_state(w, t, FS_STAGGER, act_time(w, t, ACT_STAGGER, combat_roll(w, t, 0, 21)));
-        flags |= EVF_STAGGER;
-    }
+    // Падение и пошатывание решает общий разбор ударов тика, не этот вычет: иначе первый в списке
+    // валит цель до удара того, кто идёт следом
     gain(w, t, SK_TOUGHNESS, g_tune.gain_tough * total / 10.0f * (w->state[t] == FS_UNCONSCIOUS ? g_tune.gain_tough_ko_mul : 1.0f), sk(w, t, SK_TOUGHNESS));
     return flags;
 }
@@ -573,19 +565,62 @@ void combat_begin_attack(CombatWorld *w, u32 i, u8 kind, u32 t, bool counter)
     roll_aim(w, i, t, kind);
     combat_event(w, counter ? EV_COUNTER : EV_ATTACK, i, t);
     w->ev[w->last_ev].arg = kind;
-    gain(w, i, SK_ATTACK, g_tune.gain_attack_try, defense_eff(w, t));
-    gain(w, i, SK_WEAPON + weapon_of(w, i)->wclass, g_tune.gain_weapon_try, defense_eff(w, t));
-    if (weapon_overweight(w, i) > 0.0f) gain(w, i, SK_STRENGTH, g_tune.gain_strength, g_tune.gain_strength_opp);
-    if (weapon_of(w, i)->weight <= g_tune.dex_weapon_kg) gain(w, i, SK_DEXTERITY, g_tune.gain_dex, sk(w, t, SK_DEXTERITY));
+    // Реакция по навыкам до опыта за этот замах: опыт пишется пачкой, после всех замахов прохода
+    w->react[i] = roll_react(w, t, i, kind, wt);
+}
 
-    // Защитник видит замах и успевает поднять блок или отступить
-    u8 r = roll_react(w, t, i, kind, wt);
-    w->react[i] = r;
-    if (r == REACT_BLOCK) {
-        f32 hold = wt + act_of(w, t, ACT_BLOCK)->time;
-        if (w->state[t] != FS_BLOCK || w->timer[t] < hold) combat_set_state(w, t, FS_BLOCK, hold);
-    } else if (r == REACT_DODGE) {
-        combat_set_state(w, t, FS_DODGE, wt + act_of(w, t, ACT_DODGE)->time);
+void combat_swing_xp(CombatWorld *w, u32 i)
+{
+    i32 t = w->target[i];
+    if (t < 0 || (u32)t >= w->count) return;
+    gain(w, i, SK_ATTACK, g_tune.gain_attack_try, defense_eff(w, (u32)t));
+    gain(w, i, SK_WEAPON + weapon_of(w, i)->wclass, g_tune.gain_weapon_try, defense_eff(w, (u32)t));
+    if (weapon_overweight(w, i) > 0.0f) gain(w, i, SK_STRENGTH, g_tune.gain_strength, g_tune.gain_strength_opp);
+    if (weapon_of(w, i)->weight <= g_tune.dex_weapon_kg) gain(w, i, SK_DEXTERITY, g_tune.gain_dex, sk(w, (u32)t, SK_DEXTERITY));
+}
+
+// Замах этого прохода: таймер ещё равен полной длительности, тик его не уменьшал
+static bool fresh_windup(const CombatWorld *w, u32 i)
+{
+    return w->state[i] == FS_WINDUP && w->dur[i] > 0.0f && w->timer[i] == w->dur[i];
+}
+
+// Стойка защитника — один раз на всех замахов прохода. Блок важнее уворота, держится дольше
+// из двух одинаковых. Кто сам замахнулся в этом проходе, стойку не получает: оба бьют.
+void combat_seal_guards(CombatWorld *w)
+{
+    u32 n = w->count;
+    memset(w->guard_kind, 0, n);
+    for (u32 i = 0; i < n; i++) {
+        if (w->idle[i] || !fresh_windup(w, i)) continue;
+        i32 ti = w->target[i];
+        if (ti < 0 || (u32)ti >= n) continue;
+        u32 t = (u32)ti;
+        if (fresh_windup(w, t)) continue;
+        u8 r = w->react[i];
+        if (r != REACT_BLOCK && r != REACT_DODGE) continue;
+        f32 extra = act_of(w, t, r == REACT_BLOCK ? ACT_BLOCK : ACT_DODGE)->time;
+        f32 hold = w->timer[i] + extra;
+        u8 g = w->guard_kind[t];
+        if (g == REACT_BLOCK && r != REACT_BLOCK) continue;
+        if (g != r) {
+            w->guard_kind[t] = r;
+            w->guard_hold[t] = hold;
+        } else if (hold > w->guard_hold[t]) {
+            w->guard_hold[t] = hold;
+        }
+    }
+    for (u32 t = 0; t < n; t++) {
+        u8 r = w->guard_kind[t];
+        if (!r || w->idle[t]) continue;
+        u8 s = w->state[t];
+        if (s != FS_READY && s != FS_RETREAT && s != FS_BLOCK && s != FS_DODGE && s != FS_RECOVER) continue;
+        f32 hold = w->guard_hold[t];
+        if (r == REACT_BLOCK) {
+            if (s != FS_BLOCK || w->timer[t] < hold) combat_set_state(w, t, FS_BLOCK, hold);
+        } else {
+            combat_set_state(w, t, FS_DODGE, hold);
+        }
     }
 }
 
@@ -597,7 +632,20 @@ static u8 best_counter_kind(const CombatWorld *w, u32 i)
     return ATK_SWING;
 }
 
-static void resolve_strike(CombatWorld *w, u32 i)
+// Что удар сделает с целью. Считается по состоянию до всех ударов этого тика.
+enum { OC_BLOCK = 1, OC_DODGE = 2, OC_HIT = 3, OC_BREAK = 4 };
+
+struct CombatHit {
+    u32 att, def;
+    u8  oc, part, kind, fall;
+    u8  ally, drop, counter, counter_kind;
+    u8  shock_knock, blunt_stagger;
+    f32 cut, blunt, pierce, arm_blunt;
+    f32 push, pdx, pdz;
+    f32 knock_dur, stagger_dur;
+};
+
+static void plan_strike(CombatWorld *w, u32 i, u32 *nh)
 {
     const WeaponDef *wd = weapon_of(w, i);
     u8 kind = w->attack[i];
@@ -640,8 +688,14 @@ static void resolve_strike(CombatWorld *w, u32 i)
 
     f32 falloff = 1.0f;
     for (u32 n = 0; n < nc; n++, falloff *= g_tune.cleave_falloff) {
+        if (*nh >= w->hit_cap) return;
+        CombatHit *h = &w->hits[(*nh)++];
+        memset(h, 0, sizeof *h);
         u32 t = cand[n];
-        bool ally = w->team[t] == w->team[i];
+        h->att = i;
+        h->def = t;
+        h->kind = kind;
+        h->ally = w->team[t] == w->team[i];
         u8 r;
         if (fs_lying(w->state[t]) || fs_out(w->state[t])) {
             r = REACT_NONE;
@@ -653,94 +707,198 @@ static void resolve_strike(CombatWorld *w, u32 i)
             r = roll_react(w, t, i, kind, 0.0f);
         }
 
+        f32 ha = angle_to(w, t, i);
+        f32 ah = fabsf(ha);
+        h->fall = ah < 0.9f ? FALL_BACK : ah > 2.25f ? FALL_FRONT : ha > 0.0f ? FALL_RIGHT : FALL_LEFT;
+        bool standing = !fs_lying(w->state[t]) && !fs_out(w->state[t]);
+
         if (r == REACT_BLOCK) {
-            combat_event(w, EV_BLOCK, i, t);
-            gain(w, t, SK_DEFENSE, g_tune.gain_block, attack_eff(w, i));
-            gain(w, t, SK_WEAPON + weapon_of(w, t)->wclass, g_tune.gain_block_weapon, attack_eff(w, i));
-            // Тяжёлый удар пробивает стойку: ошеломление и отдача в руку
+            h->oc = OC_BLOCK;
             f32 fa = wd->weight * (1.0f + sk(w, i, SK_STRENGTH) / 100.0f);
             f32 fd = weapon_of(w, t)->weight * (1.0f + sk(w, t, SK_STRENGTH) / 100.0f);
             if (fa > g_tune.guard_break * fd) {
-                w->ev[w->last_ev].flags |= EVF_STAGGER;
-                combat_set_state(w, t, FS_STAGGER, act_time(w, t, ACT_STAGGER, combat_roll(w, t, i, 41)));
-                apply_damage(w, t, PART_ARM_R, 0, wd->blunt * g_tune.guard_break_arm * g_quality_mul[w->weapon_q[i]], 0);
-                check_body(w, t);
+                h->oc = OC_BREAK;
+                h->arm_blunt = wd->blunt * g_tune.guard_break_arm * g_quality_mul[w->weapon_q[i]];
+                h->stagger_dur = act_time(w, t, ACT_STAGGER, combat_roll(w, t, i, 41));
             } else {
                 f32 cc = fminf(g_tune.counter_max, (defense_eff(w, t) - attack_eff(w, i)) / 100.0f);
-                if (!ally && combat_roll(w, t, i, 42) < cc) combat_begin_attack(w, t, best_counter_kind(w, t), i, true);
+                if (!h->ally && combat_roll(w, t, i, 42) < cc) {
+                    h->counter = 1;
+                    h->counter_kind = best_counter_kind(w, t);
+                }
             }
             continue;
         }
         if (r == REACT_DODGE) {
-            combat_event(w, EV_DODGE, i, t);
-            gain(w, t, SK_DODGE, g_tune.gain_dodge, attack_eff(w, i));
+            h->oc = OC_DODGE;
             continue;
         }
 
-        // Попадание
-        u32 part = choose_part(w, i, t, kind, 50 + n);
+        h->oc = OC_HIT;
+        h->part = (u8)choose_part(w, i, t, kind, 50 + n);
         f32 m = g_quality_mul[w->weapon_q[i]] * (g_tune.dmg_str_base + sk(w, i, SK_STRENGTH) / g_tune.dmg_str_div) *
                 (g_tune.dmg_rand_min + g_tune.dmg_rand * combat_roll(w, i, t, 51 + n)) * g_attacks[kind].dmg_mul * falloff;
-        f32 cut = 0, blunt = 0, pierce = 0;
         if (kind == ATK_THRUST) {
-            pierce = wd->pierce * m;
+            h->pierce = wd->pierce * m;
         } else {
-            cut = wd->cut * m;
-            blunt = wd->blunt * m;
+            h->cut = wd->cut * m;
+            h->blunt = wd->blunt * m;
         }
         for (u32 l = 0; l < ARRAY_COUNT(g_armor_layer_order); l++) {
             u8 a = w->armor[g_armor_layer_order[l]][t];
             if (a == ARMOR_NONE) continue;
             const ArmorDef *ad = &g_armors[a];
-            f32 cover = ad->cover[part] * (kind == ATK_THRUST ? g_tune.thrust_cover : 1.0f);
+            f32 cover = ad->cover[h->part] * (kind == ATK_THRUST ? g_tune.thrust_cover : 1.0f);
             if (cover <= 0.0f || combat_roll(w, t, i, 60 + l) >= cover) continue;
-            cut *= 1.0f - ad->res_cut;
-            blunt *= 1.0f - ad->res_blunt;
-            pierce *= 1.0f - ad->res_pierce * (1.0f - wd->pen);
+            h->cut *= 1.0f - ad->res_cut;
+            h->blunt *= 1.0f - ad->res_blunt;
+            h->pierce *= 1.0f - ad->res_pierce * (1.0f - wd->pen);
         }
         f32 tough = 1.0f - sk(w, t, SK_TOUGHNESS) / g_tune.dmg_tough_div;
-        cut *= tough;
-        blunt *= tough;
-        pierce *= tough;
+        h->cut *= tough;
+        h->blunt *= tough;
+        h->pierce *= tough;
 
+        if (standing) {
+            f32 dshock = h->cut + h->pierce + g_tune.shock_blunt * h->blunt;
+            f32 tough100 = 1.0f + sk(w, t, SK_TOUGHNESS) / 100.0f;
+            f32 force = wd->knock * wd->weight * (1.0f + sk(w, i, SK_STRENGTH) / 100.0f) * falloff;
+            f32 resist = w->mass[t] * tough100 * g_tune.knock_resist;
+            if (dshock > g_tune.knock_shock * tough100) {
+                h->shock_knock = 1;
+                h->knock_dur = act_time(w, t, h->fall == FALL_FRONT ? ACT_FALL_FRONT : ACT_FALL_BACK, 0.0f);
+            } else if (h->blunt > g_tune.stagger_blunt * tough100) {
+                h->blunt_stagger = 1;
+                h->stagger_dur = act_time(w, t, ACT_STAGGER, combat_roll(w, t, 0, 21));
+            }
+            if (force > resist) {
+                f32 dx = w->x[t] - w->x[i], dz = w->z[t] - w->z[i];
+                f32 len = sqrtf(dx * dx + dz * dz) + 1e-4f;
+                h->push = g_tune.knock_push_min + combat_roll(w, i, t, 70);
+                h->pdx = dx / len;
+                h->pdz = dz / len;
+                if (!h->shock_knock)
+                    h->knock_dur = act_time(w, t, h->fall == FALL_FRONT ? ACT_FALL_FRONT : ACT_FALL_BACK, 0.0f);
+                f32 p_drop = clampf(g_tune.drop_base + g_tune.drop_k * (force / resist - 1.0f), g_tune.drop_base, g_tune.drop_max) *
+                             (1.0f - sk(w, t, SK_STRENGTH) / g_tune.drop_str_div);
+                if (!w->disarmed[t] && combat_roll(w, t, i, 71) < p_drop) h->drop = 1;
+            }
+        }
+    }
+}
+
+// Опыт, раны и журнал — по уже посчитанному плану. Падение решается по всем ударам цели сразу.
+static void apply_hits(CombatWorld *w, u32 nh)
+{
+    memset(w->guard_kind, 0, w->count);
+    for (u32 n = 0; n < nh; n++) {
+        CombatHit *h = &w->hits[n];
+        u32 i = h->att, t = h->def;
+        w->guard_kind[t] = 1;
+        if (h->oc == OC_BLOCK || h->oc == OC_BREAK) {
+            combat_event(w, EV_BLOCK, i, t);
+            if (h->oc == OC_BREAK) w->ev[w->last_ev].flags |= EVF_STAGGER;
+            gain(w, t, SK_DEFENSE, g_tune.gain_block, attack_eff(w, i));
+            gain(w, t, SK_WEAPON + weapon_of(w, t)->wclass, g_tune.gain_block_weapon, attack_eff(w, i));
+            if (h->oc == OC_BREAK) apply_damage(w, t, PART_ARM_R, 0, h->arm_blunt, 0);
+            continue;
+        }
+        if (h->oc == OC_DODGE) {
+            combat_event(w, EV_DODGE, i, t);
+            gain(w, t, SK_DODGE, g_tune.gain_dodge, attack_eff(w, i));
+            continue;
+        }
         gain(w, i, SK_ATTACK, g_tune.gain_hit, defense_eff(w, t));
         gain(w, t, SK_DEFENSE, g_tune.gain_hit_defense, attack_eff(w, i));
         combat_event(w, EV_HIT, i, t);
         u32 hit_ev = w->last_ev;
-        // Куда толкает удар: от бьющего; спереди — назад, со спины — вперёд, сбоку — вбок
-        f32 ha = angle_to(w, t, i);
-        f32 ah = fabsf(ha);
-        w->fall[t] = ah < 0.9f ? FALL_BACK : ah > 2.25f ? FALL_FRONT : ha > 0.0f ? FALL_RIGHT : FALL_LEFT;
-        u8 flags = apply_damage(w, t, part, cut, blunt, pierce);
+        u8 flags = apply_damage(w, t, h->part, h->cut, h->blunt, h->pierce);
         CombatEvent *e = &w->ev[hit_ev];
-        e->part = (u8)part;
-        e->flags = flags | (ally ? EVF_ALLY : 0);
-        e->arg = kind;
-        e->cut = cut;
-        e->blunt = blunt;
-        e->pierce = pierce;
+        e->part = h->part;
+        e->flags = flags | (h->ally ? EVF_ALLY : 0);
+        e->arg = h->kind;
+        e->cut = h->cut;
+        e->blunt = h->blunt;
+        e->pierce = h->pierce;
+    }
 
-        // Сбивание с ног
-        u8 s = w->state[t];
-        if (!fs_lying(s) && !fs_out(s)) {
-            f32 force = wd->knock * wd->weight * (1.0f + sk(w, i, SK_STRENGTH) / 100.0f) * falloff;
-            f32 resist = w->mass[t] * (1.0f + sk(w, t, SK_TOUGHNESS) / 100.0f) * g_tune.knock_resist;
-            if (force > resist) {
-                f32 dx = w->x[t] - w->x[i], dz = w->z[t] - w->z[i];
-                f32 l = sqrtf(dx * dx + dz * dz) + 1e-4f;
-                f32 push = g_tune.knock_push_min + combat_roll(w, i, t, 70);
-                w->x[t] += dx / l * push;
-                w->z[t] += dz / l * push;
-                go_down(w, t, FS_KNOCKED, act_time(w, t, w->fall[t] == FALL_FRONT ? ACT_FALL_FRONT : ACT_FALL_BACK, 0.0f), 0.0f, 0);
-                // Сильный удар выбивает оружие из рук: чем больше перевес силы, тем вернее
-                f32 p_drop = clampf(g_tune.drop_base + g_tune.drop_k * (force / resist - 1.0f), g_tune.drop_base, g_tune.drop_max) *
-                             (1.0f - sk(w, t, SK_STRENGTH) / g_tune.drop_str_div);
-                if (!w->disarmed[t] && combat_roll(w, t, i, 71) < p_drop) w->loose[t] = 1;
-                combat_event(w, EV_KNOCKDOWN, i, t);
+    for (u32 t = 0; t < w->count; t++) {
+        if (!w->guard_kind[t]) continue;
+        bool shock = false, force = false, drop = false, stagger = false;
+        f32 push_x = 0, push_z = 0, stag_dur = 0, knock_dur = 0, best_shock = -1, best_push = -1;
+        u8 fall = FALL_BACK;
+        u32 force_att = t;
+        for (u32 n = 0; n < nh; n++) {
+            CombatHit *h = &w->hits[n];
+            if (h->def != t) continue;
+            if (h->blunt_stagger || h->oc == OC_BREAK) {
+                stagger = true;
+                if (h->stagger_dur > stag_dur) stag_dur = h->stagger_dur;
+            }
+            if (h->shock_knock) {
+                f32 dshock = h->cut + h->pierce + g_tune.shock_blunt * h->blunt;
+                if (!shock || dshock > best_shock) {
+                    shock = true;
+                    best_shock = dshock;
+                    fall = h->fall;
+                    knock_dur = h->knock_dur;
+                }
+            }
+            if (h->push > 0.0f) {
+                if (!force || h->push > best_push) {
+                    force = true;
+                    best_push = h->push;
+                    if (!shock) {
+                        fall = h->fall;
+                        knock_dur = h->knock_dur;
+                    }
+                    force_att = h->att;
+                }
+                if (h->drop) drop = true;
+                push_x += h->pdx * h->push;
+                push_z += h->pdz * h->push;
             }
         }
+        // Шок кладёт сам, без толчка. Толчок — только если ни один удар не уронил шоком.
+        // Куда валиться — до check_body: смерть от ран берёт это направление.
+        if (shock || force) w->fall[t] = fall;
+        if (force && !shock) {
+            w->x[t] += push_x;
+            w->z[t] += push_z;
+        }
         check_body(w, t);
+        u8 s = w->state[t];
+        if (s == FS_DEAD || s == FS_UNCONSCIOUS || fs_lying(s) || fs_out(s)) continue;
+        if (shock || force) {
+            go_down(w, t, FS_KNOCKED, knock_dur, 0.0f, 0);
+            if (shock) combat_event(w, EV_FALL, t, t);
+            if (force && !shock) {
+                if (drop && !w->disarmed[t]) w->loose[t] = 1;
+                combat_event(w, EV_KNOCKDOWN, force_att, t);
+            }
+            continue;
+        }
+        if (stagger) combat_set_state(w, t, FS_STAGGER, stag_dur);
     }
+
+    for (u32 i = 0; i < w->count; i++) w->strikes[i] = ~0u;
+    memset(w->guard_kind, 0, w->count);
+    for (u32 n = 0; n < nh; n++) {
+        CombatHit *h = &w->hits[n];
+        if (!h->counter || w->state[h->def] != FS_BLOCK) continue;
+        u32 t = h->def;
+        if (w->strikes[t] == ~0u || (u32)w->target[t] == h->att) {
+            w->strikes[t] = h->att;
+            w->guard_kind[t] = h->counter_kind;
+        }
+    }
+    for (u32 t = 0; t < w->count; t++) {
+        if (w->strikes[t] == ~0u || w->state[t] != FS_BLOCK) continue;
+        combat_begin_attack(w, t, w->guard_kind[t], w->strikes[t], true);
+    }
+    for (u32 t = 0; t < w->count; t++)
+        if (fresh_windup(w, t)) combat_swing_xp(w, t);
+    combat_seal_guards(w);
 }
 
 // ---------------------------------------------------------------- тик
@@ -810,18 +968,16 @@ static void tick_state(CombatWorld *w, u32 i, u32 *strikes, u32 *ns)
     }
 }
 
-static void tick_move(CombatWorld *w, u32 i)
+// Поворот по местам до шага: все смотрят туда, где цели стояли в начале шага
+static void tick_face(CombatWorld *w, u32 i)
 {
     u8 s = w->state[i];
-    f32 speed = 0.0f, turn = g_tune.turn;
+    f32 turn = g_tune.turn;
     switch (s) {
-    case FS_READY:   speed = g_tune.speed_ready; break;
-    case FS_RETREAT: speed = g_tune.speed_retreat; break;
-    case FS_BLOCK:   speed = g_tune.speed_block; break;
-    case FS_DODGE:   speed = g_tune.speed_dodge; break;
-    case FS_CRAWL:   speed = g_tune.speed_crawl; turn = g_tune.turn_crawl; break;
-    case FS_WINDUP:  turn = g_tune.turn_windup; break;
-    default:         turn = 0.0f; break;
+    case FS_CRAWL:  turn = g_tune.turn_crawl; break;
+    case FS_WINDUP: turn = g_tune.turn_windup; break;
+    case FS_READY: case FS_RETREAT: case FS_BLOCK: case FS_DODGE: break;
+    default: turn = 0.0f; break;
     }
     if (turn > 0.0f && w->target[i] >= 0 && s != FS_RETREAT && s != FS_CRAWL) {
         u32 t = (u32)w->target[i];
@@ -829,17 +985,31 @@ static void tick_move(CombatWorld *w, u32 i)
         f32 step = turn * COMBAT_DT;
         w->heading[i] = angle_wrap(w->heading[i] + clampf(d, -step, step));
     }
+    if (s == FS_RETREAT && w->mvx[i] * w->mvx[i] + w->mvz[i] * w->mvz[i] > 0.01f) {
+        f32 want = atan2f(w->mvx[i], w->mvz[i]);
+        f32 step = g_tune.turn_retreat * COMBAT_DT;
+        w->heading[i] = angle_wrap(w->heading[i] + clampf(angle_wrap(want - w->heading[i]), -step, step));
+    }
+}
+
+static void tick_step(CombatWorld *w, u32 i)
+{
+    u8 s = w->state[i];
+    f32 speed = 0.0f;
+    switch (s) {
+    case FS_READY:   speed = g_tune.speed_ready; break;
+    case FS_RETREAT: speed = g_tune.speed_retreat; break;
+    case FS_BLOCK:   speed = g_tune.speed_block; break;
+    case FS_DODGE:   speed = g_tune.speed_dodge; break;
+    case FS_CRAWL:   speed = g_tune.speed_crawl; break;
+    default: break;
+    }
     if (speed <= 0.0f) return;
     f32 legs = 0.5f * (part_ratio(w, i, PART_LEG_L) + part_ratio(w, i, PART_LEG_R));
     if (s != FS_CRAWL) speed *= (g_tune.move_legs_min + (1.0f - g_tune.move_legs_min) * legs);
     speed *= (1.0f - encumbrance(w, i)) * (1.0f + sk(w, i, SK_ATHLETICS) / g_tune.athletics_div);
     w->x[i] += w->mvx[i] * speed * COMBAT_DT;
     w->z[i] += w->mvz[i] * speed * COMBAT_DT;
-    if (s == FS_RETREAT && w->mvx[i] * w->mvx[i] + w->mvz[i] * w->mvz[i] > 0.01f) {
-        f32 want = atan2f(w->mvx[i], w->mvz[i]);
-        f32 step = g_tune.turn_retreat * COMBAT_DT;
-        w->heading[i] = angle_wrap(w->heading[i] + clampf(angle_wrap(want - w->heading[i]), -step, step));
-    }
 }
 
 // Расталкивание тел: каждый считает свой сдвиг от соседей по позициям начала шага,
@@ -981,8 +1151,8 @@ u32 combat_near(const CombatWorld *w, f32 x, f32 z, f32 r, u32 mask, u32 *out)
     return grid_query(&w->grid, x, z, r, mask, out, COMBAT_NEAR_MAX);
 }
 
-// Порядок фаз: тело, таймеры состояний, удары по номеру бойца, шаг, расталкивание.
-// Всё, что пишет в чужих бойцов или в журнал, идёт в одном потоке по возрастанию номера.
+// Порядок фаз: тело, таймеры, план ударов по состоянию до них, применение, поворот, шаг, расталкивание.
+// Удар не видит ран и падений других ударов этого же тика. Номер слота порядок только фиксирует.
 void combat_tick(CombatWorld *w)
 {
     combat_sync_grid(w);
@@ -997,9 +1167,13 @@ void combat_tick(CombatWorld *w)
         if (!w->idle[i]) tick_body(w, i);
     for (u32 i = 0; i < w->count; i++)
         if (!w->idle[i]) tick_state(w, i, w->strikes, &ns);
-    for (u32 k = 0; k < ns; k++) resolve_strike(w, w->strikes[k]);
+    u32 nh = 0;
+    for (u32 k = 0; k < ns; k++) plan_strike(w, w->strikes[k], &nh);
+    apply_hits(w, nh);
     for (u32 i = 0; i < w->count; i++)
-        if (!w->idle[i]) tick_move(w, i);
+        if (!w->idle[i]) tick_face(w, i);
+    for (u32 i = 0; i < w->count; i++)
+        if (!w->idle[i]) tick_step(w, i);
     // Сетка по позициям после шага: расталкивание и ИИ следующего тика читают её
     build_grid(w);
     jobs_for(w->count, 64, separate_job, w);
@@ -1037,6 +1211,10 @@ void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap)
     w->sep_x = ARENA_PUSH_ARRAY(a, f32, cap);
     w->sep_z = ARENA_PUSH_ARRAY(a, f32, cap);
     w->strikes = ARENA_PUSH_ARRAY(a, u32, cap);
+    w->hit_cap = cap * (u32)MAX_STRIKE_TARGETS;
+    w->hits = ARENA_PUSH_ARRAY(a, CombatHit, w->hit_cap);
+    w->guard_kind = ARENA_PUSH_ARRAY(a, u8, cap);
+    w->guard_hold = ARENA_PUSH_ARRAY(a, f32, cap);
     w->grid_tag = ARENA_PUSH_ARRAY(a, u8, cap);
     grid_init(&w->grid, a, cap, 128 * 128 * 4, 2.0f);
 }

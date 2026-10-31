@@ -313,8 +313,8 @@ static void rules_tick(Field *f, GroundFn ground)
                 }
                 continue;
             }
-            // Остальным оглядываться раз в COMBAT_THINK_TICKS: на тысячах тел это заметно
-            if ((i + w->tick) % COMBAT_THINK_TICKS) continue;
+            // Оглядываются все в одни тики: фаза от номера слота будила младших раньше
+            if (w->tick % COMBAT_THINK_TICKS) continue;
             // Идёт по приказу игрока: мимо боя проходит, не ввязываясь
             if ((f->flags[i] & FF_PLAYER) && p->moving) continue;
             if (nearest_foe(f, i, WAKE_R, false) >= 0) {
