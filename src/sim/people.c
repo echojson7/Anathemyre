@@ -63,7 +63,7 @@ void people_relook(People *p, u32 i)
     // Прежнюю причёску долой, новую в конец списка
     u32 n = 0;
     for (u32 k = 0; k < p->ngear[i]; k++)
-        if (p->gear[i][k] < GEAR_COUNT) p->gear[i][n++] = p->gear[i][k];
+        if (p->gear[i][k] < GEAR_CAP) p->gear[i][n++] = p->gear[i][k];
     p->ngear[i] = (u8)(n + look_hair(&p->lk[i], p->gear[i], n));
 }
 

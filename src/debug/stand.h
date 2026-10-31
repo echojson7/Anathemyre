@@ -19,7 +19,7 @@ typedef struct Stand {
     bool    on, built;
     u32     count;
     u8      body[STAND_N];
-    u8      hair[STAND_N];  // вещь причёски в ряду тела (GEAR_COUNT + вид) или 0 — без неё
+    u8      hair[STAND_N];  // вещь причёски в ряду тела (GEAR_CAP + вид) или 0 — без неё
     f32     floor[STAND_ROWS];  // высота плиты ряда
     M4     *bones;   // STAND_N наборов
     GpuMesh board;   // мерные доски за рядами

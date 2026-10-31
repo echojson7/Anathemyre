@@ -19,6 +19,7 @@ typedef enum ChronKind {
     CH_KO,            // человек a без сознания
     CH_DEATH,         // человек a мёртв
     CH_SURRENDER,     // человек a сдался
+    CH_ITEM,          // вещь n перешла от a к b (CHRON_NOBODY — земля или никто); m = место откуда × 16 + куда (PlaceKind)
     CH_KIND_COUNT
 } ChronKind;
 
