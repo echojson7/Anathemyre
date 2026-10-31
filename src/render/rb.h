@@ -88,7 +88,7 @@ typedef enum RbBlend {
 } RbBlend;
 
 // Шейдер — список файлов из data/shaders, склеиваются по порядку после rb.glsl
-#define RB_SHADER_FILES 6
+#define RB_SHADER_FILES 8
 
 typedef struct RbPipeDesc {
     const char *vs[RB_SHADER_FILES], *fs[RB_SHADER_FILES], *cs[RB_SHADER_FILES];  // cs — вычислительный
