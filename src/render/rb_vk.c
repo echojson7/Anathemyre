@@ -41,7 +41,7 @@ RB_FUNCS(R, V)
 #define MAX_BINDS 64             // номера привязок 0..63
 #define MAX_VARIANTS 4           // конвейер под разные форматы целей прохода
 #define MAX_INPUTS 16
-#define TEX_VIEWS 16
+#define TEX_VIEWS 32             // видов на текстуру: тени огней — 4 куба × 6 граней = 24 слоя
 #define TRASH_MAX 512
 #define MAX_BLOCKS 64
 #define BLOCK_RANGES 512
