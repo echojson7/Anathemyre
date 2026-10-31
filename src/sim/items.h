@@ -150,6 +150,8 @@ extern const u8          g_armor_layer_order[5];  // слоты снаружи �
 
 static inline const ItemDef *item_def(ItemStack it) { return &g_items[it.def]; }
 static inline bool item_live(ItemStack it) { return it.def != ITEM_NONE; }
+// Та же вещь (без числа в стопке): окно мешка проверяет, что на месте лежит то, что взяли
+static inline bool item_same(ItemStack a, ItemStack b) { return a.def == b.def && a.seed == b.seed && a.mat == b.mat && a.quality == b.quality; }
 static inline u8   item_weapon(ItemStack it) { return g_items[it.def].weapon; }  // COMP_NONE — не оружие
 static inline u8   item_armor(ItemStack it) { return g_items[it.def].armor; }
 // Стопка вещи def из материала по умолчанию
@@ -166,7 +168,7 @@ u8 gear_find(const char *name);
 
 // Где лежит вещь. Вещь всегда в одном месте; из места в место — только item_move
 typedef enum PlaceKind {  // IP_* — место вещи (item place)
-    IP_NONE,    // вне мира: новая вещь или брошенная из окна мешка (it)
+    IP_NONE,    // вне мира: новая вещь (it)
     IP_GROUND,  // на земле: номер в Ground, тело в физике
     IP_HAND,    // в руке: слот оружия листа; без листа — рука бойца арены (it)
     IP_BODY,    // надета: слот листа
@@ -210,7 +212,8 @@ static inline ItemPlace place_bag(struct CharSheet *c, u32 who, i32 at) { return
 
 // Переложить вещь из from в to целиком: снять с места, положить на новое. На земле — создаёт тело в физике,
 // с земли — гасит его. Перемены, заметные миру (земля, чужие руки), пишет в журнал мира (Ground.chron).
-// Только из шага мира. Положить некуда — ничего не меняется, -1; иначе номер на новом месте (на земле, в мешке)
+// Только из шага мира; внутри одного листа (мешок, тело) — и из окна мешка, тогда g и p могут быть NULL.
+// Положить некуда — ничего не меняется, -1; иначе номер на новом месте (на земле, в мешке)
 i32 item_move(struct Ground *g, struct Phys *p, const ItemPlace *from, const ItemPlace *to);
 // Что лежит в месте (пустая стопка — ничего)
 ItemStack item_at(const struct Ground *g, const ItemPlace *pl);

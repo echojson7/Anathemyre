@@ -67,10 +67,14 @@ typedef struct FigureView {
 
 // Сетки людей в m (m->gear и m->gear_lod уже выделены), кости фигур
 bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const char *data_dir);
+// Только кости фигур, без сеток (замер поз без кадра); figures_init зовёт её сама
+void figures_bones(Figures *f, Arena *perm);
 // Люди для кадра: alpha — доля шага мира после последнего (World.alpha), после field_present
 void figures_view(Figures *f, const Persons *ps, const Field *fd, f32 alpha, GroundFn ground);
 // Люди и бойцы арены (s == NULL — арены нет): элементы в items, свет факелов в lights после *nl.
-// Позы считаются здесь же, в пуле потоков. Возвращает число элементов
+// Позы считаются здесь же, в пуле потоков. Возвращает число элементов.
+// Порядок явный: люди по месту в реестре (ключ — место), за ними бойцы арены по слоту её боя; элементы
+// одного человека подряд: тело, одежда, оружие, факел. Свет факелов — в том же порядке мест
 u32  figures_draw(Figures *f, const CharMeshes *m, const Persons *p, const Field *fd, const ArenaRing *av,
                   const ArenaSession *s, const FigureView *v, DrawItem *items, PointLight *lights, u32 *nl);
 // Метки под ногами: кольца выбранных и их целей, крест приказа, кольцо осматриваемого (look_ring)

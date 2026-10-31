@@ -8,7 +8,7 @@
 #include "../core/rng.h"
 #include "persons.h"
 
-#define PEOPLE_MAX 256
+#define PEOPLE_MAX PERSONS_MAX  // все роли разом не больше реестра
 
 // Новый столбец — и в people_ser, иначе он не переживёт сохранение
 typedef struct People {

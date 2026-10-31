@@ -124,13 +124,17 @@ void loot_asks(Ground *g, Phys *p, GroundAsks *a, Squad *sq, u64 tick)
         M4 xf = m4_mul(m4_translate(a->at[n]), m4_rot_y(h + rng_range(&r, -1.0f, 1.0f)));
         V3 v = v3_add(v3_mul(fwd, rng_range(&r, 0.8f, 1.4f)), v3(0, 1.0f, 0));
         V3 w = v3(rng_range(&r, -2, 2), rng_range(&r, -2, 2), rng_range(&r, -2, 2));
-        // Вещь уже вне мешка (её вынуло окно мешка); некуда класть — обратно в мешок
-        ItemPlace out = place_none(a->it[n]), drop = place_drop(xf, v, w, 0);
-        if (a->who[n] < sq->count) out.who = squad_at(sq, a->who[n]);
-        if (item_move(g, p, &out, &drop) < 0 && a->who[n] < sq->count) {
-            ItemPlace bag = place_bag(squad_sheet(sq, a->who[n]), out.who, -1);
-            item_move(g, p, &out, &bag);
-        }
+        // Вещь лежит на своём месте, пока шаг мира её не бросит; место уже занято другим — просьба пропадает.
+        // Некуда класть (физика полна) — остаётся на месте
+        if (a->who[n] >= sq->count) continue;
+        CharSheet *c = squad_sheet(sq, a->who[n]);
+        u32 who = squad_at(sq, a->who[n]);
+        ItemPlace from = a->slot[n] == ASK_BAG ? place_bag(c, who, inv_at(&c->inv, a->x[n], a->y[n])) : place_body(c, who, a->slot[n]);
+        if (from.kind == IP_BAG && (from.at < 0 || c->inv.x[from.at] != a->x[n] || c->inv.y[from.at] != a->y[n])) continue;
+        if (from.kind == IP_BODY && from.slot >= SLOT_COUNT) continue;
+        if (!item_same(item_at(g, &from), a->it[n])) continue;
+        ItemPlace drop = place_drop(xf, v, w, 0);
+        item_move(g, p, &from, &drop);
     }
     a->n = 0;
 }
