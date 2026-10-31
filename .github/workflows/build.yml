@@ -169,6 +169,8 @@ jobs:
         run: |
           ./build/anathemyre_debug --bench arena 100 | tail -3
           ./build/anathemyre_debug --bench battle-verify 100 100
+          ./build/anathemyre_debug --bench mirror 256 --seed 1337
+          ./build/anathemyre_debug --bench mirror-fear 256 --seed 1
 
       - name: Звук (сценка в WAV без устройства)
         run: ./build/anathemyre_debug --sound-demo build/sound.wav

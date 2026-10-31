@@ -14,6 +14,11 @@ int battle_bench(u32 side_a, u32 side_b, u64 seed, u32 threads, bool verify);
 int field_bench(u32 bodies, u64 seed);
 // Бой людей реестра side_a на side_b через поле боя, с позами без кадра: время ходьбы, боя и поз
 int people_bench(u32 side_a, u32 side_b, u64 seed, u32 threads);
+// Копии напротив, без морали, одно зерно. Разница потерь больше 10% стороны — код 2.
+int mirror_bench(u32 side, u64 seed, u32 threads);
+// То же с моралью, 16 зерён от seed. Код 2, если сторона выиграла не 5..11 раз
+// или суммы потерь разошлись больше чем на 15%.
+int mirror_fear_bench(u32 side, u64 seed, u32 threads);
 // Развороты: шаг, трусца, бег; 90°, 135°, 180°; trace_path — CSV траекторий или NULL
 int player_bench(const char *trace_path);
 // count отрядов вдали на случайных местах и дорогах, hours часов дальнего мира

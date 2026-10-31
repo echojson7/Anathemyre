@@ -23,6 +23,9 @@
 #define TAGS_ALIVE (~TAG_BIT(TAG_DEAD))
 #define TAGS_FIGHTING (~(TAG_BIT(TAG_DEAD) | TAG_BIT(TAG_OUT)))
 
+// При равном счёте кого взять. Хеш от ищущего и кандидата, не «меньший номер».
+bool combat_prefer(u32 seeker, u32 a, u32 b);
+
 typedef enum Skill {
     SK_ATTACK, SK_DEFENSE, SK_DODGE,
     SK_STRENGTH, SK_DEXTERITY, SK_TOUGHNESS, SK_ATHLETICS,
@@ -114,6 +117,8 @@ typedef struct FighterDesc {
 // Наблюдатель журнала (звук): получает события до очистки, сам бой о нём ничего не знает
 struct CombatWorld;
 typedef void (*CombatSink)(void *user, const struct CombatWorld *w);
+// План одного попадания за тик. Живёт только в combat.c, в сохранение не идёт.
+typedef struct CombatHit CombatHit;
 
 #define COMBAT_IN_HAND (-1)
 #define COMBAT_GONE    (-2)
@@ -124,6 +129,7 @@ typedef struct CombatWorld {
     u32 tick;
     bool mercy;      // выбывших не добивают, сдачу принимают
     bool halted;     // бой остановлен: ИИ больше не атакует
+    bool fear;       // мораль, отход и сдача; замер копий может выключить. В сохранение не идёт
     f32 fence_r;     // > 0: бой внутри круга этого радиуса
     u32 foe[COMBAT_MAX_TEAMS];  // с кем враждует команда: биты команд; по умолчанию со всеми чужими
 
@@ -174,6 +180,12 @@ typedef struct CombatWorld {
     u8  *grid_tag;       // метка в сетке, TAG_*
     f32 *sep_x, *sep_z;  // сдвиг расталкивания за тик
     u32 *strikes;        // кто наносит удар в этом тике
+    // План ударов и сбор защиты за тик: пишутся после того, как все прочитали прошлое состояние.
+    // В сохранение не идут.
+    CombatHit *hits;
+    u32 hit_cap;
+    u8 *guard_kind;
+    f32 *guard_hold;
 } CombatWorld;
 
 // Враждует ли боец i с бойцом j (по командам)
@@ -200,8 +212,12 @@ u32  combat_add(CombatWorld *w, const FighterDesc *d);
 void combat_load(CombatWorld *w, u32 i, const FighterDesc *d);
 // Вражда двух команд в обе стороны
 void combat_set_foes(CombatWorld *w, u8 a, u8 b, bool on);
-// Начать удар (вызывает ИИ): замах, бросок реакции цели
+// Начать удар (вызывает ИИ): замах и бросок реакции по состоянию до этого прохода.
+// Опыт за замах и стойка защитника сюда не пишутся: их ставят combat_grant_swings и combat_seal_guards,
+// когда замахнулись уже все, кто решил бить в этом проходе.
 void combat_begin_attack(CombatWorld *w, u32 i, u8 kind, u32 target, bool counter);
+void combat_grant_swings(CombatWorld *w);
+void combat_seal_guards(CombatWorld *w);
 void combat_tick(CombatWorld *w);
 // Журнал прочитан: показать его наблюдателю (если есть) и очистить
 void combat_events_done(CombatWorld *w);
