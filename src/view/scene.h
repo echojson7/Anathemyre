@@ -26,6 +26,6 @@ u32  scene_statics(const Scene *s, DrawItem *out);
 // Лампы над стойками с оружием в зале: горят всегда
 u32  scene_hall_lights(PointLight *out, u32 max);
 // Свет арены: зажигается с темнотой night (Sky.night), в out — до RING_LIGHTS источников
-u32  scene_ring_lights(const ArenaRing *v, f32 night, f32 time, PointLight *out);
+u32  scene_ring_lights(f32 night, f32 time, PointLight *out);
 
 #endif

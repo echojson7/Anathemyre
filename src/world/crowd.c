@@ -6,7 +6,8 @@
 #include "../defs/defs.h"
 #include "../sim/look.h"
 #include "../sim/names.h"
-#include "../sim/arena.h"
+#include "../core/hash.h"
+#include "../sim/arena_ring.h"
 #include "../sim/squad.h"
 
 static const char *g_crowd_names[] = {
@@ -49,9 +50,23 @@ void crowd_add(People *p, Rng *rng, u32 count, GroundFn ground)
     }
 }
 
-void watchers_add(People *p, const V3 *pos, const f32 *heading, const f32 *seed, u32 count, u8 team, GroundFn ground)
+void watchers_add(People *p, V3 center, f32 floor_y, u32 count, u8 team, GroundFn ground)
 {
-    for (u32 k = 0; k < count; k++) {
+    // Места полукругом за оградой, кроме прохода к воротам: точка, куда смотрит, зерно позы
+    V3 pos[RING_SPECTATORS];
+    f32 heading[RING_SPECTATORS], seed[RING_SPECTATORS];
+    u32 n = 0;
+    for (u32 k = 0; n < RING_SPECTATORS && k < 64; k++) {
+        f32 a = 0.35f + (f32)k * 0.41f + 0.12f * hashf(k * 7u);
+        if (fabsf(wrap_angle(a - PI_F)) < 0.55f) continue;
+        f32 r = 8.0f + 0.5f * hashf(k * 11u + 3u);
+        f32 sx = sinf(a) * r, sz = cosf(a) * r;
+        pos[n] = v3(center.x + sx, floor_y, center.z + sz);
+        heading[n] = atan2f(-sx, -sz) + (hashf(k * 5u) - 0.5f) * 0.5f;
+        seed[n] = 100.0f * hashf(k * 3u + 1u);
+        n++;
+    }
+    for (u32 k = 0; k < count && k < n; k++) {
         // Одна толпа: не вступаются, только отбиваются
         u32 i = people_add(p, ROLE_WATCHER, v3(pos[k].x, ground(pos[k].x, pos[k].z), pos[k].z), heading[k], team, 0);
         p->variant[i] = (u8)((k + 2) % BODY_KIND_COUNT);

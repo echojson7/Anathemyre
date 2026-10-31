@@ -57,7 +57,5 @@ void player_update(Player *p, f32 dt, GroundFn ground);
 f32  player_stride(const Player *p);
 // Тело для кадра между двумя шагами мира: a — прошлый шаг, b — текущий, t — доля шага 0..1
 void player_lerp(const Player *a, const Player *b, f32 t, Player *out);
-// Проверка разворотов без окна: шаг, трусца, бег; 90°, 135°, 180°; trace_path — CSV траекторий или NULL
-int  player_bench(const char *trace_path);
 
 #endif

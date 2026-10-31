@@ -34,6 +34,9 @@ jobs:
       - name: Релиз, gcc, без предупреждений
         run: make -j"$(nproc)" WERROR=1 CC=gcc
 
+      - name: Игра без отладки (NODEBUG=1, docs/debug.md), gcc
+        run: make -j"$(nproc)" WERROR=1 CC=gcc NODEBUG=1
+
       - name: Отладка с ASan/UBSan и vkcheck, clang
         run: |
           make debug -j"$(nproc)" WERROR=1 CC=clang
@@ -122,8 +125,8 @@ jobs:
 
       - name: Отряды вдали (сумма релиза и отладки)
         run: |
-          ./build/anathemyre_debug --bands-bench 4000 --hours 0.25 | tee build/bands.txt | tail -3
-          test "$(./build/anathemyre --bands-bench 4000 --hours 0.25 | tail -1)" = "$(tail -1 build/bands.txt)"
+          ./build/anathemyre_debug --bench bands 4000 0.25 | tee build/bands.txt | tail -3
+          test "$(./build/anathemyre --bench bands 4000 0.25 | tail -1)" = "$(tail -1 build/bands.txt)"
 
   # Описания и моды — отдельно от сохранений: обе проверки самые долгие под ASan
   defs:
@@ -159,8 +162,8 @@ jobs:
 
       - name: Бой
         run: |
-          ./build/anathemyre_debug --arena-bench 100 | tail -3
-          ./build/anathemyre_debug --battle-bench 100 100 --battle-verify
+          ./build/anathemyre_debug --bench arena 100 | tail -3
+          ./build/anathemyre_debug --bench battle-verify 100 100
 
       - name: Звук (сценка в WAV без устройства)
         run: ./build/anathemyre_debug --sound-demo build/sound.wav

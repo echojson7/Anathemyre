@@ -60,7 +60,5 @@ u32  bands_men(const Bands *b, u32 i);
 void bands_ser(Ser *s, Bands *b);
 // Сумма состояния: одинаковый мир — одинаковая сумма
 u64  bands_checksum(const Bands *b);
-// Замер без окна: count отрядов на случайных местах и дорогах, hours часов дальнего мира
-int  bands_bench(u32 count, f32 hours, u64 seed, u32 phases, u32 log_events);
 
 #endif

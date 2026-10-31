@@ -45,7 +45,8 @@ typedef struct Hud {
     f32  grab_x, grab_y;        // где взяли относительно угла окна
     f32  inv_x, inv_y;          // углы окон; < 0 — место по умолчанию
     f32  char_x, char_y;
-    bool win_look;              // окно ВНЕШНОСТЬ (K): редактор, view/editor.c
+    bool win_look;              // окно ВНЕШНОСТЬ (K): редактор, debug/editor.c
+    bool can_look;              // редактор есть в сборке (без отладки окна нет)
     // Отладочное меню (кнопка слева вверху)
     struct {
         HudForm f;
@@ -59,7 +60,7 @@ typedef struct Hud {
 // Что интерфейс видит в мире на этом кадре
 typedef struct HudWorld {
     Squad              *squad;
-    const ArenaSession *arena;
+    const ArenaSession *arena;      // бои арены (отладка, debug/); NULL — арены нет
     const ArenaRing    *ring;
     const Field        *field;
     const Player       *view;       // люди такими, какими их показал кадр (Figures.view), по номеру в таблице

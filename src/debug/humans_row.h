@@ -3,7 +3,7 @@
 #ifndef ANA_HUMANS_ROW_H
 #define ANA_HUMANS_ROW_H
 
-#include "figures.h"
+#include "../view/figures.h"
 
 #define HUMANS_N (BODY_KIND_COUNT * CHAR_LODS)
 #define HUMANS_LOOKS (GEAR_COUNT + 1)

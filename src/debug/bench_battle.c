@@ -1,4 +1,4 @@
-#include "battle.h"
+#include "bench.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,8 +9,8 @@
 #include "../core/clock.h"
 #include "../core/jobs.h"
 #include "../core/rng.h"
-#include "combat.h"
-#include "arena.h"
+#include "../sim/combat.h"
+#include "../sim/arena.h"
 
 #define BATTLE_LIMIT_S 600.0f
 #define TICK_BUDGET_MS 1.5

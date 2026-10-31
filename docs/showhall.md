@@ -1,7 +1,7 @@
 # Мерильня — цех, где движения идут по кругу
 
-Состояние на 2026-10-30. Код: `src/view/showhall.c` (геометрия, лампы, фигуры, подписи), `src/world/map.c`
-(`showhall_flat`), `src/content/hall.c` (высота пола через `showhall_ground`), `src/app/main.c` (кадр, `--hall-t`),
+Состояние на 2026-10-30. Код: `src/debug/showhall.c` (геометрия, лампы, фигуры, подписи; Мерильня — часть отладки, [debug.md](debug.md)),
+`src/world/map.c` (`showhall_flat`), `src/app/ground.c` (высота пола через `debug_ground`), `src/debug/debug.c` (кадр, `--hall-t`),
 темнота помещения — `RoomDark` в `src/render/render.h`, `data/shaders/frame.glsl`, `scene.frag`, `atmos.frag`.
 Кнопка **КАМЕРА: В МЕРИЛЬНЮ** — в НАСТРОЙКАХ (раздел СВЕТ) и в ОТЛАДКЕ.
 
