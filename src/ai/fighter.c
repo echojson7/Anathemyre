@@ -3,9 +3,7 @@
 #include <string.h>
 
 #include "../core/jobs.h"
-
-#define PICK_MAX_R 48.0f   // дальше врагов не ищут, а идут к середине вражеского строя
-#define PICK_BONUS 3.5f    // наибольшая прибавка к счёту нетекущей цели сверх −расстояния
+#include "../sim/combat_tune.h"
 
 enum { ACT_ATTACK = 1, ACT_RETREAT = 2, ACT_RALLY = 4, ACT_SURRENDER = 8 };
 
@@ -36,16 +34,16 @@ static bool valid_target(const CombatWorld *w, u32 i, u32 j)
 static f32 target_score(const CombatWorld *w, u32 i, u32 j, f32 d)
 {
     f32 score = -d;
-    if (w->target[j] == (i32)i) score += 2.0f;               // кто бьёт меня
-    if (w->target[i] == (i32)j) score += 1.5f;               // не метаться
-    score += 1.5f * (1.0f - clampf(combat_vital_ratio(w, j), 0.0f, 1.0f));  // добить раненого
-    score -= 0.5f * fabsf(angle_from(w, i, j));              // цена поворота
+    if (w->target[j] == (i32)i) score += g_tune.target_attacker;  // кто бьёт меня
+    if (w->target[i] == (i32)j) score += g_tune.target_current;   // не метаться
+    score += g_tune.target_wounded * (1.0f - clampf(combat_vital_ratio(w, j), 0.0f, 1.0f));  // добить раненого
+    score -= g_tune.target_turn * fabsf(angle_from(w, i, j));     // цена поворота
     return score;
 }
 
-// Поиск расширяющимся кругом. Любая цель, кроме текущей, набирает не больше
-// PICK_BONUS − расстояние, так что когда лучший счёт не ниже PICK_BONUS − r,
-// дальше смотреть незачем: ответ тот же, что при полном переборе
+// Поиск расширяющимся кругом до pick_max_r (дальше врагов не ищут, а идут к середине вражеского строя).
+// Любая цель, кроме текущей, набирает не больше bonus − расстояние, так что когда лучший счёт
+// не ниже bonus − r, дальше смотреть незачем: ответ тот же, что при полном переборе
 static i32 pick_target(const CombatWorld *w, u32 i)
 {
     u32 near[COMBAT_NEAR_MAX];
@@ -53,14 +51,15 @@ static i32 pick_target(const CombatWorld *w, u32 i)
     u32 want = combat_foe_tags(w, w->team[i]);
     if (!w->mercy) want |= TAG_BIT(TAG_OUT);
     // Текущая цель считается сразу: только ей положена прибавка «не метаться»
+    const f32 max_r = g_tune.pick_max_r, bonus = g_tune.target_attacker + g_tune.target_wounded;
     i32 cur = w->target[i], best = -1;
     f32 best_score = -1e9f;
-    if (cur >= 0 && valid_target(w, i, (u32)cur) && dist2(w, i, (u32)cur) <= PICK_MAX_R * PICK_MAX_R) {
+    if (cur >= 0 && valid_target(w, i, (u32)cur) && dist2(w, i, (u32)cur) <= max_r * max_r) {
         best = cur;
         best_score = target_score(w, i, (u32)cur, sqrtf(dist2(w, i, (u32)cur)));
     }
-    for (f32 r = 4.0f;; r = fminf(r * 1.5f, PICK_MAX_R)) {
-        if (best >= 0 && best_score >= PICK_BONUS - r) return best;
+    for (f32 r = 4.0f;; r = fminf(r * 1.5f, max_r)) {
+        if (best >= 0 && best_score >= bonus - r) return best;
         if (combat_any_near(w, w->x[i], w->z[i], r, want)) {
             u32 nn = combat_near(w, w->x[i], w->z[i], r, want, near);
             for (u32 q = 0; q < nn; q++) {
@@ -69,7 +68,7 @@ static i32 pick_target(const CombatWorld *w, u32 i)
                 f32 d2 = dist2(w, i, j);
                 if (d2 > r * r) continue;
                 f32 d = sqrtf(d2);
-                if (PICK_BONUS - d < best_score) continue;  // даже с прибавками не догонит
+                if (bonus - d < best_score) continue;  // даже с прибавками не догонит
                 f32 score = target_score(w, i, j, d);
                 if (score > best_score || (score == best_score && (i32)j < best)) {
                     best_score = score;
@@ -77,14 +76,14 @@ static i32 pick_target(const CombatWorld *w, u32 i)
                 }
             }
         }
-        if (r >= PICK_MAX_R) return best;
+        if (r >= max_r) return best;
     }
 }
 
 // Сколько врагов и своих попадёт под размах
 static void count_arc(const CombatWorld *w, u32 i, u8 kind, u32 *enemies, u32 *allies)
 {
-    f32 reach = combat_reach(w, i, kind) + 0.3f;
+    f32 reach = combat_reach(w, i, kind) + g_tune.strike_reach_add;
     f32 half = 0.5f * combat_arc(w, i, kind);
     *enemies = *allies = 0;
     u32 near[COMBAT_NEAR_MAX];
@@ -110,7 +109,7 @@ static u8 choose_attack(const CombatWorld *w, u32 i, u32 t)
     if (fs_lying(w->state[t])) mask &= (u8)~(1u << ATK_SWING);
     // Дальний укол для длинного оружия, когда цель у края досягаемости
     f32 d = sqrtf(dist2(w, i, t));
-    if ((mask & (1u << ATK_THRUST)) && d > combat_reach(w, i, ATK_SWING) - 0.1f) return ATK_THRUST;
+    if ((mask & (1u << ATK_THRUST)) && d > combat_reach(w, i, ATK_SWING) - g_tune.thrust_edge) return ATK_THRUST;
     u8 opts[ATK_COUNT];
     u32 n = 0;
     for (u8 k = 0; k < ATK_COUNT; k++)
@@ -152,10 +151,10 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
     // Численный перевес врага рядом подтачивает мораль. Счёт по меткам сетки (команда; выбывшие и мёртвые
     // вне маски): свои вместе с ним самим, враги — команды, с которыми враждует
     u32 cnt[GRID_MAX_TAGS] = { 0 };
-    combat_count(w, w->x[i], w->z[i], 8.0f, TAGS_FIGHTING, cnt);
+    combat_count(w, w->x[i], w->z[i], g_tune.outnumber_r, TAGS_FIGHTING, cnt);
     u32 al = cnt[2u + w->team[i]], en = 0;
     for (u32 m = combat_foe_tags(w, w->team[i]) & TAGS_FIGHTING; m; m &= m - 1) en += cnt[__builtin_ctz(m)];
-    if (en > al + 1) w->morale[i] -= 0.1f * (f32)(en - al);
+    if (en > al + 1) w->morale[i] -= g_tune.morale_outnumber * (f32)(en - al);
 
     // По приказу бьёт только указанного, пока тот в бою; иначе выбирает сам
     i32 o = w->order[i];
@@ -177,14 +176,14 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
         return;
     }
 
-    if (w->morale[i] < 10.0f && w->mercy && (s == FS_READY || s == FS_RETREAT)) {
+    if (w->morale[i] < g_tune.morale_surrender && w->mercy && (s == FS_READY || s == FS_RETREAT)) {
         ai->act[i] = ACT_SURRENDER;
         return;
     }
-    if (w->morale[i] < 25.0f && s == FS_READY) {
+    if (w->morale[i] < g_tune.morale_flee && s == FS_READY) {
         ai->act[i] |= ACT_RETREAT;
         s = FS_RETREAT;
-    } else if (w->morale[i] >= 30.0f && s == FS_RETREAT) {
+    } else if (w->morale[i] >= g_tune.morale_rally && s == FS_RETREAT) {
         ai->act[i] |= ACT_RALLY;
         s = FS_READY;
     }
@@ -197,7 +196,7 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
         w->mvz[i] = -dz;
         if (w->fence_r > 0.0f) {
             f32 r = sqrtf(w->x[i] * w->x[i] + w->z[i] * w->z[i]);
-            cornered = r > w->fence_r - 1.0f && d < reach;
+            cornered = r > w->fence_r - g_tune.cornered_r && d < reach;
         }
         if (!cornered) return;
     }
@@ -206,18 +205,18 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
     // Держать дистанцию своего оружия: ударом достаёт, вплотную не лезет; между — кружит.
     // Издали идёт к цели обычным шагом, в паре шагов от досягаемости — приставным, медленнее
     f32 side = (i & 1) ? 1.0f : -1.0f;
-    if (d > reach * 0.98f) {
-        f32 k = d > reach + 1.0f ? 1.0f : 0.7f;
+    if (d > reach * g_tune.reach_far) {
+        f32 k = d > reach + g_tune.approach_slow_d ? 1.0f : g_tune.approach_slow;
         w->mvx[i] = dx * k;
         w->mvz[i] = dz * k;
-    } else if (d < reach * 0.82f) {
-        w->mvx[i] = -dx * 0.6f;
-        w->mvz[i] = -dz * 0.6f;
+    } else if (d < reach * g_tune.reach_close) {
+        w->mvx[i] = -dx * g_tune.back_off;
+        w->mvz[i] = -dz * g_tune.back_off;
     } else {
         // Не кружит навстречу своему: свой рядом с той стороны — обходит цель с другой
         u32 near[COMBAT_NEAR_MAX];
-        u32 nn = combat_near(w, w->x[i], w->z[i], 1.5f, TAG_BIT(2u + w->team[i]), near);
-        f32 best = 1.5f * 1.5f;
+        u32 nn = combat_near(w, w->x[i], w->z[i], g_tune.ally_r, TAG_BIT(2u + w->team[i]), near);
+        f32 best = g_tune.ally_r * g_tune.ally_r;
         for (u32 q = 0; q < nn; q++) {
             u32 j = near[q];
             f32 ax = w->x[j] - w->x[i], az = w->z[j] - w->z[i];
@@ -228,8 +227,8 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
             f32 own = (i & 1) ? 1.0f : -1.0f;
             side = (-dz * ax + dx * az) * own > 0.0f ? -own : own;
         }
-        w->mvx[i] = -dz * side * 0.5f;
-        w->mvz[i] = dx * side * 0.5f;
+        w->mvx[i] = -dz * side * g_tune.circle;
+        w->mvz[i] = dx * side * g_tune.circle;
     }
 
     // Враг уже замахнулся на меня и ударит раньше: держать защиту, а не меняться ударами
@@ -237,7 +236,7 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
 
     u8 kind = choose_attack(w, i, tt);
     if (!w->disarmed[i] && w->pause[i] <= 0.0f && d <= combat_reach(w, i, kind) &&
-        fabsf(angle_from(w, i, tt)) < 25.0f * (PI_F / 180.0f)) {
+        fabsf(angle_from(w, i, tt)) < g_tune.attack_angle_deg * (PI_F / 180.0f)) {
         ai->act[i] |= ACT_ATTACK;
         ai->kind[i] = kind;
     }

@@ -1,4 +1,4 @@
-# Удары и качество вещей. Набор постоянный: моды правят числа и названия, новых не добавляют
+# Удары, качество вещей и числа боя. Набор постоянный: моды правят числа и названия, новых не добавляют
 #
 # attack: damage — множитель урона, windup — множитель замаха, reach — прибавка к досягаемости, м,
 # arc — дуга, градусы (0 — дуга оружия). quality: mul — множитель урона оружия и сопротивлений брони
@@ -43,3 +43,244 @@ quality master
 quality ancient
     name "ДРЕВНЕЕ"
     mul 1.3
+
+# Числа боя (docs/combat.md). Нужны все; мод пишет «tuning combat» и только те числа, что меняет.
+# Навык — 0..100. «div» — делитель навыка: навык 100 при div 200 даёт половину. Время — с, длина — м.
+# Длительности состояний (сбит с ног, подъём, подбор, пошатывание) пока в коде: уйдут в наборы действий
+tuning combat
+    # Нагрузка: без штрафа носит load_free_kg + сила / load_free_str_div, кг; каждый лишний кг —
+    # encumbrance_per_kg штрафа к шагу, увороту и замаху, не больше encumbrance_max
+    load_free_kg 15
+    load_free_str_div 4
+    encumbrance_per_kg 0.02
+    encumbrance_max 0.6
+    # Тяжёлое оружие: свободно машет weapon_free_kg + сила / weapon_free_str_div, кг; каждый лишний кг
+    # снимает attack_overweight_pen атаки и удлиняет замах на windup_overweight
+    weapon_free_kg 4
+    weapon_free_str_div 8
+    attack_overweight_pen 2
+    windup_overweight 0.06
+    # Шок shock_full и выше снимает shock_penalty атаки, защиты и уворота
+    shock_penalty 0.3
+    shock_full 50
+    # Броня мешает увороту: сумма штрафов брони не больше
+    armor_dodge_pen_max 0.8
+    # Окружение: враги перед бойцом ближе surround_r; каждый после первого умножает защиту и уворот на surround_mul
+    surround_r 3
+    surround_mul 0.85
+    # Раненая рука или ноги: доля, что остаётся при отбитой части (правая рука — атака и защита,
+    # левая — защита, ноги — шаг)
+    attack_arm_min 0.5
+    defense_arm_l_min 0.7
+    defense_arm_r_min 0.5
+    move_legs_min 0.3
+
+    # Реакция: видит замах в пределах react_angle_deg от взгляда, градусы; после своего удара успевает,
+    # если до чужого удара осталось больше, чем остаток возврата / react_recover_frac
+    react_angle_deg 100
+    react_recover_frac 0.6
+    # Блок: block_base + (защита − атака) / block_skill_div; размах блокировать труднее на block_swing_pen;
+    # древковому вплотную (квадрат расстояния меньше polearm_close_d2, м²) — на polearm_close_pen
+    block_base 0.5
+    block_skill_div 100
+    block_swing_pen 0.1
+    polearm_close_d2 1.44
+    polearm_close_pen 0.15
+    block_min 0.05
+    block_max 0.95
+    # Уворот, если не заблокировал: dodge_base + (уворот − атака) / dodge_skill_div; от размаха легче
+    dodge_base 0.1
+    dodge_skill_div 150
+    dodge_swing_bonus 0.1
+    dodge_max 0.5
+    # Удар сильнее блока в guard_break раз (вес оружия × сила) пробивает стойку: пошатывание и
+    # guard_break_arm дробящего урона в руку. Иначе контратака с шансом (защита − атака) / 100,
+    # не больше counter_max, с замахом короче в counter_windup
+    guard_break 2
+    guard_break_arm 0.2
+    counter_max 0.3
+    counter_windup 0.6
+
+    # Замах: windup_base / скорость оружия × удар; ловкость и атака ускоряют до 1 − навык / div
+    windup_base 0.55
+    windup_dex_div 250
+    windup_attack_div 300
+    # Удар достаёт на strike_reach_add дальше досягаемости; каждая следующая цель размаха
+    # получает урон × cleave_falloff от предыдущей
+    strike_reach_add 0.3
+    cleave_falloff 0.75
+    # Урон: оружие × качество × (dmg_str_base + сила / dmg_str_div) × (dmg_rand_min + dmg_rand × случай) × удар
+    dmg_str_base 0.8
+    dmg_str_div 250
+    dmg_rand_min 0.85
+    dmg_rand 0.3
+    # Укол находит щель: броня закрывает в thrust_cover раз меньше
+    thrust_cover 0.8
+    # Стойкость снимает урон до 1 − навык / dmg_tough_div
+    dmg_tough_div 400
+
+    # Прицел в плоскости взгляда бьющего: y — высота, м, x — вбок, s — наклон следа. Разброс
+    # сужает ловкость до 1 − навык / aim_dex_div
+    aim_dex_div 250
+    # Размах: с долей aim_high_p — наискось в ключицу, до aim_mid_p — поперёк живота, остальное — по ногам
+    aim_high_p 0.40
+    aim_high_y 1.40
+    aim_high_dy 0.14
+    aim_high_s 0.50
+    aim_high_ds 0.35
+    aim_mid_p 0.88
+    aim_mid_y 1.05
+    aim_mid_dy 0.12
+    aim_mid_s 0.10
+    aim_mid_ds 0.30
+    aim_low_y 0.50
+    aim_low_dy 0.25
+    aim_low_s 0.10
+    # Удар сверху: в голову или в плечо справа от себя
+    aim_over_x 0.12
+    aim_over_dx 0.26
+    aim_over_y 1.45
+    aim_over_s 0.20
+    aim_over_ds 0.30
+    # Укол: в корпус, с долей aim_face_p — в лицо
+    aim_thrust_x 0.12
+    aim_face_p 0.07
+    aim_face_y 1.60
+    aim_thrust_y 1.12
+    aim_thrust_dy 0.34
+
+    # Кровотечение за единицу урона (кровь в секунду), отрубленная часть — ещё sever_bleed;
+    # пробитый живот течёт в bleed_gut_mul раз сильнее; само стихает на bleed_stop в секунду
+    bleed_cut 0.04
+    bleed_pierce 0.03
+    bleed_blunt 0.005
+    sever_bleed 3
+    bleed_gut_mul 2
+    bleed_stop 0.3
+    # Шок: урон, дробящий — в shock_blunt раз; спадает на shock_recover + стойкость × shock_recover_tough в секунду
+    shock_blunt 2
+    shock_recover 5
+    shock_recover_tough 0.05
+    # Перелом при здоровье части ниже −fracture_at её запаса
+    fracture_at 0.5
+    # Крови blood_full на blood_mass кг веса
+    blood_full 100
+    blood_mass 75
+    # Без сознания: крови меньше blood_ko запаса или жизненная часть ниже −стойкость / 100 × ko_tough запаса.
+    # Лёжа без сознания части заживают на ko_heal, кровь — на ko_blood в секунду; очнётся при крови выше wake_blood
+    blood_ko 0.5
+    ko_tough 0.5
+    ko_heal 0.5
+    ko_blood 0.1
+    wake_blood 0.55
+
+    # Скачок шока больше knock_shock × (1 + стойкость / 100) сбивает с ног; дробящий урон больше
+    # stagger_blunt × (1 + стойкость / 100) — пошатывает
+    knock_shock 45
+    stagger_blunt 20
+    # Сбивает с ног и удар, если вес × отброс оружия × сила больше массы цели × стойкость × knock_resist;
+    # отбрасывает на knock_push_min..+1 м. Выронит оружие с шансом drop_base + drop_k × (перевес − 1),
+    # не больше drop_max, сила цели снижает до 1 − навык / drop_str_div
+    knock_resist 0.4
+    knock_push_min 0.5
+    drop_base 0.15
+    drop_k 0.3
+    drop_max 0.5
+    drop_str_div 200
+
+    # Мораль: −morale_per_dmg за единицу урона; через morale_calm_s без ран растёт на morale_recover
+    # в секунду до своей. Ниже morale_shaken медлит между ударами, ниже morale_flee отходит,
+    # с morale_rally возвращается, ниже morale_surrender сдаётся (если бой милосердный).
+    # Врагов в outnumber_r больше, чем своих, на 2 и более: −morale_outnumber в шаг за каждого лишнего
+    morale_per_dmg 0.08
+    morale_calm_s 3
+    morale_recover 1
+    morale_shaken 40
+    morale_flee 25
+    morale_rally 30
+    morale_surrender 10
+    outnumber_r 8
+    morale_outnumber 0.1
+
+    # Пауза перед следующим ударом: в начале боя first_pause..+1; потом (pause_min + pause_rand × случай)
+    # × (1 − атака / pause_attack_div), в страхе × pause_shaken_mul
+    first_pause 0.5
+    pause_min 0.3
+    pause_rand 0.5
+    pause_attack_div 200
+    pause_shaken_mul 1.6
+
+    # Шаг, м/с: в стойке, в отходе, под блоком, в увороте, ползком; атлетика ускоряет до 1 + навык / athletics_div
+    speed_ready 1.6
+    speed_retreat 2.2
+    speed_block 0.5
+    speed_dodge 1.2
+    speed_crawl 0.25
+    athletics_div 200
+    # Поворот, рад/с: к цели, в замахе, ползком, в отходе (от врага)
+    turn 6
+    turn_windup 2
+    turn_crawl 1.5
+    turn_retreat 6
+
+    # Рост навыка за действие: gain_rate × вес действия × m / (1 + навык / gain_own_div), не выше skill_max;
+    # m = 1 + (навык противника − свой) / gain_opp_div, от gain_mul_min до gain_mul_max
+    skill_max 100
+    gain_rate 1.3
+    gain_own_div 20
+    gain_opp_div 25
+    gain_mul_min 0.1
+    gain_mul_max 3
+    # Вес действий: замах (атака, оружие), тяжёлое оружие (сила, противник gain_strength_opp),
+    # лёгкое до dex_weapon_kg (ловкость), блок, попытка уворота, уворот, попадание (атака бьющего, защита цели),
+    # рана (стойкость за каждые 10 урона, без сознания × gain_tough_ko_mul)
+    gain_attack_try 0.02
+    gain_weapon_try 0.03
+    gain_strength 0.02
+    gain_strength_opp 50
+    gain_dex 0.02
+    dex_weapon_kg 5
+    gain_block 0.05
+    gain_block_weapon 0.03
+    gain_dodge_try 0.02
+    gain_dodge 0.06
+    gain_hit 0.05
+    gain_hit_defense 0.03
+    gain_tough 0.02
+    gain_tough_ko_mul 2
+
+    # ИИ бойца, выбор цели: −расстояние, + target_attacker тому, кто бьёт меня, + target_current нынешней,
+    # + target_wounded × доля ран, − target_turn × угол поворота. Числа не меньше 0. Дальше pick_max_r не ищет
+    target_attacker 2
+    target_current 1.5
+    target_wounded 1.5
+    target_turn 0.5
+    pick_max_r 48
+    # Зажат у ограды ближе cornered_r — отбивается, а не отходит
+    cornered_r 1
+    # Дистанция: дальше reach_far досягаемости — идёт к цели (за approach_slow_d до неё — шагом approach_slow),
+    # ближе reach_close — отступает шагом back_off, между — кружит шагом circle, обходя своих ближе ally_r
+    reach_far 0.98
+    reach_close 0.82
+    approach_slow_d 1
+    approach_slow 0.7
+    back_off 0.6
+    circle 0.5
+    ally_r 1.5
+    # Бьёт, если цель не дальше attack_angle_deg от взгляда, градусы; длинным колет, если цель дальше
+    # досягаемости размаха без thrust_edge
+    attack_angle_deg 25
+    thrust_edge 0.1
+
+    # Сила бойца для боя формулой (вдали): навыки с весами, + rating_dmg × (урон оружия − rating_dmg_base),
+    # + rating_armor × защита торса; всё × (rating_health_min + rating_health_k × здоровье)
+    rating_attack 0.25
+    rating_defense 0.25
+    rating_dodge 0.15
+    rating_tough 0.2
+    rating_strength 0.1
+    rating_dmg 0.25
+    rating_dmg_base 25
+    rating_armor 25
+    rating_health_min 0.6
+    rating_health_k 0.4
