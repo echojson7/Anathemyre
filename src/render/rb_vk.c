@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../core/clock.h"
 #include "../core/log.h"
 #include "../platform/platform.h"
 #include "vk.h"
@@ -205,6 +206,7 @@ static struct {
     i32     win_w, win_h;
 
     Frame   frames[RB_FRAMES];
+    f64     wait_slot, wait_present;  // CPU в ожидании, с (rb_take_waits)
     u32     slot;
     bool    in_frame;
     VkCommandBuffer cmd;            // записываемый буфер команд, NULL — не начат
@@ -799,7 +801,9 @@ static void ensure_cmd(void)
 {
     if (g_vk.cmd) return;
     Frame *f = &g_vk.frames[g_vk.slot];
+    f64 t0 = time_now();
     vkWaitForFences(g_vk.device, 1, &f->done, 1, UINT64_MAX);
+    g_vk.wait_slot += time_now() - t0;
     empty_trash(f);
     timers_collect(f);
     f->staging_used = 0;
@@ -2310,6 +2314,7 @@ void rb_frame_end(void)
     vkResetFences(g_vk.device, 1, &f->done);
 
     // Картинку swapchain берём в самом конце: рисование уже записано и не ждёт её
+    f64 t0 = time_now();
     u32 idx = UINT32_MAX;
     if (g_vk.swap_dirty || !g_vk.swapchain) swapchain_build();
     if (g_vk.swapchain) {
@@ -2370,9 +2375,17 @@ void rb_frame_end(void)
     }
     if (g_vk.swapchain && (g_vk.swap_extent.width != (u32)g_vk.win_color.d.w || g_vk.swap_extent.height != (u32)g_vk.win_color.d.h))
         g_vk.swap_dirty = true;
+    g_vk.wait_present += time_now() - t0;
     g_vk.cmd = VK_NULL_HANDLE;
     g_vk.in_frame = false;
     g_vk.slot = (g_vk.slot + 1) % RB_FRAMES;
+}
+
+void rb_take_waits(f64 *slot, f64 *present)
+{
+    *slot = g_vk.wait_slot;
+    *present = g_vk.wait_present;
+    g_vk.wait_slot = g_vk.wait_present = 0.0;
 }
 
 void rb_read_window(u8 *rgb, i32 w, i32 h)
