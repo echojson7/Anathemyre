@@ -1,7 +1,7 @@
 # Свет ночью: факелы, фонари, прожекторы
 
 Состояние на 2026-10-29. Код: `src/render/render.c` (stream_lights), `data/shaders/scene.frag`,
-`data/shaders/atmos.frag` (light_glow), `src/view/scene.c` (scene_ring_lights, scene_hall_lights), `src/app/main.c` (torch_draw),
+`data/shaders/atmos.frag` (light_glow), `src/view/lights.c` (lights_collect: огни объектов, [objects.md](objects.md)), `src/app/main.c` (torch_draw),
 `src/content/weapon.c` (torch_build), `src/world/sky.c` (луна, Sky.night).
 
 ## Как устроено
@@ -23,8 +23,11 @@
 | Лампа Мерильни (13) | колпаки на тросах в цехе, днём и ночью | 6–11 м, конус ~70° вниз | малое | единственный свет в глухом цехе; одна над лестницей гудит и мигает ([showhall.md](showhall.md)) |
 
 Прожекторы и лампы зажигаются не разом, пока разгораются — мигают, потом слегка дрожат от напряжения.
+С 2026-10-31 это свет-компонент объектов (`light` в `data/defs/objects.txt`): порог темноты у каждой лампы
+свой от зерна экземпляра (`light_night`), дрожь — `light_flicker hum`.
 
 ## Пламя факела
 Отдельная кость `CHAR_BONE_FLAME`: стоит у ветоши, ось всегда вверх, куда бы ни клонилось древко.
 Форма — капля: жёлтый низ, оранжевый язык, два тёмно-красных отрыва по бокам. Яркость дрожит в шейдере.
-Свет факела исходит из середины пламени (`torch_flame_pos`).
+Свет факела исходит из середины пламени (`torch_flame_pos`). Цвет, сила и радиус — компонент `light` вещи `torch`
+(data/defs/goods.txt), огонь строит `lights_item` (view/lights.c).

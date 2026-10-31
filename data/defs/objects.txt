@@ -1,0 +1,310 @@
+# Объекты: части построек и мелочи локаций. Что это и зачем — docs/objects.md
+#
+# shape имя — генератор формы (content/shapes.c и файлы локаций); без shape объект только светит
+# size x y z — размер по умолчанию, м; строка put в заготовке может задать свой
+# mat имя, mat2 имя — материалы слотов 0 и 1 (materials.txt); put может заменить
+# tint a — разброс цвета по зерну экземпляра
+# place settle|hang|fixed — как стоит (sim/phys.h); пока все стоят намертво
+# shadow yes|no — отбрасывает ли тень
+# solid full — коробка во весь размер (точка экземпляра — её середина);
+#   solid cx cy cz hx hy hz — коробка в осях объекта при размере по умолчанию, растягивается с размером; до 4
+# light материал сила | light r g b — свет (компонент); light_at, light_dir — точка и ось в осях объекта;
+#   light_radius, light_cone (косинус половины угла, -1 — во все стороны), light_glow;
+#   light_night a s — горит с темноты a + s·(зерно 0..1), без строки — всегда; light_flicker none|hum;
+#   light_shadow yes|no — на будущее
+# act что x y z поворот — точка действия (сесть, торговать): на будущее, логики нет
+#
+# Новый объект — только если иначе играется или у него другой силуэт; оттенок и износ — зерно экземпляра
+
+# ---- Коробки: ярусы, плиты, стены. Точка — середина ----
+
+object slab
+    shape box
+    mat concrete
+    tint 0.05
+    solid full
+
+object step
+    parent slab
+    tint 0.08
+
+object hatch
+    shape box
+    mat hollow
+    size 0.5 0.5 0.08
+
+object paving
+    shape paving
+    mat concrete
+    tint 0.08
+    size 2.5 0.2 2.5
+    solid full
+
+object wall_ancient
+    shape box
+    mat concrete_wall
+    tint 0.06
+    solid full
+
+object pilaster
+    parent wall_ancient
+    mat concrete_dark
+
+object ramp
+    shape ramp
+    mat concrete
+    tint 0.08
+    size 5 3.45 7
+
+object buttress
+    shape buttress
+    mat concrete_dark
+    tint 0.08
+    size 0.9 3.2 1.4
+    solid full
+
+object rubble
+    shape rubble
+    mat concrete
+    tint 0.1
+    solid 0 0 0 0.3 0.3 0.3
+
+object sand
+    shape sand
+    mat sand
+    size 3 0.6 1.6
+
+# ---- Дома Скудели: этаж, перекрытие, дверь, окна — отдельные экземпляры ----
+
+object house_block
+    shape box
+    mat concrete
+    tint 0.08
+    size 5 3 6
+    solid full
+
+object house_slab
+    shape box
+    mat concrete_dark
+    tint 0.1
+    size 5.2 0.14 6.2
+    solid full
+
+# Проём и перемычка; точка — низ середины проёма
+object door
+    shape door
+    mat hollow
+    mat2 rust
+    size 0.95 2 0.06
+
+object awning
+    shape awning
+    size 1.6 0.03 1.1
+
+object window
+    shape window
+    mat hollow
+    size 0.7 0.55 0.06
+
+object window_lit
+    parent window
+    mat window
+    tint 0.3
+
+object shutter
+    shape box
+    mat sheet
+    tint 0.2
+    size 0.4 0.6 0.03
+
+object patch
+    shape patch
+    size 1 1 0.03
+
+# Точка — середина края у фасада; size — ширина, высота перил, вынос
+object balcony
+    shape balcony
+    size 1.1 1 1.1
+    solid 0 -0.02 0.55 0.55 0.07 0.55
+
+object ladder
+    shape ladder
+    size 0.1 3 0.5
+
+object downpipe
+    shape downpipe
+    size 0.1 3 0.1
+
+object roof_tank
+    shape roof_tank
+    solid 0 0.8 0 0.6 0.8 0.6
+
+object antenna
+    shape antenna
+
+object tarp
+    shape tarp
+
+# size — ширина, высота и глубина крыши
+object parapet
+    shape parapet
+    size 4 0.6 4
+    solid 0 0.3 2 2 0.3 0.075
+    solid -2 0.3 0 0.075 0.3 2
+
+# ---- Прилавки: точка — середина переднего края стола, size — ширина, высота, глубина стола ----
+
+object stall_scrap
+    shape stall_scrap
+    size 2.1 0.9 0.9
+    solid 0 0.45 -0.45 1.05 0.45 0.45
+    act trade 0 0 -1.35 0
+
+object stall_water
+    parent stall_scrap
+    shape stall_water
+
+object stall_food
+    parent stall_scrap
+    shape stall_food
+
+object stall_cloth
+    parent stall_scrap
+    shape stall_cloth
+
+object stall_relic
+    parent stall_scrap
+    shape stall_relic
+
+object stall_tools
+    parent stall_scrap
+    shape stall_tools
+
+# ---- Улицы и стена ----
+
+# Проход вдоль локальной z шириной size.z
+object gate
+    shape gate
+    size 1 5 4
+    solid 0 2.6 -2.5 0.5 2.6 0.5
+    solid 0 2.4 2.5 0.5 2.4 0.5
+
+object glyph_band
+    shape glyphs
+    mat glyph_green
+    size 6 0.9 0
+
+object shack
+    shape shack
+    size 2.8 2.2 1.8
+    solid 0 1.1 0 1.4 1.1 0.9
+
+object signal_mast
+    shape signal_mast
+
+# Протяжённые: от точки вдоль +x на size.x, подъём size.y
+object fence
+    shape fence
+    size 1 0 0
+    solid 0.5 1 0 0.5 1 0.1
+
+object railing
+    shape railing
+    size 1 0 0
+
+# size.z — провис
+object cable
+    shape cable
+    size 1 0 0.5
+
+object cable_rags
+    parent cable
+    shape cable_rags
+
+object cable_lamp
+    parent cable
+    shape cable_lamp
+
+# size.z — радиус
+object pipe_rust
+    shape pipe
+    mat rust
+    tint 0.15
+    size 1 0 0.3
+
+# Стояк: вверх на size.y, радиус size.x
+object riser_rust
+    shape pipe_up
+    mat rust
+    tint 0.1
+    size 0.3 10 0
+
+object pole
+    parent riser_rust
+    tint 0.2
+    size 0.05 3.2 0
+
+# ---- Мелочи: props.c ----
+
+object crate_stack
+    shape crate_stack
+    solid 0 0.3 0 0.4 0.3 0.4
+
+object barrel
+    shape barrel
+    solid 0 0.45 0 0.3 0.45 0.3
+
+object barrel_tipped
+    shape barrel_tipped
+
+object clutter
+    shape clutter
+
+object lamp_post
+    shape lamp_post
+    solid 0 0.2 0 0.22 0.2 0.22
+
+object rug
+    shape rug
+    shadow no
+
+object fire_pit
+    shape fire_pit
+
+# size.x — радиус кучи
+object scrap_heap
+    shape scrap_heap
+
+# size.y — высота бака
+object water_tower
+    shape water_tower
+
+# ---- Только свет: лампы зала и ринга (их сетки пока в content/hall.c и ring.c) ----
+
+# Лампа над стойкой с оружием: горит всегда, конусом вниз и от стены
+object hall_lamp
+    light lamp_sodium 1.5
+    light_at 0 -0.044 -0.0235
+    light_dir 0 -0.88 -0.47
+    light_cone 0.45
+    light_radius 6
+    light_glow 0.0009
+
+# Прожектор на мачте ринга: узкий конус в середину, зажигается с темнотой, дрожит
+object ring_spot
+    light lamp_white 90
+    light_at 0 10 0
+    light_dir 0 -0.728 0.6856
+    light_cone 0.96
+    light_radius 30
+    light_glow 0.00012
+    light_night 0.30 0.18
+    light_flicker hum
+
+# Лампа в сетке на стойке ворот ринга
+object ring_lamp
+    light lamp_white 2.2
+    light_radius 9
+    light_glow 0.0015
+    light_night 0.30 0.18
+    light_flicker hum

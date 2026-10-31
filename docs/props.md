@@ -31,6 +31,12 @@
 (цвет из набора), `prop_box`, `prop_frame`, `prop_lbox`, `prop_lcyl`. Цвета — материалы по имени ([materials.md](materials.md)):
 `prop_paint(mb, r, g_mat.rust, 0.2f)` — материал с разбросом, `prop_mat` — без, `mat_tint` — только цвет.
 
+## Предметы как объекты
+
+С шага 2б (2026-10-31) предметы ставятся не вызовом из кода локации, а строкой заготовки: у каждого `prop_*`
+есть форма с тем же именем в `content/shapes.c` (`crate_stack`, `barrel`, `clutter`, `lamp_post`, `fence`,
+`railing`, `cable`, …), объект в `data/defs/objects.txt` и экземпляр с зерном ([objects.md](objects.md)).
+
 ## Что пока осталось на месте
 
 - Бетонные обломки Остова (`chunk`, `rubble`) — часть его системы неровного бетона (сколы, изломы, прутья).
