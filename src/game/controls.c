@@ -12,7 +12,7 @@
 #include "showhall.h"
 
 const char *const g_stage_name[STAGE_COUNT] = {
-    "ПУСТО", "ТЕНИ", "НЕБО И ТУМАН", "ЛУЧИ", "AO", "ПИКСЕЛЬНОСТЬ", "ФИЛЬТР", "РАСТЕНИЯ", "ШАГ МИРА", "ЛЮДИ", "СУТКИ И ОГНИ", "ПОЛНАЯ",
+    "ПУСТО", "ТЕНИ", "НЕБО И ТУМАН", "ЛУЧИ", "AO", "ПИКСЕЛЬНОСТЬ", "ФИЛЬТР", "РАСТЕНИЯ", "СВЕТ", "ШАГ МИРА", "ЛЮДИ", "СУТКИ И ОГНИ", "ПОЛНАЯ",
 };
 
 const char *const g_light_preset_name[LIGHT_PRESET_COUNT] = { "ПРЕЖНИЙ", "БЫСТРЫЙ", "РЕАЛИСТИЧНЫЙ" };
@@ -122,6 +122,15 @@ RenderSettings stage_render(const Settings *s)
     rs.pixel &= s->stage >= STAGE_PIXEL;
     rs.post &= s->stage >= STAGE_POST;
     rs.flora = s->stage >= STAGE_FLORA;
+    // Части СВЕТА: каскады, мягкий край, контактные тени и тени огней — вместе с ТЕНЯМИ, GTAO — с AO,
+    // остальное до этапа СВЕТ как в наборе ПРЕЖНИЙ
+    if (s->stage < STAGE_SHADOWS) rs.light_casc = rs.light_soft = rs.light_contact = rs.light_torch = false;
+    if (s->stage < STAGE_LIGHT) {
+        rs.light_mat = LIGHT_MAT_OLD;
+        rs.light_curve = LIGHT_CURVE_ACES;
+        rs.light_expo = rs.light_bloom = false;
+        rs.light_gi = LIGHT_GI_SIMPLE;
+    }
     return rs;
 }
 

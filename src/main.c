@@ -121,7 +121,7 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..11] [--attack K] [--look-slot N] [--valley] [--bands-test] [--phys-drop N] [--loot-drop N] [--warp S] [--threads N] [--hall-t S]");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..12] [--attack K] [--look-slot N] [--valley] [--bands-test] [--phys-drop N] [--loot-drop N] [--warp S] [--threads N] [--hall-t S]");
     puts("anathemyre [--light 0..2] [--light-parts МАТЕРИАЛЫ КРИВАЯ ЭКСПОЗИЦИЯ СВЕЧЕНИЕ ОТРАЖЁННЫЙ КАСКАДЫ МЯГКИЙ КОНТАКТ УГЛЫ ОГНИ]   свет на старте: набор ПРЕЖНИЙ/БЫСТРЫЙ/РЕАЛИСТИЧНЫЙ или части (docs/lighting.md)");
     puts("anathemyre [--load file.sav] [--warp S] [--save file.sav] [--sum-after S]   сохранение без меню: прочитать, прогнать, записать; сумма мира через S секунд и выход");
     puts("anathemyre [--defs DIR] [--mods DIR]   описания вещей и моды из других папок (по умолчанию data/defs и mods, docs/content.md)");
