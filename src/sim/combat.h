@@ -23,6 +23,9 @@
 #define TAGS_ALIVE (~TAG_BIT(TAG_DEAD))
 #define TAGS_FIGHTING (~(TAG_BIT(TAG_DEAD) | TAG_BIT(TAG_OUT)))
 
+// При равном счёте кого взять. Хеш от ищущего и кандидата, не «меньший номер».
+bool combat_prefer(u32 seeker, u32 a, u32 b);
+
 typedef enum Skill {
     SK_ATTACK, SK_DEFENSE, SK_DODGE,
     SK_STRENGTH, SK_DEXTERITY, SK_TOUGHNESS, SK_ATHLETICS,
@@ -126,6 +129,7 @@ typedef struct CombatWorld {
     u32 tick;
     bool mercy;      // выбывших не добивают, сдачу принимают
     bool halted;     // бой остановлен: ИИ больше не атакует
+    bool fear;       // мораль, отход и сдача; замер копий может выключить. В сохранение не идёт
     f32 fence_r;     // > 0: бой внутри круга этого радиуса
     u32 foe[COMBAT_MAX_TEAMS];  // с кем враждует команда: биты команд; по умолчанию со всеми чужими
 
@@ -209,10 +213,10 @@ void combat_load(CombatWorld *w, u32 i, const FighterDesc *d);
 // Вражда двух команд в обе стороны
 void combat_set_foes(CombatWorld *w, u8 a, u8 b, bool on);
 // Начать удар (вызывает ИИ): замах и бросок реакции по состоянию до этого прохода.
-// Опыт за замах и стойка защитника сюда не пишутся: их ставят combat_swing_xp и combat_seal_guards,
+// Опыт за замах и стойка защитника сюда не пишутся: их ставят combat_grant_swings и combat_seal_guards,
 // когда замахнулись уже все, кто решил бить в этом проходе.
 void combat_begin_attack(CombatWorld *w, u32 i, u8 kind, u32 target, bool counter);
-void combat_swing_xp(CombatWorld *w, u32 i);
+void combat_grant_swings(CombatWorld *w);
 void combat_seal_guards(CombatWorld *w);
 void combat_tick(CombatWorld *w);
 // Журнал прочитан: показать его наблюдателю (если есть) и очистить

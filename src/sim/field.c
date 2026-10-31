@@ -235,7 +235,7 @@ static i32 nearest_foe(const Field *f, u32 i, f32 r, bool any)
         u32 j = near[q];
         if (j == i || !combat_hostile(w, i, j) || fs_out(w->state[j]) || (!any && w->idle[j])) continue;
         f32 d = dist(w, i, j);
-        if (d < best_d || (d == best_d && (i32)j < best)) {
+        if (d < best_d || (d == best_d && best >= 0 && combat_prefer(i, j, (u32)best))) {
             best_d = d;
             best = (i32)j;
         }
@@ -287,70 +287,87 @@ static void log_events(Field *f)
 }
 
 // Правила поля после тика боя: кто просыпается, кто засыпает, чей приказ выполнен.
-// Идут по номерам в одном потоке, поэтому исход не зависит от числа потоков
+// Сначала все читают, кто ещё спит и кто ещё в бою. Потом пробуждение и сон.
+// Иначе младший номер будит или укладывает цель до того, как она сама решит.
 static void rules_tick(Field *f, GroundFn ground)
 {
     CombatWorld *w = &f->w;
-    u32 active = 0;  // команды, которые сейчас дерутся
-    for (u32 i = 0; i < w->count; i++) {
+    u8 do_wake[FIELD_MAX], do_sleep[FIELD_MAX], ord_mode[FIELD_MAX];
+    i32 ord_arg[FIELD_MAX];
+    u32 active = 0;
+    u32 n = w->count;
+    if (n > FIELD_MAX) n = FIELD_MAX;
+    memset(do_wake, 0, n);
+    memset(do_sleep, 0, n);
+    memset(ord_mode, 0, n);
+    for (u32 i = 0; i < n; i++) {
         const Motion *p = &f->ps->move[i];
         i32 o = w->order[i];
         if (o >= 0 && !target_ok(f, i, (u32)o)) {
-            order_done(f, i, (u32)o);
+            ord_mode[i] = 1;
+            ord_arg[i] = o;
             o = -1;
         }
-        // Пока есть приказ, вражда не забывается: погоня может быть долгой
         if (o >= 0) active |= 1u << w->team[i] | 1u << w->team[o];
         if (w->idle[i]) {
             if (o >= 0) {
                 f32 d = dist(w, i, (u32)o);
                 if (d <= ENGAGE_R) {
-                    wake(f, i);
-                    wake(f, (u32)o);
+                    do_wake[i] = 1;
+                    do_wake[o] = 1;
                 } else if (f->soft[i] && d > LEASH_R) {
-                    w->order[i] = -1;
-                    f->soft[i] = 0;
+                    ord_mode[i] = 3;
                 }
                 continue;
             }
-            // Оглядываются все в одни тики: фаза от номера слота будила младших раньше
             if (w->tick % COMBAT_THINK_TICKS) continue;
-            // Идёт по приказу игрока: мимо боя проходит, не ввязываясь
             if ((f->flags[i] & FF_PLAYER) && p->moving) continue;
             if (nearest_foe(f, i, WAKE_R, false) >= 0) {
-                wake(f, i);
+                do_wake[i] = 1;
                 continue;
             }
             i32 j = -1;
             if ((f->flags[i] & FF_ASSIST) && ally_fighting(f, i, ASSIST_R)) j = nearest_foe(f, i, ASSIST_R, false);
             if (j < 0 && (f->flags[i] & FF_AGGRO)) j = nearest_foe(f, i, AGGRO_R, true);
             if (j >= 0) {
-                w->order[i] = j;
-                f->soft[i] = 1;
+                ord_mode[i] = 2;
+                ord_arg[i] = j;
+                active |= 1u << w->team[i] | 1u << w->team[j];
             }
             continue;
         }
 
         u8 s = w->state[i];
-        if (s == FS_DEAD) continue;  // тело остаётся лежать
+        if (s == FS_DEAD) continue;
         bool free = s == FS_READY || s == FS_RETREAT;
         if (f->leave[i] && free) {
-            sleep_slot(f, i, ground);
+            do_sleep[i] = 1;
             continue;
         }
         if (o >= 0) {
             f32 d = dist(w, i, (u32)o);
-            // Цель отошла: спящую будит, если рядом, иначе догоняет бегом
-            if (w->idle[o] && d <= ENGAGE_R) wake(f, (u32)o);
+            if (w->idle[o] && d <= ENGAGE_R) do_wake[o] = 1;
             else if (free && (w->idle[o] || d > CHASE_R)) {
-                sleep_slot(f, i, ground);
+                do_sleep[i] = 1;
                 continue;
             }
         }
         bool foe_near = nearest_foe(f, i, CALM_R, false) >= 0;
         f->calm[i] = foe_near ? 0.0f : f->calm[i] + COMBAT_DT;
         if (foe_near && !fs_out(s)) active |= 1u << w->team[i];
-        if (o < 0 && f->calm[i] >= CALM_S && (free || s == FS_SURRENDER)) sleep_slot(f, i, ground);
+        if (o < 0 && f->calm[i] >= CALM_S && (free || s == FS_SURRENDER)) do_sleep[i] = 1;
+    }
+    for (u32 i = 0; i < n; i++) {
+        if (do_wake[i]) wake(f, i);
+        else if (do_sleep[i]) sleep_slot(f, i, ground);
+        if (ord_mode[i] == 1) order_done(f, i, (u32)ord_arg[i]);
+        else if (ord_mode[i] == 2) {
+            w->order[i] = ord_arg[i];
+            f->soft[i] = 1;
+        } else if (ord_mode[i] == 3) {
+            w->order[i] = -1;
+            f->soft[i] = 0;
+        }
     }
     // Бою есть что считать, пока кто-то не спит и жив: без сознания тоже приходит в себя в бою
     f->fights = 0;

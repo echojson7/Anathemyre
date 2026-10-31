@@ -11,6 +11,8 @@ typedef struct FighterAI {
     u8  *act;     // ACT_* — что решил боец
     u8  *kind;    // вид удара
     i32 *target;  // выбранная цель
+    f32 *next_morale; // мораль после решения, пишется в мир когда решили все
+    u8  *morale_set;
     // Середина строя каждой команды (кто ещё в бою): куда идти, если врагов не видно
     f32 cx[COMBAT_MAX_TEAMS], cz[COMBAT_MAX_TEAMS];
     u32 cn[COMBAT_MAX_TEAMS];

@@ -70,7 +70,7 @@ static i32 pick_target(const CombatWorld *w, u32 i)
                 f32 d = sqrtf(d2);
                 if (bonus - d < best_score) continue;  // даже с прибавками не догонит
                 f32 score = target_score(w, i, j, d);
-                if (score > best_score || (score == best_score && (i32)j < best)) {
+                if (score > best_score || (score == best_score && best >= 0 && combat_prefer(i, j, (u32)best))) {
                     best_score = score;
                     best = (i32)j;
                 }
@@ -154,7 +154,11 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
     combat_count(w, w->x[i], w->z[i], g_tune.outnumber_r, TAGS_FIGHTING, cnt);
     u32 al = cnt[2u + w->team[i]], en = 0;
     for (u32 m = combat_foe_tags(w, w->team[i]) & TAGS_FIGHTING; m; m &= m - 1) en += cnt[__builtin_ctz(m)];
-    if (en > al + 1) w->morale[i] -= g_tune.morale_outnumber * (f32)(en - al);
+    f32 morale = w->morale[i];
+    if (w->fear && en > al + 1) morale -= g_tune.morale_outnumber * (f32)(en - al);
+    // Запись после всех решений прохода: сосед не видит уже упавшую мораль
+    ai->next_morale[i] = morale;
+    ai->morale_set[i] = 1;
 
     // По приказу бьёт только указанного, пока тот в бою; иначе выбирает сам
     i32 o = w->order[i];
@@ -176,14 +180,14 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
         return;
     }
 
-    if (w->morale[i] < g_tune.morale_surrender && w->mercy && (s == FS_READY || s == FS_RETREAT)) {
+    if (w->fear && morale < g_tune.morale_surrender && w->mercy && (s == FS_READY || s == FS_RETREAT)) {
         ai->act[i] = ACT_SURRENDER;
         return;
     }
-    if (w->morale[i] < g_tune.morale_flee && s == FS_READY) {
+    if (w->fear && morale < g_tune.morale_flee && s == FS_READY) {
         ai->act[i] |= ACT_RETREAT;
         s = FS_RETREAT;
-    } else if (w->morale[i] >= g_tune.morale_rally && s == FS_RETREAT) {
+    } else if (w->fear && morale >= g_tune.morale_rally && s == FS_RETREAT) {
         ai->act[i] |= ACT_RALLY;
         s = FS_READY;
     }
@@ -217,12 +221,15 @@ static void decide(FighterAI *ai, CombatWorld *w, u32 i)
         u32 near[COMBAT_NEAR_MAX];
         u32 nn = combat_near(w, w->x[i], w->z[i], g_tune.ally_r, TAG_BIT(2u + w->team[i]), near);
         f32 best = g_tune.ally_r * g_tune.ally_r;
+        u32 best_j = i;
         for (u32 q = 0; q < nn; q++) {
             u32 j = near[q];
             f32 ax = w->x[j] - w->x[i], az = w->z[j] - w->z[i];
             f32 a2 = ax * ax + az * az;
-            if (j == i || a2 >= best) continue;
+            if (j == i || a2 > best) continue;
+            if (a2 == best && !combat_prefer(i, j, best_j)) continue;
             best = a2;
+            best_j = j;
             // Касательная в свою сторону смотрит на своего — в другую сторону
             f32 own = (i & 1) ? 1.0f : -1.0f;
             side = (-dz * ax + dx * az) * own > 0.0f ? -own : own;
@@ -292,6 +299,8 @@ void fighter_ai_init(FighterAI *ai, Arena *a, u32 cap)
     ai->act = ARENA_PUSH_ARRAY(a, u8, cap);
     ai->kind = ARENA_PUSH_ARRAY(a, u8, cap);
     ai->target = ARENA_PUSH_ARRAY(a, i32, cap);
+    ai->next_morale = ARENA_PUSH_ARRAY(a, f32, cap);
+    ai->morale_set = ARENA_PUSH_ARRAY(a, u8, cap);
 }
 
 void fighter_ai_ser(Ser *s, FighterAI *ai, u32 count)
@@ -333,12 +342,16 @@ void fighter_think_all(FighterAI *ai, CombatWorld *w)
     if (w->tick % COMBAT_THINK_TICKS == 0) {
         ThinkCtx c = { ai, w };
         jobs_for(w->count, 16, decide_job, &c);
+        for (u32 i = 0; i < w->count; i++)
+            if (ai->morale_set[i]) {
+                w->morale[i] = ai->next_morale[i];
+                ai->morale_set[i] = 0;
+            }
         // Сначала своё состояние у всех, потом все замахи.
         // Иначе меньший номер успевает закрыть цель блоком до её собственного удара.
         for (u32 i = 0; i < w->count; i++) apply_self(ai, w, i);
         for (u32 i = 0; i < w->count; i++) apply_attack(ai, w, i);
     }
-    for (u32 i = 0; i < w->count; i++)
-        if (w->state[i] == FS_WINDUP && w->timer[i] == w->dur[i] && w->dur[i] > 0.0f) combat_swing_xp(w, i);
+    combat_grant_swings(w);
     combat_seal_guards(w);
 }

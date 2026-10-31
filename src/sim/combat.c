@@ -17,10 +17,22 @@ CombatTune g_tune;
 
 // Случайное число без общего потока: зависит только от seed, тика и участников,
 // поэтому порядок обработки бойцов (и потоки) на исход не влияют
+bool combat_prefer(u32 seeker, u32 a, u32 b)
+{
+    u32 ha = hash_u32(seeker * 0x9E3779B9u ^ hash_u32(a));
+    u32 hb = hash_u32(seeker * 0x9E3779B9u ^ hash_u32(b));
+    if (ha != hb) return ha > hb;
+    return a < b;
+}
+
 f32 combat_roll(const CombatWorld *w, u32 a, u32 b, u32 salt)
 {
-    u32 h = hash_u32((u32)w->seed ^ hash_u32((u32)(w->seed >> 32) + w->tick * 0x9E3779B9u));
-    h = hash_u32(h ^ (a * 0x85EBCA6Bu) ^ hash_u32(b + 0x27d4eb2du) ^ (salt * 0xC2B2AE35u));
+    // Своё зерно на участника и тик. Это не общий счётчик: число не зависит от того,
+    // кто в цикле вызвал бросок раньше.
+    u32 h = hash_u32((u32)w->seed ^ hash_u32((u32)(w->seed >> 32)));
+    h = hash_u32(h + w->tick);
+    h = hash_u32(h ^ a);
+    h = hash_u32(h ^ (b + salt * 0x9E3779B9u));
     return (f32)(h >> 8) * (1.0f / 16777216.0f);
 }
 
@@ -367,7 +379,7 @@ static u8 apply_damage(CombatWorld *w, u32 t, u32 part, f32 cut, f32 blunt, f32 
     w->bleed[t] += cut * g_tune.bleed_cut + pierce * g_tune.bleed_pierce + blunt * g_tune.bleed_blunt;
     f32 dshock = cut + pierce + g_tune.shock_blunt * blunt;
     w->shock[t] += dshock;
-    w->morale[t] -= total * g_tune.morale_per_dmg;
+    if (w->fear) w->morale[t] -= total * g_tune.morale_per_dmg;
     w->since_hit[t] = 0.0f;
     u8 bit = (u8)(1u << part);
     if (part != PART_CHEST && part != PART_STOMACH && w->hp[part][t] <= -g_tune.fracture_at * mx && !(w->fracture[t] & bit)) {
@@ -569,14 +581,34 @@ void combat_begin_attack(CombatWorld *w, u32 i, u8 kind, u32 t, bool counter)
     w->react[i] = roll_react(w, t, i, kind, wt);
 }
 
-void combat_swing_xp(CombatWorld *w, u32 i)
+static bool fresh_windup(const CombatWorld *w, u32 i);
+
+static void grant_swing(CombatWorld *w, u32 i, f32 opp, u32 t)
 {
-    i32 t = w->target[i];
-    if (t < 0 || (u32)t >= w->count) return;
-    gain(w, i, SK_ATTACK, g_tune.gain_attack_try, defense_eff(w, (u32)t));
-    gain(w, i, SK_WEAPON + weapon_of(w, i)->wclass, g_tune.gain_weapon_try, defense_eff(w, (u32)t));
+    gain(w, i, SK_ATTACK, g_tune.gain_attack_try, opp);
+    gain(w, i, SK_WEAPON + weapon_of(w, i)->wclass, g_tune.gain_weapon_try, opp);
     if (weapon_overweight(w, i) > 0.0f) gain(w, i, SK_STRENGTH, g_tune.gain_strength, g_tune.gain_strength_opp);
-    if (weapon_of(w, i)->weight <= g_tune.dex_weapon_kg) gain(w, i, SK_DEXTERITY, g_tune.gain_dex, sk(w, (u32)t, SK_DEXTERITY));
+    if (t < w->count && weapon_of(w, i)->weight <= g_tune.dex_weapon_kg)
+        gain(w, i, SK_DEXTERITY, g_tune.gain_dex, sk(w, t, SK_DEXTERITY));
+}
+
+// Опыт за все замахи прохода. Сила защиты цели снята до записей, чтобы младший слот
+// не поднимал навык раньше, чем его прочитает старший.
+void combat_grant_swings(CombatWorld *w)
+{
+    u32 n = w->count;
+    for (u32 i = 0; i < n; i++) {
+        w->guard_kind[i] = 0;
+        if (w->idle[i] || !fresh_windup(w, i)) continue;
+        i32 ti = w->target[i];
+        w->guard_kind[i] = 1;
+        w->guard_hold[i] = (ti >= 0 && (u32)ti < n) ? defense_eff(w, (u32)ti) : 0.0f;
+    }
+    for (u32 i = 0; i < n; i++) {
+        if (!w->guard_kind[i]) continue;
+        i32 ti = w->target[i];
+        grant_swing(w, i, w->guard_hold[i], ti >= 0 ? (u32)ti : n);
+    }
 }
 
 // Замах этого прохода: таймер ещё равен полной длительности, тик его не уменьшал
@@ -585,43 +617,11 @@ static bool fresh_windup(const CombatWorld *w, u32 i)
     return w->state[i] == FS_WINDUP && w->dur[i] > 0.0f && w->timer[i] == w->dur[i];
 }
 
-// Стойка защитника — один раз на всех замахов прохода. Блок важнее уворота, держится дольше
-// из двух одинаковых. Кто сам замахнулся в этом проходе, стойку не получает: оба бьют.
+// Реакция остаётся в react и проверяется в момент удара. В состояние блока цель не переводим:
+// иначе пауза замирает и тот, у кого она кончилась на тик раньше, не даёт копии ударить в ответ.
 void combat_seal_guards(CombatWorld *w)
 {
-    u32 n = w->count;
-    memset(w->guard_kind, 0, n);
-    for (u32 i = 0; i < n; i++) {
-        if (w->idle[i] || !fresh_windup(w, i)) continue;
-        i32 ti = w->target[i];
-        if (ti < 0 || (u32)ti >= n) continue;
-        u32 t = (u32)ti;
-        if (fresh_windup(w, t)) continue;
-        u8 r = w->react[i];
-        if (r != REACT_BLOCK && r != REACT_DODGE) continue;
-        f32 extra = act_of(w, t, r == REACT_BLOCK ? ACT_BLOCK : ACT_DODGE)->time;
-        f32 hold = w->timer[i] + extra;
-        u8 g = w->guard_kind[t];
-        if (g == REACT_BLOCK && r != REACT_BLOCK) continue;
-        if (g != r) {
-            w->guard_kind[t] = r;
-            w->guard_hold[t] = hold;
-        } else if (hold > w->guard_hold[t]) {
-            w->guard_hold[t] = hold;
-        }
-    }
-    for (u32 t = 0; t < n; t++) {
-        u8 r = w->guard_kind[t];
-        if (!r || w->idle[t]) continue;
-        u8 s = w->state[t];
-        if (s != FS_READY && s != FS_RETREAT && s != FS_BLOCK && s != FS_DODGE && s != FS_RECOVER) continue;
-        f32 hold = w->guard_hold[t];
-        if (r == REACT_BLOCK) {
-            if (s != FS_BLOCK || w->timer[t] < hold) combat_set_state(w, t, FS_BLOCK, hold);
-        } else {
-            combat_set_state(w, t, FS_DODGE, hold);
-        }
-    }
+    (void)w;
 }
 
 static u8 best_counter_kind(const CombatWorld *w, u32 i)
@@ -640,6 +640,7 @@ struct CombatHit {
     u8  oc, part, kind, fall;
     u8  ally, drop, counter, counter_kind;
     u8  shock_knock, blunt_stagger;
+    f32 atk_eff, def_eff; // навыки на начало ударов тика, не после чужого опыта
     f32 cut, blunt, pierce, arm_blunt;
     f32 push, pdx, pdz;
     f32 knock_dur, stagger_dur;
@@ -674,9 +675,10 @@ static void plan_strike(CombatWorld *w, u32 i, u32 *nh)
             k = nc++;
         } else {
             k = MAX_STRIKE_TARGETS - 1;
-            if (a > cang[k] || (a == cang[k] && j > cand[k])) continue;  // хуже худшего из взятых
+            // При равном угле не оставляем меньший номер: иначе размах всегда добирает младших
+            if (a > cang[k] || (a == cang[k] && combat_prefer(i, cand[k], j))) continue;
         }
-        while (k > 0 && (cang[k - 1] > a || (cang[k - 1] == a && cand[k - 1] > j))) {
+        while (k > 0 && (cang[k - 1] > a || (cang[k - 1] == a && combat_prefer(i, j, cand[k - 1])))) {
             cand[k] = cand[k - 1];
             cang[k] = cang[k - 1];
             k--;
@@ -696,13 +698,18 @@ static void plan_strike(CombatWorld *w, u32 i, u32 *nh)
         h->def = t;
         h->kind = kind;
         h->ally = w->team[t] == w->team[i];
+        h->atk_eff = attack_eff(w, i);
+        h->def_eff = defense_eff(w, t);
         u8 r;
         if (fs_lying(w->state[t]) || fs_out(w->state[t])) {
             r = REACT_NONE;
         } else if (t == main_t) {
             r = w->react[i];
-            if (r == REACT_BLOCK && w->state[t] != FS_BLOCK) r = REACT_NONE;
-            if (r == REACT_DODGE && w->state[t] != FS_DODGE) r = REACT_NONE;
+            // Свой замах отменяет чужой блок: иначе тот, кто вышел из паузы на тик раньше,
+            // запирает копию в стойке и добивает контратакой
+            if ((r == REACT_BLOCK || r == REACT_DODGE) &&
+                (w->state[t] == FS_WINDUP || w->state[t] == FS_STRIKE))
+                r = REACT_NONE;
         } else {
             r = roll_react(w, t, i, kind, 0.0f);
         }
@@ -798,18 +805,18 @@ static void apply_hits(CombatWorld *w, u32 nh)
         if (h->oc == OC_BLOCK || h->oc == OC_BREAK) {
             combat_event(w, EV_BLOCK, i, t);
             if (h->oc == OC_BREAK) w->ev[w->last_ev].flags |= EVF_STAGGER;
-            gain(w, t, SK_DEFENSE, g_tune.gain_block, attack_eff(w, i));
-            gain(w, t, SK_WEAPON + weapon_of(w, t)->wclass, g_tune.gain_block_weapon, attack_eff(w, i));
+            gain(w, t, SK_DEFENSE, g_tune.gain_block, h->atk_eff);
+            gain(w, t, SK_WEAPON + weapon_of(w, t)->wclass, g_tune.gain_block_weapon, h->atk_eff);
             if (h->oc == OC_BREAK) apply_damage(w, t, PART_ARM_R, 0, h->arm_blunt, 0);
             continue;
         }
         if (h->oc == OC_DODGE) {
             combat_event(w, EV_DODGE, i, t);
-            gain(w, t, SK_DODGE, g_tune.gain_dodge, attack_eff(w, i));
+            gain(w, t, SK_DODGE, g_tune.gain_dodge, h->atk_eff);
             continue;
         }
-        gain(w, i, SK_ATTACK, g_tune.gain_hit, defense_eff(w, t));
-        gain(w, t, SK_DEFENSE, g_tune.gain_hit_defense, attack_eff(w, i));
+        gain(w, i, SK_ATTACK, g_tune.gain_hit, h->def_eff);
+        gain(w, t, SK_DEFENSE, g_tune.gain_hit_defense, h->atk_eff);
         combat_event(w, EV_HIT, i, t);
         u32 hit_ev = w->last_ev;
         u8 flags = apply_damage(w, t, h->part, h->cut, h->blunt, h->pierce);
@@ -827,7 +834,7 @@ static void apply_hits(CombatWorld *w, u32 nh)
         bool shock = false, force = false, drop = false, stagger = false;
         f32 push_x = 0, push_z = 0, stag_dur = 0, knock_dur = 0, best_shock = -1, best_push = -1;
         u8 fall = FALL_BACK;
-        u32 force_att = t;
+        u32 shock_att = t, force_att = t;
         for (u32 n = 0; n < nh; n++) {
             CombatHit *h = &w->hits[n];
             if (h->def != t) continue;
@@ -837,15 +844,18 @@ static void apply_hits(CombatWorld *w, u32 nh)
             }
             if (h->shock_knock) {
                 f32 dshock = h->cut + h->pierce + g_tune.shock_blunt * h->blunt;
-                if (!shock || dshock > best_shock) {
+                if (!shock || dshock > best_shock ||
+                    (dshock == best_shock && combat_prefer(t, h->att, shock_att))) {
                     shock = true;
                     best_shock = dshock;
                     fall = h->fall;
                     knock_dur = h->knock_dur;
+                    shock_att = h->att;
                 }
             }
             if (h->push > 0.0f) {
-                if (!force || h->push > best_push) {
+                if (!force || h->push > best_push ||
+                    (h->push == best_push && combat_prefer(t, h->att, force_att))) {
                     force = true;
                     best_push = h->push;
                     if (!shock) {
@@ -896,8 +906,7 @@ static void apply_hits(CombatWorld *w, u32 nh)
         if (w->strikes[t] == ~0u || w->state[t] != FS_BLOCK) continue;
         combat_begin_attack(w, t, w->guard_kind[t], w->strikes[t], true);
     }
-    for (u32 t = 0; t < w->count; t++)
-        if (fresh_windup(w, t)) combat_swing_xp(w, t);
+    combat_grant_swings(w);
     combat_seal_guards(w);
 }
 
@@ -927,7 +936,7 @@ static void tick_body(CombatWorld *w, u32 i)
             begin_getup(w, i);
         }
     }
-    check_body(w, i);
+    // Смерть и обморок — после ударов этого тика, иначе кровотечение отменяет уже созревший замах
 }
 
 static void tick_state(CombatWorld *w, u32 i, u32 *strikes, u32 *ns)
@@ -1052,8 +1061,15 @@ static void separate_job(void *ctx, u32 b, u32 e)
                 f32 d2 = dx * dx + dz * dz;
                 if (d2 >= r2 * r2) continue;
                 f32 d = sqrtf(d2);
-                // Совпали точно: разводим по номеру
-                if (d < 1e-4f) { dx = i < j ? -1.0f : 1.0f; dz = 0.0f; d = 1.0f; d2 = 0.0f; }
+                // Совпали точно: ось пары из хеша, не «младший всегда на запад»
+                if (d < 1e-4f) {
+                    u32 lo = i < j ? i : j, hi = i < j ? j : i;
+                    f32 ang = hashf(hash_u32(lo * 0x9E3779B9u ^ hi)) * 2.0f * PI_F;
+                    f32 s = i == lo ? 1.0f : -1.0f;
+                    dx = cosf(ang) * s;
+                    dz = sinf(ang) * s;
+                    d = 1.0f;
+                }
                 // Мёртвые и лежащие без сознания не сдвигаются, живой отходит за двоих
                 f32 k = pinned(w, j) ? 2.0f : 1.0f;
                 f32 push = (r2 - sqrtf(d2)) * 0.5f * k;
@@ -1094,8 +1110,15 @@ static void around_bodies(CombatWorld *w)
             f32 d = sqrtf(dx * dx + dz * dz);
             if (d >= LIE_R) continue;
             f32 push = fminf(LIE_R - d, LIE_STEP);
-            // Стоит прямо на оси: в сторону по номеру
-            if (d < 1e-4f) { dx = i < j ? -uz : uz; dz = i < j ? ux : -ux; d = 1.0f; }
+            if (d < 1e-4f) {
+                u32 lo = i < j ? i : j, hi = i < j ? j : i;
+                f32 s = i == lo ? 1.0f : -1.0f;
+                f32 ang = hashf(hash_u32(lo * 0x9E3779B9u ^ hi));
+                dx = (-uz * (1.0f - ang) + ux * ang) * s;
+                dz = (ux * (1.0f - ang) - uz * ang) * s;
+                d = sqrtf(dx * dx + dz * dz);
+                if (d < 1e-4f) { dx = -uz * s; dz = ux * s; d = 1.0f; }
+            }
             w->sep_x[i] += dx / d * push;
             w->sep_z[i] += dz / d * push;
         }
@@ -1164,12 +1187,14 @@ void combat_tick(CombatWorld *w)
             act_update(w, i);
         }
     for (u32 i = 0; i < w->count; i++)
-        if (!w->idle[i]) tick_body(w, i);
-    for (u32 i = 0; i < w->count; i++)
         if (!w->idle[i]) tick_state(w, i, w->strikes, &ns);
+    for (u32 i = 0; i < w->count; i++)
+        if (!w->idle[i]) tick_body(w, i);
     u32 nh = 0;
     for (u32 k = 0; k < ns; k++) plan_strike(w, w->strikes[k], &nh);
     apply_hits(w, nh);
+    for (u32 i = 0; i < w->count; i++)
+        if (!w->idle[i]) check_body(w, i);
     for (u32 i = 0; i < w->count; i++)
         if (!w->idle[i]) tick_face(w, i);
     for (u32 i = 0; i < w->count; i++)
@@ -1217,6 +1242,7 @@ void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap)
     w->guard_hold = ARENA_PUSH_ARRAY(a, f32, cap);
     w->grid_tag = ARENA_PUSH_ARRAY(a, u8, cap);
     grid_init(&w->grid, a, cap, 128 * 128 * 4, 2.0f);
+    w->fear = true;
 }
 
 void combat_ser(Ser *s, CombatWorld *w)
