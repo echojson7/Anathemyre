@@ -47,6 +47,11 @@ jobs:
           ./tools/vkgen/gen.sh --check
           ./tools/spv/build.sh --check
 
+      - name: Клипы — data/anims совпадают с keys.c, хеш поз как эталон (animbake, docs/animations.md)
+        run: |
+          make animbake -j"$(nproc)" WERROR=1 CC=gcc
+          ./build/animbake check data
+
       - uses: actions/upload-artifact@v4
         with:
           name: bin-linux
