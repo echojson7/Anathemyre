@@ -121,7 +121,7 @@ void look_make(CharLook *l, u32 body, u32 seed, f32 mass, f32 height, f32 streng
     l->morph[LOOK_OLD] = a < 0.86f ? 0.3f * a : 0.35f + 2.0f * (a - 0.86f);
     l->morph[LOOK_NOSE] = 1.2f * (hash01(&s) - 0.5f);
     l->morph[LOOK_EYES] = 1.2f * (hash01(&s) - 0.5f);
-    l->morph[LOOK_JAW] = body == BODY_FEMALE ? 0.8f * hash01(&s) - 0.6f : 1.2f * hash01(&s) - 0.4f;
+    l->morph[LOOK_JAW] = body == BODY_FEMALE ? 0.8f * hash01(&s) - 0.6f : 0.9f * hash01(&s) - 0.4f;  // челюсть не выше +50, как в редакторе
     l->skin_t = (f32)((u32)(hash01(&s) * (f32)ARRAY_COUNT(g_skin)) % ARRAY_COUNT(g_skin)) / (f32)(ARRAY_COUNT(g_skin) - 1);
     // Волосы почти у всех тёмные, седина со старостью
     f32 hr = hash01(&s);

@@ -27,7 +27,7 @@ static const struct {
     [LOOK_FAT] = { "ПОЛНОТА", 0.0f, 1.0f },     [LOOK_LEAN] = { "ХУДОБА", 0.0f, 1.0f },
     [LOOK_STRONG] = { "МЫШЦЫ", 0.0f, 1.0f },
     [LOOK_OLD] = { "ВОЗРАСТ", 0.0f, 1.0f },     [LOOK_NOSE] = { "НОС", -1.0f, 1.0f },
-    [LOOK_EYES] = { "РАЗРЕЗ ГЛАЗ", -1.0f, 1.0f }, [LOOK_JAW] = { "ЧЕЛЮСТЬ", -0.6f, 1.0f },
+    [LOOK_EYES] = { "РАЗРЕЗ ГЛАЗ", -1.0f, 1.0f }, [LOOK_JAW] = { "ЧЕЛЮСТЬ", -0.6f, 0.5f },  // выше +50 не даём (пользователь 2026-10-30)
     [LOOK_LIPS] = { "ГУБЫ", -0.6f, 1.0f },  // ниже −0.6 губы расходятся
 };
 static const u8 g_body_morphs[] = { LOOK_FAT, LOOK_LEAN, LOOK_STRONG, LOOK_OLD };
@@ -95,7 +95,8 @@ static void widgets(Editor *e, World *w, u32 i)
     }
     f32 hs = p->height[i] > 0.0f ? p->height[i] : 1.0f;
     snprintf(val, sizeof val, "%.0f СМ", (f64)(180.0f * hs));
-    if (hud_form_slider(f, "РОСТ", &hs, 0.83f, 1.15f, val)) set_height(w, i, hs, 1.8f * hs);
+    // Не выше 194 см (решение пользователя 2026-10-30)
+    if (hud_form_slider(f, "РОСТ", &hs, 0.83f, 1.94f / 1.8f, val)) set_height(w, i, hs, 1.8f * hs);
     f32 ws = p->width[i] > 0.0f ? p->width[i] : 1.0f;
     snprintf(val, sizeof val, "%.0f%%", (f64)(100.0f * ws));
     // Шире ±7% тело уже не похоже на человека: плечи и таз раздувает вместе с головой
