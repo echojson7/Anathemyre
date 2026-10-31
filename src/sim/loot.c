@@ -78,13 +78,13 @@ void loot_field(Ground *g, Phys *p, Field *f, GroundFn ground, u64 tick)
             // Бой стих, а оружие лежит: живой подбирает его, уходя
             i32 k = w->gitem[i];
             if (k >= 0 && ground_live(g, k) && g->owner[k] == GROUND_OWN_FIELD + i + 1) {
-                ItemPlace from = place_ground(k), hand = place_hand(f->sheet[i], i);
+                ItemPlace from = place_ground(k), hand = place_hand(&f->ps->sheet[i], i);
                 item_move(g, p, &from, &hand);
             }
             if (k >= 0) w->gitem[i] = COMBAT_IN_HAND;
             continue;
         }
-        combat_hand(g, p, w, i, f->sheet[i], GROUND_OWN_FIELD, v3(0, 0, 0), ground(w->x[i], w->z[i]), tick);
+        combat_hand(g, p, w, i, &f->ps->sheet[i], GROUND_OWN_FIELD, v3(0, 0, 0), ground(w->x[i], w->z[i]), tick);
     }
     // Хозяина слота сменили (field_reuse) — его выроненное теперь ничьё
     for (u32 k = 0; k < g->count; k++) {
@@ -126,7 +126,7 @@ void loot_asks(Ground *g, Phys *p, GroundAsks *a, Squad *sq, u64 tick)
         V3 w = v3(rng_range(&r, -2, 2), rng_range(&r, -2, 2), rng_range(&r, -2, 2));
         // Вещь уже вне мешка (её вынуло окно мешка); некуда класть — обратно в мешок
         ItemPlace out = place_none(a->it[n]), drop = place_drop(xf, v, w, 0);
-        if (a->who[n] < sq->count) out.who = sq->member[a->who[n]];
+        if (a->who[n] < sq->count) out.who = squad_at(sq, a->who[n]);
         if (item_move(g, p, &out, &drop) < 0 && a->who[n] < sq->count) {
             ItemPlace bag = place_bag(squad_sheet(sq, a->who[n]), out.who, -1);
             item_move(g, p, &out, &bag);
@@ -140,9 +140,10 @@ void loot_pickups(Ground *g, Phys *p, Squad *sq, Field *f)
     for (u32 i = 0; i < sq->count; i++) {
         i32 k = sq->pick[i];
         if (k < 0) continue;
-        Player *b = squad_body(sq, i);
+        u32 at = squad_at(sq, i);
+        Player body = person_body(sq->ps, at), *b = &body;
         // Вещь унесли, или его втянули в бой
-        if (!ground_live(g, k) || (b->slot >= 0 && field_awake(f, (u32)b->slot))) {
+        if (!ground_live(g, k) || field_awake(f, at)) {
             sq->pick[i] = -1;
             continue;
         }
@@ -151,15 +152,19 @@ void loot_pickups(Ground *g, Phys *p, Squad *sq, Field *f)
         if (d > LOOT_PICK_R) {
             // Дошёл, а она откатилась — идёт следом; далеко укатилась — бросает
             if (!b->moving) {
-                if (d < 6.0f) player_order_move(b, x);
-                else sq->pick[i] = -1;
+                if (d < 6.0f) {
+                    player_order_move(b, x);
+                    person_set_body(sq->ps, at, b);
+                } else {
+                    sq->pick[i] = -1;
+                }
             }
             continue;
         }
         sq->pick[i] = -1;
         u16 o = g->owner[k];
         CharSheet *c = squad_sheet(sq, i);
-        ItemPlace from = place_ground(k), bag = place_bag(c, sq->member[i], -1);
+        ItemPlace from = place_ground(k), bag = place_bag(c, at, -1);
         if (item_move(g, p, &from, &bag) < 0) {
             log_info("%s: МЕШОК ПОЛОН. ВЕЩЬ ОСТАЛАСЬ НА ЗЕМЛЕ.", c->name);
             continue;
@@ -176,6 +181,7 @@ void loot_pickups(Ground *g, Phys *p, Squad *sq, Field *f)
         }
         b->moving = false;
         b->target = b->pos;
+        person_set_body(sq->ps, at, b);
     }
 }
 

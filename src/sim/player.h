@@ -18,34 +18,46 @@ enum { CTRL_FREE, CTRL_CHASE, CTRL_FIGHT };
 // Скорость режима для здорового среднего человека, м/с
 extern const f32 g_gait_speed[GAIT_COUNT];
 
+// Тело без места: походка, поза отдыха, приказ. Место и курс у людей мира — столбцы реестра (persons.h),
+// поэтому поля идут списком: тот же список в Motion (столбец реестра) и в Player (тело целиком, значением)
+#define MOTION_FIELDS \
+    f32  move_yaw;   /* куда направлена скорость */ \
+    f32  speed;      /* м/с */ \
+    f32  turn_rate;  /* поворот тела, рад/с (для переступания на месте) */ \
+    f32  lean_fwd;   /* наклон тела вперёд (разгон) и назад (торможение), рад */ \
+    f32  lean_side;  /* крен в поворот, рад; > 0 — влево */ \
+    f32  look;       /* голова к цели раньше тела, рад относительно heading */ \
+    f32  idle;       /* сколько стоит без движения, с */ \
+    /* Поза отдыха (anim.h, RestKind): садится, держит, встаёт. Пока садится или встаёт — не идёт */ \
+    u8   rest, rest_ph; \
+    u16  rest_n;     /* сколько поз было: от него и rest_seed выбор следующей */ \
+    u32  rest_seed; \
+    f32  rest_t;     /* с от начала фазы; в RP_BACK — сколько входа осталось пройти назад */ \
+    f32  rest_hold;  /* сколько держать позу, с */ \
+    f32  phase, walk; \
+    f32  run;        /* походка: 0 шаг .. 1 бег, следует за фактической скоростью */ \
+    f32  vmax;       /* предел скорости на этот кадр, ставит отряд */ \
+    u8   gait; \
+    u8   ctrl;       /* CTRL_* */ \
+    u16  group;      /* номер приказа: кто идёт вместе, держит общий темп */ \
+    i8   stride;     /* длина шага перед остановкой: 1 + stride/400 */ \
+    bool moving; \
+    V3   target; \
+    f32  marker;     /* сколько ещё секунд видна метка цели */
+
+typedef struct Motion { MOTION_FIELDS } Motion;
+
+// Тело целиком значением: место, курс и Motion. Им считает ходьба (player_update) и его показывает кадр
 typedef struct Player {
-    V3   pos;
-    f32  heading;    // куда смотрит тело
-    f32  move_yaw;   // куда направлена скорость
-    f32  speed;      // м/с
-    f32  turn_rate;  // поворот тела, рад/с (для переступания на месте)
-    f32  lean_fwd;   // наклон тела вперёд (разгон) и назад (торможение), рад
-    f32  lean_side;  // крен в поворот, рад; > 0 — влево
-    f32  look;       // голова к цели раньше тела, рад относительно heading
-    f32  idle;       // сколько стоит без движения, с
-    // Поза отдыха (anim.h, RestKind): садится, держит, встаёт. Пока садится или встаёт — не идёт
-    u8   rest, rest_ph;
-    u16  rest_n;     // сколько поз было: от него и rest_seed выбор следующей
-    u32  rest_seed;
-    f32  rest_t;     // с от начала фазы; в RP_BACK — сколько входа осталось пройти назад
-    f32  rest_hold;  // сколько держать позу, с
-    f32  phase, walk;
-    f32  run;        // походка: 0 шаг .. 1 бег, следует за фактической скоростью
-    f32  vmax;       // предел скорости на этот кадр, ставит отряд
-    u8   gait;
-    u16  group;      // номер приказа: кто идёт вместе, держит общий темп
-    u8   ctrl;       // CTRL_*
-    i8   stride;     // длина шага перед остановкой: 1 + stride/400 (в байтах выравнивания, размер прежний)
-    i32  slot;       // слот на поле боя, -1 — нет
-    V3   target;
-    bool moving;
-    f32  marker;     // сколько ещё секунд видна метка цели
+    V3  pos;
+    f32 heading;  // куда смотрит тело
+    MOTION_FIELDS
 } Player;
+
+// Motion лежит в Player с move_yaw без зазоров: тело собирается и разбирается одним memcpy (persons.h)
+#define PLAYER_MOTION_AT 16
+_Static_assert(offsetof(Player, move_yaw) == PLAYER_MOTION_AT, "Player: Motion сразу за местом и курсом");
+_Static_assert(sizeof(Player) == PLAYER_MOTION_AT + sizeof(Motion), "Player = место, курс, Motion");
 
 void player_init(Player *p, V3 pos, f32 heading);
 void player_order_move(Player *p, V3 target);

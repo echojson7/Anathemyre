@@ -76,7 +76,6 @@ void player_init(Player *p, V3 pos, f32 heading)
     p->heading = p->move_yaw = heading;
     p->gait = GAIT_RUN;
     p->vmax = g_gait_speed[GAIT_RUN];
-    p->slot = -1;
     // Зерно поз от места появления: одно и то же при каждом запуске
     u32 bx, bz;
     memcpy(&bx, &pos.x, 4);

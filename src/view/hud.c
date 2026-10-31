@@ -78,7 +78,7 @@ typedef struct LookData {
     const f32 *skill;
     ItemStack equip[SLOT_COUNT + 1];
     CharSheet *sheet;   // свои: вещи можно перекладывать
-    const Player *body; // свои: режим шага
+    const Motion *body; // свои: режим шага
 } LookData;
 
 // Два слоя: нижняя полоса (отряд, выбранный) и верхний — окна, часы, кнопки, подписи в мире
@@ -226,15 +226,15 @@ static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 
         u8 kd = LOOK_SQUAD;
         u32 idx = k;
         if (k < w->squad->count) {
-            pos = w->view[w->squad->member[k]].pos;
-            u32 s = (u32)squad_body(w->squad, k)->slot;
+            u32 s = squad_at(w->squad, k);
+            pos = w->view[s].pos;
             if (field_awake(fd, s) && fs_lying(fd->w.state[s])) tall = 0.4f;
         } else if (k >= w->squad->count + ARENA_MAX_BOUT) {
             u32 s = k - w->squad->count - ARENA_MAX_BOUT;
             if (fd->flags[s] & (FF_PLAYER | FF_ABSENT)) continue;
             kd = LOOK_FIELD;
             idx = s;
-            pos = w->view[s].pos;  // слот поля = номер в таблице
+            pos = w->view[s].pos;  // слот поля = место в реестре
             if (field_awake(fd, s) && fs_lying(fd->w.state[s])) tall = 0.4f;
         } else {
             u32 i = k - w->squad->count;
@@ -263,10 +263,11 @@ static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 
 
 // Режим передвижения видно и когда стоит: «БЕГ» — побежит по приказу.
 // В бою — состояние боя, в погоне — к цели
-static const char *move_state(const Field *f, const Player *p)
+static const char *move_state(const Field *f, u32 i)
 {
     static const char *go[GAIT_COUNT] = { "ИДЁТ ШАГОМ", "ТРУСИТ", "БЕЖИТ" };
-    if (p->slot >= 0 && field_awake(f, (u32)p->slot)) return g_state_name[f->w.state[p->slot]];
+    const Motion *p = &f->ps->move[i];
+    if (field_awake(f, i)) return g_state_name[f->w.state[i]];
     if (p->ctrl == CTRL_CHASE) return "К ЦЕЛИ";
     if (p->rest != REST_NONE && p->rest < REST_COUNT) {
         // Руки на груди и взгляд вверх — без «садится» и «встаёт»
@@ -280,7 +281,7 @@ static const char *move_state(const Field *f, const Player *p)
 // Враждует ли чужой слот с отрядом
 static bool foe_of_squad(const HudWorld *w, u32 slot)
 {
-    return w->squad->count && squad_body(w->squad, 0)->slot >= 0 && field_hostile(w->field, (u32)squad_body(w->squad, 0)->slot, slot);
+    return w->squad->count && field_hostile(w->field, squad_at(w->squad, 0), slot);
 }
 
 static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
@@ -291,9 +292,10 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
         CharSheet *c = squad_sheet(w->squad, look);
         o->name = c->name;
         o->role = "ОТРЯД";
-        o->body = squad_body(w->squad, look);
-        o->state = move_state(w->field, o->body);
-        if (o->body->slot >= 0 && field_awake(w->field, (u32)o->body->slot)) o->bleed = w->field->w.bleed[o->body->slot];
+        u32 at = squad_at(w->squad, look);
+        o->body = squad_move(w->squad, look);
+        o->state = move_state(w->field, at);
+        if (field_awake(w->field, at)) o->bleed = w->field->w.bleed[at];
         memcpy(o->hp, c->d.hp, sizeof o->hp);
         o->blood = c->d.blood;
         o->blood_max = 100.0f * c->d.mass / 75.0f;
@@ -310,10 +312,10 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
         // Чужой на поле: лист читается, но не меняется
         const Field *fd = w->field;
         if (look >= fd->w.count) return false;
-        const CharSheet *c = fd->sheet[look];
+        const CharSheet *c = &fd->ps->sheet[look];
         o->name = c->name;
         o->role = foe_of_squad(w, look) ? "ВРАГ" : c->role ? c->role : "ПРОХОЖИЙ";
-        o->state = move_state(fd, fd->body[look]);
+        o->state = move_state(fd, look);
         if (field_awake(fd, look)) o->bleed = fd->w.bleed[look];
         memcpy(o->hp, c->d.hp, sizeof o->hp);
         o->blood = c->d.blood;
@@ -612,7 +614,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
     GroundAsks *ask = w->ground_ask;
     if (lmb && !over && h->held.def && h->look_kind == LOOK_SQUAD && h->look < sq->count && ask && ask->n < GROUND_ASKS &&
         L.my < L.bottom_top) {
-        const Player *b = &w->view[sq->member[h->look]];
+        const Player *b = &w->view[squad_at(sq, h->look)];
         f32 hs = sinf(b->heading), hc = cosf(b->heading);
         ask->it[ask->n] = h->held;
         ask->at[ask->n] = v3_add(b->pos, v3(hs * 0.35f, 1.1f, hc * 0.35f));
@@ -642,7 +644,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
                 bool in_box = false;
                 for (u32 k = 0; k <= 12 && !in_box; k++) {
                     f32 a = (f32)k * (2.0f * PI_F / 12.0f), r = k ? SELECT_RING_R : 0.0f, px, py;
-                    V3 p = v3_add(w->view[sq->member[i]].pos, v3(sinf(a) * r, 0.03f, cosf(a) * r));
+                    V3 p = v3_add(w->view[squad_at(sq, i)].pos, v3(sinf(a) * r, 0.03f, cosf(a) * r));
                     in_box = project(w->view_proj, p, &px, &py) && px >= x0 && px <= x1 && py >= y0 && py <= y1;
                 }
                 if (in_box) sq->selected[i] = true;
@@ -973,7 +975,8 @@ static void draw_card(const Hud *h, const HudWorld *w, const Layout *L, u32 i)
 {
     const Squad *sq = w->squad;
     const CharSheet *c = squad_sheet(sq, i);
-    const Player *pl = squad_body(sq, i);
+    const Motion *pl = squad_move(sq, i);
+    u32 at = squad_at(sq, i);
     f32 x = card_x(L, i), y = L->bottom;
     bool hot = inside(L->bmx, L->bmy, x, y, CARD_W, BOTTOM_H);
     bool look = h->look_kind == LOOK_SQUAD && h->look == i;
@@ -988,8 +991,8 @@ static void draw_card(const Hud *h, const HudWorld *w, const Layout *L, u32 i)
     text_fit(x + 4, y + 71, CARD_W - 8, sq->selected[i] ? C_SEL : C_TEXT, c->name);
     // В бою — что делает в бою; выбыл — красным
     const Field *fd = w->field;
-    if (pl->slot >= 0 && field_awake(fd, (u32)pl->slot)) {
-        u8 st = fd->w.state[pl->slot];
+    if (field_awake(fd, at)) {
+        u8 st = fd->w.state[at];
         text_fit(x + 4, y + 80, CARD_W - 8, fs_out(st) ? C_BAD : C_ACCENT, fs_out(st) ? g_state_name[st] : "В БОЮ");
     } else {
         text_fit(x + 4, y + 80, CARD_W - 8, C_DIM, pl->ctrl == CTRL_CHASE ? "К ЦЕЛИ" : (pl->moving ? (pl->gait == GAIT_RUN ? "БЕЖИТ" : "ИДЁТ") : "СТОИТ"));

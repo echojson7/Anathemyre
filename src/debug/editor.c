@@ -41,15 +41,15 @@ void editor_init(Editor *e)
     e->who = -1;
 }
 
-// Кого правят: свой из отряда или прохожий на поле (слот поля — номер в таблице людей)
+// Кого правят: свой из отряда или прохожий на поле (слот поля — место в реестре)
 static i32 target(const Hud *h, const World *w)
 {
-    if (h->look_kind == LOOK_SQUAD && h->look < w->squad.count) return (i32)w->squad.member[h->look];
-    if (h->look_kind == LOOK_FIELD && h->look < w->people->count) return (i32)h->look;
+    if (h->look_kind == LOOK_SQUAD && h->look < w->squad.count) return (i32)squad_at(&w->squad, h->look);
+    if (h->look_kind == LOOK_FIELD && h->look < w->persons->count) return (i32)h->look;
     return -1;
 }
 
-static void remember(Editor *e, const People *p, u32 i)
+static void remember(Editor *e, const Persons *p, u32 i)
 {
     e->lk = p->lk[i];
     e->lk_own = p->lk_own[i];
@@ -62,11 +62,10 @@ static void remember(Editor *e, const People *p, u32 i)
 // Рост — настоящий: лист и поле боя тоже (досягаемость в бою)
 static void set_height(World *w, u32 i, f32 hs, f32 sheet_h)
 {
-    People *p = w->people;
+    Persons *p = w->persons;
     p->height[i] = hs;
     p->sheet[i].d.height = sheet_h;
-    i32 slot = p->body[i].slot;
-    if (slot >= 0 && (u32)slot < w->field->w.count) w->field->w.height[slot] = sheet_h;
+    if (i < w->field->w.count) w->field->w.height[i] = sheet_h;
 }
 
 // Линейный цвет в образец интерфейса
@@ -78,7 +77,7 @@ static u32 swatch(V3 c)
 
 static void widgets(Editor *e, World *w, u32 i)
 {
-    People *p = w->people;
+    Persons *p = w->persons;
     CharLook *l = &p->lk[i];
     HudForm *f = &e->f;
     char val[32];
@@ -146,7 +145,7 @@ static void widgets(Editor *e, World *w, u32 i)
         p->variant[i] = e->variant;
         p->width[i] = e->width;
         set_height(w, i, e->height, e->sheet_h);
-        people_relook(p, i);
+        persons_relook(p, i);
         p->lk_own[i] = e->lk_own;
         log_info("ВНЕШНОСТЬ: %s. Возвращена прежняя.", p->sheet[i].name ? p->sheet[i].name : "безымянный");
         return;
@@ -154,7 +153,7 @@ static void widgets(Editor *e, World *w, u32 i)
     if (!changed) return;
     look_paint(l);
     p->lk_own[i] = true;
-    people_relook(p, i);
+    persons_relook(p, i);
 }
 
 void editor_input(Editor *e, Hud *h, Input *in, World *w, RtsCamera *cam, bool humans_on)
@@ -164,17 +163,17 @@ void editor_input(Editor *e, Hud *h, Input *in, World *w, RtsCamera *cam, bool h
     i32 who = target(h, w);
     if (who != e->who || (e->f.open && !was)) {
         e->who = who;
-        if (who >= 0) remember(e, w->people, (u32)who);
+        if (who >= 0) remember(e, w->persons, (u32)who);
     }
     // Камера вплотную, лицом к лицу
     if (e->f.open && !was) {
         camera_close(true);
         cam->dist = 3.0f;
         cam->pitch = 0.12f;
-        if (who >= 0) cam->yaw = w->people->body[who].heading;
+        if (who >= 0) cam->yaw = w->persons->heading[who];
     }
     Input raw = *in;
-    const char *name = who >= 0 && w->people->sheet[who].name ? w->people->sheet[who].name : "";
+    const char *name = who >= 0 && w->persons->sheet[who].name ? w->persons->sheet[who].name : "";
     if (hud_form_begin(&e->f, &raw, "ВНЕШНОСТЬ", name)) {
         if (who >= 0) widgets(e, w, (u32)who);
         else hud_form_text(&e->f, "ВЫБЕРИ СВОЕГО ИЛИ ПРОХОЖЕГО", "");
