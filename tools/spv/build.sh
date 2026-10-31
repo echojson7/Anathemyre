@@ -8,7 +8,7 @@
 # ./tools/spv/build.sh          пересобрать изменённые
 # ./tools/spv/build.sh --all    пересобрать все
 # ./tools/spv/build.sh --check  сверить index.txt с исходниками, собрать во временную папку, проверить .spv (CI)
-# Список пополняется сам: ANA_SPV_LIST=tools/spv/list.txt ./build/anathemyre ... (игра под GL дописывает рецепты)
+# Список пополняется сам: ANA_SPV_LIST=tools/spv/list.txt ./build/anathemyre ... (игра дописывает рецепты)
 set -e
 cd "$(dirname "$0")/../.."
 MODE=${1:-}

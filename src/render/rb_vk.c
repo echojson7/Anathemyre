@@ -110,6 +110,7 @@ typedef struct Variant {
     VkFormat   color[RB_MAX_COLORS];
     u32        ncolor;
     VkFormat   depth;
+    bool       rate;        // для прохода с картой частоты шейдинга
 } Variant;
 
 // Что шейдер берёт из SPIR-V: привязки и входы вершин
@@ -499,6 +500,10 @@ static bool create_device(void)
     VkPhysicalDeviceRobustness2FeaturesEXT rob = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT };
     bool rob_ext = has_ext(ext, n_ext, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
     if (rob_ext) a13.pNext = &rob;
+    VkPhysicalDeviceFragmentShadingRateFeaturesKHR fsr = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR, .pNext = a13.pNext };
+    bool fsr_ext = has_ext(ext, n_ext, VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME);
+    if (fsr_ext) a13.pNext = &fsr;
     vkGetPhysicalDeviceFeatures2(g_vk.gpu, &a);
 
     // Что включаем: обязательное проверено в score_gpu, остальное — если есть
@@ -544,6 +549,16 @@ static bool create_device(void)
         e_clip.pNext = &e_rob;
         want[n_want++] = VK_EXT_ROBUSTNESS_2_EXTENSION_NAME;
     }
+    // Частота шейдинга по карте (ШЕЙДИНГ БЛОКАМИ): частота конвейера идёт в паре, без неё карта не включается
+    VkPhysicalDeviceFragmentShadingRateFeaturesKHR e_fsr = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR,
+        .pipelineFragmentShadingRate = 1, .attachmentFragmentShadingRate = 1 };
+    bool vrs = fsr_ext && fsr.pipelineFragmentShadingRate && fsr.attachmentFragmentShadingRate;
+    if (vrs) {
+        e_fsr.pNext = e_clip.pNext;
+        e_clip.pNext = &e_fsr;
+        want[n_want++] = VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME;
+    }
 
     f32 prio = 1.0f;
     VkDeviceQueueCreateInfo qci = {
@@ -569,11 +584,23 @@ static bool create_device(void)
 
     g_vk.caps.ubo_align = (u32)g_vk.props.limits.minUniformBufferOffsetAlignment;
     g_vk.caps.ssbo_align = (u32)g_vk.props.limits.minStorageBufferOffsetAlignment;
-    g_vk.caps.vrs = false;   // этап 5
-    VkPhysicalDevicePushDescriptorPropertiesKHR pd = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR };
+    VkPhysicalDeviceFragmentShadingRatePropertiesKHR fp_rate = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_PROPERTIES_KHR };
+    VkPhysicalDevicePushDescriptorPropertiesKHR pd = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR, .pNext = vrs ? &fp_rate : NULL };
     VkPhysicalDeviceProperties2 p2 = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &pd };
     vkGetPhysicalDeviceProperties2(g_vk.gpu, &p2);
     g_vk.max_push_desc = pd.maxPushDescriptors;
+    // Клетка карты частоты: 16 пикселей, если можно (степени двойки в пределах устройства)
+    if (vrs && vkCmdSetFragmentShadingRateKHR) {
+        u32 tw = CLAMP(16u, fp_rate.minFragmentShadingRateAttachmentTexelSize.width,
+                       fp_rate.maxFragmentShadingRateAttachmentTexelSize.width);
+        u32 th = CLAMP(16u, fp_rate.minFragmentShadingRateAttachmentTexelSize.height,
+                       fp_rate.maxFragmentShadingRateAttachmentTexelSize.height);
+        g_vk.caps.vrs = true;
+        g_vk.caps.vrs_tile[0] = (i32)tw;
+        g_vk.caps.vrs_tile[1] = (i32)th;
+    }
     VkQueueFamilyProperties q[32];
     u32 nq = ARRAY_COUNT(q);
     vkGetPhysicalDeviceQueueFamilyProperties(g_vk.gpu, &nq, q);
@@ -1037,6 +1064,7 @@ static bool tex_init(VTex *t, const RbTexDesc *d)
     if (d->usage & RB_TEX_TARGET)
         usage |= depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     if (d->usage & RB_TEX_STORAGE) usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+    if (d->usage & RB_TEX_RATE) usage |= VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;
     bool is3d = d->kind == RB_TEX_3D;
     VkImageCreateInfo ci = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -1582,11 +1610,13 @@ static void desc_formats(const RbPipeDesc *d, VkFormat *col, u32 *n, VkFormat *d
 
 // Графический конвейер под форматы целей прохода. Конвейер GL не знает целей, поэтому здесь
 // по варианту на набор форматов: первый — по объявленным в RbPipeDesc, остальные — при первом вызове
-static VkPipeline variant_get(Pipe *p, const VkFormat *col, u32 ncol, VkFormat depth)
+// и на наличие карты частоты в проходе (в проходе с картой Vulkan требует конвейер с флагом)
+static VkPipeline variant_get(Pipe *p, const VkFormat *col, u32 ncol, VkFormat depth, bool rate)
 {
     for (u32 i = 0; i < p->nvar; i++) {
         const Variant *v = &p->var[i];
-        if (v->ncolor == ncol && v->depth == depth && !memcmp(v->color, col, ncol * sizeof(VkFormat))) return v->pipe;
+        if (v->ncolor == ncol && v->depth == depth && v->rate == rate && !memcmp(v->color, col, ncol * sizeof(VkFormat)))
+            return v->pipe;
     }
     if (p->nvar == MAX_VARIANTS) {
         if (!p->warned) log_error("Vulkan: у конвейера %s вариантов целей больше %u", p->d.name ? p->d.name : "?", MAX_VARIANTS);
@@ -1672,10 +1702,12 @@ static VkPipeline variant_get(Pipe *p, const VkFormat *col, u32 ncol, VkFormat d
         .attachmentCount = ncol,
         .pAttachments = blends,
     };
-    VkDynamicState dyn[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE };
+    // Шаг потока задаётся при привязке: поток нулей идёт с шагом 0. Частота шейдинга — в prep_draw
+    VkDynamicState dyn[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE,
+                             VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR };
     VkPipelineDynamicStateCreateInfo dy = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-        .dynamicStateCount = ARRAY_COUNT(dyn),   // шаг потока задаётся при привязке: поток нулей идёт с шагом 0
+        .dynamicStateCount = ARRAY_COUNT(dyn) - (rate ? 0 : 1),
         .pDynamicStates = dyn,
     };
     VkPipelineRenderingCreateInfo rend = {
@@ -1687,6 +1719,7 @@ static VkPipeline variant_get(Pipe *p, const VkFormat *col, u32 ncol, VkFormat d
     VkGraphicsPipelineCreateInfo ci = {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = &rend,
+        .flags = rate ? VK_PIPELINE_CREATE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR : 0,
         .stageCount = 2,
         .pStages = st,
         .pVertexInputState = &vi,
@@ -1707,6 +1740,7 @@ static VkPipeline variant_get(Pipe *p, const VkFormat *col, u32 ncol, VkFormat d
     memcpy(v->color, col, ncol * sizeof(VkFormat));
     v->ncolor = ncol;
     v->depth = depth;
+    v->rate = rate;
     return pipe;
 }
 
@@ -1774,7 +1808,7 @@ RbPipe rb_vk_pipe_make(const RbPipeDesc *d)
         VkFormat col[RB_MAX_COLORS], depth;
         u32 n;
         desc_formats(d, col, &n, &depth);
-        ok = variant_get(p, col, n, depth) != VK_NULL_HANDLE;
+        ok = variant_get(p, col, n, depth, d->vrs && g_vk.caps.vrs) != VK_NULL_HANDLE;
     }
     if (!ok) {
         pipe_release(p);
@@ -1840,6 +1874,15 @@ static void begin_rendering(bool load)
         .pColorAttachments = ca,
         .pDepthAttachment = has_depth ? &da : NULL,
     };
+    VkRenderingFragmentShadingRateAttachmentInfoKHR fsr = {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR,
+        .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+        .shadingRateAttachmentTexelSize = { (u32)g_vk.caps.vrs_tile[0], (u32)g_vk.caps.vrs_tile[1] },
+    };
+    if (p->rate) {
+        fsr.imageView = tex_view(&g_vk.tex[p->rate], 0, 0);
+        ri.pNext = &fsr;
+    }
     vkCmdBeginRendering(g_vk.cmd, &ri);
 }
 
@@ -2051,11 +2094,20 @@ static bool prep_draw(bool indexed)
     if (!g_vk.in_pass || !g_vk.cur) return false;
     Pipe *p = &g_vk.pipe[g_vk.cur];
     if (p->compute) return false;
-    VkPipeline vp = variant_get(p, g_vk.pass_color, g_vk.pass_ncolor, g_vk.pass_depth);
+    bool rate = g_vk.pass.rate != 0;
+    VkPipeline vp = variant_get(p, g_vk.pass_color, g_vk.pass_ncolor, g_vk.pass_depth, rate);
     if (!vp) return false;
     if (vp != g_vk.bound[0]) {
         vkCmdBindPipeline(g_vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vp);
         g_vk.bound[0] = vp;
+        // По карте шейдит только конвейер с vrs, остальные в том же проходе — каждый пиксель
+        if (rate) {
+            VkExtent2D one = { 1, 1 };
+            VkFragmentShadingRateCombinerOpKHR ops[2] = {
+                VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR,
+                p->d.vrs ? VK_FRAGMENT_SHADING_RATE_COMBINER_OP_REPLACE_KHR : VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR };
+            vkCmdSetFragmentShadingRateKHR(g_vk.cmd, &one, ops);
+        }
     }
     if (!prep_desc(p, 0)) return false;
     // Потоки: все сразу одной командой, если что-то сменилось. Нет буфера — поток нулей с шагом 0

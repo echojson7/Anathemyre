@@ -49,6 +49,11 @@ bool rb_spv_recipe(const RbPipeDesc *d, RbStage stage, char *line, size_t line_s
         }
         p = e ? e + 1 : p + len;
     }
+    // Размер блока шейдинга нужен только шейдеру фрагментов (rb.glsl)
+    if (stage == RB_STAGE_FRAG && d->frag_size) {
+        put(line, line_size, &nl, " -DRB_VRS", 9);
+        put(defs, sizeof defs, &nd, "~RB_VRS", 7);
+    }
     for (u32 i = 0; i < RB_SHADER_FILES && files[i]; i++) {
         put(line, line_size, &nl, " ", 1);
         put(line, line_size, &nl, files[i], strlen(files[i]));

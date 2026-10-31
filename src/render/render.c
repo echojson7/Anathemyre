@@ -528,14 +528,20 @@ static void target_free(Target *t)
     memset(t, 0, sizeof *t);
 }
 
-static bool target_make(Target *t, i32 w, i32 h, RbFmt color_fmt, bool depth)
+// usage — добавочное назначение цвета (RB_TEX_RATE у карты частоты)
+static bool target_make_u(Target *t, i32 w, i32 h, RbFmt color_fmt, bool depth, u32 usage)
 {
     target_free(t);
     t->w = w;
     t->h = h;
-    t->color = rb_tex_make(&(RbTexDesc){ .fmt = color_fmt, .w = w, .h = h, .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
+    t->color = rb_tex_make(&(RbTexDesc){ .fmt = color_fmt, .w = w, .h = h, .usage = RB_TEX_TARGET | RB_TEX_SAMPLED | usage });
     if (depth) t->depth = rb_tex_make(&(RbTexDesc){ .fmt = RB_FMT_D32F, .w = w, .h = h, .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
     return t->color && (!depth || t->depth);
+}
+
+static bool target_make(Target *t, i32 w, i32 h, RbFmt color_fmt, bool depth)
+{
+    return target_make_u(t, w, h, color_fmt, depth, 0);
 }
 
 // Проход в цель t
@@ -1775,8 +1781,8 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
             target_make(&R.bloom[i], bw, bh, RB_FMT_RGBA16F, false);
         }
         if (R.vrs && !(target_make(&R.block, (iw + 3) / 4, (ih + 3) / 4, RB_FMT_R8UI, false) &&
-                       target_make(&R.rate, (iw + R.vrs_tile[0] - 1) / R.vrs_tile[0], (ih + R.vrs_tile[1] - 1) / R.vrs_tile[1],
-                                   RB_FMT_R8UI, false)))
+                       target_make_u(&R.rate, (iw + R.vrs_tile[0] - 1) / R.vrs_tile[0], (ih + R.vrs_tile[1] - 1) / R.vrs_tile[1],
+                                     RB_FMT_R8UI, false, RB_TEX_RATE)))
             R.vrs = false;
         log_info("РЕНДЕР: кадр %dx%d", iw, ih);
     }
