@@ -1,4 +1,4 @@
-// Слой rb: выбор бэкенда (GL или Vulkan) и вызовы через его таблицу. Рецепты SPIR-V для Vulkan
+// Слой rb: рецепты SPIR-V и запись их списка. Сам слой — rb_vk.c
 #include "rb_backend.h"
 
 #include <stdio.h>
@@ -6,26 +6,6 @@
 #include <string.h>
 
 #include "../core/log.h"
-
-static const RbBackend *g_be = &rb_gl_backend;
-static RbApi g_api = RB_API_GL;
-
-void rb_select(RbApi api)
-{
-    g_api = api;
-    g_be = api == RB_API_VULKAN ? &rb_vk_backend : &rb_gl_backend;
-}
-
-RbApi rb_api(void) { return g_api; }
-
-// rb_pipe_make свой (ниже): сгенерированный уходит под другим именем и не используется
-#define rb_pipe_make rb_pipe_make_plain
-#define RB_CALL_R(ret, name, params, args) ret rb_##name params { return g_be->name args; }
-#define RB_CALL_V(name, params, args) void rb_##name params { g_be->name args; }
-RB_FUNCS(RB_CALL_R, RB_CALL_V)
-#undef RB_CALL_R
-#undef RB_CALL_V
-#undef rb_pipe_make
 
 static const char *const k_stage[] = { "vert", "frag", "comp" };
 
@@ -82,7 +62,7 @@ bool rb_spv_recipe(const RbPipeDesc *d, RbStage stage, char *line, size_t line_s
     return nl < line_size && nn < name_size && files[0];
 }
 
-// ANA_SPV_LIST=файл: дописать в него рецепты всех собранных конвейеров (запуск под GL собирает список для Vulkan)
+// ANA_SPV_LIST=файл: дописать в него рецепты всех собранных конвейеров (недостающие .spv собирает tools/spv/build.sh)
 static void recipe_log(const RbPipeDesc *d)
 {
     const char *path = getenv("ANA_SPV_LIST");
@@ -112,5 +92,5 @@ static void recipe_log(const RbPipeDesc *d)
 RbPipe rb_pipe_make(const RbPipeDesc *d)
 {
     recipe_log(d);
-    return g_be->pipe_make(d);
+    return rb_vk_pipe_make(d);
 }

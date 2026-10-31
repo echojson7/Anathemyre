@@ -1,4 +1,4 @@
-// Linux: X11 + GLX или Vulkan. libGL и libvulkan подгружаются через dlopen, без линковки и заголовков
+// Linux: окно X11 для Vulkan. libvulkan подгружается через dlopen, без линковки и заголовков
 #define _GNU_SOURCE
 #include "platform.h"
 
@@ -12,67 +12,15 @@
 
 #include "../core/log.h"
 
-// Минимальные объявления GLX
-typedef struct __GLXFBConfigRec *GLXFBConfig;
-typedef struct __GLXcontextRec *GLXContext;
-typedef XID GLXDrawable;
-
-#define GLX_DOUBLEBUFFER 5
-#define GLX_RED_SIZE 8
-#define GLX_GREEN_SIZE 9
-#define GLX_BLUE_SIZE 10
-#define GLX_ALPHA_SIZE 11
-#define GLX_DEPTH_SIZE 12
-#define GLX_STENCIL_SIZE 13
-#define GLX_X_VISUAL_TYPE 0x22
-#define GLX_TRUE_COLOR 0x8002
-#define GLX_DRAWABLE_TYPE 0x8010
-#define GLX_RENDER_TYPE 0x8011
-#define GLX_X_RENDERABLE 0x8012
-#define GLX_WINDOW_BIT 0x1
-#define GLX_RGBA_BIT 0x1
-#define GLX_CONTEXT_MAJOR_VERSION_ARB 0x2091
-#define GLX_CONTEXT_MINOR_VERSION_ARB 0x2092
-#define GLX_CONTEXT_FLAGS_ARB 0x2094
-#define GLX_CONTEXT_PROFILE_MASK_ARB 0x9126
-#define GLX_CONTEXT_CORE_PROFILE_BIT_ARB 0x1
-#define GLX_CONTEXT_DEBUG_BIT_ARB 0x1
-
-typedef PlatformProc (*PFN_glXGetProcAddressARB)(const unsigned char *);
-typedef GLXFBConfig *(*PFN_glXChooseFBConfig)(Display *, int, const int *, int *);
-typedef XVisualInfo *(*PFN_glXGetVisualFromFBConfig)(Display *, GLXFBConfig);
-typedef Bool (*PFN_glXMakeCurrent)(Display *, GLXDrawable, GLXContext);
-typedef void (*PFN_glXSwapBuffers)(Display *, GLXDrawable);
-typedef void (*PFN_glXDestroyContext)(Display *, GLXContext);
-typedef GLXContext (*PFN_glXCreateContextAttribsARB)(Display *, GLXFBConfig, GLXContext, Bool, const int *);
-typedef void (*PFN_glXSwapIntervalEXT)(Display *, GLXDrawable, int);
-
 static struct {
     Display *dpy;
     Window   win;
     Colormap cmap;
     Atom     wm_delete;
-    void    *libgl;
     void    *libvk;
-    bool     vulkan;   // окно без GL-контекста, выводит rb_vk.c
-    GLXContext ctx;
     i32      width, height;
     bool     have_mouse;
-
-    PFN_glXGetProcAddressARB    GetProcAddress;
-    PFN_glXMakeCurrent          MakeCurrent;
-    PFN_glXSwapBuffers          SwapBuffers;
-    PFN_glXDestroyContext       DestroyContext;
 } g_x;
-
-// dlsym отдаёт void*, а ISO C запрещает прямое приведение к указателю на функцию
-static PlatformProc sym(const char *name)
-{
-    void *p = dlsym(g_x.libgl, name);
-    PlatformProc f;
-    memcpy(&f, &p, sizeof f);
-    return f;
-}
 
 static int x_error_handler(Display *d, XErrorEvent *e)
 {
@@ -83,11 +31,6 @@ static int x_error_handler(Display *d, XErrorEvent *e)
 
 void platform_preinit(void)
 {
-}
-
-void platform_use_vulkan(bool on)
-{
-    g_x.vulkan = on;
 }
 
 static bool init_window(const char *title, i32 width, i32 height, Visual *visual, int depth)
@@ -119,34 +62,8 @@ static bool init_window(const char *title, i32 width, i32 height, Visual *visual
     return true;
 }
 
-bool platform_init(const char *title, i32 width, i32 height, bool gl_debug)
+bool platform_init(const char *title, i32 width, i32 height)
 {
-    if (g_x.vulkan) {
-        g_x.dpy = XOpenDisplay(NULL);
-        if (!g_x.dpy) {
-            log_error("X11: нет дисплея");
-            return false;
-        }
-        XSetErrorHandler(x_error_handler);
-        int screen = DefaultScreen(g_x.dpy);
-        return init_window(title, width, height, DefaultVisual(g_x.dpy, screen), DefaultDepth(g_x.dpy, screen));
-    }
-    g_x.libgl = dlopen("libGL.so.1", RTLD_NOW | RTLD_LOCAL);
-    if (!g_x.libgl) {
-        log_error("libGL.so.1 не найдена: %s", dlerror());
-        return false;
-    }
-    g_x.GetProcAddress = (PFN_glXGetProcAddressARB)sym("glXGetProcAddressARB");
-    PFN_glXChooseFBConfig ChooseFBConfig = (PFN_glXChooseFBConfig)sym("glXChooseFBConfig");
-    PFN_glXGetVisualFromFBConfig GetVisual = (PFN_glXGetVisualFromFBConfig)sym("glXGetVisualFromFBConfig");
-    g_x.MakeCurrent = (PFN_glXMakeCurrent)sym("glXMakeCurrent");
-    g_x.SwapBuffers = (PFN_glXSwapBuffers)sym("glXSwapBuffers");
-    g_x.DestroyContext = (PFN_glXDestroyContext)sym("glXDestroyContext");
-    if (!g_x.GetProcAddress || !ChooseFBConfig || !GetVisual || !g_x.MakeCurrent || !g_x.SwapBuffers) {
-        log_error("GLX: не хватает функций");
-        return false;
-    }
-
     g_x.dpy = XOpenDisplay(NULL);
     if (!g_x.dpy) {
         log_error("X11: нет дисплея");
@@ -154,73 +71,16 @@ bool platform_init(const char *title, i32 width, i32 height, bool gl_debug)
     }
     XSetErrorHandler(x_error_handler);
     int screen = DefaultScreen(g_x.dpy);
-
-    const int fb_attr[] = {
-        GLX_X_RENDERABLE, True,
-        GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
-        GLX_RENDER_TYPE, GLX_RGBA_BIT,
-        GLX_X_VISUAL_TYPE, GLX_TRUE_COLOR,
-        GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8,
-        GLX_DEPTH_SIZE, 24,
-        GLX_DOUBLEBUFFER, True,
-        None
-    };
-    int count = 0;
-    GLXFBConfig *configs = ChooseFBConfig(g_x.dpy, screen, fb_attr, &count);
-    if (!configs || count == 0) {
-        log_error("GLX: подходящий FBConfig не найден");
-        return false;
-    }
-    GLXFBConfig fbc = configs[0];
-    XFree(configs);
-
-    XVisualInfo *vi = GetVisual(g_x.dpy, fbc);
-    if (!vi) {
-        log_error("GLX: нет visual");
-        return false;
-    }
-    bool ok = init_window(title, width, height, vi->visual, vi->depth);
-    XFree(vi);
-    if (!ok) return false;
-
-    PFN_glXCreateContextAttribsARB CreateContextAttribs =
-        (PFN_glXCreateContextAttribsARB)g_x.GetProcAddress((const unsigned char *)"glXCreateContextAttribsARB");
-    if (!CreateContextAttribs) {
-        log_error("GLX: нет glXCreateContextAttribsARB");
-        return false;
-    }
-    const int ctx_attr[] = {
-        GLX_CONTEXT_MAJOR_VERSION_ARB, 4,
-        GLX_CONTEXT_MINOR_VERSION_ARB, 5,
-        GLX_CONTEXT_PROFILE_MASK_ARB, GLX_CONTEXT_CORE_PROFILE_BIT_ARB,
-        GLX_CONTEXT_FLAGS_ARB, gl_debug ? GLX_CONTEXT_DEBUG_BIT_ARB : 0,
-        None
-    };
-    g_x.ctx = CreateContextAttribs(g_x.dpy, fbc, NULL, True, ctx_attr);
-    XSync(g_x.dpy, False);
-    if (!g_x.ctx) {
-        log_error("GLX: контекст OpenGL 4.5 core не создан");
-        return false;
-    }
-    if (!g_x.MakeCurrent(g_x.dpy, g_x.win, g_x.ctx)) {
-        log_error("GLX: glXMakeCurrent провален");
-        return false;
-    }
-    return true;
+    return init_window(title, width, height, DefaultVisual(g_x.dpy, screen), DefaultDepth(g_x.dpy, screen));
 }
 
 void platform_shutdown(void)
 {
     if (g_x.dpy) {
-        if (g_x.ctx) {
-            g_x.MakeCurrent(g_x.dpy, None, NULL);
-            g_x.DestroyContext(g_x.dpy, g_x.ctx);
-        }
         if (g_x.win) XDestroyWindow(g_x.dpy, g_x.win);
         if (g_x.cmap) XFreeColormap(g_x.dpy, g_x.cmap);
         XCloseDisplay(g_x.dpy);
     }
-    if (g_x.libgl) dlclose(g_x.libgl);
     if (g_x.libvk) dlclose(g_x.libvk);
     memset(&g_x, 0, sizeof g_x);
 }
@@ -313,20 +173,6 @@ void platform_poll(Input *in)
     }
 }
 
-void platform_swap(void)
-{
-    if (g_x.vulkan) return;
-    g_x.SwapBuffers(g_x.dpy, g_x.win);
-}
-
-void platform_set_vsync(bool on)
-{
-    if (g_x.vulkan) return;
-    PFN_glXSwapIntervalEXT f =
-        (PFN_glXSwapIntervalEXT)g_x.GetProcAddress((const unsigned char *)"glXSwapIntervalEXT");
-    if (f) f(g_x.dpy, g_x.win, on ? 1 : 0);
-}
-
 void platform_set_fullscreen(bool on)
 {
     // Просьба оконному менеджеру (EWMH): _NET_WM_STATE_FULLSCREEN
@@ -364,12 +210,6 @@ PlatformProc platform_vk_loader(void)
     PlatformProc f;
     memcpy(&f, &p, sizeof f);
     return f;
-}
-
-PlatformProc platform_gl_proc(const char *name)
-{
-    PlatformProc p = g_x.GetProcAddress((const unsigned char *)name);
-    return p ? p : sym(name);
 }
 
 bool platform_exe_dir(char *buf, size_t size)

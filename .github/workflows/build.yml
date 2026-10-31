@@ -1,11 +1,24 @@
 name: build
 
+# push — только основные ветки; ветки PR проверяются один раз через pull_request
 on:
   push:
+    branches: [stage0/test-room, main]
   pull_request:
 
+# Новый прогон той же ветки отменяет старый
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+  LSAN_OPTIONS: suppressions=tools/lsan.supp
+  UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+
 jobs:
-  linux:
+  # Сборка один раз: релиз (gcc), отладка и vkcheck (clang, ASan/UBSan); бинарники — артефактом дальше
+  build:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -13,111 +26,129 @@ jobs:
       - name: Зависимости
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential clang libclang-rt-18-dev libx11-dev xvfb xauth libgl1 libgl1-mesa-dri python3-pil \
-            mesa-vulkan-drivers vulkan-validationlayers glslang-tools spirv-tools
+          sudo apt-get install -y --no-install-recommends build-essential clang libclang-rt-18-dev libx11-dev glslang-tools spirv-tools
 
       - name: Релиз, gcc, без предупреждений
         run: make -j"$(nproc)" WERROR=1 CC=gcc
 
-      - name: Отладка с ASan/UBSan, clang
-        run: make debug -j"$(nproc)" WERROR=1 CC=clang
+      - name: Отладка с ASan/UBSan и vkcheck, clang
+        run: |
+          make debug -j"$(nproc)" WERROR=1 CC=clang
+          make vkcheck -j"$(nproc)" WERROR=1 CC=clang
 
       - name: Vulkan — vk.h и SPIR-V совпадают с исходниками (vkgen, glslang, spirv-val)
         run: |
           ./tools/vkgen/gen.sh --check
           ./tools/spv/build.sh --check
 
-      - name: Vulkan под ASan на lavapipe (validation, пиксели кадра, переворот)
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
-          LSAN_OPTIONS: suppressions=tools/lsan.supp
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-linux
+          path: |
+            build/anathemyre
+            build/anathemyre_debug
+            build/vkcheck
+          retention-days: 1
+
+  # Кадры на lavapipe под ASan с validation: любой СБОЙ — провал
+  render:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin-linux
+          path: build
+      - name: Зависимости
         run: |
-          make vkcheck -j"$(nproc)" WERROR=1 CC=clang
+          chmod +x build/*
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libx11-6 xvfb xauth python3-pil mesa-vulkan-drivers vulkan-validationlayers
+
+      - name: vkcheck (validation, пиксели кадра, переворот)
+        run: |
           xvfb-run -a -s "-screen 0 1280x720x24" ./build/vkcheck --frames 60 --verify --present mailbox --shot build/vk.ppm
           python3 -c "from PIL import Image; Image.open('build/vk.ppm').save('build/vk.png')"
 
-      - name: Кадр игры на Vulkan под ASan (lavapipe, validation; любой СБОЙ — провал, в том числе уход на GL)
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
-          LSAN_OPTIONS: suppressions=tools/lsan.supp
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      - name: Кадр игры
         run: |
-          make debug -j"$(nproc)" WERROR=1 CC=clang
-          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --vk --size 640 360 --tod 0.4 --day-stop --mute --shot build/vk_game.ppm --frames 5 | tee build/vk_game.txt
+          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --size 640 360 --tod 0.4 --day-stop --mute --shot build/vk_game.ppm --frames 5 | tee build/vk_game.txt
           ! grep -q "СБОЙ" build/vk_game.txt
           python3 -c "from PIL import Image; Image.open('build/vk_game.ppm').save('build/vk_game.png')"
 
-      - name: Кадр под ASan (программный рендер)
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          LSAN_OPTIONS: suppressions=tools/lsan.supp
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      - name: Кадр долины
         run: |
-          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --gl --shot build/shot.ppm --frames 20 | tee build/log.txt
-          ! grep -q "СБОЙ" build/log.txt
-          python3 -c "from PIL import Image; Image.open('build/shot.ppm').save('build/shot.png')"
-
-      - name: Кадр долины под ASan
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          LSAN_OPTIONS: suppressions=tools/lsan.supp
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: |
-          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --gl --valley --shot build/valley.ppm --frames 5 --no-pixel --tod 0.42 --day-stop | tee build/valley.txt
+          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --valley --shot build/valley.ppm --frames 5 --no-pixel --tod 0.42 --day-stop | tee build/valley.txt
           ! grep -q "СБОЙ" build/valley.txt
           python3 -c "from PIL import Image; Image.open('build/valley.ppm').save('build/valley.png')"
 
-      - name: Отряды вдали рядом под ASan (пробные отряды, бой телами)
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          LSAN_OPTIONS: suppressions=tools/lsan.supp
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      - name: Отряды вдали рядом (пробные отряды, бой телами)
         run: |
-          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --gl --bands-test --warp 800 --cam 1026 249 2.0 0.3 9 --no-pixel --shot build/bands.ppm --frames 3 | tee build/bands_near.txt | grep "ОТРЯДЫ"
+          xvfb-run -a -s "-screen 0 1280x720x24" ./build/anathemyre_debug --bands-test --warp 800 --cam 1026 249 2.0 0.3 9 --no-pixel --shot build/bands.ppm --frames 3 | tee build/bands_near.txt | grep "ОТРЯДЫ"
           ! grep -q "СБОЙ" build/bands_near.txt
           grep -q "отряд 1 рядом" build/bands_near.txt
-
-      - name: Сохранение под ASan (запись посреди боя, чтение в новом процессе — мир идёт бит в бит)
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          LSAN_OPTIONS: suppressions=tools/lsan.supp
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/save_check.sh "./build/anathemyre_debug --gl" build
-
-      - name: Описания и моды под ASan (другой порядок описаний, правка модом, сохранение без мода, ошибка в файле)
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          LSAN_OPTIONS: suppressions=tools/lsan.supp
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/defs_check.sh "./build/anathemyre_debug --gl" build
-
-      - name: Бой под ASan, детерминизм полевого боя на 1/2/4/8 потоках, отряды вдали
-        env:
-          LSAN_OPTIONS: suppressions=tools/lsan.supp
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: |
-          ./build/anathemyre_debug --arena-bench 100 | tail -3
-          ./build/anathemyre_debug --battle-bench 100 100 --battle-verify
-          # отряды вдали: сумма релиза (gcc) и отладки (clang) должна совпасть
-          ./build/anathemyre_debug --bands-bench 4000 --hours 0.25 | tee build/bands.txt | tail -3
-          test "$(./build/anathemyre --bands-bench 4000 --hours 0.25 | tail -1)" = "$(tail -1 build/bands.txt)"
-
-      - name: Звук под ASan (сценка в WAV без устройства)
-        env:
-          LSAN_OPTIONS: suppressions=tools/lsan.supp
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ./build/anathemyre_debug --sound-demo build/sound.wav
 
       - uses: actions/upload-artifact@v4
         with:
           name: screenshot
           path: |
-            build/shot.png
             build/valley.png
             build/vk.png
             build/vk_game.png
-            build/sound.wav
+
+  # Мир: сохранения и описания бит в бит, отряды вдали — сумма релиза и отладки совпадает
+  world:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin-linux
+          path: build
+      - name: Зависимости
+        run: |
+          chmod +x build/*
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libx11-6 xvfb xauth mesa-vulkan-drivers vulkan-validationlayers
+
+      - name: Сохранение (запись посреди боя, чтение в новом процессе — мир идёт бит в бит)
+        run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/save_check.sh ./build/anathemyre_debug build
+
+      - name: Описания и моды (другой порядок описаний, правка модом, сохранение без мода, ошибка в файле)
+        run: xvfb-run -a -s "-screen 0 1280x720x24" ./tools/defs_check.sh ./build/anathemyre_debug build
+
+      - name: Отряды вдали (сумма релиза и отладки)
+        run: |
+          ./build/anathemyre_debug --bands-bench 4000 --hours 0.25 | tee build/bands.txt | tail -3
+          test "$(./build/anathemyre --bands-bench 4000 --hours 0.25 | tail -1)" = "$(tail -1 build/bands.txt)"
+
+  # Бой (детерминизм на 1/2/4/8 потоках) и звук, под ASan без окна
+  combat:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin-linux
+          path: build
+      - name: Права
+        run: chmod +x build/*
+
+      - name: Бой
+        run: |
+          ./build/anathemyre_debug --arena-bench 100 | tail -3
+          ./build/anathemyre_debug --battle-bench 100 100 --battle-verify
+
+      - name: Звук (сценка в WAV без устройства)
+        run: ./build/anathemyre_debug --sound-demo build/sound.wav
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sound
+          path: build/sound.wav
 
   windows:
     runs-on: ubuntu-24.04

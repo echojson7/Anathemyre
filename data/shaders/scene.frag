@@ -79,7 +79,7 @@ vec3 ggx_spec(vec3 N, vec3 V, vec3 L, float a2, vec3 F0)
     return D * vis * F * nl;
 }
 
-// УГЛЫ: GTAO из половинного разрешения (gtao.frag): из четырёх соседей — близкие по дальности, как AO атмосферы
+// УГЛЫ: GTAO из половинного разрешения (gtao.frag): из четырёх соседей — близкие по дальности
 layout(binding = 36) uniform sampler2D u_gtao;
 float gtao_at(float dist)
 {
@@ -171,7 +171,7 @@ void main()
     mpp /= float(RB_FRAG_SIZE.x);
 #endif
     // На людях квадрат вдвое мельче, чтобы читались лицо и кисти
-    bool bones = u_skinned == 1 || u_skinned >= 4;
+    bool bones = u_skinned == 1;
     float base = bones ? TEXEL * 0.5 : TEXEL;
     // Сталь клинков: квадрат вчетверо мельче, иначе узкая фаска и дол тонут в одном квадрате
     if (v_mat == MAT_STEEL) base = TEXEL * 0.25;

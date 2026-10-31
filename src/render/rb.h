@@ -1,13 +1,12 @@
 // Слой рендера: всё, что render.c, terrain.c и ui.c говорят видеокарте, идёт через эти функции.
-// Под слоем бэкенд: OpenGL 4.5 (rb_gl.c) или Vulkan 1.3 (rb_vk.c), выбор — rb_select, вызовы — через rb.c.
-// Шейдеры общие (GLSL 450, rb.glsl); для Vulkan собраны офлайн в data/spv (tools/spv).
+// Под слоем Vulkan 1.3 (rb_vk.c). Шейдеры на GLSL 450 (rb.glsl), собраны офлайн в SPIR-V: data/spv (tools/spv).
 // Правила:
-// - Привязки (rb_bind_*) живут до перепривязки, как блоки текстур в GL; смена конвейера их не сбрасывает.
+// - Привязки (rb_bind_*) живут до перепривязки; смена конвейера их не сбрасывает.
 // - Буфер RB_BUF_DYNAMIC пишется с CPU каждый кадр: кусок, который читает кадр, не переписывается раньше
 //   чем через RB_FRAMES кадров (кольцо по rb_frame_slot), иначе Vulkan прочтёт уже новые данные.
 //   В остальные буферы rb_buf_write — редкая загрузка (сетки), она встаёт перед следующими командами.
 // - Барьеры между проходами ставит слой: он знает, что проход пишет (цели, rb_bind_image) и что читает.
-// - Кадр лежит в памяти как в GL: строка 0 внизу картинки, gl_FragCoord и uv от неё же.
+// - Кадр лежит в памяти строкой 0 внизу картинки (как было в GL), gl_FragCoord и uv от неё же.
 #ifndef ANA_RB_H
 #define ANA_RB_H
 
@@ -128,11 +127,6 @@ typedef struct RbCaps {
     u32  ubo_align;     // выравнивание смещения rb_bind_ubo
     u32  ssbo_align;
 } RbCaps;
-
-// Бэкенд: выбирается до rb_init (по умолчанию GL)
-typedef enum RbApi { RB_API_GL, RB_API_VULKAN } RbApi;
-void  rb_select(RbApi api);
-RbApi rb_api(void);
 
 bool rb_init(Arena *scratch, const char *data_dir);
 // Шейдеры перечитываются с диска: следующие rb_pipe_make собирают заново, а не берут собранное

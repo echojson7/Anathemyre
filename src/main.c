@@ -31,7 +31,6 @@
 #include "game/testroom.h"
 #include "game/world.h"
 #include "platform/platform.h"
-#include "render/rb.h"
 #include "render/render.h"
 #include "render/ui.h"
 #include "world/map.h"
@@ -76,10 +75,6 @@ typedef struct Options {
     const char *move_trace;
     bool        no_pixel;    // кадр без пиксельности (сравнение моделей)
     bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
-    bool        ao_half;     // AO в половинном разрешении
-    bool        noise_tex;   // шум материалов из 3D-текстуры (по умолчанию; --hash-noise — прежний счёт хешами)
-    bool        no_mdi;      // люди по вызову на сетку (сравнение с одним вызовом на проход)
-    bool        no_skin_cache; // позы людей в каждом проходе (сравнение с кешем поз)
     i32         light_preset;  // набор СВЕТ на старте (LightPreset)
     i32         light[10];     // части СВЕТ на старте: материалы, кривая, экспозиция, свечение, отражённый, каскады, мягкий край, контактные, углы, тени огней; -1 — из набора
     bool        fullscreen;  // окно без рамки на весь монитор
@@ -90,7 +85,6 @@ typedef struct Options {
     bool        valley;      // начать в долине (иначе пешком или переход из меню НАСТРОЙКИ)
     bool        mute;        // без звука
     const char *sound_demo;  // сценка звука в WAV без окна
-    i32         api;         // рендер: -1 — из anathemyre.cfg, иначе RbApi (--gl, --vk)
 } Options;
 
 // Замер кадра (меню НАСТРОЙКИ или --bench): камера у арены вплотную, утро, сутки стоят, vsync выкл.
@@ -171,12 +165,6 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--mute")) o->mute = true;
         else if (!strcmp(a, "--sound-demo") && i + 1 < argc) o->sound_demo = argv[++i];
         else if (!strcmp(a, "--no-vrs")) o->no_vrs = true;
-        else if (!strcmp(a, "--gl")) o->api = RB_API_GL;
-        else if (!strcmp(a, "--vk")) o->api = RB_API_VULKAN;
-        else if (!strcmp(a, "--ao-half")) o->ao_half = true;
-        else if (!strcmp(a, "--hash-noise")) o->noise_tex = false;
-        else if (!strcmp(a, "--no-mdi")) o->no_mdi = true;
-        else if (!strcmp(a, "--no-skin-cache")) o->no_skin_cache = true;
         else if (!strcmp(a, "--light") && i + 1 < argc) o->light_preset = (i32)((u32)atoi(argv[++i]) % LIGHT_PRESET_COUNT);
         else if (!strcmp(a, "--light-parts") && i + 10 < argc)
             for (u32 k = 0; k < 10; k++) o->light[k] = atoi(argv[++i]);
@@ -237,63 +225,18 @@ static bool find_data_dir(char *out, size_t size)
     return false;
 }
 
-// Настройки между запусками: anathemyre.cfg рядом с папкой data, строки «ключ значение».
-// Пока одна: backend vulkan|gl (НАСТРОЙКИ → РЕНДЕР: GL, после перезапуска). По умолчанию Vulkan.
-// Прежний ключ render не читается: старые файлы с render gl не держат GL после смены умолчания
-static void cfg_path(char *out, size_t size, const char *data_dir) { snprintf(out, size, "%s/../anathemyre.cfg", data_dir); }
-
-static RbApi cfg_api(const char *data_dir)
+// Окно и рендер. Vulkan не поднялся (нет драйвера, устройства, шейдера) — причина в журнале, игра не запускается
+static bool gfx_start(const Options *o, Arena *scratch, const char *data_dir)
 {
-    char path[600], line[128];
-    cfg_path(path, sizeof path, data_dir);
-    FILE *f = fopen(path, "r");
-    RbApi api = RB_API_VULKAN;
-    if (!f) return api;
-    while (fgets(line, sizeof line, f))
-        if (!strncmp(line, "backend ", 8)) api = !strncmp(line + 8, "gl", 2) ? RB_API_GL : RB_API_VULKAN;
-    fclose(f);
-    return api;
-}
-
-static void cfg_save_api(const char *data_dir, RbApi api)
-{
-    char path[600];
-    cfg_path(path, sizeof path, data_dir);
-    FILE *f = fopen(path, "w");
-    if (!f) {
-        log_error("НАСТРОЙКИ: не записан %s", path);
-        return;
+    bool win = platform_init("ANATHEMYRE", o->width, o->height);
+    if (win && render_init(scratch, data_dir) && ui_init()) return true;
+    log_error("РЕНДЕР: Vulkan не запустился, нужна видеокарта с Vulkan 1.3");
+    if (win) {
+        ui_shutdown();
+        render_shutdown();
+        platform_shutdown();
     }
-    fprintf(f, "backend %s\n", api == RB_API_VULKAN ? "vulkan" : "gl");
-    fclose(f);
-    log_info("РЕНДЕР: со следующего запуска %s", api == RB_API_VULKAN ? "VULKAN" : "GL");
-}
-
-// Окно и рендер. Vulkan не поднялся (нет драйвера, устройства, шейдера) — всё заново на GL
-static bool gfx_start(RbApi api, const Options *o, Arena *scratch, const char *data_dir)
-{
-#ifdef NDEBUG
-    const bool gl_debug = false;
-#else
-    const bool gl_debug = true;
-#endif
-    for (;;) {
-        platform_use_vulkan(api == RB_API_VULKAN);
-        rb_select(api);
-        bool win = platform_init("ANATHEMYRE", o->width, o->height, gl_debug);
-        if (win && render_init(scratch, data_dir) && ui_init()) {
-            log_info("РЕНДЕР: %s", api == RB_API_VULKAN ? "VULKAN" : "GL");
-            return true;
-        }
-        if (win) {
-            ui_shutdown();
-            render_shutdown();
-            platform_shutdown();
-        }
-        if (api == RB_API_GL) return false;
-        log_error("РЕНДЕР: Vulkan не запустился, кадр рисует GL");
-        api = RB_API_GL;
-    }
+    return false;
 }
 
 // Портреты: миниатюры отряда и крупно выбранный (свой, чужой на поле или боец арены)
@@ -323,9 +266,9 @@ int main(int argc, char **argv)
     platform_preinit();
     time_init();
     Options opt = {
-        .tod = 0.31f, .shot_frames = 90, .stage = STAGE_FULL, .bands_hours = 1.0f, .noise_tex = true, .width = 1280, .height = 720, .seed = 1337,
+        .tod = 0.31f, .shot_frames = 90, .stage = STAGE_FULL, .bands_hours = 1.0f, .width = 1280, .height = 720, .seed = 1337,
         .light = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
-        .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f }, .api = -1,
+        .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
     if (!parse_args(argc, argv, &opt)) return 1;
 
@@ -367,8 +310,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    RbApi api_want = opt.api >= 0 ? (RbApi)opt.api : cfg_api(data_dir);
-    if (!gfx_start(api_want, &opt, &scratch, data_dir)) return 1;
+    if (!gfx_start(&opt, &scratch, data_dir)) return 1;
     render_set_vsync(!opt.no_vsync && opt.shot_path == NULL);
     // Пул потоков: позы людей и бой на поле
     if (!jobs_init(opt.threads)) log_error("ПОТОКИ: пул не запущен, всё в главном потоке");
@@ -412,15 +354,12 @@ int main(int argc, char **argv)
     PointLight *lights = ARENA_PUSH_ARRAY(&perm, PointLight, TORCH_LIGHTS_MAX);
     DrawItem *items = ARENA_PUSH_ARRAY(&perm, DrawItem, RENDER_MAX_ITEMS);
     Settings set = {
-        .rs = { .post = true, .pixel = !opt.no_pixel, .vrs = !opt.no_vrs,
-                .ao_half = opt.ao_half, .noise_tex = opt.noise_tex, .mdi = !opt.no_mdi, .skin_cache = !opt.no_skin_cache },
+        .rs = { .post = true, .pixel = !opt.no_pixel, .vrs = !opt.no_vrs },
         .vsync = !opt.no_vsync && opt.shot_path == NULL, .fullscreen = opt.fullscreen && opt.shot_path == NULL,
-        // Swap после логики: пока GPU рисует прошлый кадр, CPU уже считает следующий (только без vsync,
-        // иначе кадр показывался бы на период позже)
-        .swap_late = true, .follow = opt.follow, .ui_user = 1.0f, .ui_user_text = 1.0f,
+        .follow = opt.follow, .ui_user = 1.0f, .ui_user_text = 1.0f,
         .sound_vol = 0.8f, .music_vol = 0.7f, .music_on = true, .travel = opt.valley,
         .stand = opt.stand > 0, .stand_moved = opt.stand > 0, .stand_row = opt.stand > 0 ? (u32)(opt.stand - 1) : 0,
-        .stage = opt.stage, .bench_stages = opt.bench_stages, .render_gl = api_want == RB_API_GL,
+        .stage = opt.stage, .bench_stages = opt.bench_stages,
     };
     light_preset_apply(&set.rs, (LightPreset)opt.light_preset);
     if (opt.light[0] >= 0) set.rs.light_mat = (u8)(opt.light[0] % LIGHT_MAT_COUNT);
@@ -506,7 +445,6 @@ int main(int argc, char **argv)
     f64 last = time_now();
     FrameStats stats = { .t = last, .fps_t = last };
     f32 real_time = 0;
-    bool swap_pending = false;  // кадр отрисован, но ещё не показан
     if (set.fullscreen) platform_set_fullscreen(true);
     u32 frame = 0;
     Bench bench;
@@ -630,10 +568,6 @@ int main(int argc, char **argv)
         humans_flip |= set.humans;
         bench_request |= set.bench;
         if (set.bands_test) world_bands_test(world);
-        if (set.render_save) {
-            set.render_save = false;
-            cfg_save_api(data_dir, set.render_gl ? RB_API_GL : RB_API_VULKAN);
-        }
         if (set.save) {
             if (!save_dir) log_error("СОХРАНЕНИЕ: папка для %s не создана", save_path);
             else world_save(world, save_path);
@@ -729,13 +663,6 @@ int main(int argc, char **argv)
             n += stand_draw(stand, cm, items + n);
         }
 
-        // Показать прошлый кадр: GPU рисовал его, пока шла логика этого
-        bool swap_first = set.swap_late && !set.vsync && !opt.shot_path;
-        if (swap_first && swap_pending) {
-            prof_zone(PZ_SWAP);
-            platform_swap();
-            swap_pending = false;
-        }
         prof_zone(PZ_SUBMIT);
         fv.sun_dir = sky.light_dir;
         fv.sun_color = sky.light_color;
@@ -765,8 +692,9 @@ int main(int argc, char **argv)
             hud_draw(&hud, &hin, &hw);
         }
         ui_end();
+        // Отправка кадра на GPU и показ; Vulkan держит 3 кадра в полёте, CPU ждёт только самый старый
+        prof_zone(PZ_SWAP);
         render_frame_end();
-        swap_pending = true;
 
         frame++;
         if (opt.shot_path && (i32)frame >= opt.shot_frames) {
@@ -775,14 +703,9 @@ int main(int argc, char **argv)
             else log_error("КАДР: не записан %s", opt.shot_path);
             break;
         }
-        if (!swap_first) {
-            prof_zone(PZ_SWAP);
-            platform_swap();
-            swap_pending = false;
-        }
 
         if (bench.on && now >= bench.measure_from) {
-            if (bench_frame(&bench, now, posed, ww, wh, set.swap_late)) {
+            if (bench_frame(&bench, now, posed, ww, wh)) {
                 if (stage_sweep) {
                     stage_res[set.stage] = bench.last;
                     if (set.stage < STAGE_FULL) {
@@ -806,7 +729,7 @@ int main(int argc, char **argv)
             }
             continue;
         }
-        stats_frame(&stats, now, posed, set.swap_late && !set.vsync);
+        stats_frame(&stats, now, posed);
     }
 
     audio_stop();

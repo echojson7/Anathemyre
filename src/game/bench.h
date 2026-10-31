@@ -35,7 +35,7 @@ typedef struct Bench {
 void bench_init(Bench *b, Arena *perm);
 void bench_begin(Bench *b, f64 now, f64 warmup_s, f64 measure_s);
 // Кадр, начатый в now, закончен; posed — поз в нём. true — замер окончен, итог в журнале
-bool bench_frame(Bench *b, f64 now, u32 posed, i32 ww, i32 wh, bool swap_late);
+bool bench_frame(Bench *b, f64 now, u32 posed, i32 ww, i32 wh);
 // Итог замера по этапам сцены: строка на этап, прибавка к кадру против прошлого этапа
 void bench_stages_report(const BenchResult *r, u32 n, const char *const *names);
 
@@ -49,6 +49,6 @@ typedef struct FrameStats {
 } FrameStats;
 
 void stats_reset(FrameStats *s, f64 now);
-void stats_frame(FrameStats *s, f64 now, u32 posed, bool swap_late);
+void stats_frame(FrameStats *s, f64 now, u32 posed);
 
 #endif

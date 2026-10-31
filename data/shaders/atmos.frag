@@ -4,7 +4,6 @@ layout(location = 0) in vec2 v_uv;
 
 layout(binding = 8) uniform sampler2D u_color;
 layout(binding = 9) uniform sampler2D u_rays;   // rays.frag, половинное разрешение
-layout(binding = 10) uniform sampler2D u_ao;     // ao.frag, половинное разрешение
 
 layout(location = 0) out vec4 o_color;
 
@@ -48,16 +47,6 @@ float rays_at(vec2 uv, float march)
     return sum / max(wsum, 1e-6);
 }
 
-// AO из половинного разрешения (ao.frag): из четырёх соседей берём близких по дальности, два чтения gather
-float ao_at(vec2 uv, float dist)
-{
-    vec2 t = fract(uv * vec2(textureSize(u_ao, 0)) - 0.5);
-    vec4 ao = textureGather(u_ao, uv, 0), dd = textureGather(u_ao, uv, 1);  // порядок: (0,1) (1,1) (1,0) (0,0)
-    vec4 wb = vec4((1.0 - t.x) * t.y, t.x * t.y, t.x * (1.0 - t.y), (1.0 - t.x) * (1.0 - t.y));
-    vec4 w = wb / (0.02 + abs(dd - dist) / dist);
-    return dot(ao, w) / max(dot(w, vec4(1.0)), 1e-6);
-}
-
 // Свечение пыли вокруг факелов и фонарей: свет, рассеянный вдоль луча взгляда до поверхности.
 // Интеграл 1/d² по лучу считается точно: (atan((t1 - tc)/h) - atan(-tc/h)) / h
 vec3 light_glow(vec3 dir, float dist)
@@ -96,7 +85,7 @@ void main()
         col = sky(dir);
     } else {
         col = texture(u_color, uv).rgb;
-        if ((u_parts & 2) != 0) col *= u_ao_half != 0 ? ao_at(uv, dist) : ambient_occlusion(uv, P, dist);
+        if ((u_parts & 2) != 0) col *= ambient_occlusion(uv, P, dist);
     }
 
     // Высотный туман: плотнее у земли

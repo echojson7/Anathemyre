@@ -55,19 +55,13 @@ void main()
     v_color = a_color;
     v_local = a_pos;
     v_tint = vec3(1.0);
-    if (u_skinned == 1 || u_skinned == 4 || u_skinned == 5) {
-        // В общем буфере всё о сетке — в записи экземпляра, RB_VERTEX_ID считается от начала буфера
-        bool pool = u_skinned != 1;
-        uint base = (pool ? a_rec.x : inst_pose[u_inst_base + RB_INSTANCE_ID]) * 24u;
-        if (u_skinned == 5) {
-            uint o = (a_rec.y + uint(RB_VERTEX_ID) - a_rec.z) * 2u;
-            p = skin_out[o];
-            n = skin_out[o + 1u].xyz;
-        } else {
-            int morphs = pool ? int(a_rec.y) : u_morphs;
-            uint vid = pool ? uint(RB_VERTEX_ID) - a_rec.z : uint(RB_VERTEX_ID);
-            skin_apply(base, morphs, vid, pool ? a_rec.w : 0u, a_bones, a_weights, a_mat_bone.y, p, n);
-        }
+    if (u_skinned == 1) {
+        // Люди: поза и морфы уже в кеше поз (skin.comp); всё о сетке — в записи экземпляра,
+        // RB_VERTEX_ID считается от начала общего буфера
+        uint base = a_rec.x * 24u;
+        uint o = (a_rec.y + uint(RB_VERTEX_ID) - a_rec.z) * 2u;
+        p = skin_out[o];
+        n = skin_out[o + 1u].xyz;
         // Внешность экземпляра — оттенок кожи и волос; поворот квадратов материала — от главной кости
         mat4 look = bones[base + 23u];
         if (a_mat_bone.z != 0u) v_color.rgb *= 1.0 + (a_mat_bone.z == 1u ? look[2].xyz : look[3].xyz);

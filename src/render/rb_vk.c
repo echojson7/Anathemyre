@@ -27,11 +27,6 @@ VK_DEVICE_FUNCS(X)
 #undef X
 
 
-#define R(ret, name, params, args) static ret vkb_##name params;
-#define V(name, params, args) static void vkb_##name params;
-RB_FUNCS(R, V)
-#undef R
-#undef V
 
 #define MAX_SWAP_IMAGES 8
 #define MAX_BUFS 4096
@@ -915,14 +910,14 @@ static void vbuf_destroy_now(VBuf *b)
     memset(b, 0, sizeof *b);
 }
 
-static RbBuf vkb_buf_make(size_t size, u32 usage, const void *data)
+RbBuf rb_buf_make(size_t size, u32 usage, const void *data)
 {
     for (u32 i = 1; i < MAX_BUFS; i++) {
         VBuf *b = &g_vk.buf[i];
         if (b->buf) continue;
         if (!vbuf_create(b, size, (usage & RB_BUF_DYNAMIC) != 0)) return 0;
         if (data) {
-            vkb_buf_write(i, 0, size, data);
+            rb_buf_write(i, 0, size, data);
         } else if (b->dynamic) {
             memset(b->a.map, 0, size);
         } else {
@@ -940,7 +935,7 @@ static RbBuf vkb_buf_make(size_t size, u32 usage, const void *data)
     return 0;
 }
 
-static void vkb_buf_write(RbBuf h, size_t offset, size_t size, const void *data)
+void rb_buf_write(RbBuf h, size_t offset, size_t size, const void *data)
 {
     if (!h || !size) return;
     VBuf *b = &g_vk.buf[h];
@@ -966,7 +961,7 @@ static void vkb_buf_write(RbBuf h, size_t offset, size_t size, const void *data)
     back_to_pass(was);
 }
 
-static void vkb_buf_free(RbBuf *h)
+void rb_buf_free(RbBuf *h)
 {
     if (!*h) return;
     VBuf *b = &g_vk.buf[*h];
@@ -1142,7 +1137,7 @@ static VkImageView tex_view(VTex *t, u32 mip, u32 layer)
     return v;
 }
 
-static RbTex vkb_tex_make(const RbTexDesc *d)
+RbTex rb_tex_make(const RbTexDesc *d)
 {
     for (u32 i = 1; i < MAX_TEXS; i++) {
         if (g_vk.tex[i].image) continue;
@@ -1156,7 +1151,7 @@ static RbTex vkb_tex_make(const RbTexDesc *d)
     return 0;
 }
 
-static void vkb_tex_write(RbTex h, u32 mip, i32 x, i32 y, i32 z, i32 w, i32 hh, i32 d, const void *data, u32 row_len)
+void rb_tex_write(RbTex h, u32 mip, i32 x, i32 y, i32 z, i32 w, i32 hh, i32 d, const void *data, u32 row_len)
 {
     if (!h || w <= 0 || hh <= 0 || d <= 0) return;
     VTex *t = &g_vk.tex[h];
@@ -1167,11 +1162,11 @@ static void vkb_tex_write(RbTex h, u32 mip, i32 x, i32 y, i32 z, i32 w, i32 hh, 
         const u8 *p = data;
         if (d > 1) {
             for (i32 k = 0; k < d; k++)
-                vkb_tex_write(h, mip, x, y, z + k, w, hh, 1, p + (size_t)k * rl * (u32)hh * bpp, rl);
+                rb_tex_write(h, mip, x, y, z + k, w, hh, 1, p + (size_t)k * rl * (u32)hh * bpp, rl);
         } else {
             i32 band = (i32)MAX((STAGING_BYTES / 2) / ((VkDeviceSize)rl * bpp), 1);
             for (i32 r = 0; r < hh; r += band)
-                vkb_tex_write(h, mip, x, y + r, z, w, MIN(band, hh - r), 1, p + (size_t)r * rl * bpp, rl);
+                rb_tex_write(h, mip, x, y + r, z, w, MIN(band, hh - r), 1, p + (size_t)r * rl * bpp, rl);
         }
         return;
     }
@@ -1195,7 +1190,7 @@ static void vkb_tex_write(RbTex h, u32 mip, i32 x, i32 y, i32 z, i32 w, i32 hh, 
     back_to_pass(was);
 }
 
-static void vkb_tex_free(RbTex *h)
+void rb_tex_free(RbTex *h)
 {
     if (!*h) return;
     for (u32 i = 0; i < MAX_BINDS; i++)
@@ -1204,7 +1199,7 @@ static void vkb_tex_free(RbTex *h)
     *h = 0;
 }
 
-static void vkb_tex_size(RbTex h, i32 *w, i32 *hh)
+void rb_tex_size(RbTex h, i32 *w, i32 *hh)
 {
     *w = h ? g_vk.tex[h].d.w : g_vk.win_w;
     *hh = h ? g_vk.tex[h].d.h : g_vk.win_h;
@@ -1725,7 +1720,7 @@ static void pipe_release(Pipe *p)
     memset(p, 0, sizeof *p);
 }
 
-static RbPipe vkb_pipe_make(const RbPipeDesc *d)
+RbPipe rb_vk_pipe_make(const RbPipeDesc *d)
 {
     u32 slot = 0;
     for (u32 i = 1; i < MAX_PIPES && !slot; i++)
@@ -1788,7 +1783,7 @@ static RbPipe vkb_pipe_make(const RbPipeDesc *d)
     return slot;
 }
 
-static void vkb_pipe_free(RbPipe *h)
+void rb_pipe_free(RbPipe *h)
 {
     if (!*h || *h >= MAX_PIPES || !g_vk.pipe[*h].used) return;
     pipe_release(&g_vk.pipe[*h]);
@@ -1796,12 +1791,12 @@ static void vkb_pipe_free(RbPipe *h)
     *h = 0;
 }
 
-static void vkb_bind_pipe(RbPipe h)
+void rb_bind_pipe(RbPipe h)
 {
     g_vk.cur = h < MAX_PIPES && g_vk.pipe[h].used ? h : 0;
 }
 
-static void vkb_shaders_changed(void)
+void rb_shaders_changed(void)
 {
     // .spv читаются заново при каждом rb_pipe_make: кешировать нечего
 }
@@ -1848,10 +1843,10 @@ static void begin_rendering(bool load)
     vkCmdBeginRendering(g_vk.cmd, &ri);
 }
 
-static void vkb_pass_begin(const RbPass *p)
+void rb_pass_begin(const RbPass *p)
 {
     ensure_cmd();
-    if (g_vk.in_pass) vkb_pass_end();
+    if (g_vk.in_pass) rb_pass_end();
     g_vk.pass = *p;
     bool window = !p->color[0].tex && !p->depth.tex;
     g_vk.pass_ncolor = 0;
@@ -1870,35 +1865,35 @@ static void vkb_pass_begin(const RbPass *p)
     sync();
     begin_rendering(false);
     g_vk.in_pass = true;
-    vkb_viewport(0, 0, g_vk.pass_w, g_vk.pass_h);
-    vkb_scissor_off();
+    rb_viewport(0, 0, g_vk.pass_w, g_vk.pass_h);
+    rb_scissor_off();
 }
 
-static void vkb_pass_end(void)
+void rb_pass_end(void)
 {
     leave_pass();
 }
 
 // Строки в памяти совпадают с GL, поэтому y снизу — это просто номер строки
-static void vkb_viewport(i32 x, i32 y, i32 w, i32 h)
+void rb_viewport(i32 x, i32 y, i32 w, i32 h)
 {
     g_vk.vp = (VkViewport){ (f32)x, (f32)y, (f32)MAX(w, 1), (f32)MAX(h, 1), 0.0f, 1.0f };
     if (g_vk.in_pass) vkCmdSetViewport(g_vk.cmd, 0, 1, &g_vk.vp);
 }
 
-static void vkb_scissor(i32 x, i32 y, i32 w, i32 h)
+void rb_scissor(i32 x, i32 y, i32 w, i32 h)
 {
     i32 x0 = MAX(x, 0), y0 = MAX(y, 0);
     g_vk.sc = (VkRect2D){ { x0, y0 }, { (u32)MAX(x + w - x0, 0), (u32)MAX(y + h - y0, 0) } };
     if (g_vk.in_pass) vkCmdSetScissor(g_vk.cmd, 0, 1, &g_vk.sc);
 }
 
-static void vkb_scissor_off(void)
+void rb_scissor_off(void)
 {
-    vkb_scissor(0, 0, g_vk.pass_w, g_vk.pass_h);
+    rb_scissor(0, 0, g_vk.pass_w, g_vk.pass_h);
 }
 
-static void vkb_clear_rect(i32 x, i32 y, i32 w, i32 h, const f32 *color, bool depth)
+void rb_clear_rect(i32 x, i32 y, i32 w, i32 h, const f32 *color, bool depth)
 {
     if (!g_vk.in_pass) return;
     VkClearAttachment a[RB_MAX_COLORS + 1];
@@ -1930,40 +1925,40 @@ static void bind_set(u32 b, const Bind *v)
     g_vk.dirty[1] |= 1ull << b;
 }
 
-static void vkb_bind_vertex(u32 stream, RbBuf b, size_t offset)
+void rb_bind_vertex(u32 stream, RbBuf b, size_t offset)
 {
     g_vk.vb[stream] = b;
     g_vk.vb_off[stream] = offset;
 }
 
-static void vkb_bind_index(RbBuf b, size_t offset, bool idx16)
+void rb_bind_index(RbBuf b, size_t offset, bool idx16)
 {
     g_vk.ib = b;
     g_vk.ib_off = offset;
     g_vk.ib16 = idx16;
 }
 
-static void vkb_bind_ubo(u32 binding, RbBuf b, size_t offset, size_t size)
+void rb_bind_ubo(u32 binding, RbBuf b, size_t offset, size_t size)
 {
     bind_set(binding, &(Bind){ .kind = DT_UBO, .h = b, .off = offset, .size = size });
 }
 
-static void vkb_bind_ssbo(u32 binding, RbBuf b, size_t offset, size_t size)
+void rb_bind_ssbo(u32 binding, RbBuf b, size_t offset, size_t size)
 {
     bind_set(binding, &(Bind){ .kind = DT_SSBO, .h = b, .off = offset, .size = size });
 }
 
-static void vkb_bind_tex(u32 binding, RbTex t, RbSampler s)
+void rb_bind_tex(u32 binding, RbTex t, RbSampler s)
 {
     bind_set(binding, &(Bind){ .kind = DT_TEX, .h = t, .smp = (u8)s });
 }
 
-static void vkb_bind_image(u32 binding, RbTex t, u32 mip)
+void rb_bind_image(u32 binding, RbTex t, u32 mip)
 {
     bind_set(binding, &(Bind){ .kind = DT_IMAGE, .h = t, .mip = mip });
 }
 
-static void vkb_push(u32 offset, u32 size, const void *data)
+void rb_push(u32 offset, u32 size, const void *data)
 {
     if (offset + size > RB_PUSH_BYTES) return;
     memcpy(g_vk.push + offset, data, size);
@@ -2095,23 +2090,23 @@ static bool prep_draw(bool indexed)
 
 // --- Вызовы
 
-static void vkb_draw(u32 verts, u32 first, u32 instances)
+void rb_draw(u32 verts, u32 first, u32 instances)
 {
     if (prep_draw(false)) vkCmdDraw(g_vk.cmd, verts, MAX(instances, 1), first, 0);
 }
 
-static void vkb_draw_indexed(u32 count, u32 first_index, i32 base_vertex, u32 instances, u32 base_instance)
+void rb_draw_indexed(u32 count, u32 first_index, i32 base_vertex, u32 instances, u32 base_instance)
 {
     if (prep_draw(true)) vkCmdDrawIndexed(g_vk.cmd, count, MAX(instances, 1), first_index, base_vertex, base_instance);
 }
 
-static void vkb_draw_indexed_multi(const u32 *counts, const u32 *first_indices, u32 n)
+void rb_draw_indexed_multi(const u32 *counts, const u32 *first_indices, u32 n)
 {
     if (!n || !prep_draw(true)) return;
     for (u32 i = 0; i < n; i++) vkCmdDrawIndexed(g_vk.cmd, counts[i], 1, first_indices[i], 0, 0);
 }
 
-static void vkb_draw_indexed_indirect(RbBuf b, size_t offset, u32 n)
+void rb_draw_indexed_indirect(RbBuf b, size_t offset, u32 n)
 {
     if (!n || !b || !prep_draw(true)) return;
     vkCmdDrawIndexedIndirect(g_vk.cmd, g_vk.buf[b].buf, offset, n, 20);
@@ -2136,7 +2131,7 @@ static bool prep_dispatch(bool *was)
     return true;
 }
 
-static void vkb_dispatch(u32 x, u32 y, u32 z)
+void rb_dispatch(u32 x, u32 y, u32 z)
 {
     bool was;
     if (!prep_dispatch(&was)) return;
@@ -2145,7 +2140,7 @@ static void vkb_dispatch(u32 x, u32 y, u32 z)
     back_to_pass(was);
 }
 
-static void vkb_dispatch_indirect(RbBuf b, size_t offset)
+void rb_dispatch_indirect(RbBuf b, size_t offset)
 {
     bool was;
     if (!b || !prep_dispatch(&was)) return;
@@ -2157,7 +2152,7 @@ static void vkb_dispatch_indirect(RbBuf b, size_t offset)
 
 // --- Метки времени
 
-static bool vkb_timer_init(u32 sets, u32 marks)
+bool rb_timer_init(u32 sets, u32 marks)
 {
     if (!sets || !marks || sets * marks > TIMER_MAX) return false;
     VkQueryPoolCreateInfo ci = {
@@ -2176,7 +2171,7 @@ static bool vkb_timer_init(u32 sets, u32 marks)
     return true;
 }
 
-static void vkb_timer_mark(u32 set, u32 mark)
+void rb_timer_mark(u32 set, u32 mark)
 {
     if (!g_vk.qpool || set >= g_vk.tsets || mark >= g_vk.tmarks) return;
     ensure_cmd();
@@ -2206,13 +2201,13 @@ static void timers_collect(Frame *f)
     memset(f->tmask, 0, sizeof f->tmask);
 }
 
-static bool vkb_timer_ready(u32 set, u32 mark)
+bool rb_timer_ready(u32 set, u32 mark)
 {
     u32 i = set * g_vk.tmarks + mark;
     return i < TIMER_MAX && g_vk.tready[i];
 }
 
-static u64 vkb_timer_get(u32 set, u32 mark)
+u64 rb_timer_get(u32 set, u32 mark)
 {
     u32 i = set * g_vk.tmarks + mark;
     return i < TIMER_MAX ? g_vk.tval[i] : 0;
@@ -2220,7 +2215,7 @@ static u64 vkb_timer_get(u32 set, u32 mark)
 
 // --- Кадр
 
-static void vkb_frame_begin(i32 win_w, i32 win_h)
+void rb_frame_begin(i32 win_w, i32 win_h)
 {
     g_vk.win_w = MAX(win_w, 1);
     g_vk.win_h = MAX(win_h, 1);
@@ -2229,7 +2224,7 @@ static void vkb_frame_begin(i32 win_w, i32 win_h)
     g_vk.in_frame = true;
 }
 
-static u32 vkb_frame_slot(void)
+u32 rb_frame_slot(void)
 {
     return g_vk.slot;
 }
@@ -2254,7 +2249,7 @@ static void swap_barrier(VkImage image, VkImageLayout from, VkImageLayout to)
     vkCmdPipelineBarrier2(g_vk.cmd, &dep);
 }
 
-static void vkb_frame_end(void)
+void rb_frame_end(void)
 {
     ensure_cmd();
     leave_pass();
@@ -2328,7 +2323,7 @@ static void vkb_frame_end(void)
     g_vk.slot = (g_vk.slot + 1) % RB_FRAMES;
 }
 
-static void vkb_read_window(u8 *rgb, i32 w, i32 h)
+void rb_read_window(u8 *rgb, i32 w, i32 h)
 {
     ensure_cmd();
     bool was = leave_pass();
@@ -2443,7 +2438,7 @@ static bool create_zero(void)
     return true;
 }
 
-static bool vkb_init(Arena *scratch, const char *data_dir)
+bool rb_init(Arena *scratch, const char *data_dir)
 {
     memset(&g_vk, 0, sizeof g_vk);
     g_vk.scratch = scratch;
@@ -2460,7 +2455,7 @@ static bool vkb_init(Arena *scratch, const char *data_dir)
     g_vk.win_h = MAX(h, 1);
     if (!create_instance() || !create_surface() || !create_device() || !create_frames() || !create_samplers() ||
         !create_zero() || !window_targets(g_vk.win_w, g_vk.win_h)) {
-        vkb_shutdown();
+        rb_shutdown();
         return false;
     }
     swapchain_build();
@@ -2470,7 +2465,7 @@ static bool vkb_init(Arena *scratch, const char *data_dir)
     return true;
 }
 
-static void vkb_shutdown(void)
+void rb_shutdown(void)
 {
     if (g_vk.device) {
         // Записанное, но не отправленное — отправить, чтобы буфер команд закончился честно
@@ -2516,7 +2511,7 @@ static void vkb_shutdown(void)
     g_vk.validation_errors = errors;   // для отчёта после выхода
 }
 
-static const RbCaps *vkb_caps(void)
+const RbCaps *rb_caps(void)
 {
     return &g_vk.caps;
 }
@@ -2542,11 +2537,3 @@ u32 rb_vk_validation_errors(void)
 {
     return g_vk.validation_errors;
 }
-
-const RbBackend rb_vk_backend = {
-#define R(ret, name, params, args) .name = vkb_##name,
-#define V(name, params, args) .name = vkb_##name,
-    RB_FUNCS(R, V)
-#undef R
-#undef V
-};
