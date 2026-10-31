@@ -42,7 +42,7 @@ typedef struct Settings {
     u32  stage;              // SceneStage
     bool stand, stand_moved;  // стенд фигур: показан; показать ряд stand_row или убрать
     u32  stand_row;
-    bool render_vk, render_save;  // РЕНДЕР: Vulkan со следующего запуска; записать выбор
+    bool render_gl, render_save;  // РЕНДЕР: GL со следующего запуска (для сравнения); записать выбор
 } Settings;
 
 // Наборы группы СВЕТ (docs/lighting.md): от прежнего света к самому полному
