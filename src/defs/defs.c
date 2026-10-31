@@ -1,9 +1,11 @@
 #include "defs.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #include "../sim/look.h"
 #include "../core/mesh.h"
+#include "../sim/combat_tune.h"
 #include "deftext.h"
 #include "material.h"
 
@@ -79,7 +81,7 @@ u8 def_goods(const char *id) { return by_name(DK_GOODS, id); }
 
 // Разбор одной строки поля: число слов и сами слова
 typedef struct Block {
-    i32 kind;   // DK_*, BK_ATTACK, BK_QUALITY; -1 — вне записи
+    i32 kind;   // DK_*, BK_*; -1 — вне записи
     u32 id;
     u32 lines;  // строк после заголовка
     bool shape; // в этой записи уже была форма: прежняя заменена
@@ -90,7 +92,18 @@ typedef struct Block {
     const char *mat_ref;  // paint по имени материала
 } Block;
 
-enum { BK_ATTACK = DK_COUNT, BK_QUALITY, BK_MATERIAL };
+enum { BK_ATTACK = DK_COUNT, BK_QUALITY, BK_MATERIAL, BK_TUNING };
+
+// Числа боя: ключ — имя поля CombatTune. Каждое должно быть в файлах, мод правит любое
+#define TUNE_KEY(n) #n,
+#define TUNE_OFF(n) offsetof(CombatTune, n),
+static const char *const g_tune_key[] = { COMBAT_TUNE(TUNE_KEY) };
+static const size_t g_tune_off[] = { COMBAT_TUNE(TUNE_OFF) };
+#undef TUNE_KEY
+#undef TUNE_OFF
+#define TUNE_COUNT ARRAY_COUNT(g_tune_key)
+static bool s_tune_set[TUNE_COUNT];
+static const char *const g_tuning_word[] = { "combat" };
 
 static bool args(const DefLine *l, u32 n)
 {
@@ -459,6 +472,17 @@ static bool quality_field(const DefLine *l, Block *b, Arena *mem)
     return false;
 }
 
+static bool tuning_field(const DefLine *l)
+{
+    i32 k = def_word(&l->tok[0], g_tune_key, TUNE_COUNT);
+    if (k < 0) {
+        def_error(l, "у tuning combat нет числа %.*s", (int)l->tok[0].n, l->tok[0].s);
+        return false;
+    }
+    s_tune_set[k] = true;
+    return num(l, (f32 *)((char *)&g_tune + g_tune_off[k]));
+}
+
 static i32 find_mat(const char *s, u32 n)
 {
     for (u32 i = 0; i < g_mat_count; i++)
@@ -503,7 +527,7 @@ static bool id_ok(const DefTok *t)
 // Заголовок записи: новая — с пустыми полями, прежняя — правится дальше по полям
 static bool header(const DefLine *l, Block *b, Arena *mem)
 {
-    static const char *const kinds[] = { "weapon", "armor", "goods", "attack", "quality", "material" };
+    static const char *const kinds[] = { "weapon", "armor", "goods", "attack", "quality", "material", "tuning" };
     i32 kind = def_word(&l->tok[0], kinds, ARRAY_COUNT(kinds));
     *b = (Block){ .kind = kind };
     if (l->n != 2 || !id_ok(&l->tok[1])) {
@@ -511,6 +535,12 @@ static bool header(const DefLine *l, Block *b, Arena *mem)
         return false;
     }
     const DefTok *t = &l->tok[1];
+    if (kind == BK_TUNING) {
+        u8 w;
+        if (!word(l, 1, g_tuning_word, ARRAY_COUNT(g_tuning_word), &w)) return false;
+        b->id = w;
+        return true;
+    }
     if (kind == BK_ATTACK || kind == BK_QUALITY) {
         u8 w;
         if (!word(l, 1, kind == BK_ATTACK ? g_attack_word : g_quality_word, kind == BK_ATTACK ? ATK_COUNT : Q_COUNT, &w))
@@ -648,6 +678,11 @@ static bool check(void)
             log_error("ОПИСАНИЯ: качества %s нет", g_quality_word[i]);
             ok = false;
         }
+    for (u32 i = 0; i < TUNE_COUNT; i++)
+        if (!s_tune_set[i]) {
+            log_error("ОПИСАНИЯ: в tuning combat нет числа %s", g_tune_key[i]);
+            ok = false;
+        }
     for (u32 i = 0; i < g_mat_count; i++)
         if (s_mats[i].surface == 255 || s_mats[i].impact == 255 || !s_mats[i].tones) {
             log_error("ОПИСАНИЯ: материалу %s не хватает surface, impact или color", s_mats[i].id);
@@ -694,6 +729,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
     g_weapon_count = g_armor_count = g_goods_count = g_mat_count = 0;
     memset(s_part_mat, 0, sizeof s_part_mat);
     memset(&g_mat, 0, sizeof g_mat);
+    memset(s_tune_set, 0, sizeof s_tune_set);
     g_weapons = s_weapons;
     g_weapon_parts = s_parts;
     g_weapon_pts = s_pts;
@@ -704,11 +740,11 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
     Block b = { .kind = -1 };
     bool bad = false, ok = true;
     while (deftext_next(&s_text, &l, &bad)) {
-        static const char *const kinds[] = { "weapon", "armor", "goods", "attack", "quality", "material" };
+        static const char *const kinds[] = { "weapon", "armor", "goods", "attack", "quality", "material", "tuning" };
         if (def_word(&l.tok[0], kinds, ARRAY_COUNT(kinds)) >= 0) {
             ok = header(&l, &b, mem);
         } else if (b.kind < 0) {
-            def_error(&l, "поле вне записи: сначала weapon, armor, goods, attack, quality или material");
+            def_error(&l, "поле вне записи: сначала weapon, armor, goods, attack, quality, material или tuning");
             ok = false;
         } else {
             b.lines++;
@@ -719,6 +755,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
                 case DK_GOODS: ok = goods_field(&l, &b, mem); break;
                 case BK_ATTACK: ok = attack_field(&l, &b, mem); break;
                 case BK_MATERIAL: ok = material_field(&l, &b); break;
+                case BK_TUNING: ok = tuning_field(&l); break;
                 default: ok = quality_field(&l, &b, mem); break;
                 }
         }
