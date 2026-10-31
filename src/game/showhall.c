@@ -63,6 +63,14 @@
 #define SH_COLLAPSE_S 1.1f
 #define SH_LIE_S      3.0f
 #define SH_STAND_S    3.0f
+// Смерть DIE_S, истёк кровью BLEED_S, оседает SINK_S, переворот TURN_S, сдача KNEEL_S (fight_anim.c),
+// подбор оружия PICKUP_S (sim/combat.c)
+#define SH_DIE_S      0.8f
+#define SH_BLEED_S    2.0f
+#define SH_SINK_S     1.1f
+#define SH_TURN_S     1.2f
+#define SH_KNEEL_S    1.6f
+#define SH_PICKUP_S   0.9f
 
 // Ряды первого этажа: A — позы отдыха, B — движения стоя, вразбежку, чтобы задний ряд был виден
 #define ROW_A_X(k) (-15.0f + 5.0f * (f32)(k))
@@ -71,11 +79,16 @@
 #define ROW_B_Z    -81.6f
 
 typedef enum ExKind { EX_REST, EX_REST_BACK, EX_MOVE, EX_WALK, EX_CLIP } ExKind;
-// Круги клипов: «лежит → встаёт → стоит → падает»; обморок ничком и на спину
-enum { CL_KNOCK, CL_FAINT_DOWN, CL_FAINT_UP, CL_COUNT };
+// Круги клипов: у восточной стены — сбит с ног, обморок ничком и на спину (CL_EAST); вдоль северной
+// стены — смерть по направлению удара, истёк кровью, ноги не держат, переворот, подбор оружия, сдача
+enum { CL_KNOCK, CL_FAINT_DOWN, CL_FAINT_UP, CL_EAST,
+       CL_DIE_BACK = CL_EAST, CL_DIE_FRONT, CL_DIE_SIDE, CL_BLEED, CL_SINK, CL_TURN, CL_PICKUP, CL_KNEEL, CL_COUNT };
+// от входа на запад: стоя лицом к стене, читаются слева направо
+#define CL_NORTH_X(k) (12.0f - 4.0f * (f32)(k))
+#define CL_NORTH_Z    -71.4f
 
 // Лампы: колпак на тросе от балки; первый этаж — над рядами, галерея — под крышей
-#define LAMP_N 13
+#define LAMP_N 14
 typedef struct Lamp {
     V3  pos;
     f32 power, radius;
@@ -87,7 +100,7 @@ static const Lamp g_lamp[LAMP_N] = {
     { { 5.0f, 4.3f, -79.5f }, 1.0f, 11.0f },   { { 18.5f, 3.2f, -69.9f }, 0.35f, 6.0f },
     { { -15.0f, 8.3f, -89.5f }, 0.9f, 10.0f }, { { -5.0f, 8.3f, -89.5f }, 0.9f, 10.0f },
     { { 5.0f, 8.3f, -89.5f }, 0.9f, 10.0f },   { { 15.0f, 8.3f, -89.5f }, 0.9f, 10.0f },
-    { { -20.3f, 7.4f, -78.0f }, 0.6f, 8.0f },
+    { { -20.3f, 7.4f, -78.0f }, 0.6f, 8.0f },  { { 12.5f, 4.3f, -74.0f }, 0.8f, 9.0f },
 };
 #define LAMP_FLICKER 12   // над лестницей лампа гудит и мигает
 #define BEAM_Y (RB - 0.8f)
@@ -256,9 +269,14 @@ static void build_mesh(MeshBuilder *mb)
             f32 x = r ? ROW_B_X(k) : ROW_A_X(k), z = r ? ROW_B_Z : ROW_A_Z;
             ostov_rough_box(mb, v3(x - 1.3f, FY, z - 1.3f), v3(x + 1.3f, FY + 0.12f, z + 1.3f), 0.8f, 0.04f, OSTOV_HIDE_BOT, next_seed());
         }
-    for (u32 k = 0; k < CL_COUNT; k++) {
+    for (u32 k = 0; k < CL_EAST; k++) {
         f32 z = -75.5f - 3.6f * (f32)k;
         ostov_rough_box(mb, v3(14.6f, FY, z - 1.4f), v3(20.4f, FY + 0.12f, z + 1.4f), 0.8f, 0.04f, OSTOV_HIDE_BOT, next_seed());
+    }
+    for (u32 k = 0; k < CL_COUNT - CL_EAST; k++) {
+        f32 x = CL_NORTH_X(k);
+        ostov_rough_box(mb, v3(x - 1.6f, FY, CL_NORTH_Z - 1.8f), v3(x + 1.6f, FY + 0.12f, CL_NORTH_Z + 1.8f), 0.8f, 0.04f,
+                        OSTOV_HIDE_BOT, next_seed());
     }
 
     for (u32 k = 0; k < LAMP_N; k++) {
@@ -303,7 +321,10 @@ void showhall_init(ShowHall *s, MeshBuilder *mb, Arena *perm)
         if (k == MOVE_HILT) s->ex[s->count - 1].weapon = (u8)(def_weapon("sekach") + 1);
     }
     // Клипы всем телом у восточной стены, падают вдоль площадки
-    for (u32 k = 0; k < CL_COUNT; k++) add(s, EX_CLIP, (u8)k, v3(17.5f, plinth(), -75.5f - 3.6f * (f32)k), -1.5708f, 1.1f * (f32)k);
+    for (u32 k = 0; k < CL_EAST; k++) add(s, EX_CLIP, (u8)k, v3(17.5f, plinth(), -75.5f - 3.6f * (f32)k), -1.5708f, 1.1f * (f32)k);
+    // Вдоль северной стены лицом в цех: на спину валятся к стене, ничком — в цех, набок — вдоль ряда
+    for (u32 k = CL_EAST; k < CL_COUNT; k++)
+        add(s, EX_CLIP, (u8)k, v3(CL_NORTH_X(k - CL_EAST), plinth(), CL_NORTH_Z), 3.1416f, 0.7f * (f32)k);
     // Галерея: шаг, трусца, бег туда и обратно
     static const f32 lane_z[GAIT_COUNT] = { -87.0f, -89.8f, -92.6f };
     for (u32 g = 0; g < GAIT_COUNT; g++) {
@@ -384,32 +405,92 @@ static void move_cycle(Exhibit *e, f32 T, CharPose *p)
     snprintf(e->line[1], sizeof e->line[1], "%.1f / %.1f С", (f64)lt, (f64)dur);
 }
 
+// Круг клипа из четырёх шагов: имя, клип, длительность; rev — тот же клип обратно в том же темпе
+typedef struct Step {
+    const char *name;
+    u8 clip;
+    f32 s;
+    bool rev;
+} Step;
+typedef struct ClipLoop {
+    const char *title;
+    Step st[4];
+    u8 fall;      // CHAR_FALL_*: куда валится
+    i8 side;      // лежит на боку: 1 — на левом
+    bool prone;
+    bool dead;    // мёртвый: обмяк, не дышит
+    bool faint;   // без сознания: обмяк, пока оседает и лежит; встаёт уже сам
+} ClipLoop;
+
+static const ClipLoop g_loops[CL_COUNT] = {
+    [CL_KNOCK] = { "СБИТ С НОГ И ВСТАЁТ",
+                   { { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S, 0 }, { "ВСТАЁТ", CLIP_GETUP, SH_GETUP_S, 0 },
+                     { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ПАДАЕТ", CLIP_FALL, SH_FALL_S, 0 } },
+                   .fall = CHAR_FALL_BACK },
+    [CL_FAINT_DOWN] = { "ОБМОРОК НИЧКОМ",
+                        { { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ОСЕДАЕТ", CLIP_COLLAPSE, SH_COLLAPSE_S, 0 },
+                          { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S, 0 }, { "ВСТАЁТ", CLIP_GETUP, SH_GETUP_FRONT_S, 0 } },
+                        .prone = true, .faint = true },
+    [CL_FAINT_UP] = { "ОБМОРОК НА СПИНУ",
+                      { { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ОСЕДАЕТ", CLIP_COLLAPSE, SH_COLLAPSE_S, 0 },
+                        { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S, 0 }, { "ВСТАЁТ", CLIP_GETUP, SH_GETUP_S, 0 } },
+                      .faint = true },
+    [CL_DIE_BACK] = { "УБИТ СПЕРЕДИ",
+                      { { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ПАДАЕТ", CLIP_DIE, SH_DIE_S, 0 },
+                        { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S, 0 }, { "ОБРАТНО", CLIP_DIE, SH_DIE_S, 1 } },
+                      .fall = CHAR_FALL_BACK, .dead = true },
+    [CL_DIE_FRONT] = { "УБИТ В СПИНУ",
+                       { { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ПАДАЕТ", CLIP_DIE, SH_DIE_S, 0 },
+                         { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S, 0 }, { "ОБРАТНО", CLIP_DIE, SH_DIE_S, 1 } },
+                       .fall = CHAR_FALL_FRONT, .prone = true, .dead = true },
+    [CL_DIE_SIDE] = { "УБИТ СБОКУ",
+                      { { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ПАДАЕТ", CLIP_DIE, SH_DIE_S, 0 },
+                        { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S, 0 }, { "ОБРАТНО", CLIP_DIE, SH_DIE_S, 1 } },
+                      .fall = CHAR_FALL_LEFT, .side = 1, .dead = true },
+    [CL_BLEED] = { "ИСТЁК КРОВЬЮ",
+                   { { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ОСЕДАЕТ", CLIP_BLEED, SH_BLEED_S, 0 },
+                     { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S, 0 }, { "ОБРАТНО", CLIP_BLEED, SH_BLEED_S, 1 } },
+                   .side = -1, .dead = true },
+    [CL_SINK] = { "НОГИ НЕ ДЕРЖАТ",
+                  { { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ОСЕДАЕТ", CLIP_SINK, SH_SINK_S, 0 },
+                    { "ПОЛЗЁТ", CLIP_CRAWL, SH_LIE_S, 0 }, { "ОБРАТНО", CLIP_SINK, SH_SINK_S, 1 } },
+                  .prone = true },
+    [CL_TURN] = { "СО СПИНЫ НА ЖИВОТ",
+                  { { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S, 0 }, { "ПЕРЕВОРАЧИВАЕТСЯ", CLIP_TURN, SH_TURN_S, 0 },
+                    { "ПОЛЗЁТ", CLIP_CRAWL, SH_LIE_S, 0 }, { "ОБРАТНО", CLIP_TURN, SH_TURN_S, 1 } },
+                   .fall = CHAR_FALL_BACK },
+    [CL_PICKUP] = { "ПОДНИМАЕТ ОРУЖИЕ",
+                    { { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ПОДНИМАЕТ", CLIP_PICKUP, SH_PICKUP_S, 0 },
+                      { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "ОБРАТНО", CLIP_PICKUP, SH_PICKUP_S, 1 } },
+                   .fall = CHAR_FALL_BACK },
+    [CL_KNEEL] = { "СДАЁТСЯ",
+                   { { "СТОИТ", CLIP_NONE, SH_STAND_S, 0 }, { "НА КОЛЕНИ", CLIP_KNEEL, SH_KNEEL_S, 0 },
+                     { "НА КОЛЕНЯХ", CLIP_KNEEL, SH_LIE_S, 0 }, { "ОБРАТНО", CLIP_KNEEL, SH_KNEEL_S, 1 } },
+                   .fall = CHAR_FALL_BACK },
+};
+
 static void clip_cycle(Exhibit *e, f32 T, CharAction *a)
 {
-    static const char *title[CL_COUNT] = { "СБИТ С НОГ И ВСТАЁТ", "ОБМОРОК НИЧКОМ", "ОБМОРОК НА СПИНУ" };
-    snprintf(e->line[0], sizeof e->line[0], "%s", title[e->what]);
+    const ClipLoop *c = &g_loops[e->what];
+    const Step *st = c->st;
+    snprintf(e->line[0], sizeof e->line[0], "%s", c->title);
     *a = (CharAction){ 0 };
-    // Круг из четырёх шагов: имя, клип, длительность
-    typedef struct Step {
-        const char *name;
-        u8 clip;
-        f32 s;
-    } Step;
-    static const Step knock[4] = { { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S }, { "ВСТАЁТ", CLIP_GETUP, SH_GETUP_S },
-                                   { "СТОИТ", CLIP_NONE, SH_STAND_S }, { "ПАДАЕТ", CLIP_FALL, SH_FALL_S } };
-    static const Step faint[4] = { { "СТОИТ", CLIP_NONE, SH_STAND_S }, { "ОСЕДАЕТ", CLIP_COLLAPSE, SH_COLLAPSE_S },
-                                   { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S }, { "ВСТАЁТ", CLIP_GETUP, SH_GETUP_S } };
-    static const Step faint_down[4] = { { "СТОИТ", CLIP_NONE, SH_STAND_S }, { "ОСЕДАЕТ", CLIP_COLLAPSE, SH_COLLAPSE_S },
-                                        { "ЛЕЖИТ", CLIP_LIE, SH_LIE_S }, { "ВСТАЁТ", CLIP_GETUP, SH_GETUP_FRONT_S } };
-    const Step *st = e->what == CL_KNOCK ? knock : e->what == CL_FAINT_DOWN ? faint_down : faint;
     f32 cyc = st[0].s + st[1].s + st[2].s + st[3].s, lt = wrapf(T + e->shift, cyc);
     u32 k = 0;
     while (k < 3 && lt >= st[k].s) lt -= st[k++].s;
     a->clip = st[k].clip;
-    a->clip_t = a->clip == CLIP_LIE ? lt : lt / st[k].s;
-    a->prone = e->what == CL_FAINT_DOWN;
-    // Без сознания руки безвольны, пока лежит; встаёт уже сам
-    if (e->what != CL_KNOCK && (a->clip == CLIP_COLLAPSE || a->clip == CLIP_LIE)) a->limp = 1.0f;
+    f32 u = lt / st[k].s;
+    // Лёжа и ползком клип идёт по времени; поза на коленях держит конец входа
+    if (a->clip == CLIP_LIE || a->clip == CLIP_CRAWL) a->clip_t = lt;
+    else if (a->clip == CLIP_KNEEL && k == 2) a->clip_t = 1.0f;
+    else a->clip_t = st[k].rev ? 1.0f - u : u;
+    // Переворот кончается ничком: дальше ползёт ничком, назад — со спины
+    a->prone = c->prone || (e->what == CL_TURN && k == 2);
+    a->side = (i8)(a->clip == CLIP_LIE || a->clip == CLIP_BLEED ? c->side : 0);
+    a->fall_dir = c->fall;
+    a->dead = c->dead;
+    a->still = c->dead && a->clip == CLIP_LIE ? lt : 9.0f;
+    if (c->dead || (c->faint && (a->clip == CLIP_COLLAPSE || a->clip == CLIP_LIE))) a->limp = 1.0f;
     snprintf(e->line[1], sizeof e->line[1], "%s %.1f / %.1f С", st[k].name, (f64)lt, (f64)st[k].s);
 }
 
