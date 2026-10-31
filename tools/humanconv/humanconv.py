@@ -1300,7 +1300,10 @@ def garments(ctx):
     LINEN, BAND = (0.33, 0.31, 0.26), (0.17, 0.16, 0.13)
     hips = np.isin(bone, [PELVIS, SPINE, TH_L, TH_R])
     if ctx['female']:
-        top, leg = hip + 0.105, crotch + 0.012 + 0.75 * np.maximum(0.0, AX - 0.025)
+        # Вырез спереди круче, чем сзади: сбоку низ трусов на 5 см ниже резинки, ягодицы прикрыты как раньше.
+        # Было 0.75 по кругу — сбоку 12 см ткани, выглядело как шорты (пользователь 2026-10-31)
+        front = np.clip((Z - Z[mid].mean()) / 0.08 + 0.5, 0.0, 1.0)
+        top, leg = hip + 0.105, crotch + 0.012 + (0.75 + 0.55 * front) * np.maximum(0.0, AX - 0.025)
     else:
         top, leg = hip + 0.095, crotch - 0.045 + 0.08 * np.maximum(0.0, AX - 0.06)
     sb = field(soft(hips), lin(top - Y), lin(Y - leg))
