@@ -1,0 +1,81 @@
+# Тела: скелет, роли костей, точки крепления, хит-капсулы, части ragdoll. Что это и зачем — docs/body.md
+#
+# Набор тел постоянный (пока только human): моды правят поля, новых не добавляют.
+# height — рост скелета в позе привязки, м: рост человека делится на него (множитель роста позы).
+# skeleton — общий скелет боя и креплений: data/meshes/<имя>.skel. Тела внешности (мужское, женское, худое)
+#   ставятся на те же роли своими файлами (sim/look.c).
+# bone <роль> <имя кости в .skel> — роли знает код (походка, бой, IK), имена — файл скелета.
+# part <часть> <HP> "<название>" — части, по которым считаются раны.
+# socket <крепление> <кость> x y z — точка в позе привязки, м: grip хват, grip2 второй хват, sheath ножны на поясе,
+#   back за спиной, torch факел. Точка хвата на оружии — в описании оружия.
+# hit <часть> <от> <до> ax ay az bx by bz r — капсула попаданий: концы — суставы ролей «от» и «до» со сдвигом, м.
+#   Первая строка hit в записи заменяет весь список (так же ragdoll).
+# ragdoll <от> <до> r масса [<родитель> ball конус кручение_от кручение_до | <родитель> hinge сгиб_от сгиб_до]
+#   — капсула части, доля массы тела и сустав к части родителя, градусы. Первая часть — корень, без сустава.
+#   Пределы только описаны: ragdoll появится в шаге 3.1.
+
+body human
+    height 1.80
+    skeleton mh_male
+
+    bone root ROOT
+    bone pelvis PELVIS
+    bone spine SPINE
+    bone chest CHEST
+    bone neck NECK
+    bone head HEAD
+    bone clavicle_l CLAVICLE_L
+    bone upper_arm_l UPPER_ARM_L
+    bone forearm_l FOREARM_L
+    bone hand_l HAND_L
+    bone clavicle_r CLAVICLE_R
+    bone upper_arm_r UPPER_ARM_R
+    bone forearm_r FOREARM_R
+    bone hand_r HAND_R
+    bone thigh_l THIGH_L
+    bone shin_l SHIN_L
+    bone foot_l FOOT_L
+    bone thigh_r THIGH_R
+    bone shin_r SHIN_R
+    bone foot_r FOOT_R
+
+    part head 60 "ГОЛОВА"
+    part chest 100 "ГРУДЬ"
+    part stomach 80 "ЖИВОТ"
+    part arm_l 60 "ЛЕВАЯ РУКА"
+    part arm_r 60 "ПРАВАЯ РУКА"
+    part leg_l 70 "ЛЕВАЯ НОГА"
+    part leg_r 70 "ПРАВАЯ НОГА"
+
+    socket grip hand_r -0.258 0.792 0.05
+    socket grip2 hand_l 0.258 0.792 0.05
+    socket sheath pelvis -0.17 0.98 0
+    socket back chest 0 1.30 -0.20
+    socket torch hand_l 0.258 0.792 0.05
+
+    #   часть   от           до           сдвиг от               сдвиг до               r
+    hit head    head         head         0 0.029 -0.023         0 0.029 -0.023         0.11
+    hit chest   chest        chest        0 0.053 0.030          0 0.203 0.030          0.16
+    hit stomach spine        spine        0 -0.081 0.030         0 0.059 0.030          0.15
+    hit arm_l   upper_arm_l  forearm_l    0 0 0                  0 0 0                  0.06
+    hit arm_l   forearm_l    hand_l       0 0 0                  0.003 -0.081 0.009     0.05
+    hit arm_r   upper_arm_r  forearm_r    0 0 0                  0 0 0                  0.06
+    hit arm_r   forearm_r    hand_r       0 0 0                  -0.003 -0.081 0.009    0.05
+    hit leg_l   thigh_l      shin_l       0 0 0                  0 0 0                  0.08
+    hit leg_l   shin_l       foot_l       0 0 0                  -0.001 0 0.011         0.07
+    hit leg_r   thigh_r      shin_r       0 0 0                  0 0 0                  0.08
+    hit leg_r   shin_r       foot_r       0 0 0                  0.001 0 0.011          0.07
+
+    # 11 частей, 10 суставов. Предплечье несёт кисть, голень — стопу
+    #       от           до           r      масса  родитель     сустав  пределы
+    ragdoll pelvis       spine        0.14   0.14
+    ragdoll spine        neck         0.15   0.31   pelvis       ball    35  -30 30
+    ragdoll neck         head         0.11   0.08   spine        ball    50  -70 70
+    ragdoll upper_arm_l  forearm_l    0.06   0.03   spine        ball    90  -80 80
+    ragdoll forearm_l    hand_l       0.05   0.025  upper_arm_l  hinge   0 145
+    ragdoll upper_arm_r  forearm_r    0.06   0.03   spine        ball    90  -80 80
+    ragdoll forearm_r    hand_r       0.05   0.025  upper_arm_r  hinge   0 145
+    ragdoll thigh_l      shin_l       0.08   0.12   pelvis       ball    70  -35 35
+    ragdoll shin_l       foot_l       0.065  0.06   thigh_l      hinge   0 150
+    ragdoll thigh_r      shin_r       0.08   0.12   pelvis       ball    70  -35 35
+    ragdoll shin_r       foot_r       0.065  0.06   thigh_r      hinge   0 150

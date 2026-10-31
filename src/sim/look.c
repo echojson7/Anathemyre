@@ -15,8 +15,6 @@ bool look_load_skeletons(const char *data_dir) {
         snprintf(path, sizeof path, "%s/meshes/%s.skel", data_dir, g_body_file[k]);
         if (!body_skeleton_load(path, g_body_joints[k])) return false;
     }
-    // Общий скелет (бой, капсулы, крепления ножен) — мужской: остальные тела ставятся на его кости
-    for (int i = 0; i < BONE_COUNT; i++) g_body_bones[i].joint = g_body_joints[BODY_MALE][i];
     return true;
 }
 

@@ -41,7 +41,7 @@ static f32 step_to(f32 x, f32 target, f32 step) { return x + clampf(target - x, 
 static f32 weapon_kg(const CombatWorld *w, u32 i) { return w->disarmed[i] ? 0.0f : g_weapons[w->weapon[i]].weight; }
 
 // Множители позы: рост и ширина, как в fight_anim_pose
-static f32 body_h(const CombatWorld *w, u32 i) { return w->height[i] / 1.8f; }
+static f32 body_h(const CombatWorld *w, u32 i) { return body_scale(w->height[i]); }
 static f32 body_w(const FightAnim *f) { return 1.0f + 0.08f * sinf(f->seed * 3.17f + 1.0f); }
 
 // Место стопы в стойке, координаты боя
@@ -347,7 +347,7 @@ bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha,
     *p = (CharPose){
         .pos = v3(origin.x + f->disp_x, floor_y, origin.z + f->disp_z), .heading = h,
         .phase = f->phase, .walk = f->walk, .run = char_run_from_speed(f->speed), .speed = f->speed,
-        .time = time, .seed = f->seed, .height = w->height[i] / 1.8f,
+        .time = time, .seed = f->seed, .height = body_scale(w->height[i]),
         .width = 1.0f + 0.08f * sinf(f->seed * 3.17f + 1.0f), .move_dir = f->move_dir,
         .weapon = f->dropped ? 0 : (u8)(w->weapon[i] + 1),
     };
@@ -363,7 +363,7 @@ bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha,
     i32 t = w->target[i];
     if (swing > 0.0f && t >= 0) {
         bool dodged = w->react[i] == REACT_DODGE;
-        f32 ts = w->height[t] / 1.8f;
+        f32 ts = body_scale(w->height[t]);
         f32 rx = origin.x + (dodged ? f->lock_x : w->x[t]) - p->pos.x;
         f32 rz = origin.z + (dodged ? f->lock_z : w->z[t]) - p->pos.z;
         f32 ry = fs_lying(w->state[t]) ? 0.25f : w->aim_y[i] * ts;

@@ -420,7 +420,7 @@ static u32 choose_part(const CombatWorld *w, u32 att, u32 t, u8 kind, u32 salt)
     dy /= dl;
     u32 best = PART_COUNT, near = PART_CHEST;
     f32 best_u = 1e9f, near_d = 1e9f;
-    for (u32 c = 0; c < g_body_hit_count; c++) {
+    for (u32 c = 0; c < g_body.hits; c++) {
         const HitCapsule *h = &g_body_hit_guard[c];
         if (w->severed[t] & (1u << h->part)) continue;
         f32 ax = h->a.x * cd + h->a.z * sd, az = -h->a.x * sd + h->a.z * cd;
