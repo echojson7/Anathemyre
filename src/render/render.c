@@ -37,6 +37,8 @@ enum {
     B_GTAO = 36, B_GTAO_RAW = 37,
     // ЗОНДЫ: блок Probes, клетки сцены, зонды (probes.glsl)
     B_PROBES = 38, B_VOX = 39, B_PROBE_BUF = 40, B_PROBE_DIST = 41,
+    // Тени огней: блок Torch и кубические карты (torch.glsl)
+    B_TORCH = 42, B_TORCH_TEX = 43,
 };
 #define SKIN_STATIC 0
 #define SKIN_BONES 1
@@ -200,6 +202,18 @@ typedef struct GpuProbes {
 } GpuProbes;
 _Static_assert(sizeof(GpuProbes) == 32, "GpuProbes — как блок Probes в probes.glsl");
 
+// Тени огней (torch.glsl): кубические карты для TORCH_SLOTS ближних огней, грань TORCH_PX²
+#define TORCH_SLOTS 4
+#define TORCH_PX 256
+#define TORCH_MIN_R 2.0f   // огни меньше не дают тени: светлячок фитиля, тлеющие угли
+#define TORCH_NEAR 0.3f   // ближе к огню не заслоняет: свой колпак лампы, чаша костра, рука с факелом
+typedef struct GpuTorch {
+    f32 vp[TORCH_SLOTS * 6][16];
+    f32 pos[TORCH_SLOTS][4];        // откуда нарисована карта; w — радиус
+    i32 slot[RENDER_MAX_LIGHTS];    // у огня кадра: его карта или -1
+} GpuTorch;
+_Static_assert(sizeof(GpuTorch) == 1664, "GpuTorch — как блок Torch в torch.glsl");
+
 // Цель: цвет и глубина (по желанию) одного размера
 typedef struct Target {
     RbTex color, depth;
@@ -209,7 +223,7 @@ typedef struct Target {
 // Раскладки вершин сеток: обычная (вершины и веса костей), общий буфер (и запись экземпляра), без вершин (рельеф)
 enum { LAY_MESH, LAY_POOL, LAY_NONE, LAYS };
 // Наборы конвейеров сеток по проходам
-enum { PS_SHADOW, PS_DEPTH, PS_SCENE, PS_PORTRAIT, PS_VOXEL, PSETS };
+enum { PS_SHADOW, PS_DEPTH, PS_SCENE, PS_PORTRAIT, PS_VOXEL, PS_TORCH, PSETS };
 
 static struct {
     Arena *scratch;
@@ -245,6 +259,12 @@ static struct {
     bool   vox_ready;
     u32    probe_pass;    // обходов всех зондов с последней очистки
     u32    probe_tick;    // кадров обновления зондов
+    RbTex  torch_tex;     // карты теней огней: слои — грани кубов по слотам
+    RbBuf  torch_ubo;
+    u32    torch_step;
+    GpuTorch torch;       // матрицы и положения, с которыми нарисованы карты
+    bool   torch_ok[TORCH_SLOTS];
+    u32    torch_rr;      // какой слот обновить, когда новых нет
     u32    pset;      // набор текущего прохода
     RbTex  noise_tex; // значения hash13 в узлах решётки NOISE_N³: noise3 одной выборкой (common.glsl)
     RbTex  shadow_tex;
@@ -358,7 +378,7 @@ static RbPipe pipe_mesh(u32 set, u32 lay, bool two_sided)
         .depth = set == PS_SCENE ? RB_DEPTH_LEQUAL : RB_DEPTH_LESS, .depth_write = set != PS_SCENE,
         .color = { RB_FMT_RGBA16F }, .depth_fmt = RB_FMT_D32F,
     };
-    if (set == PS_SHADOW || set == PS_DEPTH) {
+    if (set == PS_SHADOW || set == PS_DEPTH || set == PS_TORCH) {
         d.fs[0] = "shadow.frag";
         d.defines = "#define SHADOW_PASS\n";
     } else {
@@ -367,14 +387,16 @@ static RbPipe pipe_mesh(u32 set, u32 lay, bool two_sided)
         d.fs[2] = "sky.glsl";
         d.fs[3] = "shadow_sun.glsl";
         d.fs[4] = "probes.glsl";
-        d.fs[5] = "scene.frag";
+        d.fs[5] = "torch.glsl";
+        d.fs[6] = "scene.frag";
         // Портрет — та же программа, только без карты частоты: размер блока там 1
         d.frag_size = R.vrs;
         d.vrs = R.vrs && set == PS_SCENE;
     }
-    if (set == PS_SHADOW) {
-        // Что ближе к солнцу, чем ближняя плоскость, всё равно отбрасывает тень (а не режется срезом)
-        d.depth_clamp = true;
+    if (set == PS_SHADOW || set == PS_TORCH) {
+        // Что ближе к солнцу, чем ближняя плоскость, всё равно отбрасывает тень (а не режется срезом).
+        // У огня наоборот: всё ближе TORCH_NEAR (колпак, рука с факелом) срезается, иначе закрыло бы всё
+        d.depth_clamp = set == PS_SHADOW;
         d.bias_slope = 1.5f;
         d.bias_const = 2.0f;
         d.color[0] = RB_FMT_NONE;
@@ -423,12 +445,12 @@ static bool pipes_make(void)
     const char *rays_fs[] = { "frame.glsl", "common.glsl", "rays.frag" };
     const char *atmos_fs[] = { "frame.glsl", "common.glsl", "ao.glsl", "atmos.frag" };
     const char *ao_fs[] = { "frame.glsl", "common.glsl", "ao.glsl", "ao.frag" };
-    const char *style_fs[] = { "frame.glsl", "common.glsl", "pixel.glsl", "style.frag", NULL, NULL };
-    const char *src_map_fs[] = { "frame.glsl", "pixel.glsl", "src_map.frag", NULL, NULL, NULL };
-    const char *vrs_block_fs[] = { "vrs_block.frag", NULL, NULL, NULL, NULL, NULL };
-    const char *level_fs[] = { "frame.glsl", "pixel.glsl", "level.frag", NULL, NULL, NULL };
-    const char *level_max_fs[] = { "level_max.frag", NULL, NULL, NULL, NULL, NULL };
-    const char *vrs_fs[] = { "frame.glsl", "vrs.frag", NULL, NULL, NULL, NULL };
+    const char *style_fs[RB_SHADER_FILES] = { "frame.glsl", "common.glsl", "pixel.glsl", "style.frag" };
+    const char *src_map_fs[RB_SHADER_FILES] = { "frame.glsl", "pixel.glsl", "src_map.frag" };
+    const char *vrs_block_fs[RB_SHADER_FILES] = { "vrs_block.frag" };
+    const char *level_fs[RB_SHADER_FILES] = { "frame.glsl", "pixel.glsl", "level.frag" };
+    const char *level_max_fs[RB_SHADER_FILES] = { "level_max.frag" };
+    const char *vrs_fs[RB_SHADER_FILES] = { "frame.glsl", "vrs.frag" };
     const char *rays6[RB_SHADER_FILES] = { 0 }, *atmos6[RB_SHADER_FILES] = { 0 }, *ao6[RB_SHADER_FILES] = { 0 };
     memcpy(rays6, rays_fs, sizeof rays_fs);
     memcpy(atmos6, atmos_fs, sizeof atmos_fs);
@@ -613,6 +635,11 @@ bool render_init(Arena *scratch, const char *data_dir)
     R.probe_dist = rb_buf_make((size_t)PROBE_COUNT * PROBE_RAYS * 2 * sizeof(f32), RB_BUF_STORAGE, NULL);
     R.probes_step = (u32)((sizeof(GpuProbes) + caps->ubo_align - 1) / caps->ubo_align * caps->ubo_align);
     R.probes_ubo = rb_buf_make((size_t)R.probes_step * STREAM_FRAMES, RB_BUF_UNIFORM | RB_BUF_DYNAMIC, NULL);
+    R.torch_tex = rb_tex_make(&(RbTexDesc){ .kind = RB_TEX_2D_ARRAY, .fmt = RB_FMT_D24, .w = TORCH_PX, .h = TORCH_PX,
+                                            .d = TORCH_SLOTS * 6, .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
+    R.torch_step = (u32)((sizeof(GpuTorch) + caps->ubo_align - 1) / caps->ubo_align * caps->ubo_align);
+    R.torch_ubo = rb_buf_make((size_t)R.torch_step * STREAM_FRAMES, RB_BUF_UNIFORM | RB_BUF_DYNAMIC, NULL);
+    if (!R.torch_tex || !R.torch_ubo) return false;
     if (!R.vox_buf || !R.probe_buf || !R.probe_dist || !R.probes_ubo || !target_make(&R.vox_rt, VOX_NX * VOX_PX, VOX_NZ * VOX_PX, RB_FMT_R8, false))
         return false;
     if (!R.shadow_tex || !R.frame_buf || !R.expo_buf || !R.sky_depth || !R.sky_buf[0] || !R.sky_buf[1] || !R.casc_tex ||
@@ -633,6 +660,7 @@ void render_shutdown(void)
     rb_tex_free(&R.shadow_tex);
     rb_tex_free(&R.sky_depth);
     rb_tex_free(&R.casc_tex);
+    rb_tex_free(&R.torch_tex);
     target_free(&R.contact);
     target_free(&R.gtao[0]);
     target_free(&R.gtao[1]);
@@ -1526,6 +1554,94 @@ static M4 sky_matrix(V3 d, V3 c)
     return m4_mul(m4_ortho(q.x - SKY_R, q.x + SKY_R, q.y - SKY_R, q.y + SKY_R, -q.z - SKY_UP, -q.z + SKY_R), lv);
 }
 
+// Тени огней: ближние огни кадра (g_lights, по дальности) получают слоты; огонь, сдвинутый больше чем на 0.5 м,
+// — уже другой. Новый слот рисуется сразу целиком (один за кадр), иначе одна грань за кадр по кругу: огни
+// почти стоят, а факел в руке за 24 кадра (доли секунды) уходит на сантиметры
+static void torch_shadows(const DrawItem *items, u32 count, bool on)
+{
+    for (u32 i = 0; i < RENDER_MAX_LIGHTS; i++) R.torch.slot[i] = -1;
+    if (!on) {
+        for (u32 s = 0; s < TORCH_SLOTS; s++) R.torch_ok[s] = false;
+    } else {
+        bool used[TORCH_SLOTS] = { 0 };
+        i32 want[TORCH_SLOTS];
+        u32 nw = 0;
+        for (u32 i = 0; i < (u32)g_lights.count[0] && nw < TORCH_SLOTS; i++)
+            if (g_lights.pos[i][3] >= TORCH_MIN_R) want[nw++] = (i32)i;
+        // Сначала огни, у которых карта уже есть
+        for (u32 k = 0; k < nw; k++) {
+            const f32 *p = g_lights.pos[want[k]];
+            for (u32 s = 0; s < TORCH_SLOTS; s++) {
+                const f32 *q = R.torch.pos[s];
+                f32 dx = p[0] - q[0], dy = p[1] - q[1], dz = p[2] - q[2];
+                if (R.torch_ok[s] && !used[s] && dx * dx + dy * dy + dz * dz < 0.25f) {
+                    used[s] = true;
+                    R.torch.slot[want[k]] = (i32)s;
+                    break;
+                }
+            }
+        }
+        // Новый огонь получает весь куб сразу (один за кадр), остальные — по грани за кадр по кругу
+        u32 fresh = TORCH_SLOTS;
+        for (u32 k = 0; k < nw && fresh == TORCH_SLOTS; k++) {
+            if (R.torch.slot[want[k]] >= 0) continue;
+            for (u32 s = 0; s < TORCH_SLOTS; s++)
+                if (!used[s]) {
+                    used[s] = true;
+                    R.torch_ok[s] = false;
+                    memcpy(R.torch.pos[s], g_lights.pos[want[k]], sizeof R.torch.pos[s]);
+                    R.torch.slot[want[k]] = (i32)s;
+                    fresh = s;
+                    break;
+                }
+        }
+        for (u32 s = 0; s < TORCH_SLOTS; s++)
+            if (!used[s]) R.torch_ok[s] = false;
+        u32 slot = fresh, f0 = 0, f1 = 6;
+        if (fresh == TORCH_SLOTS)
+            for (u32 t = 0; t < TORCH_SLOTS * 6; t++) {
+                u32 j = (R.torch_rr + t) % (TORCH_SLOTS * 6);
+                if (!used[j / 6]) continue;
+                R.torch_rr = j + 1;
+                slot = j / 6, f0 = j % 6, f1 = f0 + 1;
+                // Положение берётся у огня сейчас: карта догоняет факел в руке
+                for (u32 i = 0; i < RENDER_MAX_LIGHTS; i++)
+                    if (R.torch.slot[i] == (i32)slot) memcpy(R.torch.pos[slot], g_lights.pos[i], sizeof R.torch.pos[slot]);
+                break;
+            }
+        static const V3 axis[6] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+        if (slot < TORCH_SLOTS) {
+            V3 c = v3(R.torch.pos[slot][0], R.torch.pos[slot][1], R.torch.pos[slot][2]);
+            f32 r = R.torch.pos[slot][3];
+            for (u32 f = f0; f < f1; f++) {
+                V3 up = f == 2 || f == 3 ? v3(0, 0, 1) : v3(0, 1, 0);
+                M4 vp = m4_mul(m4_perspective(1.5707963f, 1.0f, TORCH_NEAR, r), m4_look_at(c, v3_add(c, axis[f]), up));
+                PassView pv = { .fr = frustum_from(vp), .px_k = TORCH_PX * 0.5f, .inst_lod_k = 0.3f };
+                u32 n = gather(items, count, &pv, true, g_inst[3]);
+                u32 base = stream_insts(g_inst[3], &n);
+                rb_pass_begin(&(RbPass){ .depth = { .tex = R.torch_tex, .layer = (u16)(slot * 6 + f) }, .clear_depth = true });
+                R.pset = PS_TORCH;
+                push_view_proj(vp);
+                draw_insts(g_inst[3], n, base, 2);
+                u32 draws = 0;
+                f64 tris = 0;
+                use_pipe(LAY_NONE, false);
+                terrain_draw(pv.fr.p, 1, 0.25f, &draws, &tris);
+                rb_pass_end();
+                memcpy(R.torch.vp[slot * 6 + f], vp.m, sizeof vp.m);
+            }
+            R.torch_ok[slot] = true;
+        }
+        // Карта, которая ещё не нарисована, не читается
+        for (u32 i = 0; i < RENDER_MAX_LIGHTS; i++)
+            if (R.torch.slot[i] >= 0 && !R.torch_ok[R.torch.slot[i]]) R.torch.slot[i] = -1;
+    }
+    size_t off = (size_t)R.stream * R.torch_step;
+    rb_buf_write(R.torch_ubo, off, sizeof R.torch, &R.torch);
+    rb_bind_ubo(B_TORCH, R.torch_ubo, off, sizeof R.torch);
+    rb_bind_tex(B_TORCH_TEX, R.torch_tex, RB_SMP_SHADOW);
+}
+
 // ЗОНДЫ: мир в клетку → клип. Ось axis смотрит вдоль себя, две другие — на экран; глубина — по той же оси
 static M4 vox_matrix(u32 axis, V3 o)
 {
@@ -1854,6 +1970,7 @@ void render_frame(const FrameView *fv, const DrawItem *items, u32 count, const R
     }
     rb_bind_tex(B_CASC, R.casc_tex, RB_SMP_SHADOW);
     rb_bind_tex(B_SHADOW_RAW, R.shadow_tex, RB_SMP_NEAREST);
+    torch_shadows(items, count, rs->light_torch);
     // ЗОНДЫ: восьмая часть за кадр по готовым теням; сцена читает их после первого полного обхода
     if (probes && R.vox_ready) {
         u32 per = PROBE_COUNT / PROBE_PASSES, first = (R.probe_tick % PROBE_PASSES) * per;

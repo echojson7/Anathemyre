@@ -129,6 +129,7 @@ typedef struct RenderSettings {
     bool light_soft;    // мягкий край тени по расстоянию до заслонки (PCSS)
     bool light_contact; // контактные тени с экрана: щели, ступни, складки
     u8   light_ao;      // LIGHT_AO_*: затенение углов
+    bool light_torch;   // тени огней: кубические карты 4 ближних факелов и фонарей
 } RenderSettings;
 
 enum { LIGHT_MAT_OLD, LIGHT_MAT_GGX, LIGHT_MAT_COUNT };
