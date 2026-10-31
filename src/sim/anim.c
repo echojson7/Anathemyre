@@ -1,6 +1,7 @@
 #include "anim.h"
 
 #include "../core/hash.h"
+#include "action.h"
 #include "anim_keys.h"
 
 // ---------------------------------------------------------------- математика поз
@@ -1359,7 +1360,7 @@ static Xf strike_frame(const CharAction *a, const Xf *c, V3 P, V3 T, f32 len, f3
 static Xf fight_frame(const CharAction *a, u8 wpn, const Xf *wld)
 {
     u8 wc = g_weapons[wpn].wclass;
-    const GuardK *k = &CLIP_KEYS(GuardK, AC_WEAPON_GUARD)[wc == WC_POLEARM ? 1 : wc == WC_HEAVY ? 2 : 0];
+    const GuardK *k = &CLIP_KEYS(GuardK, AC_WEAPON_GUARD)[action_of(wc, ACT_STANCE)->key];
     const Xf *c = &wld[BONE_CHEST];
     Xf f = frame_axes(xf_dir(c, k->tip), xf_dir(c, k->edge), xf_point(c, k->pos));
     f32 bl = clampf(a->block, 0.0f, 1.0f);

@@ -1,0 +1,94 @@
+# Наборы действий: что тело делает и сколько это длится. Что это и зачем — docs/combat.md, «Наборы действий»
+#
+# actionset human — основа; набор класса оружия (blade, cleaver, blunt, polearm, heavy) берёт её через parent
+#   и правит только своё. Боец берёт набор по классу оружия в руке. Набор постоянный: моды правят действия.
+# action <имя> открывает действие, дальше его поля:
+#   clip — клип всем телом (none — только время): fall, collapse, lie, getup, kneel, crawl, die, bleed, sink, turn, pickup;
+#   key — номер ключа клипа (стойка оружия: 0 одноручное, 1 древковое, 2 тяжёлое);
+#   time — длительность, с; vary — прибавка · бросок 0..1; per_kg <с на кг> <от кг> и max — по весу оружия с потолком;
+#   kg <прибавка> <делитель> — time · (прибавка + вес/делитель); tough — · (1 − стойкость/tough);
+#   speed — темп клипа внутри действия; contact — доля действия, когда тело касается земли (звук удара о землю).
+# Длительности реалистичны относительно друг друга и от навыков не зависят (кроме стойкости там, где указано).
+# Падать помогает тяжесть, вставать приходится через силу: подъём вдвое дольше падения.
+
+actionset human
+    action fall_back      # сбит ударом спереди или сбоку: отшатывается, садится, на лопатки
+        clip fall
+        time 1.1
+        contact 0.64
+    action fall_front     # сбит ударом в спину: шаг-другой, на колени, грудью
+        clip fall
+        time 1.1
+        contact 0.55
+    action down           # лежит в сознании, прежде чем вставать
+        clip lie
+        time 1
+        vary 1.5
+        tough 200
+    action getup_back
+        clip getup
+        time 2.2
+    action getup_front
+        clip getup
+        time 2.0
+    action pickup
+        clip pickup
+        time 0.9
+    action stagger        # ошеломлён ударом
+        time 0.4
+        vary 0.6
+        tough 200
+    action strike         # проводка удара после касания: лёгкое 0.12 с, балка 18 кг — 0.24 с
+        time 0.12
+        per_kg 0.01 3
+        max 0.24
+    action recover        # возврат оружия: клинок 3 кг — 0.38 с, балка 18 кг — 0.72 с
+        time 0.45
+        kg 0.7 20
+    action block          # держит блок после удара противника
+        time 0.2
+    action dodge          # держит уворот после удара противника
+        time 0.2
+    action kneel          # сдался: на одно колено, на оба, руки пустыми ладонями
+        clip kneel
+        time 1.6
+    action collapse       # теряет сознание стоя: колени подламываются
+        clip collapse
+        time 1.1
+        contact 0.50
+    action die            # убит ударом стоя: падает мешком
+        clip die
+        time 0.8
+        contact 0.55
+    action bleed          # истёк кровью стоя: шатается, колено, бок
+        clip bleed
+        time 2.0
+        contact 0.40
+    action sink           # ноги не держат: оседает, ловит себя руками
+        clip sink
+        time 1.1
+        contact 0.45
+    action turn           # со спины на живот, прежде чем ползти
+        clip turn
+        time 1.2
+    action stance         # одноручное: рукоять у пояса справа, остриё в лицо противнику
+        key 0
+
+actionset blade
+    parent human
+
+actionset cleaver
+    parent human
+
+actionset blunt
+    parent human
+
+actionset polearm
+    parent human
+    action stance         # древко вперёд в грудь противнику, блок — поперёк груди
+        key 1
+
+actionset heavy
+    parent human
+    action stance         # рукоять у живота, клинок стоймя; блок — плашмя перед собой
+        key 2

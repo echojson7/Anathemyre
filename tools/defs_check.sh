@@ -9,6 +9,7 @@
 #   6) неизвестный класс impact у материала мода: файл и строка в журнале, игра не стартует
 #   7) мод правит числа боя (tuning combat): бой арены идёт иначе; неизвестное число — файл и строка, не стартует
 #   8) ошибки в теле мода (docs/body.md): кость крепления и родитель части ragdoll — файл и строка, не стартует
+#   9) наборы действий мода (docs/combat.md): ключ стойки вне клипа и неизвестный клип — не стартует
 # Код выхода прогонов с окном не смотрим (под ASan драйвер Vulkan оставляет утечку), только журнал.
 # ./tools/defs_check.sh [бинарник] [папка], на Linux без экрана — под xvfb-run
 set -e
@@ -20,9 +21,9 @@ DEFS=data/defs
 CAM="--cam 1026 249 2.0 0.3 9"
 sum() { grep "МИР: шаг" | tail -1 | sed 's/.*сумма //'; }
 rm -rf "$DIR/defs_rot" "$DIR/mods_ok" "$DIR/mods_bad" "$DIR/mods_bad2" "$DIR/mods_bad3" "$DIR/mods_none" "$DIR/mods_boj" \
-    "$DIR/mods_boj_bad" "$DIR/mods_telo"
+    "$DIR/mods_boj_bad" "$DIR/mods_telo" "$DIR/mods_act"
 mkdir -p "$DIR/defs_rot" "$DIR/mods_ok/proba" "$DIR/mods_bad/slom" "$DIR/mods_bad2/kraska" "$DIR/mods_bad3/zvuk" \
-    "$DIR/mods_none" "$DIR/mods_boj/boj" "$DIR/mods_boj_bad/boj" "$DIR/mods_telo/telo"
+    "$DIR/mods_none" "$DIR/mods_boj/boj" "$DIR/mods_boj_bad/boj" "$DIR/mods_telo/telo" "$DIR/mods_act/act"
 cp $DEFS/*.txt "$DIR/defs_rot/"
 # Заголовки раньше всех файлов: номера вещей и их оружия и брони идут задом наперёд, поля заполняются из обычных файлов
 cat > "$DIR/defs_rot/0order.txt" <<'END'
@@ -127,4 +128,11 @@ grep -q "telo/bodies.txt:2: неизвестное слово: nosuch" "$DIR/def
 printf 'body human\n    ragdoll pelvis spine 0.14 1\n    ragdoll shin_l foot_l 0.065 0 thigh_l hinge 0 150\n' > "$DIR/mods_telo/telo/bodies.txt"
 if $BIN --mods "$DIR/mods_telo" --bench arena 1 > "$DIR/defs11.txt" 2>&1; then exit 1; fi
 grep -q "telo/bodies.txt:3: у части ragdoll нет родителя thigh_l выше по списку" "$DIR/defs11.txt"
+# Наборы действий: стойка древкового на несуществующем ключе; набор без parent и без действий
+printf 'actionset polearm\n    action stance\n        key 7\n' > "$DIR/mods_act/act/actionsets.txt"
+if $BIN --mods "$DIR/mods_act" --bench arena 1 > "$DIR/defs12.txt" 2>&1; then exit 1; fi
+grep -q "КЛИПЫ: стойка набора действий 4 — ключ 7" "$DIR/defs12.txt"
+printf 'actionset blunt\n    action stance\n        clip fly\n' > "$DIR/mods_act/act/actionsets.txt"
+if $BIN --mods "$DIR/mods_act" --bench arena 1 > "$DIR/defs13.txt" 2>&1; then exit 1; fi
+grep -q "act/actionsets.txt:3: clip:" "$DIR/defs13.txt"
 echo "моды: правка и parent читаются, материал мода читается, сохранение без мода отклонено, числа боя правятся, ошибки указаны (и в теле)"

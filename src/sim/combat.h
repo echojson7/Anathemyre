@@ -82,6 +82,9 @@ enum { REACT_NONE, REACT_BLOCK, REACT_DODGE };
 enum { FALL_BACK, FALL_FRONT, FALL_LEFT, FALL_RIGHT };
 // Как лежит: на спине, ничком, на левом или правом боку (на боку остаются только мёртвые)
 enum { LIE_BACK, LIE_FRONT, LIE_SIDE_L, LIE_SIDE_R };
+// Откуда пришёл в нынешнее состояние тела: ещё стоял (клип падения стоя), с колен (сдался), со спины к ползанию
+// (сначала перевернуться); WAS_FRONT — лежал ничком на прошлом шаге
+enum { ACTF_STAND = 1, ACTF_KNEEL = 2, ACTF_TURN = 4, ACTF_WAS_FRONT = 8 };
 
 enum { EVF_STAGGER = 1, EVF_FRACTURE = 2, EVF_SEVER = 4, EVF_ALLY = 8 };
 
@@ -144,6 +147,12 @@ typedef struct CombatWorld {
     u8  *fall;       // FALL_*: куда толкнул последний удар
     u8  *prone;      // LIE_*: как лежит — от этого, где лежит тело, как его обходят и как встаёт
     u8  *loose;      // выронил оружие при падении: лежит рядом, после подъёма поднимет
+    // Действие всем телом (клип CharClip из sim/anim.h): решает бой, вид только сглаживает показ; идёт в сохранение
+    u8  *act;        // клип сейчас
+    u8  *act_flags;  // ACTF_*: откуда пришёл в нынешнее состояние
+    f32 *act_t;      // с в нынешнем состоянии (с начала действия)
+    f32 *act_t0;     // доля клипа в начале: обморок с колен идёт с середины
+    f32 *act_dur;    // длительность клипа, с; 0 — без конца (лежит, ползёт)
     i32 *gitem;      // оружие на земле (вещь Ground) — пишет мир, бой не трогает; COMBAT_IN_HAND — в руке,
                      // COMBAT_GONE — не в руке и не его (подобрал другой, выпало у мёртвого)
 
@@ -206,6 +215,11 @@ f32 combat_arc(const CombatWorld *w, u32 i, u8 kind);      // полная ду�
 f32 combat_vital_ratio(const CombatWorld *w, u32 i);       // худшая жизненная часть, 0..1
 f32 combat_roll(const CombatWorld *w, u32 a, u32 b, u32 salt);
 void combat_set_state(CombatWorld *w, u32 i, u8 s, f32 dur);
+// Доля клипа всем телом; ahead — сколько секунд вперёд от последнего шага (сглаживание между шагами)
+static inline f32 combat_act_frac(const CombatWorld *w, u32 i, f32 ahead)
+{
+    return w->act_dur[i] > 0.0f ? w->act_t0[i] + (w->act_t[i] + ahead) / w->act_dur[i] : 0.0f;
+}
 void combat_event(CombatWorld *w, u8 kind, u32 a, u32 b);
 f32 combat_rating(const FighterDesc *d);  // грубая сила для подбора пар
 

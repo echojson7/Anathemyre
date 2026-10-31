@@ -10,6 +10,7 @@
 #include "material.h"
 #include "objects.h"
 #include "bodydef.h"
+#include "actiondef.h"
 
 #define ARMOR_CAP ARMOR_NONE  // 255 — «пусто»
 #define COMP_CAP 32           // свет, ёмкость, тело
@@ -106,8 +107,8 @@ typedef struct Block {
     const char *mat_ref;  // paint по имени материала
 } Block;
 
-enum { BK_ITEM, BK_ATTACK, BK_QUALITY, BK_MATERIAL, BK_TUNING, BK_BODY };
-static const char *const g_kinds[] = { "item", "attack", "quality", "material", "tuning", "body" };
+enum { BK_ITEM, BK_ATTACK, BK_QUALITY, BK_MATERIAL, BK_TUNING, BK_BODY, BK_ACTIONSET };
+static const char *const g_kinds[] = { "item", "attack", "quality", "material", "tuning", "body", "actionset" };
 // Компоненты вещи: строка с этим словом открывает его поля
 enum { SEC_ITEM, SEC_WEAPON, SEC_ARMOR, SEC_WEAR, SEC_LIGHT, SEC_CONTAINER, SEC_PHYS, SEC_COUNT };
 static const char *const g_sect_word[SEC_COUNT] = { "", "weapon", "armor", "wear", "light", "container", "phys" };
@@ -669,6 +670,7 @@ static bool header(const DefLine *l, Block *b, Arena *mem)
     }
     const DefTok *t = &l->tok[1];
     if (kind == BK_BODY) return bodydef_header(l);
+    if (kind == BK_ACTIONSET) return actiondef_header(l);
     if (kind == BK_TUNING) {
         u8 w;
         if (!word(l, 1, g_tuning_word, ARRAY_COUNT(g_tuning_word), &w)) return false;
@@ -900,6 +902,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
     g_items = s_items;
     memset(s_tune_set, 0, sizeof s_tune_set);
     bodydef_reset();
+    actiondef_reset();
     g_weapons = s_weapons;
     g_weapon_parts = s_parts;
     g_weapon_pts = s_pts;
@@ -921,23 +924,24 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
             ok = obj > 0;
             b.kind = -1;
         } else if (b.kind < 0) {
-            def_error(&l, "поле вне записи: сначала item, attack, quality, material, tuning, body, object или prefab");
+            def_error(&l, "поле вне записи: сначала item, attack, quality, material, tuning, body, actionset, object или prefab");
             ok = false;
         } else {
             b.lines++;
-            if (def_is(&l.tok[0], "parent")) ok = parent(&l, &b);
+            if (def_is(&l.tok[0], "parent")) ok = b.kind == BK_ACTIONSET ? actiondef_parent(&l, b.lines) : parent(&l, &b);
             else switch (b.kind) {
                 case BK_ITEM: ok = item_field(&l, &b, mem); break;
                 case BK_ATTACK: ok = attack_field(&l, &b, mem); break;
                 case BK_MATERIAL: ok = material_field(&l, &b); break;
                 case BK_TUNING: ok = tuning_field(&l); break;
                 case BK_BODY: ok = bodydef_field(&l, mem); break;
+                case BK_ACTIONSET: ok = actiondef_field(&l); break;
                 default: ok = quality_field(&l, &b, mem); break;
                 }
         }
         if (!ok) break;
     }
-    if (bad || !ok || !check() || !objdefs_check() || !bodydef_check()) return false;
+    if (bad || !ok || !check() || !objdefs_check() || !bodydef_check() || !actiondef_check()) return false;
     g_weapon_pool_count = 0;
     for (u32 i = 0; i < g_weapon_count; i++)
         if (s_weapons[i].common) g_weapon_pool[g_weapon_pool_count++] = (u8)i;
