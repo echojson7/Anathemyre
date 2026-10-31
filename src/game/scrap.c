@@ -1,4 +1,5 @@
 #include "scrap.h"
+#include "props.h"
 
 // Формы в осях вещи; масса — сталь 7800 кг/м³, бетон 2400
 const PhysDesc g_scrap_phys[SCRAP_COUNT] = {
@@ -19,39 +20,37 @@ const PhysDesc g_scrap_phys[SCRAP_COUNT] = {
                     .friction = 0.5f, .bounce = 0.3f },
 };
 
-static const V3 C_RUST = { 0.24f, 0.12f, 0.06f }, C_STEEL = { 0.20f, 0.19f, 0.18f }, C_CONC = { 0.36f, 0.35f, 0.32f };
-
 static void box_at(MeshBuilder *mb, V3 c, V3 h) { mb_box(mb, m4_trs(c, v3_mul(h, 2.0f), 0, 0, 0)); }
 
 static void build_kind(MeshBuilder *mb, u32 k)
 {
     switch (k) {
     case SCRAP_PIPE:
-        mb_set(mb, C_RUST, MAT_RUST, 0);
+        mb_set(mb, mat_c(g_mat.rust_deep), MAT_RUST, 0);
         mb_cylinder(mb, v3(0, -0.59f, 0), v3(0, 0.59f, 0), 0.045f, 10);
         break;
     case SCRAP_REBAR:
-        mb_set(mb, C_RUST, MAT_RUST, 0);
+        mb_set(mb, mat_c(g_mat.rust_deep), MAT_RUST, 0);
         mb_cylinder(mb, v3(0, -0.46f, 0), v3(0, 0.46f, 0), 0.012f, 6);
         break;
     case SCRAP_SHEET:
-        mb_set(mb, C_STEEL, MAT_METAL, 0);
+        mb_set(mb, mat_c(g_mat.iron), MAT_METAL, 0);
         box_at(mb, v3(0, 0, 0), g_scrap_phys[k].part[0].b);
         break;
     case SCRAP_CHUNK:
-        mb_set(mb, C_CONC, MAT_CONCRETE, 0);
+        mb_set(mb, mat_c(g_mat.concrete_chip), MAT_CONCRETE, 0);
         box_at(mb, v3(0, 0, 0), g_scrap_phys[k].part[0].b);
-        mb_set(mb, C_RUST, MAT_RUST, 0);
+        mb_set(mb, mat_c(g_mat.rust_deep), MAT_RUST, 0);
         mb_cylinder(mb, v3(-0.05f, 0.0f, 0.04f), v3(-0.05f, 0.24f, 0.07f), 0.008f, 5);
         break;
     case SCRAP_CHANNEL:
-        mb_set(mb, C_RUST, MAT_RUST, 0);
+        mb_set(mb, mat_c(g_mat.rust_deep), MAT_RUST, 0);
         for (u32 i = 0; i < 3; i++) box_at(mb, g_scrap_phys[k].part[i].a, g_scrap_phys[k].part[i].b);
         break;
     case SCRAP_KEG:
-        mb_set(mb, C_RUST, MAT_RUST, 0);
+        mb_set(mb, mat_c(g_mat.rust_deep), MAT_RUST, 0);
         mb_cylinder(mb, v3(0, -0.28f, 0), v3(0, 0.28f, 0), 0.16f, 12);
-        mb_set(mb, C_STEEL, MAT_METAL, 0);
+        mb_set(mb, mat_c(g_mat.iron), MAT_METAL, 0);
         mb_cylinder(mb, v3(0, -0.12f, 0), v3(0, -0.10f, 0), 0.165f, 12);
         mb_cylinder(mb, v3(0, 0.10f, 0), v3(0, 0.12f, 0), 0.165f, 12);
         break;

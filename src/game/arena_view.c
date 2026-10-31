@@ -1,14 +1,9 @@
 #include "arena_view.h"
+#include "props.h"
 
 #include <string.h>
 
 #include "../core/hash.h"
-#include "../core/palette.h"
-
-#define C_RUST_DARK v3(0.28f, 0.17f, 0.10f)
-#define C_FLOOR v3(0.36f, 0.31f, 0.24f)
-#define C_GLYPH v3(0.16f, 0.62f, 0.28f)
-#define C_LAMP v3(0.95f, 0.82f, 0.45f)
 
 #define SLAB_R 8.6f     // вписанный радиус бетонной плиты
 #define FLOOR_R 6.9f    // песчаный круг боя
@@ -41,13 +36,13 @@ static void floor_glyph(MeshBuilder *mb, V3 c, V3 radial, f32 half_len, f32 half
 void arena_view_build(MeshBuilder *mb, V3 center)
 {
     // Плита и песок
-    mb_set(mb, PAL_CONCRETE, MAT_CONCRETE, BONE_NONE);
+    prop_mat(mb, g_mat.concrete);
     oct_slab(mb, center, SLAB_R, -0.3f, 0.12f);
-    mb_set(mb, C_FLOOR, MAT_SAND, BONE_NONE);
+    prop_mat(mb, g_mat.arena_floor);
     oct_slab(mb, center, FLOOR_R, 0.0f, FLOOR_TOP);
 
     // Круг знаков на песке: им размечено место боя, смысла никто не помнит
-    mb_set(mb, C_GLYPH, MAT_GLYPH, BONE_NONE);
+    prop_mat(mb, g_mat.glyph_dim);
     for (int k = 0; k < 28; k++) {
         f32 a = (f32)k * 2.0f * PI_F / 28.0f;
         V3 radial = v3(sinf(a), 0.0f, cosf(a));
@@ -62,21 +57,21 @@ void arena_view_build(MeshBuilder *mb, V3 center)
         f32 a = PI_F / 8.0f + (f32)k * PI_F * 0.25f;
         bool gate_post = k == gate - 1 || k == gate;
         f32 h = gate_post ? 3.1f : 2.3f;
-        mb_set(mb, C_RUST_DARK, MAT_RUST, BONE_NONE);
+        prop_mat(mb, g_mat.rust_dark);
         mb_box(mb, m4_trs(v3(p.x, h * 0.5f, p.z), v3(0.22f, h, 0.06f), 0, a, 0));
         mb_box(mb, m4_trs(v3(p.x, h * 0.5f, p.z), v3(0.05f, h, 0.2f), 0, a, 0));
-        mb_set(mb, PAL_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
+        prop_mat(mb, g_mat.concrete_dark);
         mb_box(mb, m4_trs(v3(p.x, 0.25f, p.z), v3(0.5f, 0.3f, 0.5f), 0, a, 0));
     }
     for (int k = 0; k < 8; k++) {
         int k1 = (k + 1) % 8;
         if (k1 == gate) continue;
         V3 a = oct_corner(center, FENCE_R, k, 0.0f), b = oct_corner(center, FENCE_R, k1, 0.0f);
-        mb_set(mb, PAL_RUST, MAT_RUST, BONE_NONE);
+        prop_mat(mb, g_mat.rust);
         static const f32 rails[3] = { 0.55f, 1.15f, 1.85f };
         for (int r = 0; r < 3; r++)
             mb_cylinder(mb, v3(a.x, rails[r], a.z), v3(b.x, rails[r] - (r == 2 ? 0.06f : 0.0f), b.z), 0.04f, 8);
-        mb_set(mb, C_RUST_DARK, MAT_RUST, BONE_NONE);
+        prop_mat(mb, g_mat.rust_dark);
         for (int i = 1; i < 12; i++) {
             f32 t = (f32)i / 12.0f;
             V3 q = v3_lerp(a, b, t);
@@ -89,12 +84,12 @@ void arena_view_build(MeshBuilder *mb, V3 center)
     {
         // Перекладина ворот и знак над ними
         V3 a = oct_corner(center, FENCE_R, gate - 1, 2.95f), b = oct_corner(center, FENCE_R, gate, 2.95f);
-        mb_set(mb, C_RUST_DARK, MAT_RUST, BONE_NONE);
+        prop_mat(mb, g_mat.rust_dark);
         mb_cylinder(mb, a, b, 0.09f, 10);
         V3 m = v3_lerp(a, b, 0.5f);
-        mb_set(mb, PAL_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
+        prop_mat(mb, g_mat.concrete_dark);
         mb_box(mb, m4_trs(v3(m.x, 2.45f, m.z - 0.02f), v3(1.6f, 0.75f, 0.08f), 0, 0, 0));
-        mb_set(mb, PAL_GLYPH_RED, MAT_GLYPH, BONE_NONE);
+        prop_mat(mb, g_mat.glyph_red);
         mb_quad(mb, v3(m.x, 2.45f, m.z - 0.07f), v3(-0.7f, 0, 0), v3(0, 0.3f, 0));
     }
 
@@ -103,18 +98,18 @@ void arena_view_build(MeshBuilder *mb, V3 center)
         f32 a = PI_F * (side ? 1.375f : 0.375f);
         V3 dir = v3(sinf(a), 0.0f, cosf(a));
         V3 base = v3(center.x + dir.x * 10.2f, 0.0f, center.z + dir.z * 10.2f);
-        mb_set(mb, C_RUST_DARK, MAT_RUST, BONE_NONE);
+        prop_mat(mb, g_mat.rust_dark);
         mb_box(mb, m4_trs(v3(base.x, 5.2f, base.z), v3(0.32f, 10.4f, 0.32f), 0, a, 0));
         for (int i = 0; i < 6; i++)
             mb_box(mb, m4_trs(v3(base.x, 1.2f + (f32)i * 1.6f, base.z), v3(0.5f, 0.06f, 0.5f), 0, a, 0));
-        mb_set(mb, PAL_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
+        prop_mat(mb, g_mat.concrete_dark);
         mb_box(mb, m4_trs(v3(base.x, 0.3f, base.z), v3(1.1f, 0.6f, 1.1f), 0, a, 0));
         // Корпус фонаря смотрит в центр и вниз
         V3 lamp = v3(base.x - dir.x * 0.5f, 10.2f, base.z - dir.z * 0.5f);
         f32 yaw = atan2f(-dir.x, -dir.z);
         mb_set(mb, v3(0.16f, 0.16f, 0.17f), MAT_METAL, BONE_NONE);
         mb_box(mb, m4_trs(lamp, v3(1.2f, 0.7f, 0.5f), 0.55f, yaw, 0));
-        mb_set(mb, C_LAMP, MAT_EMISSIVE, BONE_NONE);
+        prop_mat(mb, g_mat.lamp_white);
         V3 fwd = v3(sinf(yaw), 0.0f, cosf(yaw));
         V3 lens = v3_add(lamp, v3_add(v3_mul(fwd, 0.22f), v3(0, -0.14f, 0)));
         V3 right = v3(cosf(yaw), 0.0f, -sinf(yaw));
@@ -127,19 +122,19 @@ void arena_view_build(MeshBuilder *mb, V3 center)
         V3 p = oct_corner(center, FENCE_R, k, 2.62f);
         V3 in = v3_norm(v3(center.x - p.x, 0.0f, center.z - p.z));
         V3 c = v3_add(p, v3_mul(in, 0.2f));
-        mb_set(mb, C_RUST_DARK, MAT_RUST, BONE_NONE);
+        prop_mat(mb, g_mat.rust_dark);
         mb_box(mb, m4_trs(v3_add(p, v3_mul(in, 0.1f)), v3(0.2f, 0.04f, 0.04f), 0, atan2f(in.x, in.z) + PI_F * 0.5f, 0));
         mb_box(mb, m4_trs(v3_add(c, v3(0, 0.1f, 0)), v3(0.16f, 0.025f, 0.16f), 0, 0.3f, 0));
         for (int i = 0; i < 4; i++) {
             f32 a = (f32)i * PI_F * 0.5f + 0.3f;
             mb_box(mb, m4_trs(v3(c.x + sinf(a) * 0.07f, c.y - 0.02f, c.z + cosf(a) * 0.07f), v3(0.012f, 0.22f, 0.012f), 0, a, 0));
         }
-        mb_set(mb, v3_mul(C_LAMP, 0.5f), MAT_EMISSIVE, BONE_NONE);
+        mb_set(mb, v3_mul(mat_c(g_mat.lamp_white), 0.5f), MAT_EMISSIVE, BONE_NONE);
         mb_box(mb, m4_trs(v3_add(c, v3(0, -0.02f, 0)), v3(0.07f, 0.11f, 0.07f), 0, 0.3f, 0));
     }
 
     // Бетонные блоки, на которых стоят и сидят зрители
-    mb_set(mb, PAL_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
+    prop_mat(mb, g_mat.concrete_dark);
     for (int i = 0; i < 9; i++) {
         f32 a = 0.5f + (f32)i * 0.62f;
         if (fabsf(wrap_angle(a - PI_F)) < 0.6f) continue;  // проход к воротам
@@ -239,7 +234,7 @@ u32 arena_view_lights(const ArenaView *v, f32 night, f32 time, PointLight *out)
             // Узкий конус с чёткой кромкой: на полу ринга лежит круг света, за ним темно
             l->cone = 0.96f;
             l->radius = 30.0f;
-            l->color = v3_mul(C_LAMP, 90.0f * on * hum);
+            l->color = v3_mul(mat_c(g_mat.lamp_white), 90.0f * on * hum);
             l->glow = 0.00012f;
         } else {
             // Лампа в сетке на стойке ворот
@@ -249,7 +244,7 @@ u32 arena_view_lights(const ArenaView *v, f32 night, f32 time, PointLight *out)
             l->dir = v3(0, -1, 0);
             l->cone = -1.0f;
             l->radius = 9.0f;
-            l->color = v3_mul(C_LAMP, 2.2f * on * hum);
+            l->color = v3_mul(mat_c(g_mat.lamp_white), 2.2f * on * hum);
             l->glow = 0.0015f;
         }
     }

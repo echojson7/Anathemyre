@@ -1,20 +1,11 @@
 #include "props.h"
 
-// Ткани: навесы, тряпки, мешки, ковры; листы: обшивка, заборы, лом
-const V3 g_pal_cloth[PAL_CLOTH_N] = {
-    { 0.45f, 0.32f, 0.15f }, { 0.40f, 0.14f, 0.10f }, { 0.50f, 0.47f, 0.40f }, { 0.28f, 0.30f, 0.18f },
-    { 0.30f, 0.22f, 0.15f }, { 0.25f, 0.27f, 0.30f }, { 0.36f, 0.30f, 0.22f },
-};
-const V3 g_pal_sheet[PAL_SHEET_N] = {
-    { 0.34f, 0.21f, 0.13f }, { 0.27f, 0.18f, 0.12f }, { 0.23f, 0.24f, 0.20f }, { 0.21f, 0.22f, 0.24f }, { 0.31f, 0.28f, 0.23f },
-};
-
 // Ящик из листа с рёбрами; возвращает высоту
 f32 prop_crate(MeshBuilder *mb, Rng *r, V3 p, f32 yaw, f32 s)
 {
     V3 size = v3(s * rng_range(r, 0.9f, 1.5f), s * rng_range(r, 0.7f, 1.0f), s * rng_range(r, 0.8f, 1.1f));
     u32 k = rng_below(r, 3);
-    V3 col = k == 0 ? prop_tint(r, PAL_RUST, 0.2f) : k == 1 ? prop_tint(r, v3(0.24f, 0.26f, 0.19f), 0.2f) : prop_tint(r, PAL_METAL, 0.2f);
+    V3 col = k == 0 ? mat_tint(r, g_mat.rust, 0.2f) : k == 1 ? prop_tint(r, v3(0.24f, 0.26f, 0.19f), 0.2f) : mat_tint(r, g_mat.metal, 0.2f);
     M4 L = prop_frame(p, yaw);
     mb_set(mb, col, k == 0 ? MAT_RUST : MAT_METAL, BONE_NONE);
     prop_lbox(mb, L, v3(0, size.y * 0.5f, 0), size, 0, 0, 0);
@@ -90,7 +81,7 @@ void prop_scrap_heap(MeshBuilder *mb, Rng *r, V3 c, f32 rad)
         f32 h = (1.0f - d / rad) * rad * 0.55f * rng_range(r, 0.4f, 1.0f);
         V3 p = v3(c.x + cosf(a) * d, c.y + h, c.z + sinf(a) * d);
         u32 k = rng_below(r, 4);
-        mb_set(mb, k == 2 ? prop_tint(r, PAL_METAL, 0.3f) : prop_pick(r, g_pal_sheet, 5, 0.2f), k == 2 ? MAT_METAL : MAT_RUST, BONE_NONE);
+        mb_set(mb, k == 2 ? mat_tint(r, g_mat.metal, 0.3f) : mat_tint(r, g_mat.sheet, 0.2f), k == 2 ? MAT_METAL : MAT_RUST, BONE_NONE);
         if (k == 0) {
             mb_box(mb, m4_trs(p, v3(rng_range(r, 0.6f, 1.3f), 0.04f, rng_range(r, 0.4f, 0.9f)), rng_range(r, -0.7f, 0.7f),
                           rng_range(r, 0, PI_F), rng_range(r, -0.7f, 0.7f)));
@@ -135,7 +126,7 @@ void prop_cable(MeshBuilder *mb, Rng *r, V3 a, V3 b, f32 sag, u32 hang)
             f32 t = rng_range(r, 0.12f, 0.88f), w = rng_range(r, 0.3f, 0.7f), h = rng_range(r, 0.35f, 1.0f);
             V3 p = v3_lerp(a, b, t);
             p.y -= sag * 4.0f * t * (1.0f - t) + h * 0.5f;
-            mb_set(mb, prop_pick(r, g_pal_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
+            prop_paint(mb, r, g_mat.cloth, 0.2f);
             mb_box(mb, m4_trs(p, v3(w, h, 0.02f), rng_range(r, -0.15f, 0.15f), yaw, rng_range(r, -0.05f, 0.05f)));
         }
     } else if (hang == 2) {
@@ -143,9 +134,9 @@ void prop_cable(MeshBuilder *mb, Rng *r, V3 a, V3 b, f32 sag, u32 hang)
         p.y -= sag;
         mb_set(mb, v3(0.06f, 0.055f, 0.05f), MAT_METAL, BONE_NONE);
         mb_cylinder(mb, p, v3(p.x, p.y - 0.3f, p.z), 0.012f, 4);
-        mb_set(mb, PAL_METAL, MAT_METAL, BONE_NONE);
+        prop_mat(mb, g_mat.metal);
         prop_box(mb, v3(p.x, p.y - 0.34f, p.z), v3(0.26f, 0.08f, 0.26f), yaw);
-        mb_set(mb, prop_tint(r, PAL_LAMP, 0.15f), MAT_EMISSIVE, BONE_NONE);
+        prop_paint(mb, r, g_mat.lamp, 0.15f);
         prop_box(mb, v3(p.x, p.y - 0.42f, p.z), v3(0.13f, 0.08f, 0.13f), yaw);
     }
 }
@@ -154,24 +145,24 @@ void prop_lamp_post(MeshBuilder *mb, Rng *r, V3 p, f32 yaw)
 {
     f32 h = rng_range(r, 3.0f, 4.0f);
     V3 top = v3(p.x + rng_range(r, -0.08f, 0.08f), p.y + h, p.z + rng_range(r, -0.08f, 0.08f));
-    mb_set(mb, prop_tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
+    prop_paint(mb, r, g_mat.concrete_dark, 0.1f);
     prop_box(mb, v3(p.x, p.y + 0.2f, p.z), v3(0.45f, 0.4f, 0.45f), rng_range(r, 0, PI_F));
-    mb_set(mb, prop_tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
+    prop_paint(mb, r, g_mat.rust, 0.2f);
     mb_cylinder(mb, p, top, 0.06f, 6);
     V3 arm = v3_add(top, v3(sinf(yaw) * 0.7f, -0.05f, cosf(yaw) * 0.7f));
     mb_cylinder(mb, top, arm, 0.035f, 5);
-    mb_set(mb, PAL_METAL, MAT_METAL, BONE_NONE);
+    prop_mat(mb, g_mat.metal);
     prop_box(mb, v3(arm.x, arm.y - 0.08f, arm.z), v3(0.32f, 0.1f, 0.32f), yaw);
-    mb_set(mb, prop_tint(r, PAL_LAMP, 0.15f), MAT_EMISSIVE, BONE_NONE);
+    prop_paint(mb, r, g_mat.lamp, 0.15f);
     prop_box(mb, v3(arm.x, arm.y - 0.16f, arm.z), v3(0.16f, 0.07f, 0.16f), yaw);
 }
 
 void prop_rug(MeshBuilder *mb, Rng *r, V3 p, f32 yaw)
 {
     f32 w = rng_range(r, 1.2f, 2.3f), d = rng_range(r, 0.8f, 1.5f);
-    mb_set(mb, prop_pick(r, g_pal_cloth, 7, 0.15f), MAT_CLOTH, BONE_NONE);
+    prop_paint(mb, r, g_mat.cloth, 0.15f);
     prop_box(mb, v3(p.x, p.y + 0.01f, p.z), v3(w, 0.02f, d), yaw);
-    mb_set(mb, prop_pick(r, g_pal_cloth, 7, 0.15f), MAT_CLOTH, BONE_NONE);
+    prop_paint(mb, r, g_mat.cloth, 0.15f);
     prop_box(mb, v3(p.x, p.y + 0.012f, p.z), v3(w * 0.85f, 0.02f, d * 0.18f), yaw);
 }
 
@@ -181,7 +172,7 @@ void prop_fire_pit(MeshBuilder *mb, Rng *r, V3 p)
     for (u32 i = 0; i < 8; i++) {
         f32 a = (f32)i * (2 * PI_F / 8) + rng_range(r, -0.2f, 0.2f);
         f32 s = rng_range(r, 0.18f, 0.28f);
-        mb_set(mb, prop_tint(r, PAL_CONCRETE_DARK, 0.2f), MAT_CONCRETE, BONE_NONE);
+        prop_paint(mb, r, g_mat.concrete_dark, 0.2f);
         mb_box(mb, m4_trs(v3(p.x + cosf(a) * 0.5f, p.y + s * 0.4f, p.z + sinf(a) * 0.5f), v3(s, s * 0.8f, s * 1.2f), 0, a, 0));
     }
     mb_set(mb, v3(0.05f, 0.045f, 0.04f), MAT_CONCRETE, BONE_NONE);
@@ -191,7 +182,7 @@ void prop_fire_pit(MeshBuilder *mb, Rng *r, V3 p)
     for (u32 i = 0; i < 3; i++)
         prop_box(mb, v3(p.x + rng_range(r, -0.15f, 0.15f), p.y + 0.08f, p.z + rng_range(r, -0.15f, 0.15f)), v3(0.12f, 0.05f, 0.1f),
             rng_range(r, 0, PI_F));
-    mb_set(mb, prop_tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
+    prop_paint(mb, r, g_mat.rust, 0.2f);
     V3 top = v3(p.x, p.y + 1.25f, p.z);
     for (u32 i = 0; i < 3; i++) {
         f32 a = (f32)i * (2 * PI_F / 3) + 0.4f;
@@ -206,7 +197,7 @@ void prop_fire_pit(MeshBuilder *mb, Rng *r, V3 p)
 void prop_water_tower(MeshBuilder *mb, Rng *r, V3 p, f32 h)
 {
     f32 rad = rng_range(r, 1.0f, 1.4f), th = rng_range(r, 1.8f, 2.6f);
-    mb_set(mb, prop_tint(r, PAL_RUST, 0.15f), MAT_RUST, BONE_NONE);
+    prop_paint(mb, r, g_mat.rust, 0.15f);
     for (u32 i = 0; i < 4; i++) {
         f32 a = (f32)i * (PI_F / 2) + PI_F / 4;
         V3 foot = v3(p.x + cosf(a) * rad * 1.1f, p.y, p.z + sinf(a) * rad * 1.1f);
@@ -216,10 +207,10 @@ void prop_water_tower(MeshBuilder *mb, Rng *r, V3 p, f32 h)
     mb_cylinder(mb, v3(p.x, p.y + h * 0.5f, p.z - rad), v3(p.x, p.y + h * 0.5f, p.z + rad), 0.04f, 4);
     mb_set(mb, prop_tint(r, v3(0.26f, 0.19f, 0.14f), 0.1f), MAT_RUST, BONE_NONE);
     mb_cylinder(mb, v3(p.x, p.y + h, p.z), v3(p.x, p.y + h + th, p.z), rad, 16);
-    mb_set(mb, prop_tint(r, PAL_METAL, 0.2f), MAT_METAL, BONE_NONE);
+    prop_paint(mb, r, g_mat.metal, 0.2f);
     mb_cylinder(mb, v3(p.x, p.y + h + th, p.z), v3(p.x, p.y + h + th + 0.25f, p.z), rad * 0.6f, 12);
     // Труба вниз с краном
-    mb_set(mb, prop_tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
+    prop_paint(mb, r, g_mat.rust, 0.2f);
     mb_cylinder(mb, v3(p.x + rad * 0.5f, p.y + h, p.z), v3(p.x + rad * 0.5f, p.y + 0.9f, p.z), 0.06f, 6);
     mb_cylinder(mb, v3(p.x + rad * 0.5f, p.y + 0.9f, p.z), v3(p.x + rad * 0.5f + 0.3f, p.y + 0.9f, p.z), 0.05f, 6);
 }
@@ -239,16 +230,16 @@ void prop_fence(MeshBuilder *mb, Rng *r, V3 a, V3 b)
         if (k < 0.08f) {
             // дыра
         } else if (k < 0.3f) {
-            mb_set(mb, prop_tint(r, PAL_CONCRETE, 0.15f), MAT_CONCRETE, BONE_NONE);
+            prop_paint(mb, r, g_mat.concrete, 0.15f);
             f32 h = rng_range(r, 0.8f, 1.4f);
             mb_box(mb, m4_trs(v3(p.x, p.y + h * 0.5f, p.z), v3(w * 0.95f, h, 0.6f), 0, yaw + rng_range(r, -0.08f, 0.08f), 0));
         } else {
-            mb_set(mb, prop_pick(r, g_pal_sheet, 5, 0.2f), MAT_RUST, BONE_NONE);
+            prop_paint(mb, r, g_mat.sheet, 0.2f);
             f32 h = rng_range(r, 1.6f, 2.5f);
             mb_box(mb, m4_trs(v3(p.x, p.y + h * 0.5f - 0.1f, p.z), v3(w * 1.05f, h, 0.04f), rng_range(r, -0.08f, 0.08f),
                           yaw + rng_range(r, -0.05f, 0.05f), rng_range(r, -0.06f, 0.06f)));
             if (rng_f32(r) < 0.4f) {
-                mb_set(mb, prop_tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
+                prop_paint(mb, r, g_mat.rust, 0.2f);
                 mb_cylinder(mb, v3(p.x, p.y, p.z), v3(p.x, p.y + h + 0.2f, p.z), 0.05f, 5);
             }
         }
@@ -262,7 +253,7 @@ void prop_railing(MeshBuilder *mb, Rng *r, V3 a, V3 b)
     V3 d = v3_sub(b, a);
     f32 len = sqrtf(d.x * d.x + d.z * d.z);
     u32 n = (u32)(len / 1.8f) + 1;
-    mb_set(mb, prop_tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
+    prop_paint(mb, r, g_mat.rust, 0.2f);
     for (u32 i = 0; i < n; i++) {
         V3 p0 = v3_add(a, v3_mul(d, (f32)i / n)), p1 = v3_add(a, v3_mul(d, (f32)(i + 1) / n));
         if (rng_f32(r) < 0.12f) continue;

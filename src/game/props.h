@@ -3,14 +3,9 @@
 #ifndef ANA_PROPS_H
 #define ANA_PROPS_H
 
-#include "../core/palette.h"
 #include "../core/rng.h"
+#include "../defs/material.h"
 #include "../render/mesh.h"
-
-#define PAL_CLOTH_N 7
-#define PAL_SHEET_N 5
-extern const V3 g_pal_cloth[PAL_CLOTH_N];
-extern const V3 g_pal_sheet[PAL_SHEET_N];
 
 // Разброс яркости без сдвига оттенка: бетон, железо
 static inline V3 prop_shade(Rng *r, V3 c, f32 k) { return v3_mul(c, 1.0f + rng_range(r, -k, k)); }
@@ -23,6 +18,19 @@ static inline V3 prop_tint(Rng *r, V3 c, f32 a)
 }
 
 static inline V3 prop_pick(Rng *r, const V3 *pal, u32 n, f32 a) { return prop_tint(r, pal[rng_below(r, n)], a); }
+
+// Цвет материала с разбросом: у набора оттенков (ткани, листы) — случайный из набора
+static inline V3 mat_tint(Rng *r, const MatDef *m, f32 a)
+{
+    return m->tones == 1 ? prop_tint(r, m->tone[0], a) : prop_pick(r, m->tone, m->tones, a);
+}
+// Дальше строится материалом: его цвет с разбросом a и его поверхность
+static inline void prop_paint(MeshBuilder *mb, Rng *r, const MatDef *m, f32 a)
+{
+    mb_set(mb, mat_tint(r, m, a), (Material)m->surface, BONE_NONE);
+}
+// То же без разброса
+static inline void prop_mat(MeshBuilder *mb, const MatDef *m) { mb_set(mb, m->tone[0], (Material)m->surface, BONE_NONE); }
 
 static inline void prop_box(MeshBuilder *mb, V3 c, V3 s, f32 yaw) { mb_box(mb, m4_trs(c, s, 0, yaw, 0)); }
 

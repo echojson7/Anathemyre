@@ -1,4 +1,5 @@
 #include "testroom.h"
+#include "props.h"
 #include "../defs/defs.h"
 
 #include <string.h>
@@ -12,7 +13,6 @@
 #include "squad.h"
 #include "town.h"
 #include "../world/map.h"
-#include "../core/palette.h"
 
 // Цвета поверхностей (альбедо, линейные)
 
@@ -32,7 +32,7 @@ static void weapon_racks(MeshBuilder *mb);
 
 static void hall(MeshBuilder *mb, Rng *rng)
 {
-    mb_set(mb, PAL_CONCRETE, MAT_CONCRETE, BONE_NONE);
+    prop_mat(mb, g_mat.concrete);
 
     // Плита пола
     box(mb, v3(0, -0.3f, -2), v3(64, 0.8f, 52));
@@ -85,7 +85,7 @@ static void hall(MeshBuilder *mb, Rng *rng)
     }
 
     // Обрушенная боковая стена: ступенчатые обломки
-    mb_set(mb, PAL_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
+    prop_mat(mb, g_mat.concrete_dark);
     for (int k = 0; k < 12; k++) {
         f32 z = -20.0f + (f32)k * 2.6f;
         f32 h = fmaxf(1.0f, 13.0f - (f32)k * 1.1f + rng_range(rng, -1.5f, 1.5f));
@@ -99,18 +99,18 @@ static void hall(MeshBuilder *mb, Rng *rng)
         f32 s = rng_range(rng, 0.25f, 1.4f);
         V3 c = v3(cosf(ang) * r, s * 0.3f, sinf(ang) * r - 4.0f);
         if (fabsf(c.x) < 6.5f && c.z > -16.0f) continue; // проход по центру
-        mb_set(mb, rng_f32(rng) < 0.5f ? PAL_CONCRETE : PAL_CONCRETE_DARK, MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, rng_f32(rng) < 0.5f ? mat_c(g_mat.concrete) : mat_c(g_mat.concrete_dark), MAT_CONCRETE, BONE_NONE);
         mb_box(mb, m4_trs(c, v3(s * rng_range(rng, 0.8f, 2.0f), s, s * rng_range(rng, 0.7f, 1.5f)),
                           rng_range(rng, -0.4f, 0.4f), rng_range(rng, 0, PI_F), rng_range(rng, -0.4f, 0.4f)));
         if (rng_f32(rng) < 0.35f) {
-            mb_set(mb, PAL_RUST, MAT_RUST, BONE_NONE);
+            prop_mat(mb, g_mat.rust);
             V3 tip = v3_add(c, v3(rng_range(rng, -0.6f, 0.6f), rng_range(rng, 0.8f, 1.8f), rng_range(rng, -0.6f, 0.6f)));
             mb_cylinder(mb, c, tip, 0.025f, 6);
         }
     }
 
     // Трубы вдоль задней стены
-    mb_set(mb, PAL_RUST, MAT_RUST, BONE_NONE);
+    prop_mat(mb, g_mat.rust);
     for (int i = 0; i < 2; i++) {
         f32 y = 4.0f + (f32)i * 1.3f, r = 0.45f - (f32)i * 0.1f;
         mb_cylinder(mb, v3(-33, y, wz + 1.9f), v3(33, y, wz + 1.9f), r, 14);
@@ -140,16 +140,16 @@ static void hall(MeshBuilder *mb, Rng *rng)
     // Машина неизвестного назначения со знаками
     mb_set(mb, v3(0.22f, 0.21f, 0.20f), MAT_METAL, BONE_NONE);
     box(mb, v3(-4, 1.6f, -15), v3(5.0f, 3.2f, 3.0f));
-    mb_set(mb, PAL_RUST, MAT_RUST, BONE_NONE);
+    prop_mat(mb, g_mat.rust);
     box(mb, v3(-4, 3.6f, -15.5f), v3(3.6f, 0.8f, 2.0f));
     mb_cylinder(mb, v3(-6, 4.0f, -15.5f), v3(-6, 7.5f, -16.5f), 0.25f, 10);
-    glyph_panel(mb, v3(-4, 1.8f, -13.5f), v3(0, 0, 1), 1.8f, 0.7f, PAL_GLYPH_GREEN);
+    glyph_panel(mb, v3(-4, 1.8f, -13.5f), v3(0, 0, 1), 1.8f, 0.7f, mat_c(g_mat.glyph_green));
 
     // Знаки на стене и колоннах
-    glyph_panel(mb, v3(0, 13.5f, wz + 1.2f), v3(0, 0, 1), 6.0f, 1.6f, PAL_GLYPH_GREEN);
-    glyph_panel(mb, v3(-24.0f, 16.0f, wz + 1.2f), v3(0, 0, 1), 3.0f, 0.4f, PAL_GLYPH_RED);
-    glyph_panel(mb, v3(-9, 4.5f, 6.8f), v3(0, 0, 1), 0.65f, 1.6f, PAL_GLYPH_RED);
-    glyph_panel(mb, v3(9, 6.0f, -5.2f), v3(0, 0, 1), 0.65f, 2.2f, PAL_GLYPH_GREEN);
+    glyph_panel(mb, v3(0, 13.5f, wz + 1.2f), v3(0, 0, 1), 6.0f, 1.6f, mat_c(g_mat.glyph_green));
+    glyph_panel(mb, v3(-24.0f, 16.0f, wz + 1.2f), v3(0, 0, 1), 3.0f, 0.4f, mat_c(g_mat.glyph_red));
+    glyph_panel(mb, v3(-9, 4.5f, 6.8f), v3(0, 0, 1), 0.65f, 1.6f, mat_c(g_mat.glyph_red));
+    glyph_panel(mb, v3(9, 6.0f, -5.2f), v3(0, 0, 1), 0.65f, 2.2f, mat_c(g_mat.glyph_green));
 
     // Красные огни на колоннах
     mb_set(mb, v3(0.9f, 0.12f, 0.06f), MAT_EMISSIVE, BONE_NONE);
@@ -198,7 +198,7 @@ static void rack_stand(MeshBuilder *mb, f32 x0, f32 x1, f32 z, f32 top, const ch
                        bool hilt_up)
 {
     const f32 floor = 0.1f, lean = 0.06f;
-    mb_set(mb, PAL_RUST, MAT_RUST, BONE_NONE);
+    prop_mat(mb, g_mat.rust);
     box(mb, v3(0.5f * (x0 + x1), floor + 0.09f, z), v3(x1 - x0 + 0.2f, 0.18f, 0.22f));
     box(mb, v3(0.5f * (x0 + x1), top, z - top * lean - 0.04f), v3(x1 - x0 + 0.2f, 0.08f, 0.1f));
     for (u32 sd = 0; sd < 2; sd++) {
@@ -216,7 +216,7 @@ static void rack_wall(MeshBuilder *mb, f32 x0, f32 x1, f32 wall_z, f32 y0, f32 y
 {
     mb_set(mb, v3(0.34f, 0.33f, 0.30f), MAT_CONCRETE, BONE_NONE);
     box(mb, v3(0.5f * (x0 + x1), 0.5f * (y0 + y1), wall_z + 0.03f), v3(x1 - x0, y1 - y0, 0.04f));
-    mb_set(mb, PAL_RUST, MAT_RUST, BONE_NONE);
+    prop_mat(mb, g_mat.rust);
     for (u32 sd = 0; sd < 2; sd++) box(mb, v3(sd ? x1 : x0, 0.5f * (0.1f + y1 + 0.1f), wall_z + 0.08f), v3(0.08f, y1, 0.08f));
     M4 rot = rack_axes(v3(0, 0, -1), v3(1, 0, 0), v3(0, -1, 0));
     f32 dy = (y1 - y0 - 0.3f) / (f32)rows, col = (x1 - x0 - 0.3f) / 3.0f;
@@ -247,7 +247,7 @@ static void rack_lamp(MeshBuilder *mb, V3 p, f32 wall_z)
     mb_cylinder(mb, v3(p.x, p.y + 0.32f, p.z), v3(p.x, p.y + 0.2f, p.z), 0.015f, 6);
     static const V2 shade[] = { { 0.0f, 0.05f }, { 0.07f, 0.07f }, { 0.17f, 0.17f }, { 0.25f, 0.24f }, { 0.26f, 0.23f } };
     V3 d = RACK_LAMP_DIR;
-    mb_set(mb, PAL_RUST, MAT_RUST, BONE_NONE);
+    prop_mat(mb, g_mat.rust);
     mb_lathe(mb, v3_sub(p, v3_mul(d, 0.25f)), v3_add(p, v3_mul(d, 0.01f)), shade, ARRAY_COUNT(shade), 12, 1.0f, 1.0f);
     mb_set(mb, v3(1.0f, 0.78f, 0.45f), MAT_EMISSIVE, BONE_NONE);
     mb_capsule(mb, v3_sub(p, v3_mul(d, 0.06f)), v3_sub(p, v3_mul(d, 0.02f)), 0.06f, 0.06f, 8, 1.0f, 1.0f);

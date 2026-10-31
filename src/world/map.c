@@ -1,8 +1,8 @@
 #include "map.h"
+#include "../defs/material.h"
 
 #include "../core/jobs.h"
 #include "valley.h"
-#include "../core/palette.h"
 
 #define MAP_N ((u32)(2.0f * MAP_HALF / MAP_STEP) + 1u)  // узлов крупного рельефа на сторону
 #define MAP_S (MAP_N + 2u)                              // с полем в узел за краем: выборке нужны соседи
@@ -240,12 +240,12 @@ static u32 pack_color(V3 a, f32 look)
 
 static u32 color_of(f32 x, f32 z, const Sample *s)
 {
-    V3 a = PAL_SAND;
+    V3 a = mat_c(g_mat.sand);
     f32 look = 0.0f;
     if (s->desert > 0.0f) {
         // Песок пятнами светлее и темнее, на грядах камень
         f32 tone = 0.9f + 0.2f * vnoise(x / 700.0f, z / 700.0f, M.seed + 21);
-        a = v3_lerp(a, v3_lerp(v3_mul(PAL_SAND, tone), C_STONE, s->c.rock * 0.8f), s->desert);
+        a = v3_lerp(a, v3_lerp(v3_mul(mat_c(g_mat.sand), tone), C_STONE, s->c.rock * 0.8f), s->desert);
         look = s->c.rock * 0.85f * s->desert;
     }
     if (s->valley > 0.0f) {

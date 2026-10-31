@@ -6,6 +6,7 @@
 #include "../game/look.h"
 #include "../render/mesh.h"
 #include "deftext.h"
+#include "material.h"
 
 #define ARMOR_CAP ARMOR_NONE  // 255 — «пусто»
 #define GOODS_CAP 255
@@ -17,6 +18,14 @@ static f32        s_pts[WEAPON_CAP * WEAPON_PTS];
 static ArmorDef   s_armors[ARMOR_CAP];
 static GoodsDef   s_goods[GOODS_CAP];
 static DefText    s_text;
+static MatDef     s_mats[MATDEF_CAP];
+// Часть формы оружия красится материалом по имени (paint имя): цвет берётся после всех файлов, мод материала
+// перекрашивает и оружие. NULL — свой цвет в строке paint
+static const char *s_part_mat[WEAPON_CAP * WEAPON_PARTS];
+
+MatOf g_mat;
+const MatDef *g_mats = s_mats;
+u32 g_mat_count;
 
 // Слова файлов. Порядок — как перечисления в коде
 static const char *const g_class_word[WC_COUNT] = { "blade", "cleaver", "blunt", "polearm", "heavy" };
@@ -75,11 +84,13 @@ typedef struct Block {
     u32 lines;  // строк после заголовка
     bool shape; // в этой записи уже была форма: прежняя заменена
     bool paint;
+    bool tone;  // в этой записи материала уже был color: набор родителя заменён
     u8  mat;
     f32 color[3];
+    const char *mat_ref;  // paint по имени материала
 } Block;
 
-enum { BK_ATTACK = DK_COUNT, BK_QUALITY };
+enum { BK_ATTACK = DK_COUNT, BK_QUALITY, BK_MATERIAL };
 
 static bool args(const DefLine *l, u32 n)
 {
@@ -179,6 +190,8 @@ static bool slot(const DefLine *l, u8 *out)
     return word(l, 1, g_slot_word, SLOT_COUNT, out);
 }
 
+static bool id_ok(const DefTok *t);
+
 static bool weapon_field(const DefLine *l, Block *b, Arena *mem)
 {
     WeaponDef *d = &s_weapons[b->id];
@@ -227,6 +240,17 @@ static bool weapon_field(const DefLine *l, Block *b, Arena *mem)
         return l->n == 2 || word(l, 2, g_voice_word, ARRAY_COUNT(g_voice_word), &d->voice_strike);
     }
     if (def_is(k, "paint")) {
+        // paint имя — материал из materials.txt; paint поверхность r g b — свой цвет
+        if (l->n == 2) {
+            if (!id_ok(&l->tok[1])) {
+                def_error(l, "paint: имя материала или «поверхность r g b»");
+                return false;
+            }
+            b->mat_ref = def_copy(mem, &l->tok[1]);
+            b->paint = true;
+            return b->mat_ref != NULL;
+        }
+        b->mat_ref = NULL;
         if (!args(l, 4) || !word(l, 1, g_mat_word, ARRAY_COUNT(g_mat_word), &b->mat)) return false;
         for (u32 i = 0; i < 3; i++)
             if (!def_num(&l->tok[2 + i], &b->color[i])) {
@@ -336,6 +360,7 @@ static bool weapon_field(const DefLine *l, Block *b, Arena *mem)
         WeaponPart *p = &s_parts[d->part + d->parts++];
         *p = (WeaponPart){ .kind = (u8)sk, .mat = b->mat, .pt = at };
         memcpy(p->color, b->color, sizeof p->color);
+        s_part_mat[d->part + d->parts - 1] = b->mat_ref;
         memcpy(p->v, v, sizeof p->v);
         return true;
     }
@@ -434,6 +459,35 @@ static bool quality_field(const DefLine *l, Block *b, Arena *mem)
     return false;
 }
 
+static i32 find_mat(const char *s, u32 n)
+{
+    for (u32 i = 0; i < g_mat_count; i++)
+        if (strlen(s_mats[i].id) == n && !memcmp(s_mats[i].id, s, n)) return (i32)i;
+    return -1;
+}
+
+static bool material_field(const DefLine *l, Block *b)
+{
+    MatDef *d = &s_mats[b->id];
+    const DefTok *k = &l->tok[0];
+    if (def_is(k, "surface")) return args(l, 1) && word(l, 1, g_mat_word, ARRAY_COUNT(g_mat_word), &d->surface);
+    if (def_is(k, "color")) {
+        // Каждая строка — оттенок набора; первая в записи заменяет набор родителя
+        f32 v[3];
+        if (!nums(l, 3, v)) return false;
+        if (!b->tone) d->tones = 0;
+        b->tone = true;
+        if (d->tones == MAT_TONES) {
+            def_error(l, "оттенков больше %u", MAT_TONES);
+            return false;
+        }
+        d->tone[d->tones++] = v3(v[0], v[1], v[2]);
+        return true;
+    }
+    def_error(l, "у материала нет поля %.*s", (int)k->n, k->s);
+    return false;
+}
+
 // Имя записи: латиница в нижнем регистре, цифры и _
 static bool id_ok(const DefTok *t)
 {
@@ -448,7 +502,7 @@ static bool id_ok(const DefTok *t)
 // Заголовок записи: новая — с пустыми полями, прежняя — правится дальше по полям
 static bool header(const DefLine *l, Block *b, Arena *mem)
 {
-    static const char *const kinds[] = { "weapon", "armor", "goods", "attack", "quality" };
+    static const char *const kinds[] = { "weapon", "armor", "goods", "attack", "quality", "material" };
     i32 kind = def_word(&l->tok[0], kinds, ARRAY_COUNT(kinds));
     *b = (Block){ .kind = kind };
     if (l->n != 2 || !id_ok(&l->tok[1])) {
@@ -461,6 +515,22 @@ static bool header(const DefLine *l, Block *b, Arena *mem)
         if (!word(l, 1, kind == BK_ATTACK ? g_attack_word : g_quality_word, kind == BK_ATTACK ? ATK_COUNT : Q_COUNT, &w))
             return false;
         b->id = w;
+        return true;
+    }
+    if (kind == BK_MATERIAL) {
+        i32 at = find_mat(t->s, t->n);
+        if (at >= 0) {
+            b->id = (u32)at;
+            return true;
+        }
+        if (g_mat_count == MATDEF_CAP) {
+            def_error(l, "материалов больше %u", MATDEF_CAP);
+            return false;
+        }
+        const char *id = def_copy(mem, t);
+        if (!id) return false;
+        b->id = g_mat_count++;
+        s_mats[b->id] = (MatDef){ .id = id, .surface = 255 };
         return true;
     }
     i32 at = find((u32)kind, t->s, t->n);
@@ -495,12 +565,12 @@ static bool header(const DefLine *l, Block *b, Arena *mem)
 // parent: запись берёт все поля другой (кроме имени), дальше правит свои. Только первой строкой записи
 static bool parent(const DefLine *l, Block *b)
 {
-    if (b->kind >= DK_COUNT || b->lines != 1) {
-        def_error(l, "parent — первой строкой записи оружия, брони или вещи");
+    if ((b->kind >= DK_COUNT && b->kind != BK_MATERIAL) || b->lines != 1) {
+        def_error(l, "parent — первой строкой записи оружия, брони, вещи или материала");
         return false;
     }
     if (!args(l, 1)) return false;
-    i32 p = find((u32)b->kind, l->tok[1].s, l->tok[1].n);
+    i32 p = b->kind == BK_MATERIAL ? find_mat(l->tok[1].s, l->tok[1].n) : find((u32)b->kind, l->tok[1].s, l->tok[1].n);
     if (p < 0 || (u32)p == b->id) {
         def_error(l, "родителя %.*s нет выше по файлам", (int)l->tok[1].n, l->tok[1].s);
         return false;
@@ -513,6 +583,7 @@ static bool parent(const DefLine *l, Block *b)
         *d = s_weapons[p];
         d->id = id, d->part = part;
         memcpy(&s_parts[part], &s_parts[s_weapons[p].part], sizeof(WeaponPart) * d->parts);
+        memcpy(&s_part_mat[part], &s_part_mat[s_weapons[p].part], sizeof(s_part_mat[0]) * d->parts);
         // Точки родителя — в свой участок, номера частей сдвигаются туда же
         memcpy(&s_pts[b->id * WEAPON_PTS], &s_pts[(u32)p * WEAPON_PTS], sizeof(f32) * WEAPON_PTS);
         for (u32 i = 0; i < d->parts; i++) s_parts[part + i].pt = s_parts[part + i].pt - (u32)p * WEAPON_PTS + b->id * WEAPON_PTS;
@@ -522,6 +593,12 @@ static bool parent(const DefLine *l, Block *b)
         const char *id = s_armors[b->id].id;
         s_armors[b->id] = s_armors[p];
         s_armors[b->id].id = id;
+        break;
+    }
+    case BK_MATERIAL: {
+        const char *id = s_mats[b->id].id;
+        s_mats[b->id] = s_mats[p];
+        s_mats[b->id].id = id;
         break;
     }
     default: {
@@ -570,6 +647,38 @@ static bool check(void)
             log_error("ОПИСАНИЯ: качества %s нет", g_quality_word[i]);
             ok = false;
         }
+    for (u32 i = 0; i < g_mat_count; i++)
+        if (s_mats[i].surface == 255 || !s_mats[i].tones) {
+            log_error("ОПИСАНИЯ: материалу %s не хватает surface или color", s_mats[i].id);
+            ok = false;
+        }
+    // Материалы кода: имя поля g_mat = имя записи
+#define MAT_NEED(n)                                                                                                    \
+    {                                                                                                                  \
+        i32 at = find_mat(#n, (u32)strlen(#n));                                                                        \
+        if (at < 0) {                                                                                                  \
+            log_error("ОПИСАНИЯ: нет материала %s, его берёт код", #n);                                              \
+            ok = false;                                                                                                \
+        } else g_mat.n = &s_mats[at];                                                                                  \
+    }
+    MAT_OF(MAT_NEED)
+#undef MAT_NEED
+    // Части оружия с материалом по имени: цвет и поверхность — после всех файлов
+    for (u32 w = 0; w < g_weapon_count; w++)
+        for (u32 i = 0; i < s_weapons[w].parts; i++) {
+            u32 at = s_weapons[w].part + i;
+            if (!s_part_mat[at]) continue;
+            i32 m = find_mat(s_part_mat[at], (u32)strlen(s_part_mat[at]));
+            if (m < 0) {
+                log_error("ОПИСАНИЯ: оружие %s красится материалом %s, а его нет", s_weapons[w].id, s_part_mat[at]);
+                ok = false;
+                continue;
+            }
+            s_parts[at].mat = s_mats[m].surface;
+            s_parts[at].color[0] = s_mats[m].tone[0].x;
+            s_parts[at].color[1] = s_mats[m].tone[0].y;
+            s_parts[at].color[2] = s_mats[m].tone[0].z;
+        }
     for (u32 k = 0; k < DK_COUNT; k++)
         for (u32 i = 0; i < ARRAY_COUNT(g_need[k]) && g_need[k][i]; i++)
             if (find(k, g_need[k][i], (u32)strlen(g_need[k][i])) < 0) {
@@ -581,7 +690,9 @@ static bool check(void)
 
 bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
 {
-    g_weapon_count = g_armor_count = g_goods_count = 0;
+    g_weapon_count = g_armor_count = g_goods_count = g_mat_count = 0;
+    memset(s_part_mat, 0, sizeof s_part_mat);
+    memset(&g_mat, 0, sizeof g_mat);
     g_weapons = s_weapons;
     g_weapon_parts = s_parts;
     g_weapon_pts = s_pts;
@@ -592,11 +703,11 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
     Block b = { .kind = -1 };
     bool bad = false, ok = true;
     while (deftext_next(&s_text, &l, &bad)) {
-        static const char *const kinds[] = { "weapon", "armor", "goods", "attack", "quality" };
+        static const char *const kinds[] = { "weapon", "armor", "goods", "attack", "quality", "material" };
         if (def_word(&l.tok[0], kinds, ARRAY_COUNT(kinds)) >= 0) {
             ok = header(&l, &b, mem);
         } else if (b.kind < 0) {
-            def_error(&l, "поле вне записи: сначала weapon, armor, goods, attack или quality");
+            def_error(&l, "поле вне записи: сначала weapon, armor, goods, attack, quality или material");
             ok = false;
         } else {
             b.lines++;
@@ -606,6 +717,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
                 case DK_ARMOR: ok = armor_field(&l, &b, mem); break;
                 case DK_GOODS: ok = goods_field(&l, &b, mem); break;
                 case BK_ATTACK: ok = attack_field(&l, &b, mem); break;
+                case BK_MATERIAL: ok = material_field(&l, &b); break;
                 default: ok = quality_field(&l, &b, mem); break;
                 }
         }
@@ -625,8 +737,8 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
         if (s_armors[i].look < GEAR_COUNT) g_gear_hides[s_armors[i].look] |= s_armors[i].hides;
     for (u32 i = 0; i < g_goods_count; i++)
         if (s_goods[i].look < GEAR_COUNT) g_gear_hides[s_goods[i].look] |= s_goods[i].hides;
-    log_info("ОПИСАНИЯ: оружия %u, брони %u, вещей %u, файлов %u, модов %u", g_weapon_count, g_armor_count, g_goods_count,
-             s_text.files, s_text.mods);
+    log_info("ОПИСАНИЯ: оружия %u, брони %u, вещей %u, материалов %u, файлов %u, модов %u", g_weapon_count, g_armor_count,
+             g_goods_count, g_mat_count, s_text.files, s_text.mods);
     return true;
 }
 

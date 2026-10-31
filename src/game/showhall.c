@@ -1,4 +1,5 @@
 #include "showhall.h"
+#include "props.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -6,18 +7,10 @@
 #include "look.h"
 #include "ostov.h"
 #include "../core/log.h"
-#include "../core/palette.h"
 #include "../defs/defs.h"
 #include "../render/ui.h"
 
-// Цвета поверхностей (альбедо, линейные): общие из palette.h, свои — краска, железо, натрий ламп
-#define C_CONC   PAL_CONCRETE
-#define C_CONC_D PAL_CONCRETE_DARK
-#define C_PAINT  v3(0.52f, 0.47f, 0.33f)
-#define C_RUST   PAL_RUST
-#define C_IRON   v3(0.19f, 0.18f, 0.17f)
-#define C_LAMP   v3(1.0f, 0.70f, 0.36f)   // натрий: болезненно-жёлтый
-#define C_GLYPH  PAL_GLYPH_GREEN
+// Цвета — материалы data/defs/materials.txt: свои у цеха краска полос, железо, натрий ламп
 
 // Коробка цеха снаружи и внутри (стены WT), уровни: пол, низ и верх плиты галереи, низ и верх крыши
 #define X0  -22.0f
@@ -119,7 +112,7 @@ static void lamp_mesh(MeshBuilder *mb, V3 p, f32 hang_to)
 {
     cable(mb, v3_add(p, v3(0, 0.28f, 0)), v3(p.x, hang_to, p.z));
     static const V2 shade[] = { { 0.0f, 0.05f }, { 0.08f, 0.07f }, { 0.20f, 0.20f }, { 0.30f, 0.30f }, { 0.31f, 0.29f } };
-    mb_set(mb, C_RUST, MAT_RUST, BONE_NONE);
+    prop_mat(mb, g_mat.rust);
     mb_lathe(mb, v3_add(p, v3(0, 0.30f, 0)), v3_add(p, v3(0, -0.01f, 0)), shade, ARRAY_COUNT(shade), 12, 1.0f, 1.0f);
     mb_set(mb, v3(1.0f, 0.78f, 0.45f), MAT_EMISSIVE, BONE_NONE);
     mb_capsule(mb, v3_add(p, v3(0, 0.06f, 0)), v3_add(p, v3(0, 0.02f, 0)), 0.07f, 0.07f, 8, 1.0f, 1.0f);
@@ -134,7 +127,7 @@ static void glyph(MeshBuilder *mb, V3 c, V3 normal, f32 hw, f32 hh, V3 color)
 
 static void pipe_run(MeshBuilder *mb, V3 a, V3 b, f32 r)
 {
-    mb_set(mb, C_RUST, MAT_RUST, BONE_NONE);
+    prop_mat(mb, g_mat.rust);
     mb_cylinder(mb, a, b, r, 10);
 }
 
@@ -142,9 +135,9 @@ static void build_mesh(MeshBuilder *mb)
 {
     g_seed = 0;
     // Пол плитой, стены, крыша
-    mb_set(mb, C_CONC_D, MAT_CONCRETE, BONE_NONE);
+    prop_mat(mb, g_mat.concrete_dark);
     conc(mb, v3(X0 - 0.3f, -0.5f, Z0 - 0.3f), v3(X1 + 0.3f, FY, Z1 + 0.3f), OSTOV_HIDE_BOT);
-    mb_set(mb, C_CONC, MAT_CONCRETE, BONE_NONE);
+    prop_mat(mb, g_mat.concrete);
     wall_x(mb, Z1 - WT, Z1, X0, X1, DOOR_X0, DOOR_X1, DOOR_H, RB);
     conc(mb, v3(X0, FY, Z0), v3(X1, RB, Z0 + WT), OSTOV_HIDE_BOT);
     conc(mb, v3(X0, FY, IZ0), v3(X0 + WT, RB, IZ1), OSTOV_HIDE_BOT | OSTOV_HIDE_ZN | OSTOV_HIDE_ZP);
@@ -168,7 +161,7 @@ static void build_mesh(MeshBuilder *mb)
     pipe_run(mb, v3(14.0f, RT, -78.0f), v3(14.0f, RT + 4.5f, -78.0f), 0.35f);
 
     // Балки под крышей поперёк цеха; лампы висят на них
-    mb_set(mb, C_CONC_D, MAT_CONCRETE, BONE_NONE);
+    prop_mat(mb, g_mat.concrete_dark);
     static const f32 beam_z[] = { -90.5f, -85.0f, -79.5f, -74.0f };
     for (u32 k = 0; k < ARRAY_COUNT(beam_z); k++)
         conc(mb, v3(IX0, BEAM_Y, beam_z[k] - 0.25f), v3(IX1, RB, beam_z[k] + 0.25f), OSTOV_HIDE_TOP | OSTOV_HIDE_XN | OSTOV_HIDE_XP);
@@ -180,29 +173,29 @@ static void build_mesh(MeshBuilder *mb)
     }
 
     // Тамбур: стена напротив двери до TB_X, над ней пусто до балок
-    mb_set(mb, C_CONC, MAT_CONCRETE, BONE_NONE);
+    prop_mat(mb, g_mat.concrete);
     conc(mb, v3(TB_X, FY, TB_Z - 0.35f), v3(IX1, TB_H, TB_Z), OSTOV_HIDE_BOT | OSTOV_HIDE_XP);
     // Перемычка над дверью снаружи и откинутая ржавая створка
     conc(mb, v3(DOOR_X0 - 0.5f, DOOR_H, Z1), v3(DOOR_X1 + 0.5f, DOOR_H + 0.45f, Z1 + 0.5f), 0);
-    mb_set(mb, C_RUST, MAT_RUST, BONE_NONE);
+    prop_mat(mb, g_mat.rust);
     mb_box(mb, m4_mul(m4_translate(v3(DOOR_X1 + 1.15f, FY + 1.35f, Z1 + 0.55f)), m4_mul(m4_rot_y(-0.35f), m4_scale(v3(2.1f, 2.7f, 0.06f)))));
-    glyph(mb, v3(18.5f, DOOR_H + 0.9f, Z1), v3(0, 0, 1), 0.8f, 0.22f, C_GLYPH);
+    glyph(mb, v3(18.5f, DOOR_H + 0.9f, Z1), v3(0, 0, 1), 0.8f, 0.22f, mat_c(g_mat.glyph_green));
 
     // Склад под галереей: глухая стена с запертыми створками; сверху плита галереи с карнизом
-    mb_set(mb, C_CONC, MAT_CONCRETE, BONE_NONE);
+    prop_mat(mb, g_mat.concrete);
     conc(mb, v3(IX0, FY, IZ0), v3(IX1, F2B, MZ), OSTOV_HIDE_BOT | OSTOV_HIDE_TOP | OSTOV_HIDE_ZN | OSTOV_HIDE_XN | OSTOV_HIDE_XP);
     conc(mb, v3(IX0, F2B, IZ0), v3(IX1, F2, MZ + 0.35f), OSTOV_HIDE_ZN | OSTOV_HIDE_XN | OSTOV_HIDE_XP);
     for (u32 k = 0; k < 3; k++) {
         f32 x = -9.0f + 9.0f * (f32)k;
-        mb_set(mb, C_RUST, MAT_RUST, BONE_NONE);
+        prop_mat(mb, g_mat.rust);
         mb_box(mb, m4_mul(m4_translate(v3(x, FY + 1.5f, MZ + 0.04f)), m4_scale(v3(2.6f, 2.8f, 0.08f))));
-        mb_set(mb, C_IRON, MAT_METAL, BONE_NONE);
+        prop_mat(mb, g_mat.iron_dark);
         mb_box(mb, m4_mul(m4_translate(v3(x, FY + 1.5f, MZ + 0.09f)), m4_scale(v3(0.06f, 2.8f, 0.04f))));
     }
-    glyph(mb, v3(-13.5f, 3.4f, MZ), v3(0, 0, 1), 0.5f, 0.5f, PAL_GLYPH_RED);
+    glyph(mb, v3(-13.5f, 3.4f, MZ), v3(0, 0, 1), 0.5f, 0.5f, mat_c(g_mat.glyph_red));
 
     // Лестница: ступени цельным бетоном до пола
-    mb_set(mb, C_CONC_D, MAT_CONCRETE, BONE_NONE);
+    prop_mat(mb, g_mat.concrete_dark);
     f32 run = (ST_Z1 - MZ) / (f32)ST_N, rise = (F2 - FY) / (f32)ST_N;
     for (u32 i = 0; i < ST_N; i++) {
         f32 za = ST_Z1 - run * (f32)(i + 1), zb = ST_Z1 - run * (f32)i;
@@ -211,7 +204,7 @@ static void build_mesh(MeshBuilder *mb)
     }
 
     // Перила: стойки через 1.5 м и две трубы — по краю галереи и вдоль лестницы
-    mb_set(mb, C_IRON, MAT_METAL, BONE_NONE);
+    prop_mat(mb, g_mat.iron_dark);
     f32 rz = MZ + 0.2f;
     for (f32 x = ST_X1 + 0.1f; x <= IX1 - 0.1f; x += 1.5f) mb_cylinder(mb, v3(x, F2, rz), v3(x, F2 + 1.05f, rz), 0.025f, 6);
     mb_cylinder(mb, v3(ST_X1 + 0.1f, F2 + 1.05f, rz), v3(IX1, F2 + 1.05f, rz), 0.03f, 8);
@@ -224,7 +217,7 @@ static void build_mesh(MeshBuilder *mb)
     mb_cylinder(mb, v3(sx, FY + rise + 1.0f, ST_Z1 - run * 0.5f), v3(sx, F2 + 1.05f, MZ + 0.2f), 0.03f, 8);
 
     // Разметка дорожек галереи: полосы через метр, по ним видно, сколько проходит шаг
-    mb_set(mb, C_PAINT, MAT_CONCRETE, BONE_NONE);
+    prop_mat(mb, g_mat.paint_pale);
     static const f32 lane_z[] = { -86.6f, -89.4f, -92.2f };
     for (u32 k = 0; k < ARRAY_COUNT(lane_z); k++)
         for (i32 x = -17; x <= 17; x++) {
@@ -238,19 +231,19 @@ static void build_mesh(MeshBuilder *mb)
     pipe_run(mb, v3(IX1 - 0.35f, 6.15f, IZ1 - 0.3f), v3(IX1 - 0.35f, 6.15f, MZ + 0.5f), 0.09f);
     pipe_run(mb, v3(IX1 - 0.35f, 6.15f, MZ + 0.5f), v3(IX1 - 0.35f, FY, MZ + 0.5f), 0.09f);
     // Кран-балка над первым этажом: рельс и тележка с крюком
-    mb_set(mb, C_IRON, MAT_METAL, BONE_NONE);
+    prop_mat(mb, g_mat.iron_dark);
     mb_box(mb, m4_mul(m4_translate(v3(0.0f, BEAM_Y - 0.35f, -76.8f)), m4_scale(v3(IX1 - IX0, 0.3f, 0.18f))));
-    mb_set(mb, C_RUST, MAT_RUST, BONE_NONE);
+    prop_mat(mb, g_mat.rust);
     mb_box(mb, m4_mul(m4_translate(v3(9.5f, BEAM_Y - 0.65f, -76.8f)), m4_scale(v3(0.8f, 0.35f, 0.5f))));
     cable(mb, v3(9.5f, BEAM_Y - 0.8f, -76.8f), v3(9.5f, 5.6f, -76.8f));
-    mb_set(mb, C_IRON, MAT_METAL, BONE_NONE);
+    prop_mat(mb, g_mat.iron_dark);
     mb_box(mb, m4_mul(m4_translate(v3(9.5f, 5.45f, -76.8f)), m4_scale(v3(0.12f, 0.3f, 0.05f))));
     // Знаки у выхода из тамбура и на стене галереи
-    glyph(mb, v3(TB_X + 1.6f, 2.6f, TB_Z - 0.35f), v3(0, 0, -1), 0.7f, 0.18f, C_GLYPH);
-    glyph(mb, v3(0.0f, 7.6f, IZ0), v3(0, 0, 1), 2.4f, 0.3f, C_GLYPH);
+    glyph(mb, v3(TB_X + 1.6f, 2.6f, TB_Z - 0.35f), v3(0, 0, -1), 0.7f, 0.18f, mat_c(g_mat.glyph_green));
+    glyph(mb, v3(0.0f, 7.6f, IZ0), v3(0, 0, 1), 2.4f, 0.3f, mat_c(g_mat.glyph_green));
 
     // Площадки под фигурами первого этажа
-    mb_set(mb, C_CONC_D, MAT_CONCRETE, BONE_NONE);
+    prop_mat(mb, g_mat.concrete_dark);
     for (u32 k = 0; k < 6; k++)
         for (u32 r = 0; r < 2; r++) {
             f32 x = r ? ROW_B_X(k) : ROW_A_X(k), z = r ? ROW_B_Z : ROW_A_Z;
@@ -497,7 +490,7 @@ u32 showhall_lights(f32 time, PointLight *out, u32 max)
             on = f < 0.04f ? 0.15f : (f > 0.52f && f < 0.55f ? 0.4f : 0.92f + 0.08f * sinf(time * 50.0f));
         }
         out[n++] = (PointLight){ .pos = v3_add(l->pos, v3(0, -0.05f, 0)), .radius = l->radius,
-                                 .color = v3_mul(C_LAMP, 7.0f * l->power * on), .cone = 0.35f,
+                                 .color = v3_mul(mat_c(g_mat.lamp_sodium), 7.0f * l->power * on), .cone = 0.35f,
                                  .dir = v3(0, -1, 0), .glow = 0.0009f };
     }
     return n;

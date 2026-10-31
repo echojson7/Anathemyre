@@ -1,0 +1,197 @@
+# Материалы: из чего сделаны постройки, вещи и оружие. Что это и зачем — docs/materials.md
+#
+# surface — как поверхность шейдится: concrete, rust, sand, cloth, leather, glyph, emissive, skin, metal,
+#   terrain, rock, water, bark, leaf, grass, steel (render/mesh.h, scene.frag).
+# color r g b — цвет (альбедо, линейный). Несколько строк color — набор оттенков: предмет берёт один по зерну.
+# Новый материал — только если иначе выглядит вблизи; оттенок одной вещи — разброс в коде, не новая запись.
+
+# ---- Общие: один бетон, одна ржавчина, один песок на весь мир ----
+
+material concrete
+    surface concrete
+    color 0.42 0.40 0.37
+
+material concrete_dark
+    parent concrete
+    color 0.30 0.29 0.27
+
+material rust
+    surface rust
+    color 0.42 0.24 0.13
+
+material sand
+    surface sand
+    color 0.40 0.34 0.26
+
+# Листовое железо, ящики, бочки
+material metal
+    surface metal
+    color 0.22 0.21 0.20
+
+# Литое и кованое железо: хомуты, кронштейны, лом
+material iron
+    surface metal
+    color 0.20 0.19 0.18
+
+# Тёплый свет ламп и фонарей
+material lamp
+    surface emissive
+    color 0.55 0.34 0.11
+
+# Редкие яркие знаки — только для важного
+material glyph_red
+    surface glyph
+    color 0.95 0.18 0.10
+
+material glyph_green
+    surface glyph
+    color 0.25 1.0 0.40
+
+# Тьма проёмов: свет внутрь не заходит
+material hollow
+    surface emissive
+    color 0.004 0.0035 0.003
+
+# Кабель в резине
+material cable
+    surface leather
+    color 0.05 0.05 0.05
+
+# Ткани: навесы, тряпки, мешки, ковры
+material cloth
+    surface cloth
+    color 0.45 0.32 0.15
+    color 0.40 0.14 0.10
+    color 0.50 0.47 0.40
+    color 0.28 0.30 0.18
+    color 0.30 0.22 0.15
+    color 0.25 0.27 0.30
+    color 0.36 0.30 0.22
+
+# Листы: обшивка, заборы, лом
+material sheet
+    surface rust
+    color 0.34 0.21 0.13
+    color 0.27 0.18 0.12
+    color 0.23 0.24 0.20
+    color 0.21 0.22 0.24
+    color 0.31 0.28 0.23
+
+# ---- Остов: выбеленный солнцем бетон, ржавчина светлее ----
+
+material concrete_pale
+    parent concrete
+    color 0.46 0.44 0.41
+
+material concrete_pale_dark
+    parent concrete
+    color 0.36 0.35 0.33
+
+material rust_pale
+    parent rust
+    color 0.36 0.20 0.11
+
+# ---- Скудель ----
+
+# Свет в окнах
+material window
+    surface emissive
+    color 0.16 0.09 0.03
+
+# Знаки торговцев: выцветшая охра
+material sign_paint
+    surface glyph
+    color 0.42 0.25 0.08
+
+# ---- Мерильня ----
+
+# Краска полос на стенах цеха
+material paint_pale
+    surface concrete
+    color 0.52 0.47 0.33
+
+material iron_dark
+    parent iron
+    color 0.19 0.18 0.17
+
+# Натрий: болезненно-жёлтый
+material lamp_sodium
+    surface emissive
+    color 1.0 0.70 0.36
+
+# ---- Арена ----
+
+material rust_dark
+    parent rust
+    color 0.28 0.17 0.10
+
+# Утоптанная земля ринга
+material arena_floor
+    surface sand
+    color 0.36 0.31 0.24
+
+material glyph_dim
+    parent glyph_green
+    color 0.16 0.62 0.28
+
+material lamp_white
+    surface emissive
+    color 0.95 0.82 0.45
+
+# ---- Лом на земле ----
+
+material rust_deep
+    parent rust
+    color 0.24 0.12 0.06
+
+material concrete_chip
+    parent concrete
+    color 0.36 0.35 0.32
+
+# ---- Оружие: части формы (paint имя в weapons.txt) ----
+
+# Чёрное кованое железо: обухи, крестовины, навершия
+material iron_black
+    surface metal
+    color 0.15 0.15 0.16
+
+material iron_soot
+    parent iron_black
+    color 0.11 0.11 0.12
+
+# Сталь клинков: зерно, окалина, ржавчина пятнами по качеству
+material blade_steel
+    surface steel
+    color 0.24 0.24 0.25
+
+# Латунь: заклёпки, штифты, накладки
+material brass
+    surface metal
+    color 0.33 0.25 0.13
+
+# Проволочная обмотка
+material wire
+    surface metal
+    color 0.24 0.23 0.22
+
+material leather
+    surface leather
+    color 0.26 0.19 0.12
+
+material leather_dark
+    parent leather
+    color 0.13 0.09 0.06
+
+material leather_worn
+    parent leather
+    color 0.2 0.14 0.09
+
+# Обмотка рукояти
+material grip_cloth
+    surface cloth
+    color 0.3 0.26 0.2
+
+# Чёрная лента внахлёст
+material tape_black
+    surface cloth
+    color 0.08 0.08 0.08
