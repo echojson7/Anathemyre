@@ -13,20 +13,15 @@
 #include "../core/math3d.h"
 #include "../core/prof.h"
 #include "../defs/defs.h"
+#include "../debug/debug.h"
 #include "../sim/anim.h"
-#include "../sim/arena.h"
-#include "../sim/battle.h"
 #include "bench.h"
 #include "../view/camera.h"
 #include "controls.h"
-#include "../view/editor.h"
 #include "../sim/field.h"
 #include "../view/figures.h"
 #include "../view/hud.h"
-#include "../view/humans_row.h"
 #include "../sim/look.h"
-#include "../view/showhall.h"
-#include "../view/stand.h"
 #include "../view/sfx.h"
 #include "../view/scene.h"
 #include "ground.h"
@@ -51,39 +46,27 @@ typedef struct Options {
     bool        inspect;     // выбрать отряд и открыть осмотр (для снимков)
     bool        editor;      // выбрать первого из отряда и открыть ВНЕШНОСТЬ (для снимков)
     i32         look_slot;   // для снимков: осмотреть чужого в слоте поля look_slot−1
-    bool        bands_test;  // пробные отряды вдали сразу при старте
-    u32         phys_drop;   // куча лома у точки камеры на первом шаге (проверка физики)
-    u32         loot_drop;   // вещи (оружие, товар) у точки камеры на первом шаге
+    DebugStart  dbg;         // отладка на старте: ряд людей, стенд, часы Мерильни, пробные отряды, лом и вещи
     f32         warp;        // для снимков: прогнать столько секунд мира до первого кадра
     const char *save_path;   // записать мир после прогона (--warp)
     const char *load_path;   // прочитать мир до прогона
     const char *defs_dir, *mods_dir;  // описания вещей и моды вместо data/defs и mods
     f32         sum_after;   // проверка сохранений: ещё столько секунд мира, сумма мира в консоль и выход
     bool        sum_set;
-    u32         arena_bench; // прогнать N боёв арены без окна
-    u32         field_bench; // сценка атаки и нагрузка поля на N−1 тел без окна
     i32         attack;      // для снимков: весь отряд сразу атакует бродящего номер attack−1
-    u32         arena_log;   // сколько первых боёв печатать подробно
-    u32         bands_bench; // отряды вдали без окна: столько отрядов
-    f32         bands_hours; // часов дальнего мира
-    u32         bands_log;   // сколько первых событий печатать
-    u32         battle[2];   // полевой бой: бойцов в каждом отряде
-    bool        battle_verify;
     u32         threads;     // потоков вместе с главным (позы людей, бой); 0 — по числу ядер
+    const char *bench_name;  // --bench <имя> [числа]: сценарий data/debug/bench.txt
+    char      **bench_args;
+    u32         bench_nargs;
     bool        bench;       // замер кадра сразу после старта, затем выход
     bool        bench_stages; // замер по этапам сцены сразу после старта, затем выход
     u32         stage;       // этап сцены на старте (SceneStage), по умолчанию полная
-    bool        move_bench;  // проверка разворотов без окна
-    const char *move_trace;
     bool        no_pixel;    // кадр без пиксельности (сравнение моделей)
     bool        no_vrs;      // без шейдинга блоками (сравнение скорости и кадра)
     i32         light_preset;  // набор СВЕТ на старте (LightPreset)
     i32         light[10];     // части СВЕТ на старте: материалы, кривая, экспозиция, свечение, отражённый, каскады, мягкий край, контактные, углы, тени огней; -1 — из набора
     bool        fullscreen;  // окно без рамки на весь монитор
     bool        day_stop;    // сутки стоят на --tod
-    bool        humans;      // ряд людей для сравнения сразу при старте (иначе из меню НАСТРОЙКИ)
-    i32         stand;       // стенд фигур сразу при старте: ряд + 1 (0 — нет)
-    f32         hall_t;      // сдвиг часов Мерильни, с (--hall-t): кадр нужной фазы
     bool        valley;      // начать в долине (иначе пешком или переход из меню НАСТРОЙКИ)
     bool        mute;        // без звука
     const char *sound_demo;  // сценка звука в WAV без окна
@@ -117,15 +100,12 @@ static bool write_ppm(const char *path, const u8 *rgb, i32 w, i32 h)
 
 static void usage(void)
 {
-    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--bench] [--bench-stages] [--stage 0..12] [--attack K] [--look-slot N] [--valley] [--bands-test] [--phys-drop N] [--loot-drop N] [--warp S] [--threads N] [--hall-t S]");
+    puts("anathemyre [--size W H] [--seed N] [--novsync] [--follow] [--inspect] [--editor] [--tod 0..1] [--cam X Z YAW PITCH DIST] [--shot file.ppm] [--frames N] [--stage 0..12] [--attack K] [--look-slot N] [--valley] [--warp S] [--threads N]");
+    puts("anathemyre [--humans] [--stand ROW] [--hall-t S] [--bands-test] [--phys-drop N] [--loot-drop N]   отладка на старте (docs/debug.md)");
+    puts("anathemyre --bench ИМЯ [ЧИСЛА] [--seed N] [--threads N]   замер по сценарию data/debug/bench.txt: arena, battle, battle-verify, field, move, bands, frame, stages (docs/debug.md)");
     puts("anathemyre [--light 0..2] [--light-parts МАТЕРИАЛЫ КРИВАЯ ЭКСПОЗИЦИЯ СВЕЧЕНИЕ ОТРАЖЁННЫЙ КАСКАДЫ МЯГКИЙ КОНТАКТ УГЛЫ ОГНИ]   свет на старте: набор ПРЕЖНИЙ/БЫСТРЫЙ/РЕАЛИСТИЧНЫЙ или части (docs/lighting.md)");
     puts("anathemyre [--load file.sav] [--warp S] [--save file.sav] [--sum-after S]   сохранение без меню: прочитать, прогнать, записать; сумма мира через S секунд и выход");
     puts("anathemyre [--defs DIR] [--mods DIR]   описания вещей и моды из других папок (по умолчанию data/defs и mods, docs/content.md)");
-    puts("anathemyre --move-bench [trace.csv]   развороты шагом, трусцой и бегом без окна");
-    puts("anathemyre --arena-bench N [--arena-log K] [--seed N]   бои арены без окна");
-    puts("anathemyre --battle-bench A B [--threads N] [--battle-verify] [--seed N]   полевой бой без окна");
-    puts("anathemyre --field-bench N [--seed N]   приказ атаки без окна, затем нагрузка поля на N тел");
-    puts("anathemyre --bands-bench N [--hours H] [--bands-log K] [--seed N]   отряды вдали без окна: N отрядов, H часов мира");
     puts("anathemyre --sound-demo out.wav   сценка звука (ветер, шаги, бой, даль) в файл и замер микшера; --mute — играть без звука");
 }
 
@@ -136,17 +116,20 @@ static bool parse_args(int argc, char **argv, Options *o)
         if (!strcmp(a, "--shot") && i + 1 < argc) o->shot_path = argv[++i];
         else if (!strcmp(a, "--frames") && i + 1 < argc) o->shot_frames = atoi(argv[++i]);
         else if (!strcmp(a, "--novsync")) o->no_vsync = true;
-        else if (!strcmp(a, "--bench")) o->bench = true;
-        else if (!strcmp(a, "--bench-stages")) o->bench = o->bench_stages = true;
+        else if (!strcmp(a, "--bench") && i + 1 < argc) {
+            o->bench_name = argv[++i];
+            o->bench_args = argv + i + 1;
+            while (i + 1 < argc && strncmp(argv[i + 1], "--", 2)) o->bench_nargs++, i++;
+        }
         else if (!strcmp(a, "--stage") && i + 1 < argc) o->stage = (u32)atoi(argv[++i]) % STAGE_COUNT;
         else if (!strcmp(a, "--follow")) o->follow = true;
         else if (!strcmp(a, "--tod") && i + 1 < argc) o->tod = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--inspect")) o->inspect = true;
         else if (!strcmp(a, "--editor")) o->editor = true;
         else if (!strcmp(a, "--look-slot") && i + 1 < argc) o->look_slot = atoi(argv[++i]) + 1;
-        else if (!strcmp(a, "--bands-test")) o->bands_test = true;
-        else if (!strcmp(a, "--phys-drop") && i + 1 < argc) o->phys_drop = (u32)atoi(argv[++i]);
-        else if (!strcmp(a, "--loot-drop") && i + 1 < argc) o->loot_drop = (u32)atoi(argv[++i]);
+        else if (!strcmp(a, "--bands-test")) o->dbg.bands_test = true;
+        else if (!strcmp(a, "--phys-drop") && i + 1 < argc) o->dbg.phys_drop = (u32)atoi(argv[++i]);
+        else if (!strcmp(a, "--loot-drop") && i + 1 < argc) o->dbg.loot_drop = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--warp") && i + 1 < argc) o->warp = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--save") && i + 1 < argc) o->save_path = argv[++i];
         else if (!strcmp(a, "--load") && i + 1 < argc) o->load_path = argv[++i];
@@ -156,12 +139,9 @@ static bool parse_args(int argc, char **argv, Options *o)
             o->sum_after = strtof(argv[++i], NULL);
             o->sum_set = true;
         }
-        else if (!strcmp(a, "--move-bench")) {
-            o->move_bench = true;
-            if (i + 1 < argc && argv[i + 1][0] != '-') o->move_trace = argv[++i];
-        } else if (!strcmp(a, "--humans")) o->humans = true;
-        else if (!strcmp(a, "--stand") && i + 1 < argc) o->stand = atoi(argv[++i]) + 1;
-        else if (!strcmp(a, "--hall-t") && i + 1 < argc) o->hall_t = strtof(argv[++i], NULL);
+        else if (!strcmp(a, "--humans")) o->dbg.humans = true;
+        else if (!strcmp(a, "--stand") && i + 1 < argc) o->dbg.stand = (u32)atoi(argv[++i]) + 1;
+        else if (!strcmp(a, "--hall-t") && i + 1 < argc) o->dbg.hall_t = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--no-pixel")) o->no_pixel = true;
         else if (!strcmp(a, "--valley")) o->valley = true;
         else if (!strcmp(a, "--mute")) o->mute = true;
@@ -174,16 +154,6 @@ static bool parse_args(int argc, char **argv, Options *o)
         else if (!strcmp(a, "--day-stop")) o->day_stop = true;
         else if (!strcmp(a, "--cam-y") && i + 1 < argc) o->cam.target.y = strtof(argv[++i], NULL);
         else if (!strcmp(a, "--attack") && i + 1 < argc) o->attack = atoi(argv[++i]) + 1;
-        else if (!strcmp(a, "--field-bench") && i + 1 < argc) o->field_bench = (u32)atoi(argv[++i]) + 1;
-        else if (!strcmp(a, "--arena-bench") && i + 1 < argc) o->arena_bench = (u32)atoi(argv[++i]);
-        else if (!strcmp(a, "--arena-log") && i + 1 < argc) o->arena_log = (u32)atoi(argv[++i]);
-        else if (!strcmp(a, "--bands-bench") && i + 1 < argc) o->bands_bench = (u32)atoi(argv[++i]);
-        else if (!strcmp(a, "--hours") && i + 1 < argc) o->bands_hours = strtof(argv[++i], NULL);
-        else if (!strcmp(a, "--bands-log") && i + 1 < argc) o->bands_log = (u32)atoi(argv[++i]);
-        else if (!strcmp(a, "--battle-bench") && i + 2 < argc) {
-            o->battle[0] = (u32)atoi(argv[++i]);
-            o->battle[1] = (u32)atoi(argv[++i]);
-        } else if (!strcmp(a, "--battle-verify")) o->battle_verify = true;
         else if (!strcmp(a, "--threads") && i + 1 < argc) o->threads = (u32)atoi(argv[++i]);
         else if (!strcmp(a, "--seed") && i + 1 < argc) o->seed = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(a, "--size") && i + 2 < argc) {
@@ -242,14 +212,15 @@ static bool gfx_start(const Options *o, Arena *scratch, const char *data_dir)
 }
 
 // Портреты: миниатюры отряда и крупно выбранный (свой, чужой на поле или боец арены)
-static void draw_portraits(Figures *fig, const FrameView *fv, const CharMeshes *cm, const World *w, const Hud *hud)
+static void draw_portraits(Figures *fig, const FrameView *fv, const CharMeshes *cm, const World *w, const ArenaSession *arena,
+                           const Hud *hud)
 {
     const Squad *sq = &w->squad;
     for (u32 i = 0; i <= sq->count; i++) {
         bool focus = i == sq->count;
         u32 k = focus ? hud->look : i;
         if (focus && hud->look_kind == LOOK_ARENA) {
-            figures_portrait_arena(fig, fv, cm, w->arena, k, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX);
+            if (arena) figures_portrait_arena(fig, fv, cm, arena, k, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX);
             continue;
         }
         // Чужой на поле: слот поля — номер в таблице людей, внешность та же, что в мире
@@ -268,7 +239,7 @@ int main(int argc, char **argv)
     platform_preinit();
     time_init();
     Options opt = {
-        .tod = 0.31f, .shot_frames = 90, .stage = STAGE_FULL, .bands_hours = 1.0f, .width = 1280, .height = 720, .seed = 1337,
+        .tod = 0.31f, .shot_frames = 90, .stage = STAGE_FULL, .width = 1280, .height = 720, .seed = 1337,
         .light = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
         .cam = { .target = { 14, 0, 32 }, .yaw = -0.5f, .pitch = 0.42f, .dist = 17.0f },
     };
@@ -293,13 +264,13 @@ int main(int argc, char **argv)
     if (!look_load_skeletons(data_dir)) return 1;
     body_hit_build();
     anim_bake_hit_guard();
-    if (opt.move_bench) return player_bench(opt.move_trace);
-    if (opt.field_bench) return field_bench(opt.field_bench - 1, opt.seed);
     if (opt.sound_demo) return audio_demo(opt.sound_demo);
-    if (opt.arena_bench) return arena_bench(opt.arena_bench, opt.seed, opt.arena_log);
-    if (opt.bands_bench) return bands_bench(opt.bands_bench, opt.bands_hours, opt.seed, TICK_HZ, opt.bands_log);
-    if (opt.battle[0] || opt.battle[1])
-        return battle_bench(opt.battle[0], opt.battle[1], opt.seed, opt.threads, opt.battle_verify);
+    if (opt.bench_name) {
+        int rc = debug_bench(data_dir, opt.bench_name, opt.bench_args, opt.bench_nargs, opt.seed, opt.threads);
+        if (rc >= 0) return rc;
+        opt.bench = true;
+        opt.bench_stages = rc == DEBUG_BENCH_STAGES;
+    }
     // Дальше в консоль — только к/с, замеры и сбои; остальное в журнал на экране
     log_set_echo(false);
     log_info("АНАТЕМАЙР. ЭТАП 0. ЗЕРНО МИРА %llu", (unsigned long long)opt.seed);
@@ -330,9 +301,7 @@ int main(int argc, char **argv)
     cm->gear = gear;
     cm->gear_lod = gear_lod;
     Figures *fig = ARENA_PUSH_ARRAY(&perm, Figures, 1);
-    HumansRow *humans = ARENA_PUSH_ARRAY(&perm, HumansRow, 1);
-    Stand *stand = ARENA_PUSH_ARRAY(&perm, Stand, 1);
-    ShowHall *hall = ARENA_PUSH_ARRAY(&perm, ShowHall, 1);
+    Debug *dbg = NULL;
     // Формы оружия — до статики: стойки зала собираются из них
     weapon_models_load(&perm, data_dir);
     f64 map_t0 = time_now();
@@ -340,7 +309,8 @@ int main(int argc, char **argv)
     if (built) log_stat("МИР: карта %.2f с", time_now() - map_t0);
     built = built && scene_init(scene, &mb, &perm, opt.seed, &town) &&
             world_init(world, &perm, opt.seed, opt.tod, !opt.day_stop, &town, app_ground) &&
-            figures_init(fig, cm, &mb, &perm, data_dir);
+            figures_init(fig, cm, &mb, &perm, data_dir) &&
+            ((dbg = debug_init(&perm, &mb, data_dir, world, &opt.dbg)) || !g_debug);
     if (!built) {
         jobs_shutdown();
         render_shutdown();
@@ -348,14 +318,11 @@ int main(int argc, char **argv)
         return 1;
     }
     figures_view(fig, world->people, world->field, world->alpha, app_ground);
-    humans_row_init(humans, &perm, app_ground);
-    stand_init(stand, &perm);
-    showhall_init(hall, &mb, &perm);
-    hall->t_off = opt.hall_t;
     // Рельеф карты и растения долины — на весь сеанс
     render_set_terrain(map_fill, NULL);
     render_set_groups(scene->valley->groups, scene->valley->clusters, scene->valley->cluster_count);
-    bool humans_flip = opt.humans;
+    ArenaSession *arena = dbg ? debug_arena(dbg) : NULL;
+    ArenaRing *ring = dbg ? debug_ring(dbg) : NULL;
     Squad *squad = &world->squad;
     Field *field = world->field;
     ValleyView *valley = scene->valley;
@@ -367,7 +334,6 @@ int main(int argc, char **argv)
         .vsync = !opt.no_vsync && opt.shot_path == NULL, .fullscreen = opt.fullscreen && opt.shot_path == NULL,
         .follow = opt.follow, .ui_user = 1.0f, .ui_user_text = 1.0f,
         .sound_vol = 0.8f, .music_vol = 0.7f, .music_on = true, .travel = opt.valley,
-        .stand = opt.stand > 0, .stand_moved = opt.stand > 0, .stand_row = opt.stand > 0 ? (u32)(opt.stand - 1) : 0,
         .stage = opt.stage, .bench_stages = opt.bench_stages,
     };
     light_preset_apply(&set.rs, (LightPreset)opt.light_preset);
@@ -384,20 +350,19 @@ int main(int argc, char **argv)
     // Звук: слушатель у камеры, шаги, бой поля и арены. Без звука снимки кадров и --mute.
     // Банк собирается в своём потоке при старте; устройство открывается, только если звук включён
     WorldSound *wsound = ARENA_PUSH_ARRAY(&perm, WorldSound, 1);
-    sfx_init(wsound, field, world->arena, ARENA_CENTER, app_ground);
+    sfx_init(wsound, field, arena, ARENA_CENTER, app_ground);
     set.sound_ok = !opt.shot_path && audio_init(&perm);
     set.sound_on = set.sound_ok && !opt.mute;
     if (set.sound_on) audio_start();
     Hud hud;
     hud_init(&hud);
+    hud.can_look = g_debug;
     if (opt.inspect) {
         for (u32 i = 0; i < squad->count; i++) squad->selected[i] = true;
         hud_look(&hud, LOOK_SQUAD, 0);
         hud.win_inv = hud.win_char = true;
     }
-    Editor editor;
-    editor_init(&editor);
-    if (opt.editor) {
+    if (opt.editor && g_debug) {
         squad->selected[0] = true;
         hud_look(&hud, LOOK_SQUAD, 0);
         hud.win_look = true;
@@ -411,12 +376,8 @@ int main(int argc, char **argv)
         squad->selected[i] = true;
         field_attack(field, (u32)squad_body(squad, i)->slot, (u32)victim);
     }
-    if (opt.bands_test) world_bands_test(world);
-    if (opt.phys_drop || opt.loot_drop) {
-        world->focus = opt.cam.target;
-        world->phys_drop = opt.phys_drop;
-        world->loot_drop = opt.loot_drop;
-    }
+    // Лом и вещи на первом шаге падают у точки камеры
+    if (opt.dbg.phys_drop || opt.dbg.loot_drop) world->focus = opt.cam.target;
     // Сохранение в папке saves рядом с data
     char save_path[600];
     snprintf(save_path, sizeof save_path, "%s/../saves", data_dir);
@@ -477,20 +438,15 @@ int main(int argc, char **argv)
             set.follow = !set.follow;
             if (set.follow) cam.dist = MIN(cam.dist, 8.0f);
         }
-        if (humans_flip) {
-            humans_flip = false;
-            humans_row_toggle(humans, &mb, &perm, data_dir, app_ground);
-        }
-        if (set.stand_moved) {
-            set.stand_moved = false;
-            stand_show(stand, set.stand, set.stand_row, &mb, &perm, app_ground, &cam);
+        DebugStand ds = dbg ? debug_update(dbg, &cam) : DEBUG_STAND_SAME;
+        if (ds != DEBUG_STAND_SAME) {
             // --stand N --cam ...: снимок стенда своей камерой (крупно голову и т. п.), --cam-y тут — высота над морем
-            if (opt.cam_set && opt.stand > 0) {
+            if (opt.cam_set && opt.dbg.stand > 0) {
                 cam = opt.cam;
-                opt.stand = 0;
+                opt.dbg.stand = 0;
             }
             // Высоту взгляда над плитами задаёт стенд: держать её над землёй, пока он открыт
-            if (set.stand) {
+            if (ds == DEBUG_STAND_SHOWN) {
                 cam_y = app_ground(cam.target.x, cam.target.z);
                 cam_lift = cam.target.y - cam_y;
             } else cam_lift = opt.cam.target.y;
@@ -565,18 +521,16 @@ int main(int argc, char **argv)
         FrameView fv;
         fv.cam_pos = camera_eye(&cam);
         fv.cam_pos.y = fmaxf(fv.cam_pos.y, app_ground(fv.cam_pos.x, fv.cam_pos.z) + 1.5f);
-        fv.cam_pos = showhall_clamp_eye(cam.target, fv.cam_pos);
+        fv.cam_pos = debug_clamp_eye(cam.target, fv.cam_pos);
         fv.view = m4_look_at(fv.cam_pos, v3_add(cam.target, v3(0, 1.0f, 0)), v3(0, 1, 0));
         fv.proj = m4_perspective(CAM_FOV, (f32)ww / (f32)(wh > 0 ? wh : 1), 0.3f, 6000.0f);
 
         ui_set_user_scale(set.ui_user, set.ui_user_text);
         ui_begin(ww, wh);
         Input hin = in;
-        menu_input(&hud, &hin, &set, world, &cam, humans->on, &stats);
-        editor_input(&editor, &hud, &hin, world, &cam, humans->on);
-        humans_flip |= set.humans;
+        menu_input(&hud, &hin, &set, world, &cam, dbg, &stats);
+        if (dbg) debug_input(dbg, &hud, &hin, world, &cam);
         bench_request |= set.bench;
-        if (set.bands_test) world_bands_test(world);
         if (set.save) {
             if (!save_dir) log_error("СОХРАНЕНИЕ: папка для %s не создана", save_path);
             else world_save(world, save_path);
@@ -591,8 +545,8 @@ int main(int argc, char **argv)
             figures_portraits_reset();
             hud_look(&hud, LOOK_NONE, 0);
         }
-        set.humans = set.bench = set.bands_test = set.save = set.load = false;
-        HudWorld hw = { .squad = squad, .arena = world->arena, .ring = &world->ring, .field = field, .view = fig->view,
+        set.bench = set.save = set.load = false;
+        HudWorld hw = { .squad = squad, .arena = arena, .ring = ring, .field = field, .view = fig->view,
                         .view_proj = m4_mul(fv.proj, fv.view), .time = real_time, .tod = world->tod, .day = world->day,
                         .ground = world->ground, .phys = world->phys, .ground_ask = &world->ground_ask, .alpha = world->alpha };
         bool ui_busy = hud_input(&hud, &hin, &hw);
@@ -601,8 +555,9 @@ int main(int argc, char **argv)
             cam.target = v3(fp.x, cam.target.y, fp.z);
         }
         // Камера за тем, кого правят в окне ВНЕШНОСТЬ
-        if (editor_follow(&editor) >= 0 && !jumped) {
-            V3 fp = fig->view[editor_follow(&editor)].pos;
+        i32 follow = dbg ? debug_follow(dbg) : -1;
+        if (follow >= 0 && !jumped) {
+            V3 fp = fig->view[follow].pos;
             cam.target = v3(fp.x, cam.target.y, fp.z);
         }
         orders_input(&hud, &in, &hin, &hw, ui_busy, fv.cam_pos, ww, wh, world);
@@ -622,6 +577,7 @@ int main(int argc, char **argv)
         prof_zone(PZ_FIGURES);
         if (st_live) {
             world_present(world, dt);
+            if (dbg) debug_present(dbg, world, dt);
             figures_view(fig, world->people, field, world->alpha, app_ground);
         }
         f32 wtime = world_time(world);
@@ -629,7 +585,7 @@ int main(int argc, char **argv)
         if (set.sound_on && st_full) {
             sfx_listener(wsound, fv.cam_pos, cam.target, cam.yaw);
             sfx_field(wsound, field, fig->view);
-            sfx_arena(wsound, &world->ring, world->arena);
+            if (arena) sfx_arena(wsound, ring, arena);
         }
 
         // Список кадра: статика, люди и бойцы арены, метки, ряд людей; свет — фонари арены и факелы
@@ -637,13 +593,12 @@ int main(int argc, char **argv)
         Sky sky;
         // До этапа СУТКИ свет утра, как при замере кадра
         sky_at(st_day ? world_tod(world) : BENCH_TOD, &sky);
-        u32 nl = scene_ring_lights(&world->ring, sky.night, wtime, lights);
+        u32 nl = scene_ring_lights(sky.night, wtime, lights);
         u32 n = scene_statics(scene, items);
-        // Мерильня: лампы горят всегда, фигуры — когда камера рядом
-        nl += showhall_lights(wtime, lights + nl, TORCH_LIGHTS_MAX - nl);
+        // Мерильня: лампы горят всегда, фигуры — когда камера рядом; вещи арены, ряд людей, стенд
+        nl += dbg ? debug_lights(wtime, lights + nl, TORCH_LIGHTS_MAX - nl) : 0;
         nl += scene_hall_lights(lights + nl, TORCH_LIGHTS_MAX - nl);
-        if (st_people) n += showhall_draw(hall, cm, fv.cam_pos, wtime, st_live ? dt : 0.0f, items + n);
-        else items[n++] = (DrawItem){ .mesh = &hall->mesh };
+        if (dbg) n += debug_draw(dbg, cm, world, fv.cam_pos, wtime, st_live ? dt : 0.0f, st_people, items + n);
         n += valley_view_draw(valley, fv.cam_pos, items + n);
         n += scrap_draw(&scene->scrap, world->phys, world->alpha, fv.cam_pos, items + n, RENDER_MAX_ITEMS / 8);
         n += loot_draw(&scene->loot, world->ground, world->phys, cm->weapon, world->alpha, fv.cam_pos, items + n,
@@ -653,7 +608,7 @@ int main(int argc, char **argv)
             people_dress_live(world->people);
             FigureView fview = { .view_proj = hw.view_proj, .eye = fv.cam_pos, .light_dir = sky.light_dir, .dt = real_dt,
                                  .time = wtime, .night = sky.night };
-            n += figures_draw(fig, cm, world->people, field, &world->ring, world->arena, &fview, items + n, lights, &nl);
+            n += figures_draw(fig, cm, world->people, field, ring, arena, &fview, items + n, lights, &nl);
         }
         if (!st_day) nl = 0;
         u32 posed = st_people ? fig->jobs : 0;
@@ -661,11 +616,9 @@ int main(int argc, char **argv)
         V3 look_pos;
         bool look_field = hud.look_kind == LOOK_FIELD && hud.look < field->w.count;
         if (look_field) look_pos = fig->view[hud.look].pos;  // слот поля = номер в таблице
-        bool look_ring = look_field || (hud.look_kind == LOOK_ARENA && hud_arena_pos(&world->ring, world->arena, hud.look, &look_pos));
+        bool look_ring = look_field || (hud.look_kind == LOOK_ARENA && arena && hud_arena_pos(ring, arena, hud.look, &look_pos));
         if (st_people) {
             n += figures_marks(fig, cm, squad, field, look_ring ? &look_pos : NULL, items + n);
-            n += humans_row_draw(humans, cm, items + n);
-            n += stand_draw(stand, cm, items + n);
         }
 
         prof_zone(PZ_SUBMIT);
@@ -680,20 +633,20 @@ int main(int argc, char **argv)
         fv.zenith = sky.zenith;
         fv.shadow_center = cam.target;
         fv.lights = lights;
-        showhall_room(&fv.room);
+        debug_room(&fv.room);
         fv.light_count = nl;
         fv.time = wtime;
         fv.frame = frame;
         RenderSettings rs = stage_render(&set);
         render_frame(&fv, items, n, &rs, ww, wh);
         prof_zone(PZ_UI);
-        if (st_full) draw_portraits(fig, &fv, cm, world, &hud);
+        if (st_full) draw_portraits(fig, &fv, cm, world, arena, &hud);
         ui_set_image(render_portrait_texture());
         ui_set_time(real_time);
         hud.dbg.fps = stats.fps;
         hud.dbg.fps_ms = stats.fps_ms;
         if (st_full) {
-            showhall_labels(hall, hw.view_proj, fv.cam_pos);
+            if (dbg) debug_labels(dbg, hw.view_proj, fv.cam_pos);
             hud_draw(&hud, &hin, &hw);
         }
         ui_end();

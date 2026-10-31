@@ -8,13 +8,13 @@
 #include "../defs/defs.h"
 #include "../io/save.h"
 #include "map.h"
+#include "../sim/arena_ring.h"
 #include "../sim/names.h"
 #include "crowd.h"
 #include "valley.h"
 
 #define CROWD_SIZE 9
 #define TOWN_WALKERS 20
-#define ARENA_SHOW_AFTER_BOUT_S 12.0f
 
 bool world_squad_in_valley(const World *w)
 {
@@ -36,18 +36,11 @@ bool world_init(World *w, Arena *perm, u64 seed, f32 tod, bool day_run, const To
     w->valley_spawn = v3_add(valley_spawn(), VALLEY_ORIGIN);
     w->valley_heading = PI_F;
 
-    // Арена: те же бои, что в --arena-bench с этим seed, но в реальном времени
-    w->arena = ARENA_PUSH_ARRAY(perm, ArenaSession, 1);
-    if (!arena_session_init(w->arena, perm, seed)) return false;
-    w->arena->log_bouts = 0xFFFFFFFFu;
-    w->arena->after_bout_s = ARENA_SHOW_AFTER_BOUT_S;
-    arena_ring_init(&w->ring, ARENA_CENTER, RING_FLOOR_Y);
-
     // Люди. Порядок в таблице — порядок шага и отрисовки; от него зависят случайные числа
     People *p = w->people = ARENA_PUSH_ARRAY(perm, People, 1);
     crowd_add(p, &w->rng, CROWD_SIZE, ground);
     // Зрители — одна толпа, Скудель — один посёлок: команды за бродящими
-    watchers_add(p, w->ring.spos, w->ring.sh, w->ring.sseed, RING_SPECTATORS, TEAM_WANDER + CROWD_SIZE, ground);
+    watchers_add(p, ARENA_CENTER, RING_FLOOR_Y, RING_SPECTATORS, TEAM_WANDER + CROWD_SIZE, ground);
     town_folk_add(p, town, &w->town_rng, TOWN_WALKERS, BODY_KIND_COUNT, TEAM_WANDER + CROWD_SIZE + 1);
     u32 folk = 0;
     for (u32 i = 0; i < p->count; i++) folk += p->role[i] == ROLE_TOWN;
@@ -94,7 +87,7 @@ bool world_init(World *w, Arena *perm, u64 seed, f32 tod, bool day_run, const To
     return true;
 }
 
-// Один шаг мира. Порядок систем постоянный: ходьба, арена, поле боя (видит тела после ходьбы), сутки
+// Один шаг мира. Порядок систем постоянный: ходьба, поле боя (видит тела после ходьбы), вещи, физика, сутки
 static void world_tick(World *w)
 {
     People *p = w->people;
@@ -104,29 +97,16 @@ static void world_tick(World *w)
     people_update(p, &w->rng, &w->town_rng, TICK_DT, w->floor);
     squad_update(&w->squad, TICK_DT, w->floor);
     near_tick(w->near, w->bands, p, w->field, &w->squad, w->focus, TICK_DT, w->floor);
-    prof_zone(PZ_ARENA);
-    arena_ring_tick(&w->ring, w->arena);
     prof_zone(PZ_FIELD);
     field_tick(w->field, w->floor);
     bands_tick(w->bands);
-    // Физика вокруг своих и точки взгляда камеры. Лом по кнопке — тоже здесь: мир меняется только в шаге
+    if (w->hook) w->hook(w, w->hook_user);
+    // Физика вокруг своих и точки взгляда камеры
     prof_zone(PZ_PHYS);
     // Вещи на земле: выронили и подняли в бою, бросили из мешка, подобрали по приказу
-    loot_arena(w->ground, w->phys, w->arena, w->ring.in_bout, w->ring.center, w->ring.floor_y, w->tick);
     loot_field(w->ground, w->phys, w->field, w->floor, w->tick);
     loot_asks(w->ground, w->phys, &w->ground_ask, &w->squad, w->tick);
     loot_pickups(w->ground, w->phys, &w->squad, w->field);
-    if (w->loot_drop) {
-        loot_drop_test(w->ground, w->phys, v3(w->focus.x, w->floor(w->focus.x, w->focus.z), w->focus.z), w->loot_drop,
-                       w->seed ^ w->tick);
-        w->loot_drop = 0;
-    }
-    if (w->phys_drop) {
-        Rng r;
-        rng_seed(&r, w->seed ^ w->tick, 17);
-        scrap_drop(w->phys, &r, v3(w->focus.x, w->floor(w->focus.x, w->focus.z), w->focus.z), w->phys_drop);
-        w->phys_drop = 0;
-    }
     V3 zone[2] = { w->focus, squad_body(&w->squad, (u32)MAX(0, squad_primary(&w->squad)))->pos };
     phys_zone(w->phys, zone, 2);
     phys_tick(w->phys, TICK_DT, w->floor);
@@ -156,7 +136,6 @@ void world_update(World *w, f32 dt)
 
 void world_present(World *w, f32 dt)
 {
-    arena_ring_present(&w->ring, w->arena, w->alpha, dt);
     field_present(w->field, w->alpha, dt);
 }
 
@@ -168,28 +147,6 @@ f32 world_tod(const World *w)
     f32 t = w->tod + w->alpha * TICK_DT / DAY_LENGTH_S;
     return t >= 1.0f ? t - 1.0f : t;
 }
-
-void world_bands_test(World *w)
-{
-    Bands *b = w->bands;
-    if (b->count) {
-        log_info("ОТРЯДЫ: пробные уже идут");
-        return;
-    }
-    // Места мира: 0 — зал, 1 — Скудель, 2 — долина (world_init)
-    static const u16 men[BAND_TIERS] = { 3, 2, 1 };
-    i32 a = bands_add(b, 0, 1, men), c = bands_add(b, 1, 2, men);
-    if (a < 0 || c < 0) return;
-    bands_hostile(b, 0, 1);
-    field_enmity(w->field, TEAM_BANDS + 0, TEAM_BANDS + 1);
-    bands_send(b, (u32)a, 2);
-    bands_send(b, (u32)c, 1);
-    log_info("ОТРЯДЫ: два пробных отряда, у Скудели и в долине, идут навстречу");
-}
-
-void world_phys_drop(World *w) { w->phys_drop = 24; }
-
-void world_loot_drop(World *w) { w->loot_drop = 8; }
 
 bool world_squad_fighting(const World *w)
 {
@@ -231,8 +188,7 @@ bool world_travel(World *w)
 static u64 world_layout(void)
 {
     const u64 v[] = { SAVE_VERSION, sizeof(People), sizeof(Player), sizeof(CharSheet), sizeof(FighterDesc),
-                      sizeof(CombatEvent), sizeof(Bands), sizeof(NearBands), sizeof(ArenaSession),
-                      sizeof(ArenaRing), sizeof(Squad), sizeof(Field), sizeof(Chronicle), PEOPLE_MAX, FIELD_MAX, BANDS_MAX,
+                      sizeof(CombatEvent), sizeof(Bands), sizeof(NearBands), sizeof(Squad), sizeof(Field), sizeof(Chronicle), PEOPLE_MAX, FIELD_MAX, BANDS_MAX,
                       CHRON_CAP, PART_COUNT, SK_COUNT, SLOT_COUNT, COMBAT_MAX_TEAMS, TICK_HZ,
                       PHYS_MAX, PHYS_SPHERES, GROUND_MAX, sizeof(GroundAsks) };
     return ser_fnv(SER_HASH_START, v, sizeof v);
@@ -259,8 +215,6 @@ static void world_ser(Ser *s, void *user)
     field_ser(s, w->field);
     // Слот поля — номер в таблице людей: тела и листы поля указывают на тех же людей
     ser_check(s, w->field->w.count == w->people->count);
-    arena_ser(s, w->arena);
-    arena_ring_ser(s, &w->ring);
     bands_ser(s, w->bands);
     near_ser(s, w->near, w->bands->count);
     phys_ser(s, w->phys);
@@ -274,8 +228,6 @@ static void world_ser(Ser *s, void *user)
     if (s->mode == SER_LOAD && !map.same && !s->bad) {
         for (u32 i = 0; i < w->people->count; i++) defs_remap_sheet(&w->people->sheet[i], &map);
         defs_remap_combat(&w->field->w, &map);
-        defs_remap_combat(&w->arena->w, &map);
-        for (u32 k = 0; k < ARENA_ROSTER; k++) defs_remap_desc(&w->arena->roster[k].d, &map);
         for (u32 k = 0; k < w->ground->count; k++) defs_remap_item(&w->ground->item[k], &map);
         for (u32 k = 0; k < w->ground_ask.n; k++) defs_remap_item(&w->ground_ask.it[k], &map);
     }
@@ -298,7 +250,6 @@ bool world_load(World *w, const char *path)
     SaveInfo info = { .layout = world_layout(), .seed = w->seed };
     if (!save_read(path, &info, world_ser, w, w->strings, WORLD_STRINGS)) return false;
     field_view_restore(w->field);
-    arena_ring_restore(&w->ring, w->arena);
     w->alpha = w->acc / TICK_DT;
     u32 mins = (u32)(w->tod * 24.0f * 60.0f);
     log_info("СОХРАНЕНИЕ: мир прочитан, день %u, %02u:%02u, за %.0f мс", w->day, mins / 60 % 24, mins % 60,

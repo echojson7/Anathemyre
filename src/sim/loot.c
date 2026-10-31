@@ -140,7 +140,6 @@ void loot_pickups(Ground *g, Phys *p, Squad *sq, Field *f)
         }
         sq->pick[i] = -1;
         u16 o = g->owner[k];
-        if ((o & GROUND_OWN_SRC) == GROUND_OWN_ARENA && o) continue;  // бойцов арены не грабят
         CharSheet *c = squad_sheet(sq, i);
         Inventory probe = c->inv;
         if (!inv_add(&probe, g->item[k])) {

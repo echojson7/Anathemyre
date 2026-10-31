@@ -4,8 +4,8 @@
 #ifndef ANA_EDITOR_H
 #define ANA_EDITOR_H
 
-#include "camera.h"
-#include "hud.h"
+#include "../view/camera.h"
+#include "../view/hud.h"
 #include "../world/world.h"
 
 typedef struct Editor {

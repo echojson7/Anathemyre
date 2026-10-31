@@ -1,6 +1,6 @@
 #!/bin/sh
 # Проверка слоёв: каждый файл src/<папка>/ включает только папки, которые его слою можно видеть (docs/code.md).
-# Порядок: core → мир (defs, sim, ai, world, io) → content → view → app; platform, render, audio — боковые,
+# Порядок: core → мир (defs, sim, ai, world, io) → content → view → debug → app; platform, render, audio — боковые,
 # мира не видят. ./tools/layers.sh — без вывода, если всё чисто; иначе строки нарушений и код 1
 cd "$(dirname "$0")/.."
 allowed() {
@@ -12,7 +12,8 @@ allowed() {
         defs|sim|ai|world|io)     echo "core platform defs sim ai world io" ;;
         content)                  echo "core platform defs sim ai world io content" ;;
         view)                     echo "core platform defs sim ai world io content render audio view" ;;
-        app)                      echo "core platform defs sim ai world io content render audio view app" ;;
+        debug)                    echo "core platform defs sim ai world io content render audio view debug" ;;
+        app)                      echo "core platform defs sim ai world io content render audio view debug app" ;;
         *)                        echo "" ;;
     esac
 }

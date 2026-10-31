@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 #include "../core/log.h"
-#include "camera.h"
+#include "../view/camera.h"
 
 void humans_row_init(HumansRow *h, Arena *perm, GroundFn ground)
 {

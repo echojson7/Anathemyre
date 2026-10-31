@@ -59,6 +59,7 @@ void sfx_init(WorldSound *s, Field *field, ArenaSession *arena, V3 arena_center,
     s->arena_bout = 0xFFFFFFFFu;
     field->w.sink = sfx_on_events;
     field->w.sink_user = &s->field;
+    if (!arena) return;  // арена — отладка (debug/), в сборке без неё её нет
     arena->w.sink = sfx_on_events;
     arena->w.sink_user = &s->arena;
 }

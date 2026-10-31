@@ -9,6 +9,7 @@
 # TARGET_OS=windows  собрать .exe (MinGW-w64): на Windows в MSYS2 выбирается сам,
 #                    из Linux/WSL: make TARGET_OS=windows
 # WERROR=1           превратить предупреждения в ошибки (так собирает CI)
+# NODEBUG=1          без отладки: арены, Мерильни, стенда, редактора и замеров (build/anathemyre_nodebug)
 
 ifeq ($(OS),Windows_NT)
 TARGET_OS ?= windows
@@ -25,6 +26,13 @@ WARN    += -Werror
 endif
 
 SRC_COMMON := $(wildcard src/core/*.c src/defs/*.c src/sim/*.c src/ai/*.c src/world/*.c src/io/*.c src/content/*.c src/view/*.c src/app/*.c src/render/*.c src/audio/*.c)
+# Отладка (src/debug/, docs/debug.md): арена, Мерильня, стенд, редактор, замеры. NODEBUG=1 — игра без неё
+ifeq ($(NODEBUG),1)
+TARGET     := anathemyre_nodebug
+SRC_COMMON += src/debug/nodebug.c
+else
+SRC_COMMON += $(filter-out src/debug/nodebug.c,$(wildcard src/debug/*.c))
+endif
 
 ifeq ($(TARGET_OS),windows)
 EXE      := .exe

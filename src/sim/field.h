@@ -71,7 +71,5 @@ i32  field_target(const Field *f, u32 i);
 void field_pos(const Field *f, u32 i, f32 alpha, f32 *x, f32 *z, f32 *heading);
 // Враждуют ли команды двух слотов
 bool field_hostile(const Field *f, u32 a, u32 b);
-// Проверка без окна: сценка атаки с журналом, затем нагрузка на bodies тел (0 — без неё)
-int  field_bench(u32 bodies, u64 seed);
 
 #endif

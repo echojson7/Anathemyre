@@ -6,8 +6,8 @@
 #ifndef ANA_STAND_H
 #define ANA_STAND_H
 
-#include "camera.h"
-#include "figures.h"
+#include "../view/camera.h"
+#include "../view/figures.h"
 
 #define STAND_ROWS (BODY_KIND_COUNT + 2)
 #define STAND_VIEWS 4

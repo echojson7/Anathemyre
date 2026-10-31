@@ -200,7 +200,7 @@ static bool project(M4 vp, V3 p, f32 *sx, f32 *sy)
 
 i32 hud_arena_fighter(const ArenaRing *v, const ArenaSession *s, u32 roster)
 {
-    if (!v->in_bout) return -1;
+    if (!v || !v->in_bout) return -1;
     for (u32 i = 0; i < s->n && i < s->w.count; i++)
         if (s->idx[i] == roster) return (i32)i;
     return -1;
@@ -238,7 +238,7 @@ static bool pick_at(const HudWorld *w, f32 mx, f32 my, u8 *kind, u32 *index, V3 
             if (field_awake(fd, s) && fs_lying(fd->w.state[s])) tall = 0.4f;
         } else {
             u32 i = k - w->squad->count;
-            if (!w->ring->in_bout || i >= w->arena->n) continue;
+            if (!w->arena || !w->ring->in_bout || i >= w->arena->n) continue;
             kd = LOOK_ARENA;
             idx = w->arena->idx[i];
             hud_arena_pos(w->ring, w->arena, idx, &pos);
@@ -326,7 +326,7 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
         memcpy(o->equip, c->equip, sizeof o->equip);
         return true;
     }
-    if (kind != LOOK_ARENA || look >= ARENA_ROSTER) return false;
+    if (kind != LOOK_ARENA || look >= ARENA_ROSTER || !w->arena) return false;
     const ArenaSession *s = w->arena;
     const ArenaFighter *f = &s->roster[look];
     i32 i = hud_arena_fighter(w->ring, s, look);
@@ -504,7 +504,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
 
     bool has_look = h->look_kind != LOOK_NONE;
     if ((in->key_pressed[KEY_I] || in->key_pressed[KEY_P]) && (hud_window_open(h) || has_look)) windows_set(h, sq, !hud_window_open(h));
-    if (in->key_pressed[KEY_K] && (h->win_look || has_look)) h->win_look = !h->win_look;
+    if (in->key_pressed[KEY_K] && h->can_look && (h->win_look || has_look)) h->win_look = !h->win_look;
     if (in->key_pressed[KEY_ESCAPE]) {
         windows_set(h, sq, false);
         h->win_look = false;
@@ -588,7 +588,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
         over = true;
         if (lmb && has_look) {
             if (L.my < win_btn_y(&L, 2)) windows_set(h, sq, !hud_window_open(h));
-            else h->win_look = !h->win_look;
+            else if (h->can_look) h->win_look = !h->win_look;
         }
         lmb = false;
     }
@@ -1004,7 +1004,7 @@ static void draw_buttons(const Hud *h, const Layout *L)
     f32 y0 = win_btn_y(L, 0), y1 = win_btn_y(L, 1), y2 = win_btn_y(L, 2);
     button(x, y0, BTN_W, BTN_H, "I", "ИНВЕНТАРЬ", h->win_inv, can && inside(L->mx, L->my, x, y0, BTN_W, BTN_H));
     button(x, y1, BTN_W, BTN_H, "P", "ПЕРСОНАЖ", h->win_char, can && inside(L->mx, L->my, x, y1, BTN_W, BTN_H));
-    button(x, y2, BTN_W, BTN_H, "K", "ВНЕШНОСТЬ", h->win_look, can && inside(L->mx, L->my, x, y2, BTN_W, BTN_H));
+    if (h->can_look) button(x, y2, BTN_W, BTN_H, "K", "ВНЕШНОСТЬ", h->win_look, can && inside(L->mx, L->my, x, y2, BTN_W, BTN_H));
 }
 
 static void draw_clock(const Hud *h, const Layout *L, const HudWorld *w)

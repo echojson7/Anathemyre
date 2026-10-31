@@ -5,7 +5,7 @@
 #ifndef ANA_SHOWHALL_H
 #define ANA_SHOWHALL_H
 
-#include "figures.h"
+#include "../view/figures.h"
 #include "../sim/player.h"
 #include "../render/render.h"
 

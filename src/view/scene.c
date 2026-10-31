@@ -78,10 +78,10 @@ u32 scene_hall_lights(PointLight *out, u32 max)
     return n;
 }
 
-u32 scene_ring_lights(const ArenaRing *v, f32 night, f32 time, PointLight *out)
+u32 scene_ring_lights(f32 night, f32 time, PointLight *out)
 {
     u32 n = 0;
-    V3 c = v->center;
+    V3 c = ARENA_CENTER;
     for (u32 k = 0; k < RING_LIGHTS; k++) {
         // Зажигаются не разом; пока лампа разгорается, она мигает
         f32 on = smoothstepf(0.30f + 0.06f * (f32)k, 0.42f + 0.06f * (f32)k, night);
@@ -96,7 +96,7 @@ u32 scene_ring_lights(const ArenaRing *v, f32 night, f32 time, PointLight *out)
             f32 a = PI_F * (k ? 1.375f : 0.375f);
             V3 dir = v3(sinf(a), 0.0f, cosf(a));
             l->pos = v3(c.x + dir.x * 9.3f, 10.0f, c.z + dir.z * 9.3f);
-            l->dir = v3_norm(v3_sub(v3(c.x, v->floor_y, c.z), l->pos));
+            l->dir = v3_norm(v3_sub(v3(c.x, RING_FLOOR_Y, c.z), l->pos));
             // Узкий конус с чёткой кромкой: на полу ринга лежит круг света, за ним темно
             l->cone = 0.96f;
             l->radius = 30.0f;

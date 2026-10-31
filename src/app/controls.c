@@ -9,7 +9,6 @@
 #include "../render/ui.h"
 #include "../world/map.h"
 #include "../view/figures.h"
-#include "../view/showhall.h"
 
 // Камера внутри павильона Остова: лицом к пролому и каньону (кнопка КАМЕРА: В ОСТОВ)
 #define OSTOV_CAM ((RtsCamera){ .target = { -80.0f, 0.0f, 8.0f }, .yaw = 0.0f, .pitch = 0.2f, .dist = 6.0f })
@@ -109,7 +108,7 @@ static void menu_light(Hud *h, Settings *s, World *w, RtsCamera *cam, const Fram
     hud_form_slider(f, "ВРЕМЯ СУТОК", &w->tod, 0.0f, 0.999f, val);
     hud_form_check(f, "ПИКСЕЛЬНОСТЬ", &rs->pixel);
     if (hud_form_button(f, "КАМЕРА: В ОСТОВ")) *cam = OSTOV_CAM;
-    if (hud_form_button(f, "КАМЕРА: В МЕРИЛЬНЮ")) *cam = SHOWHALL_CAM;
+    debug_menu_light(f, cam);
     snprintf(val, sizeof val, "%.2f МС  %.0f К/С", (f64)st->shown_ms, (f64)st->shown_fps);
     hud_form_text(f, "КАДР", val);
     if (hud_form_button(f, "ЗАМЕР ПО ЭТАПАМ")) s->bench_stages = true;
@@ -138,7 +137,7 @@ RenderSettings stage_render(const Settings *s)
 }
 
 // Раздел ОТЛАДКА: этапы сцены, проходы, окно, мир, звук
-static void menu_debug(Hud *h, Settings *s, World *w, RtsCamera *cam, bool humans_on, const FrameStats *st)
+static void menu_debug(Hud *h, Settings *s, World *w, RtsCamera *cam, Debug *dbg, const FrameStats *st)
 {
     char val[32];
     RenderSettings *rs = &s->rs;
@@ -160,15 +159,12 @@ static void menu_debug(Hud *h, Settings *s, World *w, RtsCamera *cam, bool human
     if (hud_debug_check(h, "ВО ВЕСЬ ЭКРАН", &s->fullscreen)) platform_set_fullscreen(s->fullscreen);
     if (hud_debug_check(h, "СУТКИ ИДУТ", &w->day_run)) log_info("СУТКИ: %s", w->day_run ? "идут" : "остановлены");
     if (hud_debug_check(h, "КАМЕРА СЛЕДУЕТ", &s->follow) && s->follow) cam->dist = MIN(cam->dist, 8.0f);
-    bool humans_want = humans_on;
     if (hud_debug_button(h, world_squad_in_valley(w) ? "ПЕРЕХОД: В ЛАГЕРЬ" : "ПЕРЕХОД: В ДОЛИНУ")) s->travel = true;
     if (hud_debug_button(h, "КАМЕРА: В ОСТОВ")) *cam = OSTOV_CAM;
-    if (hud_debug_button(h, "КАМЕРА: В МЕРИЛЬНЮ")) *cam = SHOWHALL_CAM;
-    if (hud_debug_button(h, "ОТРЯДЫ ВДАЛИ: ПУСТИТЬ ПРОБНЫЕ")) s->bands_test = true;
-    // Физика вещей (docs/physics.md): выключатель, куча лома у точки взгляда, сколько тел в каком состоянии
+    // Отладка (debug/): Мерильня, пробные отряды, лом и вещи у точки взгляда, ряд людей, стенд
+    debug_menu(dbg, h, cam);
+    // Физика вещей (docs/physics.md): выключатель, сколько тел в каком состоянии
     if (hud_debug_check(h, "ФИЗИКА", &w->phys->on)) log_info("ФИЗИКА: %s", w->phys->on ? "вкл" : "выкл");
-    if (hud_debug_button(h, "ФИЗИКА: БРОСИТЬ ЛОМ")) world_phys_drop(w);
-    if (hud_debug_button(h, "ФИЗИКА: БРОСИТЬ ВЕЩИ")) world_loot_drop(w);
     const PhysStats *ps = &w->phys->st;
     snprintf(val, sizeof val, "%u / %u / %u", ps->active, ps->asleep, ps->frozen);
     hud_debug_text(h, "ФИЗИКА: СЧИТ / СПИТ / ЗАСТЫЛО", val);
@@ -180,16 +176,6 @@ static void menu_debug(Hud *h, Settings *s, World *w, RtsCamera *cam, bool human
     if (hud_debug_button(h, "МИР: ЗАГРУЗИТЬ")) s->load = true;
     snprintf(val, sizeof val, "%llu", (unsigned long long)w->chron->total);
     hud_debug_text(h, "СОБЫТИЙ В ЖУРНАЛЕ МИРА", val);
-    if (hud_debug_check(h, "ЛЮДИ ДЛЯ СРАВНЕНИЯ", &humans_want)) {
-        s->humans = true;
-        if (humans_want) *cam = (RtsCamera){ .target = { 3.4f, 0, 22 }, .yaw = 0.0f, .pitch = 0.15f, .dist = 6.5f };
-    }
-    s->stand_moved |= hud_debug_check(h, "СТЕНД ФИГУР", &s->stand);
-    static const char *stand_row[] = { "СТЕНД: МУЖЧИНА", "СТЕНД: ЖЕНЩИНА", "СТЕНД: ХУДОЙ", "СТЕНД: РОСТ", "СТЕНД: ПРИЧЁСКИ" };
-    if (s->stand && hud_debug_button(h, stand_row[s->stand_row % 5])) {
-        s->stand_row = (s->stand_row + 1) % 5;
-        s->stand_moved = true;
-    }
     u32 mins = (u32)(w->tod * 24.0f * 60.0f);
     snprintf(val, sizeof val, "%02u:%02u", mins / 60 % 24, mins % 60);
     hud_debug_slider(h, "ВРЕМЯ СУТОК", &w->tod, 0.0f, 0.999f, val);
@@ -225,7 +211,7 @@ static void menu_debug(Hud *h, Settings *s, World *w, RtsCamera *cam, bool human
     if (hud_debug_slider(h, "ГРОМКОСТЬ МУЗЫКИ", &s->music_vol, 0.0f, 1.0f, val)) audio_music(s->music_vol, s->music_on);
 }
 
-void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool humans_on, const FrameStats *st)
+void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, Debug *dbg, const FrameStats *st)
 {
     Input raw = *in;
     if (hud_debug_begin(h, &raw)) {
@@ -233,7 +219,7 @@ void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool h
         static const char *const tab_name[] = { "ОТЛАДКА", "СВЕТ" };
         hud_form_tabs(&h->dbg.f, tab_name, 2, &h->dbg.tab);
         if (h->dbg.tab == 1) menu_light(h, s, w, cam, st);
-        else menu_debug(h, s, w, cam, humans_on, st);
+        else menu_debug(h, s, w, cam, dbg, st);
     }
     if (hud_debug_end(h)) {
         memset(in->mouse_pressed, 0, sizeof in->mouse_pressed);

@@ -86,8 +86,8 @@ if $BIN --mods "$DIR/mods_none" $CAM --load "$DIR/defs_mod.sav" --sum-after 0 > 
 grep -q "ressora_stal" "$DIR/defs5.txt"
 grep -q "мир не тронут" "$DIR/defs5.txt"
 # Ошибка в файле мода
-if $BIN --mods "$DIR/mods_bad" --arena-bench 1 > "$DIR/defs6.txt" 2>&1; then exit 1; fi
+if $BIN --mods "$DIR/mods_bad" --bench arena 1 > "$DIR/defs6.txt" 2>&1; then exit 1; fi
 grep -q "slom/weapons.txt:3: не число" "$DIR/defs6.txt"
-if $BIN --mods "$DIR/mods_bad2" --arena-bench 1 > "$DIR/defs7.txt" 2>&1; then exit 1; fi
+if $BIN --mods "$DIR/mods_bad2" --bench arena 1 > "$DIR/defs7.txt" 2>&1; then exit 1; fi
 grep -q "kosa_kraska красится материалом nosuch" "$DIR/defs7.txt"
 echo "моды: правка и parent читаются, материал мода читается, сохранение без мода отклонено, ошибки указаны"

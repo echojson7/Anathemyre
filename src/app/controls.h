@@ -5,6 +5,7 @@
 #include "../render/render.h"
 #include "bench.h"
 #include "../view/camera.h"
+#include "../debug/debug.h"
 #include "../view/hud.h"
 #include "../world/world.h"
 
@@ -37,10 +38,8 @@ typedef struct Settings {
     bool sound_ok, sound_on, music_on;
     f32  sound_vol, music_vol;
     // Просьбы меню на этот кадр
-    bool travel, humans, bench, bands_test, bench_stages, save, load;
+    bool travel, bench, bench_stages, save, load;
     u32  stage;              // SceneStage
-    bool stand, stand_moved;  // стенд фигур: показан; показать ряд stand_row или убрать
-    u32  stand_row;
 } Settings;
 
 // Наборы группы СВЕТ (docs/lighting.md): от прежнего света к самому полному
@@ -54,7 +53,7 @@ LightPreset light_preset_of(const RenderSettings *rs);
 RenderSettings stage_render(const Settings *s);
 
 // Меню НАСТРОЙКИ. *in — ввод для мира и интерфейса: если мышь занята меню, клики из него убраны
-void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, bool humans_on, const FrameStats *st);
+void menu_input(Hud *h, Input *in, Settings *s, World *w, RtsCamera *cam, Debug *dbg, const FrameStats *st);
 // ПКМ по чужому: выбранные атакуют его. ПКМ по земле: идут туда, бросив бой и погоню.
 // Z шаг, X трусца, C бег — выбранным; G — держать строй; H — стоять: бросить приказ, но отбиваться.
 // in — сырой ввод (курсор), hin — после меню
