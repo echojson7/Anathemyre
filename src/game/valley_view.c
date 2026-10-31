@@ -540,7 +540,7 @@ bool valley_view_build(ValleyView *v, Arena *perm, u64 seed)
     for (u32 k = 0; k < PROP_KINDS; k++)
         for (u32 var = 0; var < VV_PROP_VARIANTS; var++) {
             fresh(&mb, perm, mark, 6000, 18000);
-            flora_prop(&mb, (PropKind)k, (u32)seed * 7u + k * 53u + var * 29u);
+            prop_ground(&mb, (PropKind)k, (u32)seed * 7u + k * 53u + var * 29u);
             gpu_mesh_upload(&v->prop[k][var], &mb);
         }
     perm->used = mark;

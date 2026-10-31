@@ -2,6 +2,7 @@
 
 #include "../core/rng.h"
 #include "../core/palette.h"
+#include "props.h"
 
 // Цвета поверхностей (альбедо, линейные)
 #define C_CONC   v3(0.46f, 0.44f, 0.41f)
@@ -72,8 +73,6 @@ static void tri_out(MeshBuilder *mb, u32 a, u32 b, u32 c, V3 out)
     }
     mb_tri(mb, a, b, c);
 }
-
-static V3 tint(Rng *r, V3 c, f32 k) { return v3_mul(c, 1.0f + rng_range(r, -k, k)); }
 
 // ---------------------------------------------------------------- неровный бетон
 
@@ -287,7 +286,7 @@ static void rubble(MeshBuilder *mb, Rng *rng, V3 c, f32 rad, u32 count, f32 smin
     for (u32 i = 0; i < count; i++) {
         f32 a = rng_range(rng, 0, 2 * PI_F), d = rad * sqrtf(rng_f32(rng));
         f32 s = rng_range(rng, smin, smax) * (1.0f - 0.5f * d / rad);
-        mb_set(mb, tint(rng, rng_f32(rng) < 0.5f ? C_CONC : C_CONC_D, 0.08f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_shade(rng, rng_f32(rng) < 0.5f ? C_CONC : C_CONC_D, 0.08f), MAT_CONCRETE, BONE_NONE);
         chunk(mb, rng, v3(c.x + cosf(a) * d, c.y + s * 0.2f, c.z + sinf(a) * d), s);
     }
 }
@@ -513,46 +512,11 @@ static void mound(MeshBuilder *mb, V3 c, f32 rad, f32 h, u32 seed)
     mb_smooth_normals(mb, v0, i0);
 }
 
-// Труба по точкам вдоль стены: колена, фланцы через ~3 м, хомуты к стене (wall — наружу от стены)
-static void pipe(MeshBuilder *mb, const V3 *pts, u32 n, f32 r, V3 wall, Rng *rng)
-{
-    mb_set(mb, tint(rng, C_RUST, 0.12f), MAT_RUST, BONE_NONE);
-    for (u32 i = 0; i + 1 < n; i++) {
-        V3 a = pts[i], b = pts[i + 1];
-        mb_cylinder(mb, a, b, r, 12);
-        V3 d = v3_sub(b, a);
-        f32 len = v3_len(d);
-        V3 dn = v3_mul(d, 1.0f / len);
-        for (f32 t = 1.2f; t < len - 0.6f; t += 3.0f) {
-            V3 p = v3_add(a, v3_mul(dn, t));
-            mb_cylinder(mb, v3_sub(p, v3_mul(dn, 0.05f)), v3_add(p, v3_mul(dn, 0.05f)), r * 1.4f, 12);
-        }
-        for (f32 t = 0.8f; t < len - 0.3f; t += 2.1f) {
-            V3 p = v3_add(a, v3_mul(dn, t));
-            V3 back = v3_sub(p, v3_mul(wall, r + 0.25f));
-            mb_set(mb, C_IRON, MAT_METAL, BONE_NONE);
-            mb_cylinder(mb, v3_sub(p, v3_mul(dn, 0.04f)), v3_add(p, v3_mul(dn, 0.04f)), r * 1.15f, 12);
-            mb_cylinder(mb, p, back, 0.03f, 6);
-            mb_set(mb, tint(rng, C_RUST, 0.12f), MAT_RUST, BONE_NONE);
-        }
-    }
-    // Колена: утолщение на стыке
-    for (u32 i = 1; i + 1 < n; i++) mb_capsule(mb, pts[i], v3_add(pts[i], v3(0, 0.001f, 0)), r * 1.12f, r * 1.12f, 12, 1.0f, 1.0f);
-}
-
 // Кабель с провисом по параболе
 static void cable(MeshBuilder *mb, V3 a, V3 b, f32 sag, f32 r)
 {
     mb_set(mb, C_CABLE, MAT_LEATHER, BONE_NONE);
-    u32 n = 14;
-    V3 prev = a;
-    for (u32 k = 1; k <= n; k++) {
-        f32 t = (f32)k / (f32)n;
-        V3 p = v3_lerp(a, b, t);
-        p.y -= sag * 4.0f * t * (1.0f - t);
-        mb_cylinder(mb, prev, p, r, 5);
-        prev = p;
-    }
+    prop_wire(mb, a, b, sag, r, 14, 5);
 }
 
 // ---------------------------------------------------------------- части руины
@@ -563,7 +527,7 @@ static u32 next_seed(void) { return g_seed++ * 7919u; }
 // Стена от lo до hi с колонной-пилястрой и сколами; hide — грани, упёртые в пол или плиту
 static void wall(MeshBuilder *mb, Rng *rng, V3 lo, V3 hi, u8 hide, u8 broken)
 {
-    mb_set(mb, tint(rng, C_CONC, 0.05f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_CONC, 0.05f), MAT_CONCRETE, BONE_NONE);
     Rough r = rough(1.3f, 0.06f, 0.14f, 0.35f, hide, next_seed());
     r.broken = broken;
     r.brk = 0.45f;
@@ -576,12 +540,12 @@ static void pavilion(MeshBuilder *mb, Rng *rng)
     // Плита
     mb_set(mb, C_CONC, MAT_CONCRETE, BONE_NONE);
     broken_slab(mb, rng, -96.5f, -63.5f, -6.5f, 17.5f, RT, RT - RB, 0.5f);
-    mb_set(mb, tint(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
     collar(mb, v3(OCULUS_X, 0, OCULUS_Z), OCULUS_R, OCULUS_R + 0.45f, RB - 0.25f, RT + 0.9f, 32);
     // Рёбра под плитой: балки поперёк, у пролома обломаны
     for (u32 k = 0; k < 4; k++) {
         f32 z = -2.0f + (f32)k * 5.5f;
-        mb_set(mb, tint(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_shade(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
         Rough r = rough(0.8f, 0.03f, 0.08f, 0.18f, HF(F_TOP), next_seed());
         if (z > -0.5f && z < 8.0f) {
             // Балка оборвана у пролома
@@ -593,7 +557,7 @@ static void pavilion(MeshBuilder *mb, Rng *rng)
     // Колонны по открытому западному краю: квадратные, с утолщением наверху; под проломом сломана
     f32 cz[] = { -3.0f, 4.0f, 11.0f, 16.3f };
     for (u32 k = 0; k < ARRAY_COUNT(cz); k++) {
-        mb_set(mb, tint(rng, C_CONC, 0.05f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_shade(rng, C_CONC, 0.05f), MAT_CONCRETE, BONE_NONE);
         bool broken = k == 1;
         f32 top = broken ? 3.4f : RB;
         Rough r = rough(0.7f, 0.03f, 0.1f, 0.2f, HF(F_BOT) | (broken ? 0 : HF(F_TOP)), next_seed());
@@ -609,7 +573,7 @@ static void pavilion(MeshBuilder *mb, Rng *rng)
         }
     }
     // Обломок колонны лежит рядом
-    mb_set(mb, tint(rng, C_CONC_D, 0.05f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_CONC_D, 0.05f), MAT_CONCRETE, BONE_NONE);
     {
         Rough r = rough(0.6f, 0.03f, 0.12f, 0.25f, 0, next_seed());
         r.broken = HF(F_ZN) | HF(F_ZP);
@@ -618,7 +582,7 @@ static void pavilion(MeshBuilder *mb, Rng *rng)
     }
 
     // Обвал из пролома: куски плиты висят на прутьях и лежат косо, под ними куча
-    mb_set(mb, tint(rng, C_CONC, 0.05f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_CONC, 0.05f), MAT_CONCRETE, BONE_NONE);
     {
         Rough r = rough(0.5f, 0.04f, 0.12f, 0.25f, 0, next_seed());
         r.broken = HF(F_ZN) | HF(F_XN);
@@ -654,18 +618,18 @@ static void pavilion(MeshBuilder *mb, Rng *rng)
     // Пилястры по южной стене и горизонтальный пояс
     for (f32 x = -93.0f; x < -66.0f; x += 5.5f) {
         if (fabsf(x - (dx0 + dx1) * 0.5f) < 2.0f) continue;
-        mb_set(mb, tint(rng, C_CONC, 0.05f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_shade(rng, C_CONC, 0.05f), MAT_CONCRETE, BONE_NONE);
         Rough r = rough(0.6f, 0.03f, 0.08f, 0.16f, HF(F_BOT) | HF(F_TOP) | HF(F_ZP), next_seed());
         rough_box(mb, v3(x - 0.35f, FY, 15.75f), v3(x + 0.35f, RB, 16.25f), &r);
     }
     // Низкий блок-скамья у стены
-    mb_set(mb, tint(rng, C_CONC_D, 0.05f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_CONC_D, 0.05f), MAT_CONCRETE, BONE_NONE);
     {
         Rough r = rough(0.5f, 0.02f, 0.07f, 0.15f, HF(F_BOT), next_seed());
         rough_box(mb, v3(-88.0f, FY, 14.6f), v3(-86.0f, FY + 0.55f, 15.4f), &r);
     }
     // Тонкая круглая колонна у ниши: ствол с поясом внизу
-    mb_set(mb, tint(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
     {
         V2 prof[] = { { 0.0f, 0.42f }, { 0.35f, 0.42f }, { 0.4f, 0.33f }, { 3.0f, 0.31f }, { RB - FY - 0.5f, 0.3f }, { RB - FY - 0.3f, 0.4f },
                       { RB - FY, 0.4f } };
@@ -692,7 +656,7 @@ static void pavilion(MeshBuilder *mb, Rng *rng)
     // Лестница: ступени со сбитыми носками, под ними кладка
     for (u32 k = 0; k < 14; k++) {
         f32 z1 = ST_Z1 - 0.3f * (f32)k, z0 = z1 - 0.3f;
-        mb_set(mb, tint(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_shade(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
         Rough r = rough(0.5f, 0.01f, 0.05f, 0.1f, HF(F_BOT) | HF(F_ZN), next_seed());
         rough_box(mb, v3(ST_X0, FY, z0), v3(ST_X1, FY + 0.3f * (f32)(k + 1), z1), &r);
     }
@@ -700,7 +664,7 @@ static void pavilion(MeshBuilder *mb, Rng *rng)
     wall(mb, rng, v3(-76.0f, FY, -6.0f), v3(ST_X1, GY, ST_Z0), HF(F_BOT), 0);
 
     // Контрфорс: стена с наклонной внутренней гранью вдоль всего востока
-    mb_set(mb, tint(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
     {
         V3 c[8] = { v3(-70.0f, FY, -6.0f), v3(-63.5f, FY, -6.0f), v3(-63.5f, FY, 17.4f), v3(-70.0f, FY, 17.4f),
                     v3(-67.6f, RB, -6.0f), v3(-63.5f, RB, -6.0f), v3(-63.5f, RB, 17.4f), v3(-67.6f, RB, 17.4f) };
@@ -709,7 +673,7 @@ static void pavilion(MeshBuilder *mb, Rng *rng)
     }
 
     // Пол: цоколь, отдельные плиты приподняты и сдвинуты, песок задуло с запада
-    mb_set(mb, tint(rng, C_CONC_D, 0.03f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_CONC_D, 0.03f), MAT_CONCRETE, BONE_NONE);
     {
         Rough r = rough(1.0f, 0.02f, 0.15f, 0.3f, HF(F_BOT), next_seed());
         rough_box(mb, v3(PX0, FY - 1.6f, PZ0), v3(PX1, FY, PZ1), &r);
@@ -717,7 +681,7 @@ static void pavilion(MeshBuilder *mb, Rng *rng)
     for (u32 k = 0; k < 9; k++) {
         f32 x = rng_range(rng, -94.0f, -76.0f), z = rng_range(rng, -3.0f, 14.0f);
         if (roof_cell(x, z) == 1) continue;
-        mb_set(mb, tint(rng, C_CONC_D, 0.05f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_shade(rng, C_CONC_D, 0.05f), MAT_CONCRETE, BONE_NONE);
         f32 s = rng_range(rng, 1.2f, 2.4f);
         M4 m = m4_mul(m4_rot_y(rng_range(rng, -0.15f, 0.15f)), m4_mul(m4_rot_x(rng_range(rng, -0.06f, 0.06f)), m4_rot_z(rng_range(rng, -0.06f, 0.06f))));
         Rough r = rough(0.5f, 0.01f, 0.05f, 0.12f, HF(F_BOT), next_seed());
@@ -743,27 +707,27 @@ static void canyon(MeshBuilder *mb, Rng *rng)
         z += len;
     }
     for (f32 z = cz0 + 3.0f; z < cz1 - 1.0f; z += 6.5f) {
-        mb_set(mb, tint(rng, C_CONC_D, 0.05f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_shade(rng, C_CONC_D, 0.05f), MAT_CONCRETE, BONE_NONE);
         f32 h = FY + rng_range(rng, 17.0f, 22.0f);
         Rough r = rough(0.8f, 0.03f, 0.1f, 0.22f, HF(F_BOT) | HF(F_XN), next_seed());
         r.broken = HF(F_TOP);
         rough_box(mb, v3(-81.0f, FY, z - 0.45f), v3(-80.3f, h, z + 0.45f), &r);
     }
     // Пояс-карниз на 12 м и выступ с дверью-люком внизу
-    mb_set(mb, tint(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
     {
         Rough r = rough(0.8f, 0.03f, 0.08f, 0.15f, HF(F_XN), next_seed());
         rough_box(mb, v3(-81.0f, FY + 11.6f, cz0 + 1.0f), v3(-80.5f, FY + 12.1f, cz1), &r);
     }
     mb_set(mb, v3(0.004f, 0.004f, 0.004f), MAT_EMISSIVE, BONE_NONE);
     mb_quad(mb, v3(-80.98f, FY + 1.1f, -24.0f), v3(0, 0, -0.55f), v3(0, 1.0f, 0));
-    mb_set(mb, tint(rng, C_RUST, 0.1f), MAT_RUST, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_RUST, 0.1f), MAT_RUST, BONE_NONE);
     mb_box(mb, m4_mul(m4_translate(v3(-80.9f, FY + 1.1f, -24.9f)), m4_mul(m4_rot_y(0.9f), m4_scale(v3(0.06f, 2.1f, 1.1f)))));
 
     // Восточный массив: низ, плита галереи с выступом, парапет, простенки, потолок, верх
     const f32 ex0 = -76.0f, ex1 = -63.5f;
     wall(mb, rng, v3(ex0, FY, cz0), v3(ex1, GY - 0.35f, cz1 - 0.7f), HF(F_BOT), 0);
-    mb_set(mb, tint(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
     {
         Rough r = rough(0.8f, 0.03f, 0.1f, 0.2f, 0, next_seed());
         rough_box(mb, v3(ex0 - 0.6f, GY - 0.35f, cz0), v3(ex1, GY, -6.0f), &r);
@@ -782,7 +746,7 @@ static void canyon(MeshBuilder *mb, Rng *rng)
     mb_set(mb, v3(0.004f, 0.004f, 0.004f), MAT_EMISSIVE, BONE_NONE);
     for (f32 z = -12.0f; z > cz0 + 3.0f; z -= 9.0f) mb_quad(mb, v3(-72.06f, GY + 1.1f, z), v3(0, 0, 0.6f), v3(0, 1.1f, 0));
     // Потолок галереи и массив над ним; на стороне каньона пояса
-    mb_set(mb, tint(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_CONC, 0.04f), MAT_CONCRETE, BONE_NONE);
     {
         Rough r = rough(0.8f, 0.03f, 0.1f, 0.2f, 0, next_seed());
         rough_box(mb, v3(ex0 - 0.3f, GT, cz0), v3(ex1, GT + 0.7f, -6.0f), &r);
@@ -796,7 +760,7 @@ static void canyon(MeshBuilder *mb, Rng *rng)
     }
     for (u32 k = 0; k < 2; k++) {
         f32 y = FY + 12.0f + (f32)k * 4.5f;
-        mb_set(mb, tint(rng, C_CONC_D, 0.04f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_shade(rng, C_CONC_D, 0.04f), MAT_CONCRETE, BONE_NONE);
         Rough r = rough(0.8f, 0.02f, 0.08f, 0.15f, HF(F_XP), next_seed());
         rough_box(mb, v3(ex0 - 0.45f, y, cz0 + 0.5f), v3(ex0, y + 0.45f, -6.5f), &r);
     }
@@ -804,7 +768,7 @@ static void canyon(MeshBuilder *mb, Rng *rng)
     // Север: завал поперёк каньона и обломанная балка-перемычка наверху
     mound(mb, v3(-78.5f, FY, -47.0f), 4.0f, 1.6f, 61);
     rubble(mb, rng, v3(-78.5f, FY + 0.3f, -47.0f), 3.2f, 22, 0.3f, 1.4f);
-    mb_set(mb, tint(rng, C_CONC, 0.05f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_CONC, 0.05f), MAT_CONCRETE, BONE_NONE);
     {
         Rough r = rough(0.6f, 0.03f, 0.12f, 0.25f, 0, next_seed());
         r.broken = HF(F_ZP);
@@ -825,14 +789,14 @@ static void canyon(MeshBuilder *mb, Rng *rng)
         V3 a[] = { v3(-73.0f, FY + 21.4f, -12.0f), v3(-76.35f, FY + 21.4f, -12.0f), v3(-76.35f, FY + 17.0f, -12.0f),
                    v3(-76.35f, FY + 16.2f, -14.0f), v3(-76.35f, FY + 16.2f, -19.0f), v3(-76.35f, FY + 15.2f, -20.0f),
                    v3(-76.35f, GT + 1.0f, -20.0f), v3(-76.35f, GT + 1.0f, -24.0f) };
-        pipe(mb, a, ARRAY_COUNT(a), 0.2f, v3(-1, 0, 0), rng);
+        prop_pipe_run(mb, a, ARRAY_COUNT(a), 0.2f, v3(-1, 0, 0), C_RUST, C_IRON, rng);
         V3 b[] = { v3(-76.3f, FY + 20.6f, -29.0f), v3(-76.3f, FY + 14.0f, -29.0f), v3(-76.3f, FY + 13.2f, -30.5f),
                    v3(-76.3f, GT + 0.9f, -30.5f) };
-        pipe(mb, b, ARRAY_COUNT(b), 0.12f, v3(-1, 0, 0), rng);
+        prop_pipe_run(mb, b, ARRAY_COUNT(b), 0.12f, v3(-1, 0, 0), C_RUST, C_IRON, rng);
         // По западной стене низко: длинная, с фланцами
         V3 c[] = { v3(-80.65f, FY + 4.8f, -7.0f), v3(-80.65f, FY + 4.8f, -41.0f), v3(-80.65f, FY + 3.6f, -42.5f),
                    v3(-80.65f, FY + 0.6f, -42.5f) };
-        pipe(mb, c, ARRAY_COUNT(c), 0.24f, v3(1, 0, 0), rng);
+        prop_pipe_run(mb, c, ARRAY_COUNT(c), 0.24f, v3(1, 0, 0), C_RUST, C_IRON, rng);
     }
     // Кабели поперёк и вдоль каньона
     cable(mb, v3(-80.9f, FY + 15.2f, -15.0f), v3(-76.1f, FY + 14.6f, -17.5f), 1.6f, 0.04f);
@@ -842,7 +806,7 @@ static void canyon(MeshBuilder *mb, Rng *rng)
     cable(mb, v3(-76.1f, FY + 17.2f, -9.2f), v3(-80.9f, FY + 15.6f, -27.4f), 3.0f, 0.04f);
     cable(mb, v3(-80.9f, FY + 9.5f, -33.0f), v3(-76.1f, FY + 10.4f, -36.0f), 1.2f, 0.035f);
     // Ржавая скоба-лестница на западной стене до карниза
-    mb_set(mb, tint(rng, C_RUST, 0.1f), MAT_RUST, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_RUST, 0.1f), MAT_RUST, BONE_NONE);
     for (f32 y = FY + 0.6f; y < FY + 11.5f; y += 0.35f)
         mb_cylinder(mb, v3(-80.75f, y, -38.3f), v3(-80.75f, y, -37.7f), 0.02f, 4);
     mb_cylinder(mb, v3(-80.75f, FY + 0.4f, -38.32f), v3(-80.75f, FY + 11.6f, -38.32f), 0.025f, 4);
@@ -853,7 +817,7 @@ static void canyon(MeshBuilder *mb, Rng *rng)
 static void vent(MeshBuilder *mb, Rng *rng, V3 c, V3 n, f32 w, f32 h)
 {
     V3 u = v3_norm(v3_cross(v3(0, 1, 0), n));
-    mb_set(mb, tint(rng, C_RUST, 0.15f), MAT_RUST, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_RUST, 0.15f), MAT_RUST, BONE_NONE);
     V3 back = v3_sub(c, v3_mul(n, 0.02f));
     // Рама
     for (int s = -1; s <= 1; s += 2) {
@@ -861,7 +825,7 @@ static void vent(MeshBuilder *mb, Rng *rng, V3 c, V3 n, f32 w, f32 h)
         mb_box(mb, m4_mul(m4_translate(v3_add(back, v3(0, (f32)s * h * 0.5f, 0))), m4_mul(m4_rot_y(atan2f(n.x, n.z)), m4_scale(v3(w + 0.06f, 0.06f, 0.1f)))));
     }
     // Планки; пара выбита
-    mb_set(mb, tint(rng, C_IRON, 0.1f), MAT_METAL, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_IRON, 0.1f), MAT_METAL, BONE_NONE);
     for (f32 y = -h * 0.5f + 0.1f; y < h * 0.5f - 0.05f; y += 0.12f) {
         if (rng_f32(rng) < 0.12f) continue;
         M4 m = m4_mul(m4_translate(v3_add(back, v3(0, y, 0))), m4_mul(m4_rot_y(atan2f(n.x, n.z)), m4_mul(m4_rot_x(0.6f), m4_scale(v3(w, 0.015f, 0.1f)))));
@@ -877,7 +841,7 @@ static void plate(MeshBuilder *mb, Rng *rng, V3 c, V3 n, f32 w, f32 h)
 {
     V3 u = v3_norm(v3_cross(v3(0, 1, 0), n));
     f32 yaw = atan2f(n.x, n.z);
-    mb_set(mb, tint(rng, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_RUST, 0.2f), MAT_RUST, BONE_NONE);
     mb_box(mb, m4_mul(m4_translate(v3_add(c, v3_mul(n, 0.015f))), m4_mul(m4_rot_y(yaw), m4_scale(v3(w, h, 0.03f)))));
     for (int i = -1; i <= 1; i += 2)
         for (int j = -1; j <= 1; j += 2) {
@@ -885,7 +849,7 @@ static void plate(MeshBuilder *mb, Rng *rng, V3 c, V3 n, f32 w, f32 h)
             mb_cylinder(mb, v3_add(b, v3_mul(n, 0.02f)), v3_add(b, v3_mul(n, 0.07f)), 0.03f, 6);
         }
     if (rng_f32(rng) < 0.5f) {
-        mb_set(mb, tint(rng, C_IRON, 0.1f), MAT_METAL, BONE_NONE);
+        mb_set(mb, prop_shade(rng, C_IRON, 0.1f), MAT_METAL, BONE_NONE);
         V3 a = v3_add(c, v3_mul(n, 0.03f));
         mb_box(mb, m4_mul(m4_translate(v3_add(a, v3_mul(n, 0.25f))), m4_mul(m4_rot_y(yaw), m4_scale(v3(0.08f, 0.08f, 0.5f)))));
         mb_box(mb, m4_mul(m4_translate(v3_add(a, v3_add(v3_mul(n, 0.48f), v3(0, -0.15f, 0)))), m4_mul(m4_rot_y(yaw), m4_scale(v3(0.08f, 0.3f, 0.08f)))));
@@ -896,9 +860,9 @@ static void plate(MeshBuilder *mb, Rng *rng, V3 c, V3 n, f32 w, f32 h)
 static void junction(MeshBuilder *mb, Rng *rng, V3 c, V3 n, f32 up)
 {
     f32 yaw = atan2f(n.x, n.z);
-    mb_set(mb, tint(rng, C_IRON, 0.15f), MAT_METAL, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_IRON, 0.15f), MAT_METAL, BONE_NONE);
     mb_box(mb, m4_mul(m4_translate(v3_add(c, v3_mul(n, 0.1f))), m4_mul(m4_rot_y(yaw), m4_scale(v3(0.45f, 0.6f, 0.2f)))));
-    mb_set(mb, tint(rng, C_RUST, 0.15f), MAT_RUST, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_RUST, 0.15f), MAT_RUST, BONE_NONE);
     mb_box(mb, m4_mul(m4_translate(v3_add(c, v3_add(v3_mul(n, 0.21f), v3(0, 0.05f, 0)))), m4_mul(m4_rot_y(yaw), m4_scale(v3(0.4f, 0.5f, 0.02f)))));
     V3 t0 = v3_add(c, v3_add(v3_mul(n, 0.08f), v3(0, 0.3f, 0)));
     mb_cylinder(mb, t0, v3_add(t0, v3(0, up, 0)), 0.03f, 6);
@@ -908,7 +872,7 @@ static void junction(MeshBuilder *mb, Rng *rng, V3 c, V3 n, f32 up)
 // Слив из края плиты: ржавый носик
 static void scupper(MeshBuilder *mb, Rng *rng, V3 c, V3 out)
 {
-    mb_set(mb, tint(rng, C_RUST, 0.15f), MAT_RUST, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_RUST, 0.15f), MAT_RUST, BONE_NONE);
     V3 tip = v3_add(c, v3_add(v3_mul(out, 0.5f), v3(0, -0.12f, 0)));
     mb_cylinder(mb, v3_sub(c, v3_mul(out, 0.2f)), tip, 0.07f, 8);
 }
@@ -930,12 +894,12 @@ static void fixtures(MeshBuilder *mb, Rng *rng)
     junction(mb, rng, v3(-81.0f, FY + 1.6f, -31.0f), v3(1, 0, 0), 2.6f);
     vent(mb, rng, v3(-81.0f, FY + 2.2f, -19.5f), v3(1, 0, 0), 0.9f, 0.6f);
     plate(mb, rng, v3(-81.0f, FY + 6.5f, -27.5f), v3(1, 0, 0), 0.7f, 0.5f);
-    mb_set(mb, tint(rng, C_IRON, 0.1f), MAT_METAL, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_IRON, 0.1f), MAT_METAL, BONE_NONE);
     for (f32 z = -8.0f; z > -46.0f; z -= 2.5f) {
         // Консоли лотка; на некоторых участках лоток сорван
         mb_box(mb, m4_mul(m4_translate(v3(-80.7f, FY + 7.85f, z)), m4_scale(v3(0.6f, 0.06f, 0.06f))));
     }
-    mb_set(mb, tint(rng, C_RUST, 0.15f), MAT_RUST, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_RUST, 0.15f), MAT_RUST, BONE_NONE);
     for (f32 z = -8.0f; z > -44.0f; z -= 6.0f) {
         if (rng_f32(rng) < 0.25f) continue;
         mb_box(mb, m4_mul(m4_translate(v3(-80.6f, FY + 7.93f, z - 3.0f)), m4_scale(v3(0.45f, 0.04f, 5.8f))));
@@ -956,7 +920,7 @@ static void fixtures(MeshBuilder *mb, Rng *rng)
     plate(mb, rng, v3(-77.0f, FY + 3.0f, 16.2f), v3(0, 0, -1), 0.6f, 0.8f);
     plate(mb, rng, v3(-73.2f, FY + 4.6f, 9.0f), v3(1, 0, 0), 0.5f, 0.5f);
     junction(mb, rng, v3(-84.6f, FY + 1.4f, 16.2f), v3(0, 0, -1), 4.6f);
-    mb_set(mb, tint(rng, C_RUST, 0.15f), MAT_RUST, BONE_NONE);
+    mb_set(mb, prop_shade(rng, C_RUST, 0.15f), MAT_RUST, BONE_NONE);
     for (u32 k = 0; k < 7; k++) {
         f32 x = rng_range(rng, -84.0f, -68.0f), z = rng_range(rng, -4.0f, 15.0f);
         if (roof_cell(x, z) != 0) continue;
