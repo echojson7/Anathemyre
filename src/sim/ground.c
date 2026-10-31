@@ -8,6 +8,7 @@ void ground_init(Ground *g, Arena *perm)
     g->item = ARENA_PUSH_ARRAY(perm, ItemStack, GROUND_MAX);
     g->body = ARENA_PUSH_ARRAY(perm, i32, GROUND_MAX);
     g->owner = ARENA_PUSH_ARRAY(perm, u16, GROUND_MAX);
+    g->chron = NULL;
 }
 
 // Форма оружия по типу, пока у описаний нет своей (WeaponDef.col — тред оружия): рукоять до кулака,

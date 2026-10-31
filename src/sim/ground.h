@@ -6,6 +6,7 @@
 
 #include "inventory.h"
 #include "phys.h"
+#include "../io/chronicle.h"
 
 #define GROUND_MAX   1024
 #define GROUND_USER  0x2000u  // user тела вещи на земле: GROUND_USER + номер вещи
@@ -21,6 +22,7 @@ typedef struct Ground {
     ItemStack *item;   // ITEM_NONE — место свободно
     i32  *body;   // тело в физике
     u16  *owner;
+    Chronicle *chron;  // журнал мира для item_move; NULL — некуда (арена)
 } Ground;
 
 // Просьбы интерфейса бросить вещь из мешка: исполняет шаг мира (мир меняется только в шаге)

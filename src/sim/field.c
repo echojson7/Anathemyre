@@ -114,7 +114,11 @@ static f32 dist(const CombatWorld *w, u32 i, u32 j)
     return sqrtf(dx * dx + dz * dz);
 }
 
-static bool armed(const Field *f, u32 i) { return item_weapon(f->sheet[i]->equip[SLOT_WEAPON]) != COMP_NONE; }
+// Есть чем бить: в руке или своё выроненное лежит рядом (поднимет)
+static bool armed(const Field *f, u32 i)
+{
+    return item_weapon(f->sheet[i]->equip[SLOT_WEAPON]) != COMP_NONE || (i < f->w.count && f->w.gitem[i] >= 0);
+}
 
 // Цель ещё в бою: жива, не без сознания, не сдалась
 static bool target_ok(const Field *f, u32 i, u32 t)

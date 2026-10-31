@@ -21,12 +21,16 @@ static void hand_vel(f32 h, Rng *r, V3 *v, V3 *w)
     *w = v3_add(v3_mul(right, rng_range(r, -4.0f, -1.5f)), v3(0, rng_range(r, -1.5f, 1.5f), 0));
 }
 
-static ItemStack hand_item(const CombatWorld *w, u32 i, const CharSheet *sh)
+// Рука бойца i: на поле — слот оружия листа (номер слота поля — номер человека), на арене — рука самого боя
+static ItemPlace hand_of(const CombatWorld *w, u32 i, CharSheet *sh)
 {
-    return sh ? sh->equip[SLOT_WEAPON] : item_of_weapon(w->weapon[i], w->weapon_q[i]);
+    ItemPlace h = place_hand(sh, sh ? i : ITEM_NOBODY);
+    if (!sh) h.it = item_of_weapon(w->weapon[i], w->weapon_q[i]);
+    return h;
 }
 
-// Общее для поля и арены: что с оружием бойца i в этом шаге. sh — лист (поле) или NULL (арена: только возврат)
+// Общее для поля и арены: что с оружием бойца i в этом шаге. sh — лист (поле) или NULL (арена: только возврат).
+// Выронил — вещь уходит из руки на землю (item_move), поднял — обратно; бой видит только gitem
 static void combat_hand(Ground *g, Phys *p, CombatWorld *w, u32 i, CharSheet *sh, u16 src, V3 origin, f32 y,
                         u64 tick)
 {
@@ -37,29 +41,32 @@ static void combat_hand(Ground *g, Phys *p, CombatWorld *w, u32 i, CharSheet *sh
     bool lost = gone || st == FS_UNCONSCIOUS || st == FS_SURRENDER || (w->loose[i] && !picking);
     i32 k = w->gitem[i];
     if (k == COMBAT_IN_HAND && lost) {
-        ItemStack it = hand_item(w, i, sh);
-        if (item_weapon(it) == COMP_NONE) return;  // нечего ронять
+        ItemPlace hand = hand_of(w, i, sh);
+        if (item_weapon(item_at(g, &hand)) == COMP_NONE) return;  // нечего ронять
         Rng r;
         rng_seed(&r, tick, src + i);
         f32 x = origin.x + w->x[i], z = origin.z + w->z[i];
         V3 v, av;
         hand_vel(w->heading[i], &r, &v, &av);
-        k = ground_drop(g, p, it, hand_xf(x, y, z, w->heading[i], &r), v, av, (u16)(src + i + 1));
+        ItemPlace drop = place_drop(hand_xf(x, y, z, w->heading[i], &r), v, av, (u16)(src + i + 1));
+        k = item_move(g, p, &hand, &drop);
         if (k < 0) return;  // места нет: остаётся в руке
         w->gitem[i] = k;
         // Встанет — поднимет (после подъёма бой ведёт его к подбору)
         if (!gone) w->loose[i] = 1;
     } else if (k >= 0 && !lost) {
         // Поднял своё; если его уже унесли — рука пуста
-        if (ground_live(g, k) && g->owner[k] == src + i + 1) ground_take(g, p, (u32)k);
+        if (ground_live(g, k) && g->owner[k] == src + i + 1) {
+            ItemPlace from = place_ground(k), hand = hand_of(w, i, sh);
+            item_move(g, p, &from, &hand);
+        }
         w->gitem[i] = COMBAT_IN_HAND;
     }
-    // Мёртвый и безрукий уже не поднимут: на поле оружие становится ничьим, лист его больше не держит
+    // Мёртвый и безрукий уже не поднимут: на поле оружие становится ничьим (в руке его нет с тех пор, как выронил)
     if (sh && gone && w->gitem[i] >= 0) {
         k = w->gitem[i];
         if (ground_live(g, k) && g->owner[k] == src + i + 1) g->owner[k] = 0;
         w->gitem[i] = COMBAT_GONE;
-        sh->equip[SLOT_WEAPON] = (ItemStack){ 0 };
     }
 }
 
@@ -70,7 +77,10 @@ void loot_field(Ground *g, Phys *p, Field *f, GroundFn ground, u64 tick)
         if (w->idle[i]) {
             // Бой стих, а оружие лежит: живой подбирает его, уходя
             i32 k = w->gitem[i];
-            if (k >= 0 && ground_live(g, k) && g->owner[k] == GROUND_OWN_FIELD + i + 1) ground_take(g, p, (u32)k);
+            if (k >= 0 && ground_live(g, k) && g->owner[k] == GROUND_OWN_FIELD + i + 1) {
+                ItemPlace from = place_ground(k), hand = place_hand(f->sheet[i], i);
+                item_move(g, p, &from, &hand);
+            }
             if (k >= 0) w->gitem[i] = COMBAT_IN_HAND;
             continue;
         }
@@ -95,7 +105,10 @@ void loot_arena(Ground *g, Phys *p, ArenaSession *s, bool in_bout, V3 center, f3
         u16 o = g->owner[k];
         if (!item_live(g->item[k]) || (o & GROUND_OWN_SRC) != GROUND_OWN_ARENA) continue;
         u32 i = (o & ~GROUND_OWN_SRC) - 1u;
-        if (!in_bout || i >= w->count || w->gitem[i] != (i32)k) ground_take(g, p, k);
+        if (!in_bout || i >= w->count || w->gitem[i] != (i32)k) {
+            ItemPlace from = place_ground((i32)k), hand = place_hand(NULL, ITEM_NOBODY);
+            item_move(g, p, &from, &hand);
+        }
     }
 }
 
@@ -111,8 +124,13 @@ void loot_asks(Ground *g, Phys *p, GroundAsks *a, Squad *sq, u64 tick)
         M4 xf = m4_mul(m4_translate(a->at[n]), m4_rot_y(h + rng_range(&r, -1.0f, 1.0f)));
         V3 v = v3_add(v3_mul(fwd, rng_range(&r, 0.8f, 1.4f)), v3(0, 1.0f, 0));
         V3 w = v3(rng_range(&r, -2, 2), rng_range(&r, -2, 2), rng_range(&r, -2, 2));
-        if (ground_drop(g, p, a->it[n], xf, v, w, 0) < 0 && a->who[n] < sq->count)
-            inv_add(&squad_sheet(sq, a->who[n])->inv, a->it[n]);  // некуда класть — обратно в мешок
+        // Вещь уже вне мешка (её вынуло окно мешка); некуда класть — обратно в мешок
+        ItemPlace out = place_none(a->it[n]), drop = place_drop(xf, v, w, 0);
+        if (a->who[n] < sq->count) out.who = sq->member[a->who[n]];
+        if (item_move(g, p, &out, &drop) < 0 && a->who[n] < sq->count) {
+            ItemPlace bag = place_bag(squad_sheet(sq, a->who[n]), out.who, -1);
+            item_move(g, p, &out, &bag);
+        }
     }
     a->n = 0;
 }
@@ -141,8 +159,8 @@ void loot_pickups(Ground *g, Phys *p, Squad *sq, Field *f)
         sq->pick[i] = -1;
         u16 o = g->owner[k];
         CharSheet *c = squad_sheet(sq, i);
-        Inventory probe = c->inv;
-        if (!inv_add(&probe, g->item[k])) {
+        ItemPlace from = place_ground(k), bag = place_bag(c, sq->member[i], -1);
+        if (item_move(g, p, &from, &bag) < 0) {
             log_info("%s: МЕШОК ПОЛОН. ВЕЩЬ ОСТАЛАСЬ НА ЗЕМЛЕ.", c->name);
             continue;
         }
@@ -154,10 +172,8 @@ void loot_pickups(Ground *g, Phys *p, Squad *sq, Field *f)
                 w->gitem[s] = COMBAT_GONE;
                 w->disarmed[s] = 1;
                 w->loose[s] = 0;
-                f->sheet[s]->equip[SLOT_WEAPON] = (ItemStack){ 0 };
             }
         }
-        inv_add(&c->inv, ground_take(g, p, (u32)k));
         b->moving = false;
         b->target = b->pos;
     }
@@ -180,6 +196,7 @@ void loot_drop_test(Ground *g, Phys *p, V3 at, u32 n, u64 seed)
         V3 c = v3_add(at, v3(rng_range(&r, -1.5f, 1.5f), 1.2f + 0.3f * (f32)i, rng_range(&r, -1.5f, 1.5f)));
         M4 xf = m4_trs(c, v3(1, 1, 1), rng_range(&r, 0, 2 * PI_F), rng_range(&r, 0, 2 * PI_F), rng_range(&r, 0, 2 * PI_F));
         V3 w = v3(rng_range(&r, -3, 3), rng_range(&r, -3, 3), rng_range(&r, -3, 3));
-        ground_drop(g, p, it, xf, v3(0, -0.5f, 0), w, 0);
+        ItemPlace out = place_none(it), drop = place_drop(xf, v3(0, -0.5f, 0), w, 0);
+        item_move(g, p, &out, &drop);
     }
 }

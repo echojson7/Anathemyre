@@ -392,7 +392,7 @@ bool hud_pick(const Hud *h, const Input *in, const HudWorld *w, u8 *kind, u32 *i
 
 // Вещь на земле под курсором: ближайшая к курсору на экране в пределах ITEM_PICK_PX
 #define ITEM_PICK_PX 12.0f
-static i32 item_at(const HudWorld *w, f32 mx, f32 my)
+static i32 ground_item_under(const HudWorld *w, f32 mx, f32 my)
 {
     if (!w->ground || !w->phys) return -1;
     i32 best = -1;
@@ -414,7 +414,7 @@ static i32 item_at(const HudWorld *w, f32 mx, f32 my)
 i32 hud_pick_item(const Hud *h, const Input *in, const HudWorld *w)
 {
     Layout L = layout(h, in);
-    return L.my < L.bottom_top ? item_at(w, L.mx, L.my) : -1;
+    return L.my < L.bottom_top ? ground_item_under(w, L.mx, L.my) : -1;
 }
 
 // Вещь с курсора обратно в мешок; некуда — false, окно не закрывается
@@ -1195,7 +1195,7 @@ void hud_draw(const Hud *h, const Input *in, const HudWorld *w)
         }
     } else if (!h->drag_live && L.my < L.bottom_top) {
         // Вещь на земле: имя у курсора (ПКМ — подобрать)
-        i32 k = item_at(w, L.mx, L.my);
+        i32 k = ground_item_under(w, L.mx, L.my);
         if (k >= 0) {
             const char *name = item_name(w->ground->item[k]);
             f32 tw = ui_text_width(name), x = floorf(L.mx + 10), y = floorf(L.my - 14);

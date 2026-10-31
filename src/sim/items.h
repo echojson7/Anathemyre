@@ -162,4 +162,57 @@ static inline ItemStack item_of_armor(u8 a, u8 quality) { return item_make(g_arm
 // Номер сетки одежды по имени, GEAR_NONE — нет такой
 u8 gear_find(const char *name);
 
+// ---------------------------------------------------------------- место вещи и переход
+
+// Где лежит вещь. Вещь всегда в одном месте; из места в место — только item_move
+typedef enum PlaceKind {  // IP_* — место вещи (item place)
+    IP_NONE,    // вне мира: новая вещь или брошенная из окна мешка (it)
+    IP_GROUND,  // на земле: номер в Ground, тело в физике
+    IP_HAND,    // в руке: слот оружия листа; без листа — рука бойца арены (it)
+    IP_BODY,    // надета: слот листа
+    IP_BAG,     // в мешке: сетка INV_W×INV_H листа
+    IP_BOX,     // в стойке или ящике: объект с компонентом container (объекты — шаг 2б)
+    IP_COUNT
+} PlaceKind;
+
+struct CharSheet;
+struct Ground;
+struct Phys;
+
+typedef struct ItemPlace {
+    u8  kind;
+    u8  slot;     // ТЕЛО: слот (SLOT_*)
+    u8  x, y;     // МЕШОК, куда: клетка; x = 255 — в стопку или первое свободное место
+    i32 at;       // ЗЕМЛЯ, откуда: номер на земле; МЕШОК, откуда: номер в мешке; ЯЩИК: номер объекта
+    u32 who;      // чья рука, тело, мешок: номер человека (для журнала); ITEM_NOBODY — ничьи
+    struct CharSheet *sheet;
+    ItemStack it;  // ВНЕ МИРА и РУКА без листа: что там
+    // ЗЕМЛЯ, куда: поза (у оружия — рукоять в начале осей, острие по +Y), скорость, вращение, чья вещь (Ground.owner)
+    M4  xf;
+    V3  vel, spin;
+    u16 owner;
+} ItemPlace;
+
+#define ITEM_NOBODY 0xFFFFFFFFu
+
+static inline ItemPlace place_none(ItemStack it) { return (ItemPlace){ .kind = IP_NONE, .who = ITEM_NOBODY, .it = it }; }
+static inline ItemPlace place_ground(i32 k) { return (ItemPlace){ .kind = IP_GROUND, .at = k, .who = ITEM_NOBODY }; }
+static inline ItemPlace place_drop(M4 xf, V3 vel, V3 spin, u16 owner)
+{
+    return (ItemPlace){ .kind = IP_GROUND, .at = -1, .who = ITEM_NOBODY, .xf = xf, .vel = vel, .spin = spin, .owner = owner };
+}
+static inline ItemPlace place_hand(struct CharSheet *c, u32 who) { return (ItemPlace){ .kind = IP_HAND, .who = who, .sheet = c }; }
+static inline ItemPlace place_body(struct CharSheet *c, u32 who, u8 slot)
+{
+    return (ItemPlace){ .kind = IP_BODY, .slot = slot, .who = who, .sheet = c };
+}
+static inline ItemPlace place_bag(struct CharSheet *c, u32 who, i32 at) { return (ItemPlace){ .kind = IP_BAG, .x = 255, .at = at, .who = who, .sheet = c }; }
+
+// Переложить вещь из from в to целиком: снять с места, положить на новое. На земле — создаёт тело в физике,
+// с земли — гасит его. Перемены, заметные миру (земля, чужие руки), пишет в журнал мира (Ground.chron).
+// Только из шага мира. Положить некуда — ничего не меняется, -1; иначе номер на новом месте (на земле, в мешке)
+i32 item_move(struct Ground *g, struct Phys *p, const ItemPlace *from, const ItemPlace *to);
+// Что лежит в месте (пустая стопка — ничего)
+ItemStack item_at(const struct Ground *g, const ItemPlace *pl);
+
 #endif
