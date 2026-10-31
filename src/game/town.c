@@ -3,6 +3,7 @@
 
 #include "look.h"
 #include "names.h"
+#include "props.h"
 #include "squad.h"
 #include "../core/palette.h"
 
@@ -27,327 +28,17 @@
 #define SZ0 14.0f
 
 // Цвета (альбедо, линейные)
-#define C_METAL  v3(0.22f, 0.21f, 0.20f)
 #define C_VOID   v3(0.004f, 0.0035f, 0.003f)  // проёмы: свет внутрь не заходит
-#define C_LAMP   v3(0.55f, 0.34f, 0.11f)
 #define C_WINDOW v3(0.16f, 0.09f, 0.03f)
 #define C_PAINT  v3(0.42f, 0.25f, 0.08f)      // знаки торговцев: выцветшая охра
 
-static const V3 k_cloth[] = {
-    { 0.45f, 0.32f, 0.15f }, { 0.40f, 0.14f, 0.10f }, { 0.50f, 0.47f, 0.40f }, { 0.28f, 0.30f, 0.18f },
-    { 0.30f, 0.22f, 0.15f }, { 0.25f, 0.27f, 0.30f }, { 0.36f, 0.30f, 0.22f },
-};
-static const V3 k_sheet[] = {
-    { 0.34f, 0.21f, 0.13f }, { 0.27f, 0.18f, 0.12f }, { 0.23f, 0.24f, 0.20f }, { 0.21f, 0.22f, 0.24f }, { 0.31f, 0.28f, 0.23f },
-};
 
 typedef enum StallKind { STALL_SCRAP, STALL_WATER, STALL_FOOD, STALL_CLOTH, STALL_RELIC, STALL_TOOLS, STALL_KINDS } StallKind;
 
-// Разброс цвета: у каждого предмета свой оттенок и износ
-static V3 tint(Rng *r, V3 c, f32 a)
-{
-    f32 k = 1.0f + rng_range(r, -a, a);
-    return v3(c.x * k * (1.0f + rng_range(r, -a, a) * 0.4f), c.y * k, c.z * k * (1.0f + rng_range(r, -a, a) * 0.4f));
-}
-
-static V3 pick(Rng *r, const V3 *pal, u32 n, f32 a) { return tint(r, pal[rng_below(r, n)], a); }
-
-static void box(MeshBuilder *mb, V3 c, V3 s, f32 yaw) { mb_box(mb, m4_trs(c, s, 0, yaw, 0)); }
-
-// Локальная система: +z вперёд (к улице), +x вправо
-static M4 frame(V3 p, f32 yaw) { return m4_mul(m4_translate(p), m4_rot_y(yaw)); }
-
-static void lbox(MeshBuilder *mb, M4 L, V3 c, V3 s, f32 rx, f32 ry, f32 rz) { mb_box(mb, m4_mul(L, m4_trs(c, s, rx, ry, rz))); }
-
-static void lcyl(MeshBuilder *mb, M4 L, V3 a, V3 b, f32 r, u32 segs) { mb_cylinder(mb, m4_point(L, a), m4_point(L, b), r, segs); }
 
 static void add_spot(Town *t, V3 p, f32 heading, u8 kind)
 {
     if (t->spot_count < TOWN_MAX_SPOTS) t->spot[t->spot_count++] = (TownSpot){ p, heading, kind };
-}
-
-// ---------------------------------------------------------------- мелкие предметы
-
-// Ящик из листа с рёбрами; возвращает высоту
-static f32 crate(MeshBuilder *mb, Rng *r, V3 p, f32 yaw, f32 s)
-{
-    V3 size = v3(s * rng_range(r, 0.9f, 1.5f), s * rng_range(r, 0.7f, 1.0f), s * rng_range(r, 0.8f, 1.1f));
-    u32 k = rng_below(r, 3);
-    V3 col = k == 0 ? tint(r, PAL_RUST, 0.2f) : k == 1 ? tint(r, v3(0.24f, 0.26f, 0.19f), 0.2f) : tint(r, C_METAL, 0.2f);
-    M4 L = frame(p, yaw);
-    mb_set(mb, col, k == 0 ? MAT_RUST : MAT_METAL, BONE_NONE);
-    lbox(mb, L, v3(0, size.y * 0.5f, 0), size, 0, 0, 0);
-    mb_set(mb, v3_mul(col, 0.65f), MAT_RUST, BONE_NONE);
-    lbox(mb, L, v3(0, size.y * 0.82f, 0), v3(size.x + 0.03f, size.y * 0.1f, size.z + 0.03f), 0, 0, 0);
-    if (rng_f32(r) < 0.5f) lbox(mb, L, v3(0, size.y * 0.2f, 0), v3(size.x + 0.03f, size.y * 0.1f, size.z + 0.03f), 0, 0, 0);
-    return size.y;
-}
-
-// Несколько ящиков: внизу рядом, сверху со сдвигом и поворотом
-static void crate_stack(MeshBuilder *mb, Rng *r, V3 p, f32 yaw)
-{
-    f32 s = rng_range(r, 0.45f, 0.7f);
-    f32 h = crate(mb, r, p, yaw + rng_range(r, -0.15f, 0.15f), s);
-    if (rng_f32(r) < 0.6f) {
-        V3 side = v3(cosf(yaw), 0, -sinf(yaw));
-        crate(mb, r, v3_add(p, v3_mul(side, s * rng_range(r, 1.1f, 1.5f))), yaw + rng_range(r, -0.3f, 0.3f), s * rng_range(r, 0.8f, 1.1f));
-    }
-    if (rng_f32(r) < 0.55f) crate(mb, r, v3(p.x + rng_range(r, -0.1f, 0.1f), p.y + h, p.z + rng_range(r, -0.1f, 0.1f)),
-                                  yaw + rng_range(r, -0.5f, 0.5f), s * rng_range(r, 0.6f, 0.9f));
-}
-
-static void barrel(MeshBuilder *mb, Rng *r, V3 p, bool tipped)
-{
-    static const V3 bc[4] = { { 0.40f, 0.22f, 0.12f }, { 0.24f, 0.26f, 0.18f }, { 0.22f, 0.25f, 0.28f }, { 0.36f, 0.14f, 0.10f } };
-    f32 rad = rng_range(r, 0.26f, 0.32f), h = rng_range(r, 0.8f, 0.95f);
-    u32 k = rng_below(r, 4);
-    V3 col = tint(r, bc[k], 0.15f);
-    V3 a = p, b;
-    if (tipped) {
-        f32 yaw = rng_range(r, 0, 2 * PI_F);
-        a = v3(p.x, p.y + rad, p.z);
-        b = v3_add(a, v3(sinf(yaw) * h, 0, cosf(yaw) * h));
-    } else {
-        b = v3(p.x + rng_range(r, -0.04f, 0.04f), p.y + h, p.z + rng_range(r, -0.04f, 0.04f));
-    }
-    mb_set(mb, col, k ? MAT_METAL : MAT_RUST, BONE_NONE);
-    mb_cylinder(mb, a, b, rad, 10);
-    mb_set(mb, v3_mul(col, 0.6f), MAT_RUST, BONE_NONE);
-    V3 d = v3_mul(v3_norm(v3_sub(b, a)), 0.025f);
-    for (int i = 0; i < 2; i++) {
-        V3 c = v3_lerp(a, b, i ? 0.78f : 0.22f);
-        mb_cylinder(mb, v3_sub(c, d), v3_add(c, d), rad + 0.015f, 10);
-    }
-}
-
-static void sack(MeshBuilder *mb, Rng *r, V3 p, f32 yaw)
-{
-    f32 w = rng_range(r, 0.4f, 0.6f);
-    mb_set(mb, tint(r, v3(0.40f, 0.35f, 0.25f), 0.18f), MAT_CLOTH, BONE_NONE);
-    mb_box(mb, m4_trs(v3(p.x, p.y + 0.13f, p.z), v3(w, 0.26f, w * 0.65f), rng_range(r, -0.12f, 0.12f), yaw, rng_range(r, -0.12f, 0.12f)));
-    mb_box(mb, m4_trs(v3(p.x, p.y + 0.29f, p.z), v3(0.13f, 0.09f, 0.11f), 0, yaw, rng_range(r, -0.3f, 0.3f)));
-}
-
-static void sack_pile(MeshBuilder *mb, Rng *r, V3 p, f32 yaw)
-{
-    u32 n = 2 + rng_below(r, 4);
-    V3 side = v3(cosf(yaw), 0, -sinf(yaw));
-    for (u32 i = 0; i < n; i++) {
-        f32 o = ((f32)(i % 3) - 1.0f) * 0.5f;
-        V3 q = v3_add(p, v3_mul(side, o + rng_range(r, -0.08f, 0.08f)));
-        if (i >= 3) q = v3(q.x + side.x * 0.25f, p.y + 0.24f, q.z + side.z * 0.25f);
-        sack(mb, r, q, yaw + rng_range(r, -0.4f, 0.4f));
-    }
-}
-
-// Куча лома: листы, трубы, обломки, колёса; выше к центру
-static void scrap_heap(MeshBuilder *mb, Rng *r, V3 c, f32 rad)
-{
-    u32 n = 9 + rng_below(r, 9);
-    for (u32 i = 0; i < n; i++) {
-        f32 a = rng_range(r, 0, 2 * PI_F), d = rad * sqrtf(rng_f32(r));
-        f32 h = (1.0f - d / rad) * rad * 0.55f * rng_range(r, 0.4f, 1.0f);
-        V3 p = v3(c.x + cosf(a) * d, c.y + h, c.z + sinf(a) * d);
-        u32 k = rng_below(r, 4);
-        mb_set(mb, k == 2 ? tint(r, C_METAL, 0.3f) : pick(r, k_sheet, 5, 0.2f), k == 2 ? MAT_METAL : MAT_RUST, BONE_NONE);
-        if (k == 0) {
-            mb_box(mb, m4_trs(p, v3(rng_range(r, 0.6f, 1.3f), 0.04f, rng_range(r, 0.4f, 0.9f)), rng_range(r, -0.7f, 0.7f),
-                          rng_range(r, 0, PI_F), rng_range(r, -0.7f, 0.7f)));
-        } else if (k == 1) {
-            f32 yaw = rng_range(r, 0, PI_F), len = rng_range(r, 0.6f, 1.7f);
-            V3 dd = v3(sinf(yaw) * len * 0.5f, rng_range(r, -0.3f, 0.3f), cosf(yaw) * len * 0.5f);
-            mb_cylinder(mb, v3_sub(p, dd), v3_add(p, dd), rng_range(r, 0.04f, 0.1f), 6);
-        } else if (k == 2) {
-            f32 s = rng_range(r, 0.2f, 0.5f);
-            mb_box(mb, m4_trs(p, v3(s, s * rng_range(r, 0.5f, 1.0f), s * rng_range(r, 0.6f, 1.2f)), rng_range(r, -0.5f, 0.5f),
-                          rng_range(r, 0, PI_F), rng_range(r, -0.5f, 0.5f)));
-        } else {
-            f32 yaw = rng_range(r, 0, PI_F), tilt = rng_range(r, 0.3f, 1.4f);
-            V3 ax = v3(sinf(yaw) * sinf(tilt) * 0.04f, cosf(tilt) * 0.04f, cosf(yaw) * sinf(tilt) * 0.04f);
-            mb_cylinder(mb, v3_sub(p, ax), v3_add(p, ax), rng_range(r, 0.2f, 0.45f), 10);
-        }
-    }
-}
-
-// Провод с провисом; hang: 0 голый, 1 тряпки, 2 лампа
-static void cable(MeshBuilder *mb, Rng *r, V3 a, V3 b, f32 sag, u32 hang)
-{
-    enum { SEG = 8 };
-    mb_set(mb, v3(0.06f, 0.055f, 0.05f), MAT_METAL, BONE_NONE);
-    V3 prev = a;
-    for (u32 i = 1; i <= SEG; i++) {
-        f32 t = (f32)i / SEG;
-        V3 p = v3_lerp(a, b, t);
-        p.y -= sag * 4.0f * t * (1.0f - t);
-        mb_cylinder(mb, prev, p, 0.018f, 4);
-        prev = p;
-    }
-    f32 yaw = atan2f(-(b.z - a.z), b.x - a.x);
-    if (hang == 1) {
-        u32 n = 3 + rng_below(r, 5);
-        for (u32 i = 0; i < n; i++) {
-            f32 t = rng_range(r, 0.12f, 0.88f), w = rng_range(r, 0.3f, 0.7f), h = rng_range(r, 0.35f, 1.0f);
-            V3 p = v3_lerp(a, b, t);
-            p.y -= sag * 4.0f * t * (1.0f - t) + h * 0.5f;
-            mb_set(mb, pick(r, k_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
-            mb_box(mb, m4_trs(p, v3(w, h, 0.02f), rng_range(r, -0.15f, 0.15f), yaw, rng_range(r, -0.05f, 0.05f)));
-        }
-    } else if (hang == 2) {
-        V3 p = v3_lerp(a, b, 0.5f);
-        p.y -= sag;
-        mb_set(mb, v3(0.06f, 0.055f, 0.05f), MAT_METAL, BONE_NONE);
-        mb_cylinder(mb, p, v3(p.x, p.y - 0.3f, p.z), 0.012f, 4);
-        mb_set(mb, C_METAL, MAT_METAL, BONE_NONE);
-        box(mb, v3(p.x, p.y - 0.34f, p.z), v3(0.26f, 0.08f, 0.26f), yaw);
-        mb_set(mb, tint(r, C_LAMP, 0.15f), MAT_EMISSIVE, BONE_NONE);
-        box(mb, v3(p.x, p.y - 0.42f, p.z), v3(0.13f, 0.08f, 0.13f), yaw);
-    }
-}
-
-static void lamp_post(MeshBuilder *mb, Rng *r, V3 p, f32 yaw)
-{
-    f32 h = rng_range(r, 3.0f, 4.0f);
-    V3 top = v3(p.x + rng_range(r, -0.08f, 0.08f), p.y + h, p.z + rng_range(r, -0.08f, 0.08f));
-    mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
-    box(mb, v3(p.x, p.y + 0.2f, p.z), v3(0.45f, 0.4f, 0.45f), rng_range(r, 0, PI_F));
-    mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
-    mb_cylinder(mb, p, top, 0.06f, 6);
-    V3 arm = v3_add(top, v3(sinf(yaw) * 0.7f, -0.05f, cosf(yaw) * 0.7f));
-    mb_cylinder(mb, top, arm, 0.035f, 5);
-    mb_set(mb, C_METAL, MAT_METAL, BONE_NONE);
-    box(mb, v3(arm.x, arm.y - 0.08f, arm.z), v3(0.32f, 0.1f, 0.32f), yaw);
-    mb_set(mb, tint(r, C_LAMP, 0.15f), MAT_EMISSIVE, BONE_NONE);
-    box(mb, v3(arm.x, arm.y - 0.16f, arm.z), v3(0.16f, 0.07f, 0.16f), yaw);
-}
-
-static void rug(MeshBuilder *mb, Rng *r, V3 p, f32 yaw)
-{
-    f32 w = rng_range(r, 1.2f, 2.3f), d = rng_range(r, 0.8f, 1.5f);
-    mb_set(mb, pick(r, k_cloth, 7, 0.15f), MAT_CLOTH, BONE_NONE);
-    box(mb, v3(p.x, p.y + 0.01f, p.z), v3(w, 0.02f, d), yaw);
-    mb_set(mb, pick(r, k_cloth, 7, 0.15f), MAT_CLOTH, BONE_NONE);
-    box(mb, v3(p.x, p.y + 0.012f, p.z), v3(w * 0.85f, 0.02f, d * 0.18f), yaw);
-}
-
-// Очаг: камни кругом, угли, тренога с котлом
-static void fire_pit(MeshBuilder *mb, Rng *r, V3 p)
-{
-    for (u32 i = 0; i < 8; i++) {
-        f32 a = (f32)i * (2 * PI_F / 8) + rng_range(r, -0.2f, 0.2f);
-        f32 s = rng_range(r, 0.18f, 0.28f);
-        mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.2f), MAT_CONCRETE, BONE_NONE);
-        mb_box(mb, m4_trs(v3(p.x + cosf(a) * 0.5f, p.y + s * 0.4f, p.z + sinf(a) * 0.5f), v3(s, s * 0.8f, s * 1.2f), 0, a, 0));
-    }
-    mb_set(mb, v3(0.05f, 0.045f, 0.04f), MAT_CONCRETE, BONE_NONE);
-    for (u32 i = 0; i < 4; i++)
-        mb_box(mb, m4_trs(v3(p.x, p.y + 0.06f, p.z), v3(0.6f, 0.06f, 0.07f), 0, rng_range(r, 0, PI_F), rng_range(r, -0.1f, 0.1f)));
-    mb_set(mb, v3(0.9f, 0.32f, 0.06f), MAT_EMISSIVE, BONE_NONE);
-    for (u32 i = 0; i < 3; i++)
-        box(mb, v3(p.x + rng_range(r, -0.15f, 0.15f), p.y + 0.08f, p.z + rng_range(r, -0.15f, 0.15f)), v3(0.12f, 0.05f, 0.1f),
-            rng_range(r, 0, PI_F));
-    mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
-    V3 top = v3(p.x, p.y + 1.25f, p.z);
-    for (u32 i = 0; i < 3; i++) {
-        f32 a = (f32)i * (2 * PI_F / 3) + 0.4f;
-        mb_cylinder(mb, v3(p.x + cosf(a) * 0.7f, p.y, p.z + sinf(a) * 0.7f), top, 0.025f, 4);
-    }
-    mb_cylinder(mb, top, v3(p.x, p.y + 0.6f, p.z), 0.01f, 4);
-    mb_set(mb, v3(0.08f, 0.075f, 0.07f), MAT_METAL, BONE_NONE);
-    mb_cylinder(mb, v3(p.x, p.y + 0.38f, p.z), v3(p.x, p.y + 0.62f, p.z), 0.2f, 10);
-}
-
-// Бак на ногах с лестницей
-static void water_tower(MeshBuilder *mb, Rng *r, V3 p, f32 h)
-{
-    f32 rad = rng_range(r, 1.0f, 1.4f), th = rng_range(r, 1.8f, 2.6f);
-    mb_set(mb, tint(r, PAL_RUST, 0.15f), MAT_RUST, BONE_NONE);
-    for (u32 i = 0; i < 4; i++) {
-        f32 a = (f32)i * (PI_F / 2) + PI_F / 4;
-        V3 foot = v3(p.x + cosf(a) * rad * 1.1f, p.y, p.z + sinf(a) * rad * 1.1f);
-        mb_cylinder(mb, foot, v3(p.x + cosf(a) * rad * 0.8f, p.y + h, p.z + sinf(a) * rad * 0.8f), 0.08f, 6);
-    }
-    mb_cylinder(mb, v3(p.x - rad, p.y + h * 0.5f, p.z), v3(p.x + rad, p.y + h * 0.5f, p.z), 0.04f, 4);
-    mb_cylinder(mb, v3(p.x, p.y + h * 0.5f, p.z - rad), v3(p.x, p.y + h * 0.5f, p.z + rad), 0.04f, 4);
-    mb_set(mb, tint(r, v3(0.26f, 0.19f, 0.14f), 0.1f), MAT_RUST, BONE_NONE);
-    mb_cylinder(mb, v3(p.x, p.y + h, p.z), v3(p.x, p.y + h + th, p.z), rad, 16);
-    mb_set(mb, tint(r, C_METAL, 0.2f), MAT_METAL, BONE_NONE);
-    mb_cylinder(mb, v3(p.x, p.y + h + th, p.z), v3(p.x, p.y + h + th + 0.25f, p.z), rad * 0.6f, 12);
-    // Труба вниз с краном
-    mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
-    mb_cylinder(mb, v3(p.x + rad * 0.5f, p.y + h, p.z), v3(p.x + rad * 0.5f, p.y + 0.9f, p.z), 0.06f, 6);
-    mb_cylinder(mb, v3(p.x + rad * 0.5f, p.y + 0.9f, p.z), v3(p.x + rad * 0.5f + 0.3f, p.y + 0.9f, p.z), 0.05f, 6);
-}
-
-// Забор из листов и блоков от a до b; дыры и разная высота
-static void fence(MeshBuilder *mb, Rng *r, V3 a, V3 b)
-{
-    V3 d = v3_sub(b, a);
-    f32 len = sqrtf(d.x * d.x + d.z * d.z);
-    f32 yaw = atan2f(-d.z, d.x);
-    f32 t = 0.0f;
-    while (t < len) {
-        f32 w = rng_range(r, 0.9f, 1.5f);
-        f32 c = fminf(t + w * 0.5f, len);
-        V3 p = v3_add(a, v3_mul(d, c / len));
-        f32 k = rng_f32(r);
-        if (k < 0.08f) {
-            // дыра
-        } else if (k < 0.3f) {
-            mb_set(mb, tint(r, PAL_CONCRETE, 0.15f), MAT_CONCRETE, BONE_NONE);
-            f32 h = rng_range(r, 0.8f, 1.4f);
-            mb_box(mb, m4_trs(v3(p.x, p.y + h * 0.5f, p.z), v3(w * 0.95f, h, 0.6f), 0, yaw + rng_range(r, -0.08f, 0.08f), 0));
-        } else {
-            mb_set(mb, pick(r, k_sheet, 5, 0.2f), MAT_RUST, BONE_NONE);
-            f32 h = rng_range(r, 1.6f, 2.5f);
-            mb_box(mb, m4_trs(v3(p.x, p.y + h * 0.5f - 0.1f, p.z), v3(w * 1.05f, h, 0.04f), rng_range(r, -0.08f, 0.08f),
-                          yaw + rng_range(r, -0.05f, 0.05f), rng_range(r, -0.06f, 0.06f)));
-            if (rng_f32(r) < 0.4f) {
-                mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
-                mb_cylinder(mb, v3(p.x, p.y, p.z), v3(p.x, p.y + h + 0.2f, p.z), 0.05f, 5);
-            }
-        }
-        t += w;
-    }
-}
-
-// Перила из труб вдоль a→b; часть пролётов выломана
-static void railing(MeshBuilder *mb, Rng *r, V3 a, V3 b)
-{
-    V3 d = v3_sub(b, a);
-    f32 len = sqrtf(d.x * d.x + d.z * d.z);
-    u32 n = (u32)(len / 1.8f) + 1;
-    mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
-    for (u32 i = 0; i < n; i++) {
-        V3 p0 = v3_add(a, v3_mul(d, (f32)i / n)), p1 = v3_add(a, v3_mul(d, (f32)(i + 1) / n));
-        if (rng_f32(r) < 0.12f) continue;
-        V3 lean = v3(rng_range(r, -0.08f, 0.08f), 0, rng_range(r, -0.08f, 0.08f));
-        mb_cylinder(mb, p0, v3_add(v3(p0.x, p0.y + 1.0f, p0.z), lean), 0.035f, 5);
-        mb_cylinder(mb, v3(p0.x, p0.y + 1.0f, p0.z), v3(p1.x, p1.y + 1.0f + rng_range(r, -0.05f, 0.05f), p1.z), 0.03f, 5);
-        if (rng_f32(r) < 0.7f) mb_cylinder(mb, v3(p0.x, p0.y + 0.5f, p0.z), v3(p1.x, p1.y + 0.5f, p1.z), 0.025f, 4);
-        if (i + 1 == n) mb_cylinder(mb, p1, v3(p1.x, p1.y + 1.0f, p1.z), 0.035f, 5);
-    }
-}
-
-static void ladder(MeshBuilder *mb, M4 L, V3 base, f32 h)
-{
-    mb_set(mb, v3(0.30f, 0.18f, 0.11f), MAT_RUST, BONE_NONE);
-    lcyl(mb, L, v3(base.x, base.y, base.z - 0.22f), v3(base.x, base.y + h, base.z - 0.22f), 0.025f, 4);
-    lcyl(mb, L, v3(base.x, base.y, base.z + 0.22f), v3(base.x, base.y + h, base.z + 0.22f), 0.025f, 4);
-    for (f32 y = 0.3f; y < h; y += 0.32f) lbox(mb, L, v3(base.x, base.y + y, base.z), v3(0.03f, 0.03f, 0.44f), 0, 0, 0);
-}
-
-// Мелочь у стены дома или прилавка
-static void clutter(MeshBuilder *mb, Rng *r, V3 p, f32 yaw)
-{
-    u32 k = rng_below(r, 6);
-    if (k == 0) crate_stack(mb, r, p, yaw);
-    else if (k == 1) barrel(mb, r, p, rng_f32(r) < 0.2f);
-    else if (k == 2) sack_pile(mb, r, p, yaw);
-    else if (k == 3) {
-        barrel(mb, r, p, false);
-        barrel(mb, r, v3(p.x + cosf(yaw) * 0.62f, p.y, p.z - sinf(yaw) * 0.62f), false);
-    } else if (k == 4) scrap_heap(mb, r, p, rng_range(r, 0.5f, 0.9f));
-    else crate(mb, r, p, yaw + rng_range(r, -0.3f, 0.3f), rng_range(r, 0.4f, 0.6f));
 }
 
 // ---------------------------------------------------------------- дома
@@ -356,7 +47,7 @@ static void clutter(MeshBuilder *mb, Rng *r, V3 p, f32 yaw)
 // каждый чуть смещён; окна, двери, балконы, заплаты, лестницы, хлам на крыше. Возвращает высоту крыши
 static f32 house(MeshBuilder *mb, Rng *r, Town *t, V3 base, f32 yaw, f32 w, f32 d, u32 floors)
 {
-    M4 L = frame(base, yaw);
+    M4 L = prop_frame(base, yaw);
     f32 y = 0.0f, ox = 0.0f, oz = 0.0f, pw = w, pd = d;
     t->houses++;
     for (u32 f = 0; f < floors; f++) {
@@ -369,29 +60,29 @@ static f32 house(MeshBuilder *mb, Rng *r, Town *t, V3 base, f32 yaw, f32 w, f32 
             oz = clampf(oz + rng_range(r, -0.3f, 0.45f), -0.4f, 0.7f);  // верх нависает над улицей
         }
         bool concrete = f == 0 || rng_f32(r) < 0.35f;
-        V3 wall = concrete ? tint(r, rng_f32(r) < 0.5f ? PAL_CONCRETE : PAL_CONCRETE_DARK, 0.08f) : pick(r, k_sheet, 5, 0.15f);
+        V3 wall = concrete ? prop_tint(r, rng_f32(r) < 0.5f ? PAL_CONCRETE : PAL_CONCRETE_DARK, 0.08f) : prop_pick(r, g_pal_sheet, 5, 0.15f);
         mb_set(mb, wall, concrete ? MAT_CONCRETE : MAT_RUST, BONE_NONE);
-        lbox(mb, L, v3(ox, y + h * 0.5f, oz), v3(fw, h, fd), 0, 0, 0);
+        prop_lbox(mb, L, v3(ox, y + h * 0.5f, oz), v3(fw, h, fd), 0, 0, 0);
         // Плита перекрытия или крыши
-        mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
-        lbox(mb, L, v3(ox, y + h + 0.07f, oz), v3(fw + 0.25f, 0.14f, fd + 0.25f), 0, 0, 0);
+        mb_set(mb, prop_tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
+        prop_lbox(mb, L, v3(ox, y + h + 0.07f, oz), v3(fw + 0.25f, 0.14f, fd + 0.25f), 0, 0, 0);
         f32 front = oz + fd * 0.5f;
         if (f == 0) {
             f32 dx = ox + rng_range(r, -fw * 0.25f, fw * 0.25f);
             mb_set(mb, C_VOID, MAT_EMISSIVE, BONE_NONE);
-            lbox(mb, L, v3(dx, 1.0f, front), v3(0.95f, 2.0f, 0.06f), 0, 0, 0);
-            mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
-            lbox(mb, L, v3(dx, 2.08f, front + 0.04f), v3(1.2f, 0.12f, 0.1f), 0, 0, 0);
+            prop_lbox(mb, L, v3(dx, 1.0f, front), v3(0.95f, 2.0f, 0.06f), 0, 0, 0);
+            mb_set(mb, prop_tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
+            prop_lbox(mb, L, v3(dx, 2.08f, front + 0.04f), v3(1.2f, 0.12f, 0.1f), 0, 0, 0);
             if (rng_f32(r) < 0.5f) {
                 // Навес над дверью
-                mb_set(mb, rng_f32(r) < 0.5f ? pick(r, k_sheet, 5, 0.2f) : pick(r, k_cloth, 7, 0.2f), MAT_RUST, BONE_NONE);
-                lbox(mb, L, v3(dx, 2.45f, front + 0.5f), v3(1.6f, 0.03f, 1.1f), 0.3f, 0, rng_range(r, -0.04f, 0.04f));
+                mb_set(mb, rng_f32(r) < 0.5f ? prop_pick(r, g_pal_sheet, 5, 0.2f) : prop_pick(r, g_pal_cloth, 7, 0.2f), MAT_RUST, BONE_NONE);
+                prop_lbox(mb, L, v3(dx, 2.45f, front + 0.5f), v3(1.6f, 0.03f, 1.1f), 0.3f, 0, rng_range(r, -0.04f, 0.04f));
             }
             // Окно рядом с дверью
             if (fw > 3.6f && rng_f32(r) < 0.6f) {
                 f32 wx = dx > ox ? dx - 1.5f : dx + 1.5f;
                 mb_set(mb, rng_f32(r) < 0.2f ? C_WINDOW : C_VOID, MAT_EMISSIVE, BONE_NONE);
-                lbox(mb, L, v3(wx, 1.55f, front), v3(0.7f, 0.55f, 0.06f), 0, 0, 0);
+                prop_lbox(mb, L, v3(wx, 1.55f, front), v3(0.7f, 0.55f, 0.06f), 0, 0, 0);
             }
         } else {
             u32 nw = 1 + rng_below(r, fw > 3.8f ? 3 : 2);
@@ -399,38 +90,38 @@ static f32 house(MeshBuilder *mb, Rng *r, Town *t, V3 base, f32 yaw, f32 w, f32 
                 f32 wx = ox + ((f32)i + 0.5f) / (f32)nw * fw - fw * 0.5f + rng_range(r, -0.2f, 0.2f);
                 f32 ww = rng_range(r, 0.5f, 0.85f), wh = rng_range(r, 0.45f, 0.75f);
                 bool lit = rng_f32(r) < 0.22f;
-                mb_set(mb, lit ? tint(r, C_WINDOW, 0.3f) : C_VOID, MAT_EMISSIVE, BONE_NONE);
-                lbox(mb, L, v3(wx, y + 1.5f, front), v3(ww, wh, 0.06f), 0, 0, 0);
+                mb_set(mb, lit ? prop_tint(r, C_WINDOW, 0.3f) : C_VOID, MAT_EMISSIVE, BONE_NONE);
+                prop_lbox(mb, L, v3(wx, y + 1.5f, front), v3(ww, wh, 0.06f), 0, 0, 0);
                 if (!lit && rng_f32(r) < 0.35f) {
-                    mb_set(mb, pick(r, k_sheet, 5, 0.2f), MAT_RUST, BONE_NONE);
-                    lbox(mb, L, v3(wx + ww * 0.6f, y + 1.5f, front + 0.12f), v3(ww * 0.5f, wh * 1.1f, 0.03f), 0, 0.6f, 0);
+                    mb_set(mb, prop_pick(r, g_pal_sheet, 5, 0.2f), MAT_RUST, BONE_NONE);
+                    prop_lbox(mb, L, v3(wx + ww * 0.6f, y + 1.5f, front + 0.12f), v3(ww * 0.5f, wh * 1.1f, 0.03f), 0, 0.6f, 0);
                 }
             }
             // Окно сбоку
             if (rng_f32(r) < 0.5f) {
                 f32 sx = ox + (rng_f32(r) < 0.5f ? -1.0f : 1.0f) * fw * 0.5f;
                 mb_set(mb, C_VOID, MAT_EMISSIVE, BONE_NONE);
-                lbox(mb, L, v3(sx, y + 1.5f, oz + rng_range(r, -fd * 0.2f, fd * 0.2f)), v3(0.06f, 0.55f, 0.7f), 0, 0, 0);
+                prop_lbox(mb, L, v3(sx, y + 1.5f, oz + rng_range(r, -fd * 0.2f, fd * 0.2f)), v3(0.06f, 0.55f, 0.7f), 0, 0, 0);
             }
             // Балкон
             if (rng_f32(r) < 0.55f) {
                 f32 bd = rng_range(r, 0.9f, 1.3f), bw = fw * rng_range(r, 0.45f, 0.85f);
                 f32 bx = ox + rng_range(r, -(fw - bw) * 0.5f, (fw - bw) * 0.5f);
-                mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
-                lbox(mb, L, v3(bx, y - 0.02f, front + bd * 0.5f), v3(bw, 0.14f, bd), 0, 0, 0);
-                mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
+                mb_set(mb, prop_tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
+                prop_lbox(mb, L, v3(bx, y - 0.02f, front + bd * 0.5f), v3(bw, 0.14f, bd), 0, 0, 0);
+                mb_set(mb, prop_tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
                 f32 fz = front + bd - 0.04f, ry = y + 0.05f;
                 for (int s = -1; s <= 1; s++)
-                    lcyl(mb, L, v3(bx + (f32)s * bw * 0.48f, ry, fz), v3(bx + (f32)s * bw * 0.48f, ry + 1.0f, fz), 0.03f, 4);
-                lcyl(mb, L, v3(bx - bw * 0.5f, ry + 1.0f, fz), v3(bx + bw * 0.5f, ry + 1.0f, fz), 0.03f, 4);
-                lcyl(mb, L, v3(bx - bw * 0.48f, ry + 1.0f, front), v3(bx - bw * 0.48f, ry + 1.0f, fz), 0.025f, 4);
-                lcyl(mb, L, v3(bx + bw * 0.48f, ry + 1.0f, front), v3(bx + bw * 0.48f, ry + 1.0f, fz), 0.025f, 4);
+                    prop_lcyl(mb, L, v3(bx + (f32)s * bw * 0.48f, ry, fz), v3(bx + (f32)s * bw * 0.48f, ry + 1.0f, fz), 0.03f, 4);
+                prop_lcyl(mb, L, v3(bx - bw * 0.5f, ry + 1.0f, fz), v3(bx + bw * 0.5f, ry + 1.0f, fz), 0.03f, 4);
+                prop_lcyl(mb, L, v3(bx - bw * 0.48f, ry + 1.0f, front), v3(bx - bw * 0.48f, ry + 1.0f, fz), 0.025f, 4);
+                prop_lcyl(mb, L, v3(bx + bw * 0.48f, ry + 1.0f, front), v3(bx + bw * 0.48f, ry + 1.0f, fz), 0.025f, 4);
                 if (rng_f32(r) < 0.55f) {
-                    mb_set(mb, pick(r, k_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
-                    lbox(mb, L, v3(bx + rng_range(r, -bw * 0.25f, bw * 0.25f), ry + 0.65f, fz + 0.04f),
+                    mb_set(mb, prop_pick(r, g_pal_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
+                    prop_lbox(mb, L, v3(bx + rng_range(r, -bw * 0.25f, bw * 0.25f), ry + 0.65f, fz + 0.04f),
                          v3(rng_range(r, 0.5f, 0.9f), rng_range(r, 0.5f, 0.8f), 0.02f), 0, 0, rng_range(r, -0.05f, 0.05f));
                 }
-                if (rng_f32(r) < 0.5f) crate(mb, r, m4_point(L, v3(bx - bw * 0.3f, ry, front + 0.35f)), yaw, 0.4f);
+                if (rng_f32(r) < 0.5f) prop_crate(mb, r, m4_point(L, v3(bx - bw * 0.3f, ry, front + 0.35f)), yaw, 0.4f);
                 if (rng_f32(r) < 0.6f)
                     add_spot(t, m4_point(L, v3(bx + rng_range(r, -bw * 0.2f, bw * 0.2f), y + 0.05f, front + bd * 0.45f)), yaw, SPOT_IDLE);
             }
@@ -438,15 +129,15 @@ static f32 house(MeshBuilder *mb, Rng *r, Town *t, V3 base, f32 yaw, f32 w, f32 
         // Заплаты из листа
         u32 np = rng_below(r, 3);
         for (u32 i = 0; i < np; i++) {
-            mb_set(mb, rng_f32(r) < 0.7f ? pick(r, k_sheet, 5, 0.25f) : tint(r, C_METAL, 0.3f), MAT_RUST, BONE_NONE);
+            mb_set(mb, rng_f32(r) < 0.7f ? prop_pick(r, g_pal_sheet, 5, 0.25f) : prop_tint(r, PAL_METAL, 0.3f), MAT_RUST, BONE_NONE);
             f32 pw2 = rng_range(r, 0.6f, 1.6f), ph = rng_range(r, 0.5f, 1.4f);
             f32 py = y + rng_range(r, ph * 0.5f + 0.1f, h - ph * 0.5f - 0.1f);
             if (rng_f32(r) < 0.6f)
-                lbox(mb, L, v3(ox + rng_range(r, -fw * 0.35f, fw * 0.35f), py, front + 0.03f), v3(pw2, ph, 0.03f), 0, 0,
+                prop_lbox(mb, L, v3(ox + rng_range(r, -fw * 0.35f, fw * 0.35f), py, front + 0.03f), v3(pw2, ph, 0.03f), 0, 0,
                      rng_range(r, -0.08f, 0.08f));
             else {
                 f32 sx = ox + (rng_f32(r) < 0.5f ? -1.0f : 1.0f) * (fw * 0.5f + 0.03f);
-                lbox(mb, L, v3(sx, py, oz + rng_range(r, -fd * 0.3f, fd * 0.3f)), v3(0.03f, ph, pw2), rng_range(r, -0.08f, 0.08f), 0, 0);
+                prop_lbox(mb, L, v3(sx, py, oz + rng_range(r, -fd * 0.3f, fd * 0.3f)), v3(0.03f, ph, pw2), rng_range(r, -0.08f, 0.08f), 0, 0);
             }
         }
         y += h + 0.14f;
@@ -456,14 +147,14 @@ static f32 house(MeshBuilder *mb, Rng *r, Town *t, V3 base, f32 yaw, f32 w, f32 
     // Лестница сбоку на второй этаж и выше
     if (floors > 1 && rng_f32(r) < 0.45f) {
         f32 sx = (rng_f32(r) < 0.5f ? -1.0f : 1.0f) * (w * 0.5f + 0.06f);
-        ladder(mb, L, v3(sx, 0, rng_range(r, -d * 0.2f, d * 0.3f)), y - 0.1f);
+        prop_ladder(mb, L, v3(sx, 0, rng_range(r, -d * 0.2f, d * 0.3f)), y - 0.1f);
     }
     // Водосток
     if (rng_f32(r) < 0.5f) {
-        mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
+        mb_set(mb, prop_tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
         f32 sx = (rng_f32(r) < 0.5f ? -1.0f : 1.0f) * (w * 0.5f + 0.08f), sz = d * 0.5f - 0.15f;
-        lcyl(mb, L, v3(sx, y, sz), v3(sx, 0.3f, sz), 0.06f, 6);
-        lcyl(mb, L, v3(sx, 0.3f, sz), v3(sx, 0.05f, sz + 0.35f), 0.06f, 6);
+        prop_lcyl(mb, L, v3(sx, y, sz), v3(sx, 0.3f, sz), 0.06f, 6);
+        prop_lcyl(mb, L, v3(sx, 0.3f, sz), v3(sx, 0.05f, sz + 0.35f), 0.06f, 6);
     }
     // Крыша: бак, антенна, брезент, ящики, бортик
     u32 nr = 1 + rng_below(r, 3);
@@ -471,37 +162,37 @@ static f32 house(MeshBuilder *mb, Rng *r, Town *t, V3 base, f32 yaw, f32 w, f32 
         V3 q = v3(ox + rng_range(r, -pw * 0.3f, pw * 0.3f), y, oz + rng_range(r, -pd * 0.3f, pd * 0.3f));
         u32 k = rng_below(r, 5);
         if (k == 0) {
-            mb_set(mb, pick(r, k_sheet, 5, 0.15f), MAT_RUST, BONE_NONE);
+            mb_set(mb, prop_pick(r, g_pal_sheet, 5, 0.15f), MAT_RUST, BONE_NONE);
             f32 rr = rng_range(r, 0.45f, 0.75f), hh = rng_range(r, 0.9f, 1.5f);
-            lcyl(mb, L, v3(q.x, q.y + 0.25f, q.z), v3(q.x, q.y + 0.25f + hh, q.z), rr, 12);
-            mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
-            lbox(mb, L, v3(q.x, q.y + 0.12f, q.z), v3(rr * 1.8f, 0.25f, rr * 1.8f), 0, 0, 0);
+            prop_lcyl(mb, L, v3(q.x, q.y + 0.25f, q.z), v3(q.x, q.y + 0.25f + hh, q.z), rr, 12);
+            mb_set(mb, prop_tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
+            prop_lbox(mb, L, v3(q.x, q.y + 0.12f, q.z), v3(rr * 1.8f, 0.25f, rr * 1.8f), 0, 0, 0);
         } else if (k == 1) {
-            mb_set(mb, tint(r, C_METAL, 0.2f), MAT_METAL, BONE_NONE);
+            mb_set(mb, prop_tint(r, PAL_METAL, 0.2f), MAT_METAL, BONE_NONE);
             f32 hh = rng_range(r, 2.0f, 4.0f);
             V3 top = v3(q.x + rng_range(r, -0.15f, 0.15f), q.y + hh, q.z + rng_range(r, -0.15f, 0.15f));
-            lcyl(mb, L, q, top, 0.03f, 4);
+            prop_lcyl(mb, L, q, top, 0.03f, 4);
             for (u32 j = 0; j < 2; j++) {
                 f32 yy = q.y + hh * (0.6f + 0.25f * (f32)j), half = rng_range(r, 0.3f, 0.6f);
-                lcyl(mb, L, v3(q.x - half, yy, q.z), v3(q.x + half, yy, q.z), 0.015f, 4);
+                prop_lcyl(mb, L, v3(q.x - half, yy, q.z), v3(q.x + half, yy, q.z), 0.015f, 4);
             }
         } else if (k == 2) {
-            mb_set(mb, pick(r, k_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
-            lbox(mb, L, v3(q.x, q.y + 0.35f, q.z), v3(rng_range(r, 1.2f, 2.0f), 0.5f, rng_range(r, 1.0f, 1.6f)),
+            mb_set(mb, prop_pick(r, g_pal_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
+            prop_lbox(mb, L, v3(q.x, q.y + 0.35f, q.z), v3(rng_range(r, 1.2f, 2.0f), 0.5f, rng_range(r, 1.0f, 1.6f)),
                  rng_range(r, -0.1f, 0.1f), rng_range(r, 0, PI_F), rng_range(r, -0.1f, 0.1f));
         } else if (k == 3) {
-            crate_stack(mb, r, m4_point(L, q), yaw + rng_range(r, 0, PI_F));
+            prop_crate_stack(mb, r, m4_point(L, q), yaw + rng_range(r, 0, PI_F));
         } else {
-            mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
-            lbox(mb, L, v3(ox, y + 0.3f, oz + pd * 0.5f), v3(pw, 0.6f, 0.15f), 0, 0, 0);
-            lbox(mb, L, v3(ox - pw * 0.5f, y + 0.3f, oz), v3(0.15f, 0.6f, pd), 0, 0, 0);
+            mb_set(mb, prop_tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
+            prop_lbox(mb, L, v3(ox, y + 0.3f, oz + pd * 0.5f), v3(pw, 0.6f, 0.15f), 0, 0, 0);
+            prop_lbox(mb, L, v3(ox - pw * 0.5f, y + 0.3f, oz), v3(0.15f, 0.6f, pd), 0, 0, 0);
         }
     }
     // Хлам у фасада по краям
     u32 nc = rng_below(r, 3);
     for (u32 i = 0; i < nc; i++) {
         f32 sx = (i & 1 ? 1.0f : -1.0f) * rng_range(r, w * 0.3f, w * 0.45f);
-        clutter(mb, r, m4_point(L, v3(sx, 0, d * 0.5f + 0.35f)), yaw + rng_range(r, -0.3f, 0.3f));
+        prop_clutter(mb, r, m4_point(L, v3(sx, 0, d * 0.5f + 0.35f)), yaw + rng_range(r, -0.3f, 0.3f));
     }
     return y;
 }
@@ -518,37 +209,37 @@ static void goods(MeshBuilder *mb, Rng *r, M4 L, u32 kind, f32 w, f32 d, f32 h)
         switch (kind) {
         case STALL_SCRAP: {
             u32 k = rng_below(r, 3);
-            mb_set(mb, k == 1 ? tint(r, C_METAL, 0.3f) : pick(r, k_sheet, 5, 0.2f), k == 1 ? MAT_METAL : MAT_RUST, BONE_NONE);
-            if (k == 0) lcyl(mb, L, v3(x, h, z), v3(x, h + 0.04f, z), rng_range(r, 0.07f, 0.15f), 8);
-            else if (k == 1) lcyl(mb, L, v3(x - 0.25f, h + 0.04f, z), v3(x + 0.25f, h + 0.04f, z + rng_range(r, -0.1f, 0.1f)), 0.035f, 6);
-            else lbox(mb, L, v3(x, h + 0.07f, z), v3(rng_range(r, 0.1f, 0.25f), 0.14f, rng_range(r, 0.1f, 0.2f)), 0, yaw, 0);
+            mb_set(mb, k == 1 ? prop_tint(r, PAL_METAL, 0.3f) : prop_pick(r, g_pal_sheet, 5, 0.2f), k == 1 ? MAT_METAL : MAT_RUST, BONE_NONE);
+            if (k == 0) prop_lcyl(mb, L, v3(x, h, z), v3(x, h + 0.04f, z), rng_range(r, 0.07f, 0.15f), 8);
+            else if (k == 1) prop_lcyl(mb, L, v3(x - 0.25f, h + 0.04f, z), v3(x + 0.25f, h + 0.04f, z + rng_range(r, -0.1f, 0.1f)), 0.035f, 6);
+            else prop_lbox(mb, L, v3(x, h + 0.07f, z), v3(rng_range(r, 0.1f, 0.25f), 0.14f, rng_range(r, 0.1f, 0.2f)), 0, yaw, 0);
         } break;
         case STALL_WATER: {
             if (rng_f32(r) < 0.55f) {
                 static const V3 cc[3] = { { 0.24f, 0.27f, 0.18f }, { 0.40f, 0.22f, 0.12f }, { 0.22f, 0.25f, 0.29f } };
-                mb_set(mb, tint(r, cc[rng_below(r, 3)], 0.15f), MAT_METAL, BONE_NONE);
-                lbox(mb, L, v3(x, h + 0.16f, z), v3(0.22f, 0.32f, 0.14f), 0, yaw * 0.3f, 0);
+                mb_set(mb, prop_tint(r, cc[rng_below(r, 3)], 0.15f), MAT_METAL, BONE_NONE);
+                prop_lbox(mb, L, v3(x, h + 0.16f, z), v3(0.22f, 0.32f, 0.14f), 0, yaw * 0.3f, 0);
             } else {
-                mb_set(mb, tint(r, v3(0.32f, 0.26f, 0.20f), 0.2f), MAT_LEATHER, BONE_NONE);
+                mb_set(mb, prop_tint(r, v3(0.32f, 0.26f, 0.20f), 0.2f), MAT_LEATHER, BONE_NONE);
                 f32 hh = rng_range(r, 0.18f, 0.3f), rr = rng_range(r, 0.06f, 0.1f);
-                lcyl(mb, L, v3(x, h, z), v3(x, h + hh, z), rr, 8);
-                lcyl(mb, L, v3(x, h + hh, z), v3(x, h + hh + 0.06f, z), rr * 0.4f, 6);
+                prop_lcyl(mb, L, v3(x, h, z), v3(x, h + hh, z), rr, 8);
+                prop_lcyl(mb, L, v3(x, h + hh, z), v3(x, h + hh + 0.06f, z), rr * 0.4f, 6);
             }
         } break;
         case STALL_FOOD: {
-            mb_set(mb, tint(r, v3(0.40f, 0.35f, 0.25f), 0.15f), MAT_CLOTH, BONE_NONE);
+            mb_set(mb, prop_tint(r, v3(0.40f, 0.35f, 0.25f), 0.15f), MAT_CLOTH, BONE_NONE);
             f32 s = rng_range(r, 0.22f, 0.34f);
-            lbox(mb, L, v3(x, h + s * 0.4f, z), v3(s, s * 0.8f, s), 0, yaw, 0);
-            mb_set(mb, rng_f32(r) < 0.5f ? tint(r, v3(0.30f, 0.20f, 0.10f), 0.2f) : tint(r, v3(0.38f, 0.33f, 0.18f), 0.2f), MAT_SAND,
+            prop_lbox(mb, L, v3(x, h + s * 0.4f, z), v3(s, s * 0.8f, s), 0, yaw, 0);
+            mb_set(mb, rng_f32(r) < 0.5f ? prop_tint(r, v3(0.30f, 0.20f, 0.10f), 0.2f) : prop_tint(r, v3(0.38f, 0.33f, 0.18f), 0.2f), MAT_SAND,
                    BONE_NONE);
-            lbox(mb, L, v3(x, h + s * 0.8f + 0.01f, z), v3(s * 0.85f, 0.04f, s * 0.85f), 0, yaw, 0);
+            prop_lbox(mb, L, v3(x, h + s * 0.8f + 0.01f, z), v3(s * 0.85f, 0.04f, s * 0.85f), 0, yaw, 0);
         } break;
         case STALL_CLOTH: {
             f32 yy = h;
             u32 layers = 2 + rng_below(r, 5);
             for (u32 j = 0; j < layers; j++) {
-                mb_set(mb, pick(r, k_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
-                lbox(mb, L, v3(x, yy + 0.025f, z), v3(0.34f, 0.05f, 0.26f), 0, rng_range(r, -0.15f, 0.15f), 0);
+                mb_set(mb, prop_pick(r, g_pal_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
+                prop_lbox(mb, L, v3(x, yy + 0.025f, z), v3(0.34f, 0.05f, 0.26f), 0, rng_range(r, -0.15f, 0.15f), 0);
                 yy += 0.05f;
             }
         } break;
@@ -556,25 +247,25 @@ static void goods(MeshBuilder *mb, Rng *r, M4 L, u32 kind, f32 w, f32 d, f32 h)
             u32 k = rng_below(r, 3);
             if (k == 0) {
                 mb_set(mb, v3(0.12f, 0.45f, 0.18f), MAT_GLYPH, BONE_NONE);
-                lbox(mb, L, v3(x, h + 0.015f, z), v3(0.36f, 0.03f, 0.28f), 0, yaw * 0.2f, 0);
+                prop_lbox(mb, L, v3(x, h + 0.015f, z), v3(0.36f, 0.03f, 0.28f), 0, yaw * 0.2f, 0);
             } else if (k == 1) {
-                mb_set(mb, tint(r, C_METAL, 0.3f), MAT_METAL, BONE_NONE);
-                lcyl(mb, L, v3(x, h, z), v3(x, h + rng_range(r, 0.1f, 0.25f), z), rng_range(r, 0.08f, 0.14f), 10);
-                lbox(mb, L, v3(x, h + 0.05f, z), v3(0.3f, 0.06f, 0.08f), 0, yaw, 0);
+                mb_set(mb, prop_tint(r, PAL_METAL, 0.3f), MAT_METAL, BONE_NONE);
+                prop_lcyl(mb, L, v3(x, h, z), v3(x, h + rng_range(r, 0.1f, 0.25f), z), rng_range(r, 0.08f, 0.14f), 10);
+                prop_lbox(mb, L, v3(x, h + 0.05f, z), v3(0.3f, 0.06f, 0.08f), 0, yaw, 0);
             } else {
-                mb_set(mb, tint(r, v3(0.33f, 0.31f, 0.28f), 0.2f), MAT_CONCRETE, BONE_NONE);
-                lbox(mb, L, v3(x, h + 0.1f, z), v3(0.18f, 0.2f, 0.18f), 0.2f, yaw, 0.3f);
+                mb_set(mb, prop_tint(r, v3(0.33f, 0.31f, 0.28f), 0.2f), MAT_CONCRETE, BONE_NONE);
+                prop_lbox(mb, L, v3(x, h + 0.1f, z), v3(0.18f, 0.2f, 0.18f), 0.2f, yaw, 0.3f);
             }
         } break;
         default: {
-            mb_set(mb, tint(r, C_METAL, 0.3f), MAT_METAL, BONE_NONE);
+            mb_set(mb, prop_tint(r, PAL_METAL, 0.3f), MAT_METAL, BONE_NONE);
             if (rng_f32(r) < 0.6f) {
-                lbox(mb, L, v3(x, h + 0.01f, z), v3(0.05f, 0.015f, rng_range(r, 0.55f, 0.85f)), 0, rng_range(r, -0.1f, 0.1f), 0);
+                prop_lbox(mb, L, v3(x, h + 0.01f, z), v3(0.05f, 0.015f, rng_range(r, 0.55f, 0.85f)), 0, rng_range(r, -0.1f, 0.1f), 0);
             } else {
-                mb_set(mb, tint(r, v3(0.30f, 0.22f, 0.15f), 0.2f), MAT_LEATHER, BONE_NONE);
-                lcyl(mb, L, v3(x, h + 0.03f, z - 0.2f), v3(x, h + 0.03f, z + 0.15f), 0.02f, 5);
-                mb_set(mb, tint(r, C_METAL, 0.3f), MAT_METAL, BONE_NONE);
-                lbox(mb, L, v3(x, h + 0.05f, z + 0.18f), v3(0.14f, 0.07f, 0.07f), 0, 0, 0);
+                mb_set(mb, prop_tint(r, v3(0.30f, 0.22f, 0.15f), 0.2f), MAT_LEATHER, BONE_NONE);
+                prop_lcyl(mb, L, v3(x, h + 0.03f, z - 0.2f), v3(x, h + 0.03f, z + 0.15f), 0.02f, 5);
+                mb_set(mb, prop_tint(r, PAL_METAL, 0.3f), MAT_METAL, BONE_NONE);
+                prop_lbox(mb, L, v3(x, h + 0.05f, z + 0.18f), v3(0.14f, 0.07f, 0.07f), 0, 0, 0);
             }
         } break;
         }
@@ -584,65 +275,65 @@ static void goods(MeshBuilder *mb, Rng *r, M4 L, u32 kind, f32 w, f32 d, f32 h)
 // Прилавок: p — середина переднего края стола у земли, yaw — к покупателям. Продавец за столом
 static void stall(MeshBuilder *mb, Rng *r, Town *t, V3 p, f32 yaw, u32 kind)
 {
-    M4 L = frame(p, yaw);
+    M4 L = prop_frame(p, yaw);
     f32 w = rng_range(r, 1.7f, 2.6f), d = rng_range(r, 0.75f, 1.0f), h = rng_range(r, 0.82f, 0.95f);
     f32 cz = -d * 0.5f;
     t->stalls++;
     // Стол: лист на ножках, на бетонных блоках или на бочках
     bool rust = rng_f32(r) < 0.5f;
-    mb_set(mb, rust ? tint(r, PAL_RUST, 0.2f) : tint(r, C_METAL, 0.25f), rust ? MAT_RUST : MAT_METAL, BONE_NONE);
-    lbox(mb, L, v3(0, h - 0.03f, cz), v3(w, 0.06f, d), 0, rng_range(r, -0.02f, 0.02f), rng_range(r, -0.01f, 0.01f));
+    mb_set(mb, rust ? prop_tint(r, PAL_RUST, 0.2f) : prop_tint(r, PAL_METAL, 0.25f), rust ? MAT_RUST : MAT_METAL, BONE_NONE);
+    prop_lbox(mb, L, v3(0, h - 0.03f, cz), v3(w, 0.06f, d), 0, rng_range(r, -0.02f, 0.02f), rng_range(r, -0.01f, 0.01f));
     u32 table = rng_below(r, 3);
     if (table == 0) {
         for (int i = 0; i < 4; i++)
-            lbox(mb, L, v3((i & 1 ? 1.0f : -1.0f) * (w * 0.5f - 0.1f), (h - 0.06f) * 0.5f, cz + (i & 2 ? 1.0f : -1.0f) * (d * 0.5f - 0.08f)),
+            prop_lbox(mb, L, v3((i & 1 ? 1.0f : -1.0f) * (w * 0.5f - 0.1f), (h - 0.06f) * 0.5f, cz + (i & 2 ? 1.0f : -1.0f) * (d * 0.5f - 0.08f)),
                  v3(0.05f, h - 0.06f, 0.05f), 0, 0, 0);
     } else if (table == 1) {
-        mb_set(mb, tint(r, PAL_CONCRETE, 0.1f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_tint(r, PAL_CONCRETE, 0.1f), MAT_CONCRETE, BONE_NONE);
         for (int s = -1; s <= 1; s += 2)
-            lbox(mb, L, v3((f32)s * (w * 0.5f - 0.3f), (h - 0.06f) * 0.5f, cz), v3(0.4f, h - 0.06f, d * 0.85f), 0, rng_range(r, -0.05f, 0.05f), 0);
+            prop_lbox(mb, L, v3((f32)s * (w * 0.5f - 0.3f), (h - 0.06f) * 0.5f, cz), v3(0.4f, h - 0.06f, d * 0.85f), 0, rng_range(r, -0.05f, 0.05f), 0);
     } else {
-        mb_set(mb, pick(r, k_sheet, 5, 0.2f), MAT_RUST, BONE_NONE);
+        mb_set(mb, prop_pick(r, g_pal_sheet, 5, 0.2f), MAT_RUST, BONE_NONE);
         for (int s = -1; s <= 1; s += 2)
-            lcyl(mb, L, v3((f32)s * (w * 0.5f - 0.35f), 0, cz), v3((f32)s * (w * 0.5f - 0.35f), h - 0.06f, cz), 0.28f, 10);
+            prop_lcyl(mb, L, v3((f32)s * (w * 0.5f - 0.35f), 0, cz), v3((f32)s * (w * 0.5f - 0.35f), h - 0.06f, cz), 0.28f, 10);
     }
     if (rng_f32(r) < 0.45f) {
-        mb_set(mb, pick(r, k_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
-        lbox(mb, L, v3(0, (h - 0.06f) * 0.5f + 0.06f, 0.015f), v3(w * 0.96f, h - 0.18f, 0.02f), rng_range(r, -0.04f, 0.04f), 0, 0);
+        mb_set(mb, prop_pick(r, g_pal_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
+        prop_lbox(mb, L, v3(0, (h - 0.06f) * 0.5f + 0.06f, 0.015f), v3(w * 0.96f, h - 0.18f, 0.02f), rng_range(r, -0.04f, 0.04f), 0, 0);
     }
     // Навес: задние стойки за продавцом, передние не всегда
     f32 hb = rng_range(r, 2.3f, 2.7f), hf = hb - rng_range(r, 0.25f, 0.5f);
     f32 aw = w + rng_range(r, 0.2f, 0.6f), zb = -d - 0.95f, zf = 0.35f;
-    mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
+    mb_set(mb, prop_tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
     for (int s = -1; s <= 1; s += 2) {
-        lcyl(mb, L, v3((f32)s * aw * 0.48f, 0, zb), v3((f32)s * aw * 0.48f, hb, zb), 0.04f, 5);
+        prop_lcyl(mb, L, v3((f32)s * aw * 0.48f, 0, zb), v3((f32)s * aw * 0.48f, hb, zb), 0.04f, 5);
     }
     bool front_posts = rng_f32(r) < 0.55f;
     if (front_posts)
-        for (int s = -1; s <= 1; s += 2) lcyl(mb, L, v3((f32)s * aw * 0.48f, 0, zf - 0.05f), v3((f32)s * aw * 0.48f, hf, zf - 0.05f), 0.035f, 5);
+        for (int s = -1; s <= 1; s += 2) prop_lcyl(mb, L, v3((f32)s * aw * 0.48f, 0, zf - 0.05f), v3((f32)s * aw * 0.48f, hf, zf - 0.05f), 0.035f, 5);
     else
         for (int s = -1; s <= 1; s += 2)
-            lcyl(mb, L, v3((f32)s * aw * 0.48f, hb * 0.6f, zb), v3((f32)s * aw * 0.48f, hf, zf - 0.05f), 0.03f, 4);
-    lcyl(mb, L, v3(-aw * 0.5f, hf, zf - 0.05f), v3(aw * 0.5f, hf, zf - 0.05f), 0.03f, 5);
+            prop_lcyl(mb, L, v3((f32)s * aw * 0.48f, hb * 0.6f, zb), v3((f32)s * aw * 0.48f, hf, zf - 0.05f), 0.03f, 4);
+    prop_lcyl(mb, L, v3(-aw * 0.5f, hf, zf - 0.05f), v3(aw * 0.5f, hf, zf - 0.05f), 0.03f, 5);
     f32 len = sqrtf((zf - zb) * (zf - zb) + (hb - hf) * (hb - hf)), ang = atan2f(hb - hf, zf - zb);
     bool cloth = rng_f32(r) < 0.7f;
     if (cloth && rng_f32(r) < 0.4f) {
         // Полосами двух цветов
-        V3 c0 = pick(r, k_cloth, 7, 0.15f), c1 = pick(r, k_cloth, 7, 0.15f);
+        V3 c0 = prop_pick(r, g_pal_cloth, 7, 0.15f), c1 = prop_pick(r, g_pal_cloth, 7, 0.15f);
         u32 ns = 3 + rng_below(r, 3);
         for (u32 i = 0; i < ns; i++) {
             mb_set(mb, i & 1 ? c1 : c0, MAT_CLOTH, BONE_NONE);
             f32 sx = -aw * 0.5f + ((f32)i + 0.5f) * aw / (f32)ns;
-            lbox(mb, L, v3(sx, (hb + hf) * 0.5f + 0.04f, (zb + zf) * 0.5f), v3(aw / (f32)ns, 0.03f, len), ang, 0, 0);
+            prop_lbox(mb, L, v3(sx, (hb + hf) * 0.5f + 0.04f, (zb + zf) * 0.5f), v3(aw / (f32)ns, 0.03f, len), ang, 0, 0);
         }
     } else {
-        mb_set(mb, cloth ? pick(r, k_cloth, 7, 0.15f) : pick(r, k_sheet, 5, 0.15f), cloth ? MAT_CLOTH : MAT_RUST, BONE_NONE);
-        lbox(mb, L, v3(0, (hb + hf) * 0.5f + 0.04f, (zb + zf) * 0.5f), v3(aw, 0.03f, len), ang, 0, rng_range(r, -0.03f, 0.03f));
+        mb_set(mb, cloth ? prop_pick(r, g_pal_cloth, 7, 0.15f) : prop_pick(r, g_pal_sheet, 5, 0.15f), cloth ? MAT_CLOTH : MAT_RUST, BONE_NONE);
+        prop_lbox(mb, L, v3(0, (hb + hf) * 0.5f + 0.04f, (zb + zf) * 0.5f), v3(aw, 0.03f, len), ang, 0, rng_range(r, -0.03f, 0.03f));
     }
     if (cloth && rng_f32(r) < 0.45f) {
         // Оборванный край свисает
-        mb_set(mb, pick(r, k_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
-        lbox(mb, L, v3(rng_range(r, -aw * 0.3f, aw * 0.3f), hf - 0.2f, zf + 0.02f), v3(aw * rng_range(r, 0.2f, 0.4f), 0.4f, 0.02f), 0, 0, 0);
+        mb_set(mb, prop_pick(r, g_pal_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
+        prop_lbox(mb, L, v3(rng_range(r, -aw * 0.3f, aw * 0.3f), hf - 0.2f, zf + 0.02f), v3(aw * rng_range(r, 0.2f, 0.4f), 0.4f, 0.02f), 0, 0, 0);
     }
     goods(mb, r, L, kind, w, d, h);
     // Висящий товар с переднего края навеса
@@ -650,37 +341,37 @@ static void stall(MeshBuilder *mb, Rng *r, Town *t, V3 p, f32 yaw, u32 kind)
         u32 nh = 2 + rng_below(r, 4);
         for (u32 i = 0; i < nh; i++) {
             f32 x = rng_range(r, -aw * 0.42f, aw * 0.42f), hh = rng_range(r, 0.3f, 0.7f);
-            if (kind == STALL_FOOD) mb_set(mb, tint(r, v3(0.26f, 0.13f, 0.08f), 0.2f), MAT_LEATHER, BONE_NONE);
-            else if (kind == STALL_CLOTH) mb_set(mb, pick(r, k_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
-            else mb_set(mb, tint(r, C_METAL, 0.3f), MAT_METAL, BONE_NONE);
+            if (kind == STALL_FOOD) mb_set(mb, prop_tint(r, v3(0.26f, 0.13f, 0.08f), 0.2f), MAT_LEATHER, BONE_NONE);
+            else if (kind == STALL_CLOTH) mb_set(mb, prop_pick(r, g_pal_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
+            else mb_set(mb, prop_tint(r, PAL_METAL, 0.3f), MAT_METAL, BONE_NONE);
             f32 ww = kind == STALL_CLOTH ? rng_range(r, 0.3f, 0.5f) : 0.08f;
-            lbox(mb, L, v3(x, hf - hh * 0.5f - 0.03f, zf - 0.05f), v3(ww, hh, 0.03f), 0, rng_range(r, -0.3f, 0.3f), 0);
+            prop_lbox(mb, L, v3(x, hf - hh * 0.5f - 0.03f, zf - 0.05f), v3(ww, hh, 0.03f), 0, rng_range(r, -0.3f, 0.3f), 0);
         }
     }
     // Вывеска знаками над навесом или лампа под ним
     if (rng_f32(r) < 0.45f) {
         f32 sw = rng_range(r, 1.2f, 1.8f);
-        mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
-        lcyl(mb, L, v3(-sw * 0.3f, hb, zb + 0.1f), v3(-sw * 0.3f, hb + 0.35f, zb + 0.1f), 0.025f, 4);
-        lcyl(mb, L, v3(sw * 0.3f, hb, zb + 0.1f), v3(sw * 0.3f, hb + 0.35f, zb + 0.1f), 0.025f, 4);
-        mb_set(mb, tint(r, C_PAINT, 0.25f), MAT_GLYPH, BONE_NONE);
-        lbox(mb, L, v3(rng_range(r, -0.15f, 0.15f), hb + 0.75f, zb + 0.1f), v3(sw, 0.85f, 0.04f), 0, 0, rng_range(r, -0.04f, 0.04f));
+        mb_set(mb, prop_tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
+        prop_lcyl(mb, L, v3(-sw * 0.3f, hb, zb + 0.1f), v3(-sw * 0.3f, hb + 0.35f, zb + 0.1f), 0.025f, 4);
+        prop_lcyl(mb, L, v3(sw * 0.3f, hb, zb + 0.1f), v3(sw * 0.3f, hb + 0.35f, zb + 0.1f), 0.025f, 4);
+        mb_set(mb, prop_tint(r, C_PAINT, 0.25f), MAT_GLYPH, BONE_NONE);
+        prop_lbox(mb, L, v3(rng_range(r, -0.15f, 0.15f), hb + 0.75f, zb + 0.1f), v3(sw, 0.85f, 0.04f), 0, 0, rng_range(r, -0.04f, 0.04f));
     }
     if (rng_f32(r) < 0.6f) {
         f32 x = rng_range(r, -aw * 0.3f, aw * 0.3f), z = rng_range(r, -d * 0.6f, -d * 0.2f);
         f32 yy = hf + (hb - hf) * (zf - z) / (zf - zb);
         mb_set(mb, v3(0.06f, 0.055f, 0.05f), MAT_METAL, BONE_NONE);
-        lcyl(mb, L, v3(x, yy, z), v3(x, yy - 0.3f, z), 0.01f, 4);
-        mb_set(mb, tint(r, C_LAMP, 0.2f), MAT_EMISSIVE, BONE_NONE);
-        lbox(mb, L, v3(x, yy - 0.36f, z), v3(0.12f, 0.12f, 0.12f), 0, 0, 0);
+        prop_lcyl(mb, L, v3(x, yy, z), v3(x, yy - 0.3f, z), 0.01f, 4);
+        mb_set(mb, prop_tint(r, PAL_LAMP, 0.2f), MAT_EMISSIVE, BONE_NONE);
+        prop_lbox(mb, L, v3(x, yy - 0.36f, z), v3(0.12f, 0.12f, 0.12f), 0, 0, 0);
     }
     // Рядом ящики, мешки, бочки; у водоноса всегда бочка
     u32 nc = 1 + rng_below(r, 3);
     for (u32 i = 0; i < nc; i++) {
         f32 s = i & 1 ? 1.0f : -1.0f;
         V3 q = m4_point(L, v3(s * (w * 0.5f + rng_range(r, 0.35f, 0.7f)), 0, rng_range(r, -d - 0.5f, -0.2f)));
-        if (kind == STALL_WATER && i == 0) barrel(mb, r, q, false);
-        else clutter(mb, r, q, yaw + rng_range(r, -0.4f, 0.4f));
+        if (kind == STALL_WATER && i == 0) prop_barrel(mb, r, q, false);
+        else prop_clutter(mb, r, q, yaw + rng_range(r, -0.4f, 0.4f));
     }
     add_spot(t, m4_point(L, v3(rng_range(r, -w * 0.25f, w * 0.25f), 0, -d - 0.45f)), yaw, SPOT_TRADER);
 }
@@ -689,24 +380,24 @@ static void stall(MeshBuilder *mb, Rng *r, Town *t, V3 p, f32 yaw, u32 kind)
 
 static void slab(MeshBuilder *mb, f32 x0, f32 x1, f32 z0, f32 z1, f32 y0, f32 y1)
 {
-    box(mb, v3((x0 + x1) * 0.5f, (y0 + y1) * 0.5f, (z0 + z1) * 0.5f), v3(x1 - x0, y1 - y0, z1 - z0), 0);
+    prop_box(mb, v3((x0 + x1) * 0.5f, (y0 + y1) * 0.5f, (z0 + z1) * 0.5f), v3(x1 - x0, y1 - y0, z1 - z0), 0);
 }
 
 static void terraces(MeshBuilder *mb, Rng *r)
 {
-    mb_set(mb, tint(r, PAL_CONCRETE, 0.05f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_tint(r, PAL_CONCRETE, 0.05f), MAT_CONCRETE, BONE_NONE);
     // Средний ярус с вырезом под пандус
     slab(mb, TX0, RX0, TZ1, TZ2, -1.0f, TH1);
     slab(mb, RX1, TX1, TZ1, TZ2, -1.0f, TH1);
     slab(mb, RX0, RX1, RZ1, TZ2, -1.0f, TH1);
     // Верхний ярус
-    mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.05f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_tint(r, PAL_CONCRETE_DARK, 0.05f), MAT_CONCRETE, BONE_NONE);
     slab(mb, TX0, TX1, TZ2, TZ3, -1.0f, TH2);
     // Пандус: наклонная плита с бортиками
     f32 run = RZ1 - TZ1, rise = TH1 - TH0, len = sqrtf(run * run + rise * rise), a = atan2f(rise, run);
     V3 n = v3(0, cosf(a), -sinf(a));
     V3 top = v3((RX0 + RX1) * 0.5f, (TH0 + TH1) * 0.5f, (TZ1 + RZ1) * 0.5f);
-    mb_set(mb, tint(r, PAL_CONCRETE, 0.08f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_tint(r, PAL_CONCRETE, 0.08f), MAT_CONCRETE, BONE_NONE);
     mb_box(mb, m4_trs(v3_sub(top, v3_mul(n, 0.3f)), v3(RX1 - RX0, 0.6f, len), -a, 0, 0));
     // Лестница на верхний ярус: ступени по 0.29 м, внизу сплошная кладка
     u32 steps = 12;
@@ -715,33 +406,33 @@ static void terraces(MeshBuilder *mb, Rng *r)
         slab(mb, x0, SX1, SZ0, TZ2, TH1 - 0.1f, TH1 + (TH2 - TH1) * (f32)(k + 1) / (f32)steps);
     }
     slab(mb, SX1, SX2, SZ0, TZ2, TH1 - 0.1f, TH2);
-    railing(mb, r, v3(SX0 + 1.0f, TH1 + 0.35f, SZ0 + 0.05f), v3(SX1, TH2, SZ0 + 0.05f));
-    railing(mb, r, v3(SX1, TH2, SZ0 + 0.05f), v3(SX2, TH2, SZ0 + 0.05f));
+    prop_railing(mb, r, v3(SX0 + 1.0f, TH1 + 0.35f, SZ0 + 0.05f), v3(SX1, TH2, SZ0 + 0.05f));
+    prop_railing(mb, r, v3(SX1, TH2, SZ0 + 0.05f), v3(SX2, TH2, SZ0 + 0.05f));
     // Перила по краю верхнего яруса и у пандуса
-    railing(mb, r, v3(TX0 + 0.3f, TH2, TZ2 + 0.1f), v3(SX1, TH2, TZ2 + 0.1f));
-    railing(mb, r, v3(SX2 + 0.1f, TH2, TZ2 + 0.1f), v3(TX1 - 0.3f, TH2, TZ2 + 0.1f));
-    railing(mb, r, v3(RX0 - 0.1f, TH1, RZ1 - 0.2f), v3(RX0 - 0.1f, TH1, TZ1 + 0.2f));
-    railing(mb, r, v3(RX1 + 0.1f, TH1, TZ1 + 0.2f), v3(RX1 + 0.1f, TH1, RZ1 - 0.2f));
-    railing(mb, r, v3(RX0 - 2.0f, TH1, TZ1 + 0.1f), v3(RX0 - 0.1f, TH1, TZ1 + 0.1f));
-    railing(mb, r, v3(RX1 + 0.1f, TH1, TZ1 + 0.1f), v3(RX1 + 2.0f, TH1, TZ1 + 0.1f));
+    prop_railing(mb, r, v3(TX0 + 0.3f, TH2, TZ2 + 0.1f), v3(SX1, TH2, TZ2 + 0.1f));
+    prop_railing(mb, r, v3(SX2 + 0.1f, TH2, TZ2 + 0.1f), v3(TX1 - 0.3f, TH2, TZ2 + 0.1f));
+    prop_railing(mb, r, v3(RX0 - 0.1f, TH1, RZ1 - 0.2f), v3(RX0 - 0.1f, TH1, TZ1 + 0.2f));
+    prop_railing(mb, r, v3(RX1 + 0.1f, TH1, TZ1 + 0.2f), v3(RX1 + 0.1f, TH1, RZ1 - 0.2f));
+    prop_railing(mb, r, v3(RX0 - 2.0f, TH1, TZ1 + 0.1f), v3(RX0 - 0.1f, TH1, TZ1 + 0.1f));
+    prop_railing(mb, r, v3(RX1 + 0.1f, TH1, TZ1 + 0.1f), v3(RX1 + 2.0f, TH1, TZ1 + 0.1f));
     // Контрфорсы, трубы и водостоки на фронте верхнего яруса
     for (f32 x = TX0 + 2.0f; x < TX1 - 1.0f; x += rng_range(r, 4.5f, 7.0f)) {
         if (x > SX0 - 1.0f && x < SX2 + 0.5f) continue;
-        mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.08f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_tint(r, PAL_CONCRETE_DARK, 0.08f), MAT_CONCRETE, BONE_NONE);
         mb_box(mb, m4_trs(v3(x, TH1 + 1.5f, TZ2 - 0.5f), v3(0.9f, 3.2f, 1.4f), 0.22f, 0, 0));
         if (rng_f32(r) < 0.5f) {
             mb_set(mb, C_VOID, MAT_EMISSIVE, BONE_NONE);
-            box(mb, v3(x + 1.6f, TH1 + 2.4f, TZ2), v3(0.5f, 0.5f, 0.08f), 0);
+            prop_box(mb, v3(x + 1.6f, TH1 + 2.4f, TZ2), v3(0.5f, 0.5f, 0.08f), 0);
         }
     }
-    mb_set(mb, tint(r, PAL_RUST, 0.15f), MAT_RUST, BONE_NONE);
+    mb_set(mb, prop_tint(r, PAL_RUST, 0.15f), MAT_RUST, BONE_NONE);
     mb_cylinder(mb, v3(TX0 + 1.0f, TH1 + 2.6f, TZ2 + 0.35f), v3(SX0 - 1.0f, TH1 + 2.8f, TZ2 + 0.35f), 0.22f, 10);
     // Обломки у западных торцов ярусов: сюда обрушилась часть плит
     for (u32 i = 0; i < 26; i++) {
         f32 z = rng_range(r, TZ1 - 1.0f, TZ3), x = TX0 - rng_range(r, 0.3f, 4.5f);
         f32 top_h = z < TZ2 ? TH1 : TH2;
         f32 s = rng_range(r, 0.6f, 2.2f), yy = rng_range(r, 0.0f, top_h * (1.0f - (TX0 - x) / 5.0f));
-        mb_set(mb, tint(r, rng_f32(r) < 0.5f ? PAL_CONCRETE : PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_tint(r, rng_f32(r) < 0.5f ? PAL_CONCRETE : PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
         mb_box(mb, m4_trs(v3(x, yy, z), v3(s * rng_range(r, 0.8f, 1.8f), s, s * rng_range(r, 0.7f, 1.4f)), rng_range(r, -0.5f, 0.5f),
                       rng_range(r, 0, PI_F), rng_range(r, -0.5f, 0.5f)));
     }
@@ -767,11 +458,11 @@ static void ancient_wall(MeshBuilder *mb, Rng *r)
         f32 w = rng_range(r, 5.0f, 9.0f);
         // Восточнее посёлка стена проломлена
         f32 h = x > 102.0f && x < 114.0f ? rng_range(r, 12.0f, 18.0f) : rng_range(r, 30.0f, 38.0f);
-        mb_set(mb, tint(r, v3(0.34f, 0.33f, 0.31f), 0.06f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_tint(r, v3(0.34f, 0.33f, 0.31f), 0.06f), MAT_CONCRETE, BONE_NONE);
         slab(mb, x, x + w, z0, z1, -1.0f, h);
         // Пилястры
         if (rng_f32(r) < 0.7f) {
-            mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.06f), MAT_CONCRETE, BONE_NONE);
+            mb_set(mb, prop_tint(r, PAL_CONCRETE_DARK, 0.06f), MAT_CONCRETE, BONE_NONE);
             f32 px = x + w * 0.5f;
             slab(mb, px - 1.0f, px + 1.0f, z0 - 1.2f, z0, px > TX0 && px < TX1 ? TH2 - 0.2f : -1.0f, h - rng_range(r, 0.0f, 6.0f));
         }
@@ -780,31 +471,31 @@ static void ancient_wall(MeshBuilder *mb, Rng *r)
     // Проём неизвестного назначения и полоса знаков над ним
     f32 gx = 82.0f;
     mb_set(mb, C_VOID, MAT_EMISSIVE, BONE_NONE);
-    box(mb, v3(gx, TH2 + 5.5f, z0 - 0.02f), v3(6.0f, 11.0f, 0.1f), 0);
-    mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.05f), MAT_CONCRETE, BONE_NONE);
+    prop_box(mb, v3(gx, TH2 + 5.5f, z0 - 0.02f), v3(6.0f, 11.0f, 0.1f), 0);
+    mb_set(mb, prop_tint(r, PAL_CONCRETE_DARK, 0.05f), MAT_CONCRETE, BONE_NONE);
     slab(mb, gx - 4.2f, gx + 4.2f, z0 - 1.6f, z0, TH2 + 11.0f, TH2 + 12.6f);
     slab(mb, gx - 4.2f, gx - 3.0f, z0 - 1.6f, z0, TH2, TH2 + 11.0f);
     slab(mb, gx + 3.0f, gx + 4.2f, z0 - 1.6f, z0, TH2, TH2 + 11.0f);
     mb_set(mb, PAL_GLYPH_GREEN, MAT_GLYPH, BONE_NONE);
     mb_quad(mb, v3(gx, TH2 + 15.0f, z0 - 0.04f), v3(-6.0f, 0, 0), v3(0, 0.9f, 0));
     // Выступ на высоте с двумя лачугами и лестницей к нему: живут и там
-    mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.05f), MAT_CONCRETE, BONE_NONE);
+    mb_set(mb, prop_tint(r, PAL_CONCRETE_DARK, 0.05f), MAT_CONCRETE, BONE_NONE);
     slab(mb, 66.5f, 77.0f, z0 - 2.2f, z0, TH2 + 7.6f, TH2 + 8.0f);
     for (int i = 0; i < 2; i++) {
-        mb_set(mb, pick(r, k_sheet, 5, 0.15f), MAT_RUST, BONE_NONE);
+        mb_set(mb, prop_pick(r, g_pal_sheet, 5, 0.15f), MAT_RUST, BONE_NONE);
         f32 x = 68.8f + (f32)i * 4.6f + rng_range(r, -0.3f, 0.3f), hh = rng_range(r, 2.0f, 2.6f);
         mb_box(mb, m4_trs(v3(x, TH2 + 8.0f + hh * 0.5f, z0 - 1.0f), v3(rng_range(r, 2.4f, 3.2f), hh, 1.8f), 0, rng_range(r, -0.05f, 0.05f), 0));
         mb_set(mb, C_VOID, MAT_EMISSIVE, BONE_NONE);
-        box(mb, v3(x, TH2 + 8.9f, z0 - 1.92f), v3(0.8f, 1.7f, 0.05f), 0);
+        prop_box(mb, v3(x, TH2 + 8.9f, z0 - 1.92f), v3(0.8f, 1.7f, 0.05f), 0);
     }
-    ladder(mb, frame(v3(77.4f, TH2, z0 - 0.3f), PI_F * 0.5f), v3(0, 0, 0), 8.0f);
-    railing(mb, r, v3(66.7f, TH2 + 8.0f, z0 - 2.1f), v3(76.8f, TH2 + 8.0f, z0 - 2.1f));
+    prop_ladder(mb, prop_frame(v3(77.4f, TH2, z0 - 0.3f), PI_F * 0.5f), v3(0, 0, 0), 8.0f);
+    prop_railing(mb, r, v3(66.7f, TH2 + 8.0f, z0 - 2.1f), v3(76.8f, TH2 + 8.0f, z0 - 2.1f));
     // Ржавые трубы по стене и красный огонь на мачте у пролома: единственный ориентир издалека
-    mb_set(mb, tint(r, PAL_RUST, 0.1f), MAT_RUST, BONE_NONE);
+    mb_set(mb, prop_tint(r, PAL_RUST, 0.1f), MAT_RUST, BONE_NONE);
     mb_cylinder(mb, v3(48.0f, -0.2f, z0 - 0.5f), v3(48.0f, 33.0f, z0 - 0.5f), 0.5f, 12);
     mb_cylinder(mb, v3(95.0f, TH2, z0 - 0.4f), v3(95.0f, 24.0f, z0 - 0.4f), 0.3f, 10);
     mb_cylinder(mb, v3(95.0f, 24.0f, z0 - 0.4f), v3(101.0f, 24.0f, z0 - 0.4f), 0.3f, 10);
-    mb_set(mb, tint(r, C_METAL, 0.1f), MAT_METAL, BONE_NONE);
+    mb_set(mb, prop_tint(r, PAL_METAL, 0.1f), MAT_METAL, BONE_NONE);
     V3 mast = v3(75.8f, TH2, 23.2f);
     mb_cylinder(mb, mast, v3(mast.x + 0.15f, TH2 + 16.0f, mast.z), 0.12f, 6);
     for (u32 i = 0; i < 4; i++) {
@@ -812,11 +503,11 @@ static void ancient_wall(MeshBuilder *mb, Rng *r)
         mb_cylinder(mb, v3(mast.x + 0.1f, y, mast.z), v3(mast.x + cosf(a) * 2.2f, TH2, mast.z + sinf(a) * 1.2f), 0.02f, 4);
     }
     mb_set(mb, v3(0.9f, 0.12f, 0.06f), MAT_EMISSIVE, BONE_NONE);
-    box(mb, v3(mast.x + 0.15f, TH2 + 16.1f, mast.z), v3(0.25f, 0.25f, 0.25f), 0);
+    prop_box(mb, v3(mast.x + 0.15f, TH2 + 16.1f, mast.z), v3(0.25f, 0.25f, 0.25f), 0);
     // Груда обломков у пролома
     for (u32 i = 0; i < 18; i++) {
         f32 s = rng_range(r, 1.0f, 3.5f);
-        mb_set(mb, tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
+        mb_set(mb, prop_tint(r, PAL_CONCRETE_DARK, 0.1f), MAT_CONCRETE, BONE_NONE);
         mb_box(mb, m4_trs(v3(rng_range(r, 101.0f, 116.0f), rng_range(r, 0.0f, 4.0f), rng_range(r, TZ3 - 9.0f, TZ3 - 1.0f)),
                       v3(s * 1.6f, s, s * 1.2f), rng_range(r, -0.6f, 0.6f), rng_range(r, 0, PI_F), rng_range(r, -0.6f, 0.6f)));
     }
@@ -828,7 +519,7 @@ static void pavement(MeshBuilder *mb, Rng *r)
     for (f32 x = TX0 + 1.5f; x < TX1; x += 3.0f)
         for (f32 z = TZ0 + 1.5f; z < TZ1; z += 3.0f) {
             if (rng_f32(r) < 0.22f) continue;
-            mb_set(mb, tint(r, rng_f32(r) < 0.6f ? PAL_CONCRETE : PAL_CONCRETE_DARK, 0.08f), MAT_CONCRETE, BONE_NONE);
+            mb_set(mb, prop_tint(r, rng_f32(r) < 0.6f ? PAL_CONCRETE : PAL_CONCRETE_DARK, 0.08f), MAT_CONCRETE, BONE_NONE);
             f32 top = rng_range(r, 0.03f, 0.08f);
             mb_box(mb, m4_trs(v3(x + rng_range(r, -0.3f, 0.3f), top - 0.1f, z + rng_range(r, -0.3f, 0.3f)),
                           v3(rng_range(r, 2.2f, 2.9f), 0.2f, rng_range(r, 2.2f, 2.9f)), rng_range(r, -0.015f, 0.015f), rng_range(r, -0.06f, 0.06f),
@@ -839,21 +530,21 @@ static void pavement(MeshBuilder *mb, Rng *r)
 // Ворота с запада: столбы, балка, знак, лампы, лоскуты
 static void gate(MeshBuilder *mb, Rng *r, Town *t, f32 x, f32 z0, f32 z1)
 {
-    mb_set(mb, tint(r, PAL_CONCRETE, 0.08f), MAT_CONCRETE, BONE_NONE);
-    box(mb, v3(x, 2.6f, z0 - 0.5f), v3(1.0f, 5.2f, 1.0f), 0.04f);
-    box(mb, v3(x, 2.4f, z1 + 0.5f), v3(1.0f, 4.8f, 1.0f), -0.03f);
-    mb_set(mb, tint(r, PAL_RUST, 0.1f), MAT_RUST, BONE_NONE);
+    mb_set(mb, prop_tint(r, PAL_CONCRETE, 0.08f), MAT_CONCRETE, BONE_NONE);
+    prop_box(mb, v3(x, 2.6f, z0 - 0.5f), v3(1.0f, 5.2f, 1.0f), 0.04f);
+    prop_box(mb, v3(x, 2.4f, z1 + 0.5f), v3(1.0f, 4.8f, 1.0f), -0.03f);
+    mb_set(mb, prop_tint(r, PAL_RUST, 0.1f), MAT_RUST, BONE_NONE);
     mb_box(mb, m4_trs(v3(x, 4.95f, (z0 + z1) * 0.5f), v3(0.4f, 0.5f, z1 - z0 + 2.4f), 0.02f, 0, 0));
     mb_set(mb, PAL_GLYPH_GREEN, MAT_GLYPH, BONE_NONE);
     mb_quad(mb, v3(x - 0.25f, 4.0f, (z0 + z1) * 0.5f), v3(0, 0, 1.5f), v3(0, 0.45f, 0));
     for (u32 i = 0; i < 6; i++) {
-        mb_set(mb, pick(r, k_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
+        mb_set(mb, prop_pick(r, g_pal_cloth, 7, 0.2f), MAT_CLOTH, BONE_NONE);
         f32 z = lerpf(z0 + 0.3f, z1 - 0.3f, (f32)i / 5.0f) + rng_range(r, -0.2f, 0.2f), h = rng_range(r, 0.4f, 1.1f);
-        box(mb, v3(x, 4.7f - h * 0.5f, z), v3(0.02f, h, rng_range(r, 0.15f, 0.3f)), rng_range(r, -0.2f, 0.2f));
+        prop_box(mb, v3(x, 4.7f - h * 0.5f, z), v3(0.02f, h, rng_range(r, 0.15f, 0.3f)), rng_range(r, -0.2f, 0.2f));
     }
-    mb_set(mb, C_LAMP, MAT_EMISSIVE, BONE_NONE);
-    box(mb, v3(x - 0.55f, 3.6f, z0 - 0.5f), v3(0.12f, 0.2f, 0.2f), 0);
-    box(mb, v3(x - 0.55f, 3.6f, z1 + 0.5f), v3(0.12f, 0.2f, 0.2f), 0);
+    mb_set(mb, PAL_LAMP, MAT_EMISSIVE, BONE_NONE);
+    prop_box(mb, v3(x - 0.55f, 3.6f, z0 - 0.5f), v3(0.12f, 0.2f, 0.2f), 0);
+    prop_box(mb, v3(x - 0.55f, 3.6f, z1 + 0.5f), v3(0.12f, 0.2f, 0.2f), 0);
     add_spot(t, v3(x + 0.6f, TH0, z0 - 1.2f), -PI_F * 0.5f, SPOT_GUARD);
     add_spot(t, v3(x + 0.6f, TH0, z1 + 1.2f), -PI_F * 0.5f, SPOT_GUARD);
 }
@@ -868,12 +559,12 @@ void town_build(MeshBuilder *mb, Rng *r, Town *t)
     // Ограда нижнего яруса, ворота на западе и проход на восток
     f32 mz0 = -10.0f, mz1 = -6.0f;  // главная улица
     gate(mb, r, t, TX0 - 0.4f, mz0, mz1);
-    fence(mb, r, v3(TX0 - 0.6f, 0, TZ0), v3(TX0 - 0.6f, 0, mz0 - 1.0f));
-    fence(mb, r, v3(TX0 - 0.6f, 0, mz1 + 1.0f), v3(TX0 - 0.6f, 0, TZ1));
-    fence(mb, r, v3(TX0, 0, TZ0 - 0.4f), v3(RX0, 0, TZ0 - 0.4f));
-    fence(mb, r, v3(RX1, 0, TZ0 - 0.4f), v3(TX1, 0, TZ0 - 0.4f));
-    fence(mb, r, v3(TX1 + 0.4f, 0, TZ0), v3(TX1 + 0.4f, 0, mz0 - 0.5f));
-    fence(mb, r, v3(TX1 + 0.4f, 0, mz1 + 0.5f), v3(TX1 + 0.4f, 0, TZ1));
+    prop_fence(mb, r, v3(TX0 - 0.6f, 0, TZ0), v3(TX0 - 0.6f, 0, mz0 - 1.0f));
+    prop_fence(mb, r, v3(TX0 - 0.6f, 0, mz1 + 1.0f), v3(TX0 - 0.6f, 0, TZ1));
+    prop_fence(mb, r, v3(TX0, 0, TZ0 - 0.4f), v3(RX0, 0, TZ0 - 0.4f));
+    prop_fence(mb, r, v3(RX1, 0, TZ0 - 0.4f), v3(TX1, 0, TZ0 - 0.4f));
+    prop_fence(mb, r, v3(TX1 + 0.4f, 0, TZ0), v3(TX1 + 0.4f, 0, mz0 - 0.5f));
+    prop_fence(mb, r, v3(TX1 + 0.4f, 0, mz1 + 0.5f), v3(TX1 + 0.4f, 0, TZ1));
 
     // Дома нижнего яруса: северный ряд прислонён к среднему ярусу, южный у ограды
     static const f32 north_x[6] = { 58.7f, 64.3f, 70.3f, 85.6f, 91.4f, 97.1f };
@@ -914,21 +605,21 @@ void town_build(MeshBuilder *mb, Rng *r, Town *t)
     stall(mb, r, t, v3(82.0f, TH2, 19.6f), PI_F, STALL_RELIC);
 
     // Очаг с ковром вместо прилавка, куча лома, где разбирают железо
-    fire_pit(mb, r, v3(68.0f, TH0, -12.6f));
-    rug(mb, r, v3(66.4f, TH0, -12.9f), 0.2f);
+    prop_fire_pit(mb, r, v3(68.0f, TH0, -12.6f));
+    prop_rug(mb, r, v3(66.4f, TH0, -12.9f), 0.2f);
     add_spot(t, v3(67.2f, TH0, -12.0f), 2.4f, SPOT_WORKER);
     add_spot(t, v3(68.8f, TH0, -13.2f), -0.6f, SPOT_WORKER);
-    scrap_heap(mb, r, v3(93.0f, TH0, -13.0f), 1.5f);
-    scrap_heap(mb, r, v3(RX1 + 1.0f, TH0, 2.0f), 1.0f);
+    prop_scrap_heap(mb, r, v3(93.0f, TH0, -13.0f), 1.5f);
+    prop_scrap_heap(mb, r, v3(RX1 + 1.0f, TH0, 2.0f), 1.0f);
     add_spot(t, v3(92.0f, TH0, -11.8f), 2.8f, SPOT_WORKER);
-    rug(mb, r, v3(80.0f, TH1, 15.0f), 0.0f);
-    water_tower(mb, r, v3(60.0f, TH1, 14.4f), 3.0f);
-    scrap_heap(mb, r, v3(72.0f, TH1, 15.0f), 0.9f);
-    crate_stack(mb, r, v3(66.0f, TH1, 15.3f), 0.1f);
-    crate_stack(mb, r, v3(97.0f, TH1, 15.2f), -0.2f);
-    barrel(mb, r, v3(81.5f, TH1, 15.4f), false);
-    barrel(mb, r, v3(82.2f, TH1, 15.5f), true);
-    for (u32 i = 0; i < 5; i++) clutter(mb, r, v3(rng_range(r, 58.0f, 98.0f), TH2, rng_range(r, 19.2f, 20.0f)), rng_range(r, 0, PI_F));
+    prop_rug(mb, r, v3(80.0f, TH1, 15.0f), 0.0f);
+    prop_water_tower(mb, r, v3(60.0f, TH1, 14.4f), 3.0f);
+    prop_scrap_heap(mb, r, v3(72.0f, TH1, 15.0f), 0.9f);
+    prop_crate_stack(mb, r, v3(66.0f, TH1, 15.3f), 0.1f);
+    prop_crate_stack(mb, r, v3(97.0f, TH1, 15.2f), -0.2f);
+    prop_barrel(mb, r, v3(81.5f, TH1, 15.4f), false);
+    prop_barrel(mb, r, v3(82.2f, TH1, 15.5f), true);
+    for (u32 i = 0; i < 5; i++) prop_clutter(mb, r, v3(rng_range(r, 58.0f, 98.0f), TH2, rng_range(r, 19.2f, 20.0f)), rng_range(r, 0, PI_F));
     // Зеваки у перил верхнего яруса смотрят вниз
     add_spot(t, v3(66.0f, TH2, TZ2 + 0.55f), PI_F, SPOT_IDLE);
     add_spot(t, v3(74.5f, TH2, TZ2 + 0.6f), PI_F + 0.3f, SPOT_IDLE);
@@ -939,11 +630,11 @@ void town_build(MeshBuilder *mb, Rng *r, Town *t)
     static const f32 lamp_x[6] = { 57.5f, 68.5f, 81.6f, 87.0f, 93.5f, 99.0f };
     for (u32 i = 0; i < 6; i++) {
         bool south = i & 1;
-        lamp_post(mb, r, v3(lamp_x[i], TH0, south ? mz0 - 0.55f : mz1 + 0.55f), south ? 0.0f : PI_F);
+        prop_lamp_post(mb, r, v3(lamp_x[i], TH0, south ? mz0 - 0.55f : mz1 + 0.55f), south ? 0.0f : PI_F);
     }
-    lamp_post(mb, r, v3(RX0 - 0.6f, TH1, 12.0f), PI_F * 0.5f);
-    lamp_post(mb, r, v3(95.6f, TH2, 16.6f), PI_F);
-    lamp_post(mb, r, v3(76.0f, TH0, -20.5f), 0.5f);
+    prop_lamp_post(mb, r, v3(RX0 - 0.6f, TH1, 12.0f), PI_F * 0.5f);
+    prop_lamp_post(mb, r, v3(95.6f, TH2, 16.6f), PI_F);
+    prop_lamp_post(mb, r, v3(76.0f, TH0, -20.5f), 0.5f);
 
     // Провода над главной улицей от крыши к крыше, тряпки и лампы на них
     for (u32 i = 0; i < 9; i++) {
@@ -953,16 +644,16 @@ void town_build(MeshBuilder *mb, Rng *r, Town *t)
         f32 sag = rng_range(r, 0.3f, 0.8f);
         if (fminf(ya, yb) - sag < 2.6f) sag = fmaxf(0.1f, fminf(ya, yb) - 2.6f);
         if (fminf(ya, yb) < 2.7f) continue;
-        cable(mb, r, v3(xa, ya, -2.5f), v3(xb, yb, -13.7f), sag, rng_below(r, 3));
+        prop_cable(mb, r, v3(xa, ya, -2.5f), v3(xb, yb, -13.7f), sag, rng_below(r, 3));
     }
     // С верхнего яруса вниз, к домам среднего
     for (u32 i = 0; i < 4; i++) {
         f32 x = rng_range(r, 58.0f, 98.0f);
         if (x > SX0 - 1.0f && x < SX2 + 1.0f) continue;
         f32 xb = mid_x[rng_below(r, 6)] + rng_range(r, -1.5f, 1.5f);
-        mb_set(mb, tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
+        mb_set(mb, prop_tint(r, PAL_RUST, 0.2f), MAT_RUST, BONE_NONE);
         mb_cylinder(mb, v3(x, TH2, TZ2 + 0.35f), v3(x, TH2 + 3.2f, TZ2 + 0.35f), 0.05f, 5);
-        cable(mb, r, v3(x, TH2 + 3.1f, TZ2 + 0.35f), v3(xb, TH1 + 2.6f, 8.6f), 0.5f, rng_below(r, 2));
+        prop_cable(mb, r, v3(x, TH2 + 3.1f, TZ2 + 0.35f), v3(xb, TH1 + 2.6f, 8.6f), 0.5f, rng_below(r, 2));
     }
 }
 

@@ -11,8 +11,6 @@ typedef enum TreeKind { TREE_BROAD, TREE_PINE, TREE_BIRCH, TREE_DEAD, TREE_BUSH,
 // Трава и мелкие растения: пучок вокруг (0, 0, 0)
 typedef enum GrassKind { GRASS_MEADOW, GRASS_TALL, GRASS_REEDS, GRASS_FERN, GRASS_FLOWERS, GRASS_KINDS } GrassKind;
 
-// Мелочи на земле
-typedef enum PropKind { PROP_LOG, PROP_STUMP, PROP_PIPE, PROP_PLATE, PROP_GEAR, PROP_SLAB, PROP_KINDS } PropKind;
 
 void flora_tree(MeshBuilder *mb, TreeKind kind, u32 seed, u32 lod);
 #define GRASS_LODS 2
@@ -20,7 +18,6 @@ void flora_tree(MeshBuilder *mb, TreeKind kind, u32 seed, u32 lod);
 void flora_grass(MeshBuilder *mb, GrassKind kind, u32 seed, u32 lod);
 // Валун около единичного радиуса, основание на y = 0
 void flora_rock(MeshBuilder *mb, u32 seed, u32 lod);
-void flora_prop(MeshBuilder *mb, PropKind kind, u32 seed);
 // Неровная сфера из икосаэдра (subdiv 0..2) со своим цветом вершин; для крон, кустов и камней
 void flora_blob(MeshBuilder *mb, V3 c, V3 r, u32 subdiv, f32 jitter, u32 seed);
 

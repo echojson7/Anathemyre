@@ -5,6 +5,7 @@
 
 #include "../render/render.h"
 #include "flora.h"
+#include "props.h"
 
 #define VV_TREE_VARIANTS 6   // разных сеток каждой породы
 #define VV_GRASS_VARIANTS 3

@@ -12,10 +12,11 @@
 | `smooth01(t)` — то же для доли 0..1 | `src/core/math3d.h` | копии в anim.c и player.c |
 | `wrap_angle` — угол в −π..π | `src/core/math3d.h` | копии в player.c, fight_anim.c, arena_view.c |
 | `m4_trs(c, size, rx, ry, rz)` — матрица детали постройки | `src/core/math3d.h` | `xf_box` в testroom.c и arena_view.c, `xf` в town.c, выражение в valley_view.c |
-| `PAL_*` — общие бетон, тёмный бетон, ржавчина, песок, красный и зелёный знак | `src/core/palette.h` | `C_CONCRETE`, `C_CONC`, `C_RUST`, `C_SAND`, `C_GLYPH_*` в testroom.c, arena_view.c, town.c, ostov.c, map.c |
+| `prop_*` — ящики, бочки, мешки, фонари, заборы, кабели, трубы, лом на земле (docs/props.md) | `src/game/props.c` | свои `static` в town.c, `cable` и `pipe` в ostov.c, `flora_prop` в flora.c |
+| `PAL_*` — общие бетон, тёмный бетон, ржавчина, песок, металл, свет ламп, красный и зелёный знак | `src/core/palette.h` | `C_CONCRETE`, `C_CONC`, `C_RUST`, `C_SAND`, `C_GLYPH_*` в testroom.c, arena_view.c, town.c, ostov.c, map.c |
 
 Правила:
-- Новый помощник, нужный двум файлам, — сразу в `core/`, не второй `static`.
+- Новый помощник, нужный двум файлам, — сразу в `core/`, не второй `static`. Новый предмет — в `props.c`, не в файл локации.
 - Свой цвет у постройки — только если он отличается намеренно (выбеленный бетон и своя ржавчина Остова,
   свет ламп Скудели); общий материал берётся из `palette.h`.
 - Хеши с другим перемешиванием (`hash2` в map.c и valley.c, `hash3` в ostov.c и flora.c) пока свои:
