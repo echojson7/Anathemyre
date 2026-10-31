@@ -110,8 +110,8 @@ void town_folk_add(People *p, const Town *t, Rng *r, u32 walkers, u32 variants, 
         u8 weapon = def_weapon(p->variant[i] % 2 ? "sekach" : "ressora");
         sheet_random(c, &sr, name_next(p->variant[i] % BODY_KIND_COUNT == BODY_FEMALE), armed ? 1 : 0, weapon);
         if (!armed) {
-            Item old;
-            sheet_equip(c, SLOT_WEAPON, (Item){ 0 }, &old);
+            ItemStack old;
+            sheet_equip(c, SLOT_WEAPON, (ItemStack){ 0 }, &old);
         }
         c->role = role;
         p->torch[i] = armed || (!p->stand[i] && k % 5 == 0);

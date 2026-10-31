@@ -291,7 +291,7 @@ static void add(ShowHall *s, u8 kind, u8 what, V3 pos, f32 heading, f32 shift)
     *e = (Exhibit){ .kind = kind, .what = what, .pos = pos, .heading = heading, .shift = shift };
     e->body = (u8)(i % BODY_KIND_COUNT);
     u32 cuts = look_cuts(e->body);
-    e->hair = cuts ? (u8)(GEAR_COUNT + (i * 7u + 3u) % cuts) : 0;
+    e->hair = cuts ? (u8)(GEAR_CAP + (i * 7u + 3u) % cuts) : 0;
 }
 
 void showhall_init(ShowHall *s, MeshBuilder *mb, Arena *perm)

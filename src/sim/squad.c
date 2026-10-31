@@ -14,10 +14,10 @@ typedef struct MemberDef {
     const char *weapon;  // имена описаний (data/defs); NULL — конец списка
     const char *armor[4];
     const char *gear[4]; // вещи для слотов лица, ног, рук, спины, пояса
-    struct { u8 kind; const char *id; u8 count; } inv[6];
+    struct { const char *id; u8 count; } inv[6];
 } MemberDef;
 
-#define GOODS(id, n) { IK_GOODS, id, n }
+#define GOODS(id, n) { id, n }
 
 static const MemberDef g_start[] = {
     { "ГОСТОМЫСЛ", 0, 1, Q_SOUND, "ressora", { "rags", "jacket", "pants" }, { "wrap", "boots", "pack" },
@@ -27,7 +27,7 @@ static const MemberDef g_start[] = {
     { "АППИЙ", 2, 0, Q_JUNK, "sekach", { "rags", "pants" }, { "boots" },
       { GOODS("fuel", 1), GOODS("part", 1), GOODS("rusk", 3) } },
     { "КИНСЛАВА", 1, 2, Q_MASTER, "sekach", { "quilt", "plate", "greaves", "pants" }, { "boots", "mitts", "pack" },
-      { GOODS("water", 1), GOODS("bandage", 6), GOODS("meat", 5), { IK_WEAPON, "ressora", 1 } } },
+      { GOODS("water", 1), GOODS("bandage", 6), GOODS("meat", 5), GOODS("ressora", 1) } },
 };
 
 static void member_init(CharSheet *c, const MemberDef *m, u8 weapon, Rng *rng)
@@ -40,19 +40,19 @@ static void member_init(CharSheet *c, const MemberDef *m, u8 weapon, Rng *rng)
     c->d.blood = 100.0f * c->d.mass / 75.0f;
     c->d.skill[SK_WEAPON + g_weapons[weapon].wclass] = fminf(100.0f, c->d.skill[SK_ATTACK] + 5.0f);
 
-    Item old;
-    sheet_equip(c, SLOT_WEAPON, item_make(IK_WEAPON, weapon, m->weapon_q, 1), &old);
+    ItemStack old;
+    sheet_equip(c, SLOT_WEAPON, item_of_weapon(weapon, m->weapon_q), &old);
     for (u32 k = 0; k < 4 && m->armor[k]; k++) {
-        Item it = item_make(IK_ARMOR, def_armor(m->armor[k]), Q_WORN, 1);
+        ItemStack it = item_of_armor(def_armor(m->armor[k]), Q_WORN);
         sheet_equip(c, item_slot(it), it, &old);
     }
     for (u32 k = 0; k < 4 && m->gear[k]; k++) {
-        Item it = item_make(IK_GOODS, def_goods(m->gear[k]), Q_WORN, 1);
+        ItemStack it = item_make(def_item(m->gear[k]), Q_WORN, 1);
         sheet_equip(c, item_slot(it), it, &old);
     }
-    for (u32 k = 0; k < 6 && m->inv[k].kind; k++) {
-        u8 id = m->inv[k].kind == IK_WEAPON ? def_weapon(m->inv[k].id) : def_goods(m->inv[k].id);
-        inv_add(&c->inv, item_make(m->inv[k].kind, id, m->inv[k].kind == IK_WEAPON ? Q_WORN : Q_SOUND, m->inv[k].count));
+    for (u32 k = 0; k < 6 && m->inv[k].id; k++) {
+        u16 id = def_item(m->inv[k].id);
+        inv_add(&c->inv, item_make(id, g_items[id].weapon != COMP_NONE ? Q_WORN : Q_SOUND, m->inv[k].count));
     }
 }
 

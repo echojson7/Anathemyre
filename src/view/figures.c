@@ -1,5 +1,7 @@
 #include "figures.h"
 #include "../content/weapon.h"
+#include "../defs/defs.h"
+#include "lights.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +15,12 @@
 static const f32 g_char_lod_px[CHAR_LODS - 1] = { 420.0f, 200.0f, 70.0f, 30.0f };
 
 // Сетка и её грубые уровни из data/meshes/<stem>{,_lod1.._lod4}.mesh; пороги g_char_lod_px × scale
+// Место в ряду сеток тела занято: вещь из описаний или причёска этого тела
+static bool gear_slot_used(u32 body, u32 g)
+{
+    return g < GEAR_CAP ? g < g_gear_count : g_hair_file[body][g - GEAR_CAP] != NULL;
+}
+
 static bool load_lods(GpuMesh *full, GpuMesh *lods, MeshBuilder *mb, Arena *perm, const char *data_dir, const char *stem, f32 scale)
 {
     size_t mark = perm->used;
@@ -68,10 +76,10 @@ bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const
     size_t mark = perm->used;
     for (u32 k = 0; k < BODY_KIND_COUNT; k++)
         for (u32 g = 0; g < GEAR_ROW; g++) {
-            if (g >= GEAR_COUNT && !g_hair_file[k][g - GEAR_COUNT]) continue;
+            if (!gear_slot_used(k, g)) continue;
             char stem[96];
-            if (g < GEAR_COUNT) snprintf(stem, sizeof stem, "gear/%s_%s", g_body_file[k], g_gear_file[g]);
-            else snprintf(stem, sizeof stem, "hair/%s_%s", g_body_file[k], g_hair_file[k][g - GEAR_COUNT]);
+            if (g < GEAR_CAP) snprintf(stem, sizeof stem, "gear/%s_%s", g_body_file[k], g_gear_file[g]);
+            else snprintf(stem, sizeof stem, "hair/%s_%s", g_body_file[k], g_hair_file[k][g - GEAR_CAP]);
             if (!load_lods(&m->gear[k * GEAR_ROW + g], &m->gear_lod[(k * GEAR_ROW + g) * (CHAR_LODS - 1)], mb, perm,
                            data_dir, stem, 0.0f))
                 return false;
@@ -80,7 +88,7 @@ bool figures_init(Figures *f, CharMeshes *m, MeshBuilder *mb, Arena *perm, const
         if (!load_lods(&m->body[k], m->body_lod[k], mb, perm, data_dir, g_body_file[k], 1.0f)) return false;
         // Вещь переключает LOD на той же дальности, что и тело: порог по отношению сфер
         for (u32 g = 0; g < GEAR_ROW; g++) {
-            if (g >= GEAR_COUNT && !g_hair_file[k][g - GEAR_COUNT]) continue;
+            if (!gear_slot_used(k, g)) continue;
             GpuMesh *gm = &m->gear[k * GEAR_ROW + g], *gl = &m->gear_lod[(k * GEAR_ROW + g) * (CHAR_LODS - 1)];
             f32 ratio = gm->bound.w / m->body[k].bound.w;
             for (u32 l = 0; l + 1 < CHAR_LODS; l++) (l ? &gl[l - 1] : gm)->lod_px = g_char_lod_px[l] * ratio;
@@ -159,19 +167,6 @@ static f32 torch_lit(bool has, f32 seed, f32 night)
     f32 th = 0.22f + 0.3f * (seed * 0.618034f - floorf(seed * 0.618034f));
     f32 t = clampf((night - th) / 0.1f, 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);
-}
-
-// Свет факела по костям b: пламя пляшет, яркость дрожит от двух частот и случайных провалов
-static void torch_light(const M4 *b, f32 lit, f32 seed, f32 time, PointLight *l)
-{
-    f32 fl = 0.80f + 0.10f * sinf(time * 17.0f + seed) + 0.07f * sinf(time * 29.3f + seed * 3.1f) +
-             0.05f * sinf(time * 47.0f + seed * 7.7f);
-    l->pos = torch_flame_pos(b);
-    l->radius = 8.0f;
-    l->color = v3_mul(v3(1.0f, 0.50f, 0.18f), 2.6f * lit * fl);
-    l->cone = -1.0f;
-    l->dir = v3(0, -1, 0);
-    l->glow = 0.0025f;
 }
 
 // Вещи поверх тела: те же кости, что у тела
@@ -278,8 +273,8 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
         // Свет факела достаёт дальше тела: с горящим факелом проверяем шире
         if (!pose_cull(&pc, b->pos, lit > 0.0f ? 8.0f : 2.5f, fight, &f->age[i], &pose)) continue;
         // Выроненное в бою лежит вещью на земле: его рисует физика
-        bool armed = cs->equip[SLOT_WEAPON].kind == IK_WEAPON && !(fight && fd->w.gitem[b->slot] != COMBAT_IN_HAND);
-        u8 wid = cs->equip[SLOT_WEAPON].id;
+        bool armed = item_weapon(cs->equip[SLOT_WEAPON]) != COMP_NONE && !(fight && fd->w.gitem[b->slot] != COMBAT_IN_HAND);
+        u8 wid = item_weapon(cs->equip[SLOT_WEAPON]);
         u32 kind = p->variant[i];
         M4 *bones = &f->bones[(size_t)i * RENDER_MAX_BONES];
         if (pose) {
@@ -312,11 +307,12 @@ u32 figures_draw(Figures *f, const CharMeshes *m, const People *p, const Field *
     if (s) n += arena_figures(f, m, av, s, v->time, items + n);
     prof_zone(PZ_POSES);
     jobs_for(f->jobs, POSE_GRAIN, pose_job, f->job);
-    // Свет факелов — по готовым костям, в том же порядке, что и люди
-    for (u32 i = 0; lit_any && i < p->count && *nl < TORCH_LIGHTS_MAX; i++) {
+    // Свет факелов — компонент light вещи torch, по готовым костям, в том же порядке, что и люди
+    u8 tl = g_items[def_item("torch")].light;
+    for (u32 i = 0; lit_any && tl != COMP_NONE && i < p->count && *nl < TORCH_LIGHTS_MAX; i++) {
         f32 lit = torch_lit(p->torch[i], p->seed[i], v->night);
         if (lit < 0.05f || f->age[i] < 0.0f) continue;
-        torch_light(&f->bones[(size_t)i * RENDER_MAX_BONES], lit, p->seed[i], v->time, &lights[(*nl)++]);
+        lights[(*nl)++] = lights_item(&g_lights[tl], torch_flame_pos(&f->bones[(size_t)i * RENDER_MAX_BONES]), lit, p->seed[i], v->time);
     }
     return n;
 }
@@ -401,9 +397,10 @@ void figures_portrait(Figures *f, const FrameView *base, const CharMeshes *m, co
                       bool focus)
 {
     const CharSheet *cs = &p->sheet[i];
-    const GpuMesh *wm = cs->equip[SLOT_WEAPON].kind == IK_WEAPON ? &m->weapon[weapon_mesh(cs->equip[SLOT_WEAPON].id, cs->equip[SLOT_WEAPON].quality)] : NULL;
+    u8 wid = item_weapon(cs->equip[SLOT_WEAPON]);
+    const GpuMesh *wm = wid != COMP_NONE ? &m->weapon[weapon_mesh(wid, cs->equip[SLOT_WEAPON].quality)] : NULL;
     u32 kind = p->variant[i];
-    portrait(base, slot, size, kind, &m->body[kind], wm, cs->equip[SLOT_WEAPON].id, p->seed[i], p->height[i], p->width[i],
+    portrait(base, slot, size, kind, &m->body[kind], wm, wid == COMP_NONE ? 0 : wid, p->seed[i], p->height[i], p->width[i],
              p->look[i], m->gear + kind * GEAR_ROW, p->gear[i], p->ngear[i], f->portrait + (focus ? RENDER_MAX_BONES : 0));
 }
 

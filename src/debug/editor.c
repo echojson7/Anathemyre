@@ -130,7 +130,7 @@ static void widgets(Editor *e, World *w, u32 i)
         changed = true;
     }
     bool bucket = false;
-    for (u32 g = 0; g < p->ngear[i]; g++) bucket |= p->gear[i][g] == GEAR_BUCKET;
+    for (u32 g = 0; g < p->ngear[i]; g++) bucket |= p->gear[i][g] < GEAR_CAP && (g_gear_hides[p->gear[i][g]] & GEAR_HIDES_HAIR);
     if (bucket) hud_form_text(f, "ПОД КОЖУХОМ НЕ ВИДНО", "");
 
     f->row += 4;

@@ -1,8 +1,5 @@
 #include "inventory.h"
 
-const GoodsDef *g_goods;
-u32             g_goods_count;
-
 const char *g_skill_name[SK_COUNT] = {
     [SK_ATTACK] = "АТАКА", [SK_DEFENSE] = "ЗАЩИТА", [SK_DODGE] = "УВОРОТ",
     [SK_STRENGTH] = "СИЛА", [SK_DEXTERITY] = "ЛОВКОСТЬ", [SK_TOUGHNESS] = "СТОЙКОСТЬ", [SK_ATHLETICS] = "АТЛЕТИКА",
@@ -24,44 +21,10 @@ const char *g_state_name[FS_COUNT] = {
     [FS_PICKUP] = "ПОДНИМАЕТ",
 };
 
-const char *item_name(Item it)
+u8 item_slot(ItemStack it)
 {
-    switch (it.kind) {
-    case IK_WEAPON: return g_weapons[it.id].name;
-    case IK_ARMOR: return g_armors[it.id].name;
-    case IK_GOODS: return g_goods[it.id].name;
-    default: return "";
-    }
-}
-
-void item_size(Item it, u8 *w, u8 *h)
-{
-    // Оружие стоймя, длина по высоте
-    switch (it.kind) {
-    case IK_WEAPON: *w = g_weapons[it.id].size_w, *h = g_weapons[it.id].size_h; break;
-    case IK_ARMOR: *w = g_armors[it.id].size_w, *h = g_armors[it.id].size_h; break;
-    default: *w = g_goods[it.id].w, *h = g_goods[it.id].h; break;
-    }
-}
-
-f32 item_weight(Item it)
-{
-    switch (it.kind) {
-    case IK_WEAPON: return g_weapons[it.id].weight;
-    case IK_ARMOR: return g_armors[it.id].weight;
-    case IK_GOODS: return g_goods[it.id].weight * (f32)it.count;
-    default: return 0.0f;
-    }
-}
-
-u8 item_slot(Item it)
-{
-    switch (it.kind) {
-    case IK_WEAPON: return SLOT_WEAPON;
-    case IK_ARMOR: return g_armors[it.id].slot;
-    case IK_GOODS: return g_goods[it.id].slot;
-    default: return SLOT_NONE;
-    }
+    const ItemDef *d = item_def(it);
+    return d->weapon != COMP_NONE ? SLOT_WEAPON : d->slot;
 }
 
 i32 inv_at(const Inventory *inv, i32 x, i32 y)
@@ -74,7 +37,7 @@ i32 inv_at(const Inventory *inv, i32 x, i32 y)
     return -1;
 }
 
-bool inv_fits(const Inventory *inv, Item it, i32 x, i32 y)
+bool inv_fits(const Inventory *inv, ItemStack it, i32 x, i32 y)
 {
     u8 w, h;
     item_size(it, &w, &h);
@@ -85,7 +48,7 @@ bool inv_fits(const Inventory *inv, Item it, i32 x, i32 y)
     return true;
 }
 
-bool inv_put(Inventory *inv, Item it, i32 x, i32 y)
+bool inv_put(Inventory *inv, ItemStack it, i32 x, i32 y)
 {
     if (!inv_fits(inv, it, x, y)) return false;
     inv->item[inv->n] = it;
@@ -95,13 +58,14 @@ bool inv_put(Inventory *inv, Item it, i32 x, i32 y)
     return true;
 }
 
-bool inv_add(Inventory *inv, Item it)
+bool inv_add(Inventory *inv, ItemStack it)
 {
-    if (it.kind == IK_GOODS) {
+    u8 stack = item_def(it)->stack;
+    if (stack > 1) {
         for (u32 i = 0; i < inv->n && it.count; i++) {
-            Item *s = &inv->item[i];
-            if (s->kind != IK_GOODS || s->id != it.id) continue;
-            u8 room = (u8)(g_goods[it.id].stack - MIN(s->count, g_goods[it.id].stack));
+            ItemStack *s = &inv->item[i];
+            if (s->def != it.def || s->mat != it.mat || s->quality != it.quality) continue;
+            u8 room = (u8)(stack - MIN(s->count, stack));
             u8 k = MIN(room, it.count);
             s->count += k;
             it.count -= k;
@@ -114,9 +78,9 @@ bool inv_add(Inventory *inv, Item it)
     return false;
 }
 
-Item inv_take(Inventory *inv, i32 index)
+ItemStack inv_take(Inventory *inv, i32 index)
 {
-    Item it = inv->item[index];
+    ItemStack it = inv->item[index];
     inv->n--;
     inv->item[index] = inv->item[inv->n];
     inv->x[index] = inv->x[inv->n];
@@ -131,19 +95,19 @@ f32 inv_weight(const Inventory *inv)
     return w;
 }
 
-bool sheet_equip(CharSheet *c, u8 slot, Item it, Item *old)
+bool sheet_equip(CharSheet *c, u8 slot, ItemStack it, ItemStack *old)
 {
-    if (slot > SLOT_WEAPON || (it.kind != IK_NONE && item_slot(it) != slot)) return false;
+    if (slot > SLOT_WEAPON || (item_live(it) && item_slot(it) != slot)) return false;
     *old = c->equip[slot];
     c->equip[slot] = it;
     // Бой видит только своё: броню по слотам и оружие
     if (slot == SLOT_WEAPON) {
-        if (it.kind == IK_WEAPON) {
-            c->d.weapon = it.id;
+        if (item_weapon(it) != COMP_NONE) {
+            c->d.weapon = item_weapon(it);
             c->d.weapon_q = it.quality;
         }
     } else {
-        c->d.armor[slot] = it.kind == IK_ARMOR ? it.id : ARMOR_NONE;
+        c->d.armor[slot] = item_armor(it) == COMP_NONE ? ARMOR_NONE : item_armor(it);
     }
     return true;
 }
@@ -159,6 +123,6 @@ f32 sheet_carry_max(const CharSheet *c)
 {
     f32 m = 20.0f + 0.6f * c->d.skill[SK_STRENGTH];
     for (u32 s = 0; s < SLOT_COUNT; s++)
-        if (c->equip[s].kind == IK_GOODS) m += g_goods[c->equip[s].id].carry;
+        m += item_def(c->equip[s])->carry;
     return m;
 }

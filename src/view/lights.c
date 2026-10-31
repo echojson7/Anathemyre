@@ -31,3 +31,12 @@ u32 lights_collect(const Objects *o, V3 eye, f32 night, f32 time, PointLight *ou
     }
     return n;
 }
+
+PointLight lights_item(const LightDef *d, V3 pos, f32 lit, f32 seed, f32 time)
+{
+    // Пламя: две частоты и третья мелкая дрожь, у каждого огня свой сдвиг
+    f32 fl = 0.80f + 0.10f * sinf(time * 17.0f + seed) + 0.07f * sinf(time * 29.3f + seed * 3.1f) +
+             0.05f * sinf(time * 47.0f + seed * 7.7f);
+    return (PointLight){ .pos = pos, .radius = d->radius, .color = v3_mul(d->color, d->power * lit * fl), .cone = -1.0f,
+                         .dir = v3(0, -1, 0), .glow = 0.0025f };
+}

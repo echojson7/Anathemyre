@@ -1,82 +1,93 @@
-# Одежда и броня. Ключи и слова — docs/content.md
+# Одежда и броня. Ключи и слова — docs/content.md и docs/items.md
 #
-# slot: куда надевается. cover: часть тела и доля, которую закрывает (не названные — 0).
-# resist: сопротивление режущему, дробящему, колющему. weight: кг. dodge_penalty: насколько мешает уворачиваться.
-# size: клетки инвентаря. look: сетка на теле (data/meshes/gear). hides: какие сетки под ней не рисуются (hair — причёска).
-# metal: удар по ней звенит железом
+# weight: кг. size: клетки инвентаря. look: сетка на теле (data/meshes/gear). hides: какие сетки под ней не рисуются
+# (hair — причёска). made_of: материал — удар по железному звенит. wear: куда надевается.
+# armor: cover — часть тела и доля, которую закрывает (не названные — 0); resist — сопротивление режущему, дробящему,
+# колющему; dodge_penalty — насколько мешает уворачиваться.
 
-armor rags
+item rags
     name "РОБА"
-    slot shirt
-    cover chest 0.8 stomach 0.8 arm_l 0.8 arm_r 0.8
-    resist 0.10 0.05 0.05
     weight 1
-    dodge_penalty 0
     size 2 2
     look rags
+    made_of cloth
+    wear shirt
+    armor
+        cover chest 0.8 stomach 0.8 arm_l 0.8 arm_r 0.8
+        resist 0.10 0.05 0.05
+        dodge_penalty 0
 
-armor jacket
+item jacket
     name "РЕЗИНОВАЯ КУРТКА"
-    slot armor
-    cover chest 0.85 stomach 0.85 arm_l 0.85 arm_r 0.85
-    resist 0.25 0.15 0.20
     weight 4
-    dodge_penalty 0.05
     size 2 3
     look jacket
+    made_of leather
+    wear armor
+    armor
+        cover chest 0.85 stomach 0.85 arm_l 0.85 arm_r 0.85
+        resist 0.25 0.15 0.20
+        dodge_penalty 0.05
 
-armor quilt
+item quilt
     name "КОМБИНЕЗОН"
-    slot shirt
-    cover chest 0.9 stomach 0.9
-    resist 0.15 0.25 0.10
     weight 3
-    dodge_penalty 0.03
     size 2 2
     look quilt
     # Штанина комбинезона закрывает штаны
     hides pants
+    made_of cloth
+    wear shirt
+    armor
+        cover chest 0.9 stomach 0.9
+        resist 0.15 0.25 0.10
+        dodge_penalty 0.03
 
-armor plate
+item plate
     name "ОБШИВКА"
-    slot armor
-    cover chest 0.75 stomach 0.4
-    resist 0.55 0.20 0.35
     weight 9
-    dodge_penalty 0.15
     size 2 3
     look plate
-    metal
+    made_of iron
+    wear armor
+    armor
+        cover chest 0.75 stomach 0.4
+        resist 0.55 0.20 0.35
+        dodge_penalty 0.15
 
-armor bucket
+item bucket
     name "КОЖУХ"
-    slot head
-    cover head 0.9
-    resist 0.60 0.25 0.50
     weight 3
-    dodge_penalty 0.05
     size 2 2
     look bucket
     hides hair
-    metal
+    made_of iron
+    wear head
+    armor
+        cover head 0.9
+        resist 0.60 0.25 0.50
+        dodge_penalty 0.05
 
-armor greaves
+item greaves
     name "ТРУБНЫЕ ПОНОЖИ"
-    slot legs
-    cover leg_l 0.7 leg_r 0.7
-    resist 0.30 0.20 0.25
     weight 4
-    dodge_penalty 0.08
     size 2 2
     look greaves
-    metal
+    made_of iron
+    wear legs
+    armor
+        cover leg_l 0.7 leg_r 0.7
+        resist 0.30 0.20 0.25
+        dodge_penalty 0.08
 
-armor pants
+item pants
     name "РАБОЧИЕ ШТАНЫ"
-    slot pants
-    cover leg_l 0.8 leg_r 0.8
-    resist 0.10 0.05 0.05
     weight 1
-    dodge_penalty 0
     size 2 2
     look pants
+    made_of cloth
+    wear pants
+    armor
+        cover leg_l 0.8 leg_r 0.8
+        resist 0.10 0.05 0.05
+        dodge_penalty 0
