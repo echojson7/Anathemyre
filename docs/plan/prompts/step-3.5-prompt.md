@@ -1,6 +1,6 @@
 # Шаг 3.5: толкание капсулами
 
-Сначала прочитай `common.md`. Шаг идёт после 3.4. Память: anathemyre-physical-combat, anathemyre-physics, anathemyre-movement, anathemyre-persons.
+Сначала прочитай `common.md`. Шаг идёт после 3.4. Память: anathemyre-combat, anathemyre-plan.
 
 ## Решения пользователя
 - Толкание — **капсулами**: стоящий человек — одна капсула, лежащий — ragdoll (11 капсул, шаг 3.1). 31.10, 11:21.

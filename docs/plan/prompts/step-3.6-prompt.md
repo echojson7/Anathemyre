@@ -1,6 +1,6 @@
 # Шаг 3.6: перенос тел
 
-Сначала прочитай `common.md`. Шаг можно вести параллельно с 3.3–3.5 после влития 3.2. Память: anathemyre-physics, anathemyre-items, anathemyre-persons, anathemyre-body-def.
+Сначала прочитай `common.md`. Шаг можно вести параллельно с 3.3–3.5 после влития 3.2. Память: anathemyre-combat, anathemyre-world, anathemyre-plan, anathemyre-body-anim.
 
 ## Решения (план физики, одобрен 30.10 и 31.10)
 - Перенос как в Kenshi: тело (убитое или без сознания) берут на плечо и несут; можно положить на землю, в постель, в контейнер-клетку позже.
