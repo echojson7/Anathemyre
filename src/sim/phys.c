@@ -17,6 +17,8 @@
 #define PAIR_PUSH    0.01f   // вещи расходятся за подшаг не больше, м (3.6 м/с)
 #define AIR_DAMP     0.5f    // гашение вращения в воздухе, 1/с
 #define ROLL_DAMP    6.0f    // на земле
+#define JOINT_ITERS  2       // проходов по суставам за подшаг: цепь из четырёх тел не провисает
+#define JOINT_DAMP   3.0f    // трение в суставах, 1/с: мёртвое тело не болтается, как на верёвках
 
 // ---------------------------------------------------------------- кватернионы xyzw
 
@@ -34,6 +36,8 @@ static V4 qnorm(V4 q)
     f32 k = l > 1e-12f ? 1.0f / l : 0.0f;
     return l > 1e-12f ? (V4){ q.x * k, q.y * k, q.z * k, q.w * k } : (V4){ 0, 0, 0, 1 };
 }
+
+static V4 qconj(V4 q) { return (V4){ -q.x, -q.y, -q.z, q.w }; }
 
 static V3 qrot(V4 q, V3 v)
 {
@@ -72,6 +76,20 @@ static V4 q_from_m4(M4 m)
     return qnorm(q);
 }
 
+V4 phys_quat(M4 m) { return q_from_m4(m); }
+
+// atan2 многочленом, без libm (шаг детерминирован на любой машине): ошибка ~1e-5 рад
+static f32 fatan2(f32 y, f32 x)
+{
+    f32 ax = fabsf(x), ay = fabsf(y), mx = fmaxf(ax, ay), mn = fminf(ax, ay);
+    if (mx < 1e-20f) return 0.0f;
+    f32 a = mn / mx, s = a * a;
+    f32 r = ((-0.0464964749f * s + 0.15931422f) * s - 0.327622764f) * s * a + a;
+    if (ay > ax) r = 1.57079637f - r;
+    if (x < 0.0f) r = 3.14159274f - r;
+    return y < 0.0f ? -r : r;
+}
+
 static M4 m4_from_q(V4 q, V3 t)
 {
     V3 a = qrot(q, v3(1, 0, 0)), b = qrot(q, v3(0, 1, 0)), c = qrot(q, v3(0, 0, 1));
@@ -106,6 +124,15 @@ void phys_init(Phys *p, Arena *perm)
     p->wake = ARENA_PUSH_ARRAY(perm, u8, n);
     p->touch = ARENA_PUSH_ARRAY(perm, u8, n);
     p->user = ARENA_PUSH_ARRAY(perm, u16, n);
+    p->group = ARENA_PUSH_ARRAY(perm, u16, n);
+    p->ja = ARENA_PUSH_ARRAY(perm, u16, PHYS_JOINTS);
+    p->jb = ARENA_PUSH_ARRAY(perm, u16, PHYS_JOINTS);
+    p->jkind = ARENA_PUSH_ARRAY(perm, u8, PHYS_JOINTS);
+    p->jra = ARENA_PUSH_ARRAY(perm, V3, PHYS_JOINTS);
+    p->jrb = ARENA_PUSH_ARRAY(perm, V3, PHYS_JOINTS);
+    p->jqa = ARENA_PUSH_ARRAY(perm, V4, PHYS_JOINTS);
+    p->jqb = ARENA_PUSH_ARRAY(perm, V4, PHYS_JOINTS);
+    p->jlim = ARENA_PUSH_ARRAY(perm, V4, PHYS_JOINTS);
     p->zone_ix = ARENA_PUSH_ARRAY(perm, u32, n);
     p->zone_x = ARENA_PUSH_ARRAY(perm, f32, n);
     p->zone_z = ARENA_PUSH_ARRAY(perm, f32, n);
@@ -118,12 +145,13 @@ void phys_init(Phys *p, Arena *perm)
 static u32 shape_spheres(const PhysDesc *d, V4 *out)
 {
     u32 n = 0;
+    f32 gap = d->gap > 0.0f ? d->gap : 1.5f;
     for (u32 k = 0; k < d->parts && n < PHYS_SPHERES; k++) {
         const PhysPart *pt = &d->part[k];
         u32 left = PHYS_SPHERES - n - (d->parts - 1 - k);  // хотя бы по шару на оставшиеся части
         if (pt->kind == PP_CAPSULE) {
             f32 len = v3_len(v3_sub(pt->b, pt->a));
-            u32 m = (u32)(len / (pt->r * 1.5f)) + 2;
+            u32 m = (u32)(len / (pt->r * gap)) + 2;
             if (len < 1e-4f) m = 1;
             if (m > left) m = left;
             for (u32 i = 0; i < m; i++) {
@@ -193,6 +221,7 @@ i32 phys_spawn(Phys *p, const PhysDesc *d, M4 xf, V3 vel, V3 angvel, u8 mode, u1
     p->bounce[h] = d->bounce;
     p->mode[h] = mode;
     p->user[h] = user;
+    p->group[h] = 0;
     p->sleep_t[h] = p->out_t[h] = 0.0f;
     p->wake[h] = 0;
     // Новое тело ждёт зону: застывшим; если оно уже в зоне, первый же шаг решит, что с ним
@@ -206,8 +235,37 @@ i32 phys_spawn(Phys *p, const PhysDesc *d, M4 xf, V3 vel, V3 angvel, u8 mode, u1
 void phys_free(Phys *p, u32 h)
 {
     if (h >= p->count) return;
+    // Суставы с ним уходят вместе с телом
+    for (u32 j = 0; j < p->jcount; j++)
+        if (p->jkind[j] != PJ_FREE && (p->ja[j] == h || p->jb[j] == h)) p->jkind[j] = PJ_FREE;
+    while (p->jcount && p->jkind[p->jcount - 1] == PJ_FREE) p->jcount--;
+    p->group[h] = 0;
     p->state[h] = PS_FREE;
     while (p->count && p->state[p->count - 1] == PS_FREE) p->count--;
+}
+
+i32 phys_joint(Phys *p, const PhysJointDesc *d)
+{
+    u32 j = 0;
+    while (j < p->jcount && p->jkind[j] != PJ_FREE) j++;
+    if (j == PHYS_JOINTS || d->a >= p->count || d->b >= p->count) return -1;
+    if (j == p->jcount) p->jcount++;
+    p->ja[j] = (u16)d->a;
+    p->jb[j] = (u16)d->b;
+    p->jkind[j] = d->kind;
+    p->jra[j] = qrot(qconj(p->q[d->a]), v3_sub(d->at, p->x[d->a]));
+    p->jrb[j] = qrot(qconj(p->q[d->b]), v3_sub(d->at, p->x[d->b]));
+    p->jqa[j] = qnorm(d->fa);
+    p->jqb[j] = qnorm(d->fb);
+    p->jlim[j] = (V4){ d->lo, d->hi, d->cone, 0.0f };
+    return (i32)j;
+}
+
+void phys_joint_free(Phys *p, u32 j)
+{
+    if (j >= p->jcount) return;
+    p->jkind[j] = PJ_FREE;
+    while (p->jcount && p->jkind[p->jcount - 1] == PJ_FREE) p->jcount--;
 }
 
 M4 phys_pose(const Phys *p, u32 h, f32 alpha)
@@ -364,6 +422,7 @@ static void find_pairs(Phys *p, f32 dt)
         for (u32 q = 0; q < nn; q++) {
             u32 b = p->zone_ix[near[q]];
             if (b == a || (p->state[b] == PS_ACTIVE && b < a)) continue;
+            if (p->group[a] && p->group[a] == p->group[b]) continue;  // части одного тела держат суставы
             V3 d = v3_sub(p->x[a], p->x[b]);
             f32 r = p->bound[a] + p->bound[b] + v3_len(p->v[a]) * dt + v3_len(p->v[b]) * dt;
             if (v3_dot(d, d) >= r * r) continue;
@@ -487,6 +546,91 @@ static void turn_spheres(const Phys *p, u32 h, V3 *wr)
     for (u32 i = 0; i < p->ns[h]; i++) wr[(size_t)h * PHYS_SPHERES + i] = qrot(p->q[h], v3(s[i].x, s[i].y, s[i].z));
 }
 
+// ---------------------------------------------------------------- суставы
+
+// Обобщённая обратная инерция тела по оси n (мир); застывшее и спящее — стена
+static f32 ang_w(const Phys *p, u32 h, V3 n)
+{
+    if (p->inv_m[h] == 0.0f || p->state[h] != PS_ACTIVE) return 0.0f;
+    return v3_dot(n, iw_mul(h, n));
+}
+
+// Повернуть b относительно a на угол th вокруг оси n (мир), поделив по инерции
+static void rel_turn(Phys *p, u32 a, u32 b, V3 n, f32 th)
+{
+    f32 wa = ang_w(p, a, n), wb = ang_w(p, b, n);
+    if (wa + wb <= 0.0f) return;
+    V3 j = v3_mul(n, th / (wa + wb));
+    if (wb > 0.0f) p->q[b] = qturn(p->q[b], iw_mul(b, j));
+    if (wa > 0.0f) p->q[a] = qturn(p->q[a], iw_mul(a, v3_mul(j, -1.0f)));
+}
+
+static f32 wrap_pi(f32 a) { return a > 3.14159274f ? a - 6.28318548f : a < -3.14159274f ? a + 6.28318548f : a; }
+
+// Сустав за проход подшага: сначала пределы поворота, потом общая точка (Müller и др., «Detailed Rigid Body
+// Simulation with Extended Position Based Dynamics», 2020). Поворот b относительно a: R = (qa·fa)⁻¹·(qb·fb)
+static void joint_solve(Phys *p, u32 j)
+{
+    u32 a = p->ja[j], b = p->jb[j];
+    if (p->state[a] != PS_ACTIVE && p->state[b] != PS_ACTIVE) return;
+    V4 lim = p->jlim[j];
+    V4 fa = qmul(p->q[a], p->jqa[j]), fb = qmul(p->q[b], p->jqb[j]);
+    if (p->jkind[j] == PJ_HINGE) {
+        // Оси петли совпадают
+        V3 za = qrot(fa, v3(0, 0, 1)), zb = qrot(fb, v3(0, 0, 1)), c = v3_cross(zb, za);
+        f32 s = v3_len(c);
+        if (s > 1e-6f) {
+            rel_turn(p, a, b, v3_mul(c, 1.0f / s), fatan2(s, v3_dot(za, zb)));
+            fa = qmul(p->q[a], p->jqa[j]);
+            fb = qmul(p->q[b], p->jqb[j]);
+        }
+        V4 r = qmul(qconj(fa), fb);
+        f32 phi = wrap_pi(2.0f * fatan2(r.z, r.w)), want = clampf(phi, lim.x, lim.y);
+        if (want != phi) rel_turn(p, a, b, qrot(fa, v3(0, 0, 1)), want - phi);
+    } else {
+        // Разложение на отклонение (swing) и кручение вокруг X (twist): R = swing·twist
+        V4 r = qmul(qconj(fa), fb);
+        if (r.w < 0.0f) r = (V4){ -r.x, -r.y, -r.z, -r.w };
+        f32 tl = sqrtf(r.x * r.x + r.w * r.w);
+        V4 tw = tl > 1e-6f ? (V4){ r.x / tl, 0, 0, r.w / tl } : (V4){ 0, 0, 0, 1 };
+        V4 sw = qmul(r, qconj(tw));  // sw.w = tl >= 0
+        V3 sv = qv(sw);
+        f32 sl = v3_len(sv), s = 2.0f * fatan2(sl, sw.w);
+        if (s > lim.z && sl > 1e-6f) {
+            rel_turn(p, a, b, qrot(fa, v3_mul(sv, 1.0f / sl)), lim.z - s);
+            fb = qmul(p->q[b], p->jqb[j]);
+        }
+        f32 t = 2.0f * fatan2(tw.x, tw.w), want = clampf(t, lim.x, lim.y);
+        if (want != t) rel_turn(p, a, b, qrot(fb, v3(1, 0, 0)), want - t);
+    }
+    // Общая точка
+    V3 ra = qrot(p->q[a], p->jra[j]), rb = qrot(p->q[b], p->jrb[j]);
+    V3 d = v3_sub(v3_add(p->x[b], rb), v3_add(p->x[a], ra));
+    f32 c = v3_len(d);
+    if (c < 1e-7f) return;
+    V3 n = v3_mul(d, 1.0f / c);
+    f32 wa = gen_w(p, a, ra, n), wb = gen_w(p, b, rb, n);
+    if (wa + wb <= 0.0f) return;
+    f32 lam = c / (wa + wb);
+    push(p, a, ra, v3_mul(n, lam));
+    push(p, b, rb, v3_mul(n, -lam));
+}
+
+// Трение в суставе: гасит разность угловых скоростей
+static void joint_damp(Phys *p, u32 j, f32 sh)
+{
+    u32 a = p->ja[j], b = p->jb[j];
+    V3 dw = v3_sub(p->w[b], p->w[a]);
+    f32 l = v3_len(dw);
+    if (l < 1e-6f) return;
+    V3 n = v3_mul(dw, 1.0f / l);
+    f32 wa = ang_w(p, a, n), wb = ang_w(p, b, n);
+    if (wa + wb <= 0.0f) return;
+    V3 L = v3_mul(n, l * fminf(1.0f, JOINT_DAMP * sh) / (wa + wb));
+    if (wa > 0.0f) p->w[a] = v3_add(p->w[a], iw_mul(a, L));
+    if (wb > 0.0f) p->w[b] = v3_sub(p->w[b], iw_mul(b, L));
+}
+
 static void substep(Phys *p, f32 sh, const Plane *pl, V3 *xp, V4 *qp, V3 *wr, Contact *cs, u32 *ncs)
 {
     for (u32 h = 0; h < p->count; h++) {
@@ -499,6 +643,9 @@ static void substep(Phys *p, f32 sh, const Plane *pl, V3 *xp, V4 *qp, V3 *wr, Co
         turn_spheres(p, h, wr);
         world_inv_i(p, h);
     }
+    for (u32 it = 0; it < JOINT_ITERS; it++)
+        for (u32 j = 0; j < p->jcount; j++)
+            if (p->jkind[j] != PJ_FREE) joint_solve(p, j);
     for (u32 k = 0; k < p->npair; k++) pair_contacts(p, p->pair[k] >> 16, p->pair[k] & 0xFFFFu, wr);
     for (u32 h = 0; h < p->count; h++) {
         if (p->state[h] != PS_ACTIVE) continue;
@@ -515,6 +662,38 @@ static void substep(Phys *p, f32 sh, const Plane *pl, V3 *xp, V4 *qp, V3 *wr, Co
         f32 k = ncs[h] ? ROLL_DAMP : AIR_DAMP;
         p->w[h] = v3_mul(p->w[h], 1.0f / (1.0f + k * sh));
     }
+    for (u32 j = 0; j < p->jcount; j++)
+        if (p->jkind[j] != PJ_FREE) joint_damp(p, j, sh);
+}
+
+// Тела одной группы живут вместе: застыло одно — застывают все, считается одно — считаются все.
+// Иначе сустав между считающимся и застывшим тянул бы живое к неподвижному
+static void group_sync(Phys *p)
+{
+    static u8 fl[PHYS_GROUPS];
+    memset(fl, 0, sizeof fl);
+    for (u32 h = 0; h < p->count; h++) {
+        u16 g = p->group[h];
+        if (g && p->state[h] != PS_FREE) fl[g] |= p->state[h] == PS_FROZEN ? 1 : p->state[h] == PS_ACTIVE ? 2 : 0;
+    }
+    for (u32 h = 0; h < p->count; h++) {
+        u16 g = p->group[h];
+        if (!g || p->state[h] == PS_FREE) continue;
+        if (fl[g] & 1) {
+            if (p->state[h] != PS_FROZEN) p->v[h] = p->w[h] = v3(0, 0, 0);
+            p->state[h] = PS_FROZEN;
+        } else if ((fl[g] & 2) && p->state[h] == PS_ASLEEP) {
+            p->state[h] = PS_ACTIVE;
+            p->sleep_t[h] = 0.0f;
+        }
+    }
+}
+
+static void put_asleep(Phys *p, u32 h)
+{
+    p->state[h] = PS_ASLEEP;
+    p->settled[h] = 1;
+    p->v[h] = p->w[h] = v3(0, 0, 0);
 }
 
 void phys_tick(Phys *p, f32 dt, PhysGround ground)
@@ -524,7 +703,8 @@ void phys_tick(Phys *p, f32 dt, PhysGround ground)
     memcpy(p->q_tick, p->q, p->count * sizeof *p->q);
     if (!p->on) return;
     zone_pass(p, dt);
-    // Сверх предела считающихся засыпают самые медленные
+    group_sync(p);
+    // Сверх предела считающихся засыпают самые медленные; тело из группы — всей группой
     u32 na = 0;
     for (u32 h = 0; h < p->count; h++) na += p->state[h] == PS_ACTIVE;
     while (na > PHYS_ACTIVE_MAX) {
@@ -534,9 +714,13 @@ void phys_tick(Phys *p, f32 dt, PhysGround ground)
             f32 e = v3_dot(p->v[h], p->v[h]);
             if (p->state[h] == PS_ACTIVE && e < best) best = e, slow = h;
         }
-        p->state[slow] = PS_ASLEEP;
-        p->v[slow] = p->w[slow] = v3(0, 0, 0);
-        na--;
+        u16 g = p->group[slow];
+        for (u32 h = 0; h < p->count; h++) {
+            if (h != slow && (!g || p->group[h] != g || p->state[h] != PS_ACTIVE)) continue;
+            p->state[h] = PS_ASLEEP;
+            p->v[h] = p->w[h] = v3(0, 0, 0);
+            na--;
+        }
     }
     find_pairs(p, dt);
     memset(p->touch, 0, p->count);
@@ -568,14 +752,17 @@ void phys_tick(Phys *p, f32 dt, PhysGround ground)
         }
         if (p->state[h] == PS_ACTIVE) {
             bool still = v3_dot(p->v[h], p->v[h]) < SLEEP_V * SLEEP_V && v3_dot(p->w[h], p->w[h]) < SLEEP_W * SLEEP_W;
-            // В воздухе не засыпает: лежать надо на чём-то
-            p->sleep_t[h] = still && (ncs[h] || p->touch[h]) ? p->sleep_t[h] + dt : 0.0f;
-            if (p->sleep_t[h] >= SLEEP_S) {
-                p->state[h] = PS_ASLEEP;
-                p->settled[h] = 1;
-                p->v[h] = p->w[h] = v3(0, 0, 0);
-            }
+            // В воздухе не засыпает: лежать надо на чём-то. Часть тела может висеть на суставе (голова над землёй)
+            p->sleep_t[h] = still && (ncs[h] || p->touch[h] || p->group[h]) ? p->sleep_t[h] + dt : 0.0f;
         }
+    }
+    // Группа засыпает, только когда замерли все её тела
+    static u8 busy[PHYS_GROUPS];
+    memset(busy, 0, sizeof busy);
+    for (u32 h = 0; h < p->count; h++)
+        if (p->group[h] && p->state[h] == PS_ACTIVE && p->sleep_t[h] < SLEEP_S) busy[p->group[h]] = 1;
+    for (u32 h = 0; h < p->count; h++) {
+        if (p->state[h] == PS_ACTIVE && (p->group[h] ? !busy[p->group[h]] : p->sleep_t[h] >= SLEEP_S)) put_asleep(p, h);
         p->st.active += p->state[h] == PS_ACTIVE;
         p->st.asleep += p->state[h] == PS_ASLEEP;
         p->st.frozen += p->state[h] == PS_FROZEN;
@@ -608,9 +795,23 @@ void phys_ser(Ser *s, Phys *p)
     SER_N(s, p->mode, n);
     SER_N(s, p->settled, n);
     SER_N(s, p->user, n);
+    SER_N(s, p->group, n);
+    ser_count(s, &p->jcount, PHYS_JOINTS);
+    if (s->bad) return;
+    u32 nj = p->jcount;
+    SER_N(s, p->ja, nj);
+    SER_N(s, p->jb, nj);
+    SER_N(s, p->jkind, nj);
+    SER_N(s, p->jra, nj);
+    SER_N(s, p->jrb, nj);
+    SER_N(s, p->jqa, nj);
+    SER_N(s, p->jqb, nj);
+    SER_N(s, p->jlim, nj);
     SER(s, p->on);
+    for (u32 j = 0; j < nj && s->mode == SER_LOAD; j++)
+        ser_check(s, p->jkind[j] <= PJ_HINGE && (p->jkind[j] == PJ_FREE || (p->ja[j] < n && p->jb[j] < n)));
     for (u32 h = 0; h < n && s->mode == SER_LOAD; h++) {
-        ser_check(s, p->state[h] <= PS_FROZEN && p->ns[h] <= PHYS_SPHERES);
+        ser_check(s, p->state[h] <= PS_FROZEN && p->ns[h] <= PHYS_SPHERES && p->group[h] < PHYS_GROUPS);
         p->wake[h] = 0;
     }
 }
