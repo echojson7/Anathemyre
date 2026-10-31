@@ -114,7 +114,7 @@ static f32 dist(const CombatWorld *w, u32 i, u32 j)
     return sqrtf(dx * dx + dz * dz);
 }
 
-static bool armed(const Field *f, u32 i) { return f->sheet[i]->equip[SLOT_WEAPON].kind == IK_WEAPON; }
+static bool armed(const Field *f, u32 i) { return item_weapon(f->sheet[i]->equip[SLOT_WEAPON]) != COMP_NONE; }
 
 // Цель ещё в бою: жива, не без сознания, не сдалась
 static bool target_ok(const Field *f, u32 i, u32 t)

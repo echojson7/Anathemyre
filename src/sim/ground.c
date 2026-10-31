@@ -5,7 +5,7 @@
 void ground_init(Ground *g, Arena *perm)
 {
     g->count = 0;
-    g->item = ARENA_PUSH_ARRAY(perm, Item, GROUND_MAX);
+    g->item = ARENA_PUSH_ARRAY(perm, ItemStack, GROUND_MAX);
     g->body = ARENA_PUSH_ARRAY(perm, i32, GROUND_MAX);
     g->owner = ARENA_PUSH_ARRAY(perm, u16, GROUND_MAX);
 }
@@ -38,9 +38,9 @@ static PhysDesc weapon_desc(const WeaponDef *wd)
     return d;
 }
 
-PhysDesc ground_desc(Item it)
+PhysDesc ground_desc(ItemStack it)
 {
-    if (it.kind == IK_WEAPON && it.id < g_weapon_count) return weapon_desc(&g_weapons[it.id]);
+    if (item_weapon(it) != COMP_NONE) return weapon_desc(&g_weapons[item_weapon(it)]);
     // Узел: одежда, броня, товар — свёрток размером по клеткам мешка
     u8 w = 1, h = 1;
     item_size(it, &w, &h);
@@ -49,11 +49,11 @@ PhysDesc ground_desc(Item it)
                        .mass = fmaxf(item_weight(it), 0.3f) };
 }
 
-i32 ground_drop(Ground *g, Phys *p, Item it, M4 xf, V3 vel, V3 angvel, u16 owner)
+i32 ground_drop(Ground *g, Phys *p, ItemStack it, M4 xf, V3 vel, V3 angvel, u16 owner)
 {
-    if (!it.kind) return -1;
+    if (!item_live(it)) return -1;
     u32 k = 0;
-    while (k < g->count && g->item[k].kind != IK_NONE) k++;
+    while (k < g->count && g->item[k].def != ITEM_NONE) k++;
     if (k == GROUND_MAX) return -1;
     PhysDesc d = ground_desc(it);
     i32 b = phys_spawn(p, &d, xf, vel, angvel, PHYS_SETTLE, (u16)(GROUND_USER + k));
@@ -65,16 +65,16 @@ i32 ground_drop(Ground *g, Phys *p, Item it, M4 xf, V3 vel, V3 angvel, u16 owner
     return (i32)k;
 }
 
-Item ground_take(Ground *g, Phys *p, u32 k)
+ItemStack ground_take(Ground *g, Phys *p, u32 k)
 {
-    if (!ground_live(g, (i32)k)) return (Item){ 0 };
-    Item it = g->item[k];
+    if (!ground_live(g, (i32)k)) return (ItemStack){ 0 };
+    ItemStack it = g->item[k];
     // Что лежало на ней, падает
     phys_wake(p, p->x[g->body[k]], p->bound[g->body[k]] + 0.05f);
     phys_free(p, (u32)g->body[k]);
-    g->item[k] = (Item){ 0 };
+    g->item[k] = (ItemStack){ 0 };
     g->owner[k] = 0;
-    while (g->count && g->item[g->count - 1].kind == IK_NONE) g->count--;
+    while (g->count && g->item[g->count - 1].def == ITEM_NONE) g->count--;
     return it;
 }
 
@@ -83,7 +83,7 @@ i32 ground_nearest(const Ground *g, const Phys *p, V3 at, f32 r)
     i32 best = -1;
     f32 bd = r * r;
     for (u32 k = 0; k < g->count; k++) {
-        if (g->item[k].kind == IK_NONE) continue;
+        if (g->item[k].def == ITEM_NONE) continue;
         V3 x = p->x[g->body[k]];
         f32 dx = x.x - at.x, dz = x.z - at.z, d = dx * dx + dz * dz;
         if (d < bd) {
@@ -97,7 +97,7 @@ i32 ground_nearest(const Ground *g, const Phys *p, V3 at, f32 r)
 u32 ground_live_count(const Ground *g)
 {
     u32 n = 0;
-    for (u32 k = 0; k < g->count; k++) n += g->item[k].kind != IK_NONE;
+    for (u32 k = 0; k < g->count; k++) n += g->item[k].def != ITEM_NONE;
     return n;
 }
 
@@ -108,5 +108,5 @@ void ground_ser(Ser *s, Ground *g)
     SER_N(s, g->body, g->count);
     SER_N(s, g->owner, g->count);
     for (u32 k = 0; k < g->count; k++)
-        ser_check(s, g->item[k].kind == IK_NONE || (g->body[k] >= 0 && g->body[k] < PHYS_MAX));
+        ser_check(s, g->item[k].def == ITEM_NONE || (g->body[k] >= 0 && g->body[k] < PHYS_MAX));
 }

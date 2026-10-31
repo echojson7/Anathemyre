@@ -6,7 +6,7 @@
 #include "../view/figures.h"
 
 #define HUMANS_N (BODY_KIND_COUNT * CHAR_LODS)
-#define HUMANS_LOOKS (GEAR_COUNT + 1)
+#define HUMANS_LOOKS (GEAR_CAP + 1)  // наибольшее: по сетке из описаний и последний во всём
 
 typedef struct HumansRow {
     bool    on;
@@ -14,7 +14,7 @@ typedef struct HumansRow {
     GpuMesh mesh[HUMANS_N], hair[HUMANS_N];  // причёска — первый вид тела, у худого без неё
     bool    has_hair[HUMANS_N];
     M4     *bones;   // HUMANS_N наборов
-    M4     *looks;   // HUMANS_LOOKS наборов
+    M4     *looks;   // g_gear_count + 1 наборов (место на HUMANS_LOOKS)
 } HumansRow;
 
 void humans_row_init(HumansRow *h, Arena *perm, GroundFn ground);

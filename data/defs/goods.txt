@@ -1,108 +1,134 @@
-# Вещи: еда, хлам, снаряжение без брони. Ключи и слова — docs/content.md
+# Вещи: еда, хлам, снаряжение без брони. Ключи и слова — docs/content.md и docs/items.md
 #
-# size: клетки инвентаря. stack: сколько в одной клетке. weight: кг за штуку.
-# slot: куда надевается (без slot — только в мешок). carry: сколько кг добавляет к переносимому.
+# size: клетки инвентаря. stack: сколько в одной клетке. weight: кг за штуку. made_of: материал (звук падения).
+# wear: куда надевается (без wear — только в мешок), carry: сколько кг добавляет к переносимому.
 # look: сетка на теле. desc: строка в осмотре
 
-goods water
+item water
     name "ФЛЯГА ВОДЫ"
     size 1 2
     stack 1
     weight 1.0
     desc "Вода с привкусом ржавчины."
+    made_of iron
 
-goods rusk
+item rusk
     name "СУХАРИ"
     size 1 1
     stack 10
     weight 0.2
     desc "Твёрдые, как бетон. Едят."
+    made_of cloth
 
-goods meat
+item meat
     name "ВЯЛЕНОЕ МЯСО"
     size 1 1
     stack 10
     weight 0.3
     desc "Чьё мясо, лучше не спрашивать."
+    made_of cloth
 
-goods bandage
+item bandage
     name "БИНТЫ"
     size 1 1
     stack 10
     weight 0.1
     desc "Серые тряпки. Останавливают кровь."
+    made_of cloth
 
-goods scrap
+item scrap
     name "МЕТАЛЛОЛОМ"
     size 2 2
     stack 5
     weight 4.0
     desc "Ржавое железо. Берут кузнецы."
+    made_of rust
 
-goods part
+item part
     name "ДЕТАЛЬ МАШИНЫ"
     size 2 1
     stack 1
     weight 2.5
     desc "Назначение неизвестно. Покупают."
+    made_of iron
 
-goods fuel
+item fuel
     name "ТОПЛИВО"
     size 1 2
     stack 1
     weight 3.0
     desc "Канистра. Пахнет старым миром."
+    made_of metal
 
-goods token
+item token
     name "ЖЕТОН СО ЗНАКАМИ"
     size 1 1
     stack 1
     weight 0.05
     desc "Знаки никто не читает."
+    made_of iron
 
-goods wrap
+item wrap
     name "РЕСПИРАТОР"
     size 1 1
     stack 1
-    slot face
     weight 0.1
     look wrap
     desc "Резина и банка фильтра. Пыль держит."
+    made_of leather
+    wear face
 
-goods boots
+item boots
     name "РАБОЧИЕ БОТИНКИ"
     size 1 2
     stack 1
-    slot feet
     weight 0.6
     look boots
     desc "Окованный носок. Подошва из старой резины."
+    made_of leather
+    wear feet
 
-goods mitts
+item mitts
     name "КРАГИ"
     size 1 1
     stack 1
-    slot hands
     weight 0.3
     look mitts
     desc "Резина с раструбом. Рукоять не скользит."
+    made_of leather
+    wear hands
 
-goods pack
+item pack
     name "РАНЕЦ"
     size 2 2
     stack 1
-    slot back
     weight 1.0
-    carry 15
     look pack
     desc "Рама из труб, ящик и баллон. Что в баллоне, никто не знает."
+    made_of iron
+    wear back
+        carry 15
 
-goods belt
+item belt
     name "ПОЯС И ПОДСУМКИ"
     size 2 1
     stack 1
-    slot belt
     weight 0.5
-    carry 4
     look belt
     desc "Подсумки и шланг. Мелочь под рукой."
+    made_of leather
+    wear belt
+        carry 4
+
+# Факел носят в левой руке ночью. Свет пока ставит вид (figures.c, torch_light) — числа ниже те же;
+# к сбору огней (шаг 2б) свет пойдёт отсюда
+item torch
+    name "ФАКЕЛ"
+    size 1 2
+    weight 0.6
+    desc "Палка, тряпьё, смола. Темнота отступает на восемь шагов."
+    made_of cloth
+    light
+        color 1 0.5 0.18
+        power 2.6
+        radius 8

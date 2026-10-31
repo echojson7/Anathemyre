@@ -20,10 +20,6 @@ bool look_load_skeletons(const char *data_dir) {
     return true;
 }
 
-const char *const g_gear_file[GEAR_COUNT] = {
-    "rags", "quilt", "jacket", "plate", "bucket", "greaves", "wrap", "boots", "mitts", "pack", "belt", "pants",
-};
-
 // Порядок как HAIR_FEMALE и HAIR_MALE в tools/humanconv
 #define HAIR_MH_MALE { "crop", "shag", "tied", "buzz", "slick", "long" }
 const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX] = {
@@ -32,14 +28,14 @@ const char *const g_hair_file[BODY_KIND_COUNT][HAIR_MAX] = {
     [BODY_THIN] = HAIR_MH_MALE,
 };
 
-u32 g_gear_hides[GEAR_COUNT];
+u32 g_gear_hides[GEAR_CAP];
 
 u32 look_hair(const CharLook *l, u8 *gear, u32 n)
 {
     if (!l->cut) return 0;
     for (u32 i = 0; i < n; i++)
-        if (gear[i] < GEAR_COUNT && (g_gear_hides[gear[i]] & GEAR_HIDES_HAIR)) return 0;
-    gear[n] = (u8)(GEAR_COUNT + l->cut - 1);
+        if (gear[i] < GEAR_CAP && (g_gear_hides[gear[i]] & GEAR_HIDES_HAIR)) return 0;
+    gear[n] = (u8)(GEAR_CAP + l->cut - 1);
     return 1;
 }
 
@@ -48,7 +44,7 @@ static u32 drop_hidden(u8 *out, u32 n)
 {
     u32 hidden = 0;
     for (u32 i = 0; i < n; i++) hidden |= g_gear_hides[out[i]];
-    if (!(hidden & ((1u << GEAR_COUNT) - 1u))) return n;
+    if (!(hidden & ((1u << GEAR_CAP) - 1u))) return n;
     u32 m = 0;
     for (u32 i = 0; i < n; i++)
         if (!(hidden & (1u << out[i]))) out[m++] = out[i];
@@ -59,7 +55,10 @@ u32 gear_from_armor(const u8 *armor, u8 *out)
 {
     u32 n = 0;
     for (u32 s = 0; s < SLOT_COUNT; s++)
-        if (armor[s] < g_armor_count && g_armors[armor[s]].look < GEAR_COUNT) out[n++] = g_armors[armor[s]].look;
+        if (armor[s] < g_armor_count) {
+            u8 g = g_items[g_armors[armor[s]].item].look;
+            if (g != GEAR_NONE) out[n++] = g;
+        }
     return drop_hidden(out, n);
 }
 
@@ -67,9 +66,8 @@ u32 gear_from_sheet(const CharSheet *cs, u8 *out)
 {
     u32 n = 0;
     for (u32 s = 0; s < SLOT_COUNT; s++) {
-        const Item *it = &cs->equip[s];
-        u8 g = it->kind == IK_ARMOR ? g_armors[it->id].look : it->kind == IK_GOODS ? g_goods[it->id].look : GEAR_NONE;
-        if (g < GEAR_COUNT) out[n++] = g;
+        u8 g = item_def(cs->equip[s])->look;
+        if (g != GEAR_NONE) out[n++] = g;
     }
     return drop_hidden(out, n);
 }
@@ -80,14 +78,20 @@ u32 gear_random(u32 seed, u8 *out)
 {
     u32 s = seed * 2246822519u + 5u, n = 0;
     f32 t = hash01(&s);
-    out[n++] = t < 0.45f ? GEAR_RAGS : t < 0.75f ? GEAR_QUILT : GEAR_JACKET;
-    if (hash01(&s) < 0.5f) out[n++] = GEAR_WRAP;
-    if (hash01(&s) < 0.75f) out[n++] = GEAR_BOOTS;
-    if (hash01(&s) < 0.25f) out[n++] = GEAR_PACK;
-    if (hash01(&s) < 0.4f) out[n++] = GEAR_BELT;
+    // Сетки по имени: нет такой в описаниях — прохожий без этой вещи
+    u8 shirt = gear_find(t < 0.45f ? "rags" : t < 0.75f ? "quilt" : "jacket"), pants = gear_find("pants");
+    if (shirt != GEAR_NONE) out[n++] = shirt;
+    if (hash01(&s) < 0.5f) out[n++] = gear_find("wrap");
+    if (hash01(&s) < 0.75f) out[n++] = gear_find("boots");
+    if (hash01(&s) < 0.25f) out[n++] = gear_find("pack");
+    if (hash01(&s) < 0.4f) out[n++] = gear_find("belt");
     // Штаны почти у всех; под комбинезоном их не видно
-    if (hash01(&s) < 0.85f && !(g_gear_hides[out[0]] & (1u << GEAR_PANTS))) out[n++] = GEAR_PANTS;
-    return n;
+    if (hash01(&s) < 0.85f && pants != GEAR_NONE && !(shirt != GEAR_NONE && (g_gear_hides[shirt] & (1u << pants))))
+        out[n++] = pants;
+    u32 m = 0;
+    for (u32 i = 0; i < n; i++)
+        if (out[i] != GEAR_NONE) out[m++] = out[i];
+    return m;
 }
 
 // Цвета, запечённые в сетках (PEOPLE в tools/humanconv): оттенок экземпляра — отношение к ним

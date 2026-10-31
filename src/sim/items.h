@@ -1,4 +1,5 @@
-// Таблицы оружия и брони. Числа баланса — в data/defs (docs/content.md), читаются при старте, не в коде боя.
+// Вещи: одна запись item с общими полями и компонентами (оружие, броня, носится, ёмкость, свет, тело),
+// стопка вещи в мире (ItemStack). Числа баланса — в data/defs (docs/content.md, docs/items.md), читаются при старте.
 #ifndef ANA_ITEMS_H
 #define ANA_ITEMS_H
 
@@ -7,12 +8,11 @@
 typedef enum WeaponClass { WC_BLADE, WC_CLEAVER, WC_BLUNT, WC_POLEARM, WC_HEAVY, WC_COUNT } WeaponClass;
 typedef enum AttackKind { ATK_OVERHEAD, ATK_SWING, ATK_THRUST, ATK_COUNT } AttackKind;
 
-// Голос железа при ударе: звук — view/sfx.c (SFX_WPN_* в том же порядке)
-typedef enum WeaponVoice { VOICE_RESSORA, VOICE_SEKACH, VOICE_ARMATURA, VOICE_BAGOR, VOICE_HOOK, VOICE_BALKA, VOICE_COUNT } WeaponVoice;
-
+// Компонент «оружие». Имя, вес — копии из вещи (их читает бой)
 typedef struct WeaponDef {
-    const char *id;   // имя в описаниях: по нему моды правят запись, сохранение сверяет номера
+    const char *id;   // имя вещи: по нему сохранение сверяет номера
     const char *name;
+    u16 item;         // чья это часть: номер вещи
     u8  wclass;
     u8  attacks;      // маска (1 << AttackKind)
     u8  max_targets;  // предел целей размаха
@@ -23,8 +23,7 @@ typedef struct WeaponDef {
     f32 arc_deg;      // дуга размаха
     f32 knock;        // сила сбивания
     f32 pen;          // пробой брони уколом, 0..1
-    u8  size_w, size_h;  // клетки инвентаря
-    u8  voice, voice_strike;  // голос железа (WeaponVoice): закрылся им и ударил им
+    const char *sound, *sound_strike;  // голос железа по имени (звук находит вид): закрылся им и ударил им
     u16 part, parts;  // форма: части в g_weapon_parts
     const char *model;  // готовая форма data/meshes/weapons/<model>.mesh (tools/weaponconv), части — запасные
     bool common;      // в общем запасе: отряды, арена, толпа берут случайное оружие отсюда
@@ -47,22 +46,68 @@ typedef struct WeaponPart {
 
 #define WEAPON_CAP 64  // сеток оружия на GPU
 
+// Компонент «броня». Имя, слот, вес — копии из вещи (их читает бой)
 typedef struct ArmorDef {
     const char *id;
     const char *name;
+    u16 item;
     u8  slot;
     f32 cover[PART_COUNT];
     f32 res_cut, res_blunt, res_pierce;
     f32 weight;
     f32 dodge_pen;
-    u8  size_w, size_h;
-    u8  look;   // сетка одежды (GEAR_*), GEAR_NONE — не видна
-    bool metal; // удар по ней звенит железом
-    u32 hides;  // какие сетки под ней не рисуются: биты GEAR_*, GEAR_HIDES_HAIR — причёска
 } ArmorDef;
+
+// Компонент «свет»: вещь светит, когда горит (факел)
+typedef struct LightDef {
+    V3  color;
+    f32 power, radius;
+} LightDef;
+
+// Компонент «ёмкость»: сетка клеток внутри вещи (ящик, стойка — объекты шага 2б)
+typedef struct ContainerDef {
+    u8 w, h;
+} ContainerDef;
+
+// Компонент «тело»: своя форма на земле вместо свёртка по клеткам (полуразмеры бруска, м)
+typedef struct PhysCompDef {
+    V3 half;
+} PhysCompDef;
+
+#define COMP_NONE 255
+#define ITEM_NONE 0   // запись 0 — «ничего»: пустая стопка, пустой слот
+#define ITEM_CAP 1024
+
+// Вещь: общие поля и номера компонентов (COMP_NONE — нет), как ThingComps у RimWorld
+typedef struct ItemDef {
+    const char *id;
+    const char *name;
+    const char *desc;
+    f32 weight;       // кг за штуку
+    f32 carry;        // носится: сколько кг добавляет к переносимому
+    u32 hides;        // какие сетки под ней не рисуются: биты номеров g_gear_file, GEAR_HIDES_HAIR — причёска
+    u8  w, h;         // клетки инвентаря
+    u8  stack;        // сколько в одной клетке
+    u8  slot;         // носится: слот тела (SLOT_*), SLOT_NONE — нет
+    u8  mat;          // материал по умолчанию: номер в g_mats
+    u8  look;         // сетка на теле: номер в g_gear_file, GEAR_NONE — не видна
+    u8  weapon, armor, light, container, phys;
+} ItemDef;
+
+// Вещь в мире: 8 байт. Износа нет (решение пользователя); зерно — вариант вида
+typedef struct ItemStack {
+    u16 def;      // номер описания, ITEM_NONE — пусто
+    u16 seed;
+    u8  mat;      // материал (номер в g_mats)
+    u8  quality;  // Q_*
+    u8  count;
+    u8  pad;
+} ItemStack;
+_Static_assert(sizeof(ItemStack) == 8, "ItemStack — 8 байт");
 
 #define ARMOR_NONE 255
 #define GEAR_NONE 255
+#define GEAR_CAP 24   // разных сеток одежды в описаниях
 #define GEAR_HIDES_HAIR (1u << 31)
 #define WEAPON_PARTS 48  // частей формы на оружие
 #define WEAPON_PTS 1536  // чисел точек клинков и пластин на оружие
@@ -80,6 +125,14 @@ typedef struct AttackDef {
 #define ARM_REACH 0.7f
 
 // Заполняет defs_load при старте
+extern const ItemDef    *g_items;
+extern u32               g_item_count;
+extern const LightDef   *g_lights;
+extern const ContainerDef *g_containers;
+extern const PhysCompDef *g_phys_comps;
+// Сетки одежды по имени (look в описаниях): файл data/meshes/gear/<тело>_<имя>.mesh находит вид
+extern const char       *g_gear_file[GEAR_CAP];
+extern u32               g_gear_count;
 extern const WeaponDef  *g_weapons;
 extern u32               g_weapon_count;
 extern const WeaponPart *g_weapon_parts;
@@ -94,5 +147,19 @@ extern f32               g_quality_mul[Q_COUNT];
 extern const char       *g_quality_name[Q_COUNT];
 extern const char       *g_attack_name[ATK_COUNT];
 extern const u8          g_armor_layer_order[5];  // слоты снаружи внутрь
+
+static inline const ItemDef *item_def(ItemStack it) { return &g_items[it.def]; }
+static inline bool item_live(ItemStack it) { return it.def != ITEM_NONE; }
+static inline u8   item_weapon(ItemStack it) { return g_items[it.def].weapon; }  // COMP_NONE — не оружие
+static inline u8   item_armor(ItemStack it) { return g_items[it.def].armor; }
+// Стопка вещи def из материала по умолчанию
+static inline ItemStack item_make(u16 def, u8 quality, u8 count)
+{
+    return (ItemStack){ .def = def, .mat = g_items[def].mat, .quality = quality, .count = count };
+}
+static inline ItemStack item_of_weapon(u8 w, u8 quality) { return item_make(g_weapons[w].item, quality, 1); }
+static inline ItemStack item_of_armor(u8 a, u8 quality) { return item_make(g_armors[a].item, quality, 1); }
+// Номер сетки одежды по имени, GEAR_NONE — нет такой
+u8 gear_find(const char *name);
 
 #endif

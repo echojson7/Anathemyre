@@ -21,9 +21,9 @@ static void hand_vel(f32 h, Rng *r, V3 *v, V3 *w)
     *w = v3_add(v3_mul(right, rng_range(r, -4.0f, -1.5f)), v3(0, rng_range(r, -1.5f, 1.5f), 0));
 }
 
-static Item hand_item(const CombatWorld *w, u32 i, const CharSheet *sh)
+static ItemStack hand_item(const CombatWorld *w, u32 i, const CharSheet *sh)
 {
-    return sh ? sh->equip[SLOT_WEAPON] : item_make(IK_WEAPON, w->weapon[i], w->weapon_q[i], 1);
+    return sh ? sh->equip[SLOT_WEAPON] : item_of_weapon(w->weapon[i], w->weapon_q[i]);
 }
 
 // Общее для поля и арены: что с оружием бойца i в этом шаге. sh — лист (поле) или NULL (арена: только возврат)
@@ -37,8 +37,8 @@ static void combat_hand(Ground *g, Phys *p, CombatWorld *w, u32 i, CharSheet *sh
     bool lost = gone || st == FS_UNCONSCIOUS || st == FS_SURRENDER || (w->loose[i] && !picking);
     i32 k = w->gitem[i];
     if (k == COMBAT_IN_HAND && lost) {
-        Item it = hand_item(w, i, sh);
-        if (it.kind != IK_WEAPON) return;  // нечего ронять
+        ItemStack it = hand_item(w, i, sh);
+        if (item_weapon(it) == COMP_NONE) return;  // нечего ронять
         Rng r;
         rng_seed(&r, tick, src + i);
         f32 x = origin.x + w->x[i], z = origin.z + w->z[i];
@@ -59,7 +59,7 @@ static void combat_hand(Ground *g, Phys *p, CombatWorld *w, u32 i, CharSheet *sh
         k = w->gitem[i];
         if (ground_live(g, k) && g->owner[k] == src + i + 1) g->owner[k] = 0;
         w->gitem[i] = COMBAT_GONE;
-        sh->equip[SLOT_WEAPON] = (Item){ 0 };
+        sh->equip[SLOT_WEAPON] = (ItemStack){ 0 };
     }
 }
 
@@ -79,7 +79,7 @@ void loot_field(Ground *g, Phys *p, Field *f, GroundFn ground, u64 tick)
     // Хозяина слота сменили (field_reuse) — его выроненное теперь ничьё
     for (u32 k = 0; k < g->count; k++) {
         u16 o = g->owner[k];
-        if (!g->item[k].kind || !o || (o & GROUND_OWN_SRC) != GROUND_OWN_FIELD) continue;
+        if (!item_live(g->item[k]) || !o || (o & GROUND_OWN_SRC) != GROUND_OWN_FIELD) continue;
         u32 s = (o & ~GROUND_OWN_SRC) - 1u;
         if (s >= w->count || w->gitem[s] != (i32)k) g->owner[k] = 0;
     }
@@ -93,7 +93,7 @@ void loot_arena(Ground *g, Phys *p, ArenaSession *s, bool in_bout, V3 center, f3
     // Схватка кончилась или в слотах уже другие: выроненное уходит вместе с бойцами
     for (u32 k = 0; k < g->count; k++) {
         u16 o = g->owner[k];
-        if (!g->item[k].kind || (o & GROUND_OWN_SRC) != GROUND_OWN_ARENA) continue;
+        if (!item_live(g->item[k]) || (o & GROUND_OWN_SRC) != GROUND_OWN_ARENA) continue;
         u32 i = (o & ~GROUND_OWN_SRC) - 1u;
         if (!in_bout || i >= w->count || w->gitem[i] != (i32)k) ground_take(g, p, k);
     }
@@ -154,7 +154,7 @@ void loot_pickups(Ground *g, Phys *p, Squad *sq, Field *f)
                 w->gitem[s] = COMBAT_GONE;
                 w->disarmed[s] = 1;
                 w->loose[s] = 0;
-                f->sheet[s]->equip[SLOT_WEAPON] = (Item){ 0 };
+                f->sheet[s]->equip[SLOT_WEAPON] = (ItemStack){ 0 };
             }
         }
         inv_add(&c->inv, ground_take(g, p, (u32)k));
@@ -167,11 +167,16 @@ void loot_drop_test(Ground *g, Phys *p, V3 at, u32 n, u64 seed)
 {
     Rng r;
     rng_seed(&r, seed, 23);
-    if (!g_weapon_pool_count && !g_goods_count) return;
+    // Простые вещи: без оружия, брони и света
+    u16 goods[ITEM_CAP];
+    u32 ng = 0;
+    for (u32 d = 1; d < g_item_count; d++)
+        if (g_items[d].weapon == COMP_NONE && g_items[d].armor == COMP_NONE && g_items[d].light == COMP_NONE) goods[ng++] = (u16)d;
+    if (!g_weapon_pool_count && !ng) return;
     for (u32 i = 0; i < n; i++) {
-        Item it = g_goods_count && (!g_weapon_pool_count || rng_below(&r, 3) == 0)
-                      ? item_make(IK_GOODS, (u8)rng_below(&r, g_goods_count), Q_WORN, 1)
-                      : item_make(IK_WEAPON, g_weapon_pool[rng_below(&r, g_weapon_pool_count)], (u8)rng_below(&r, 3), 1);
+        ItemStack it = ng && (!g_weapon_pool_count || rng_below(&r, 3) == 0)
+                      ? item_make(goods[rng_below(&r, ng)], Q_WORN, 1)
+                      : item_of_weapon(g_weapon_pool[rng_below(&r, g_weapon_pool_count)], (u8)rng_below(&r, 3));
         V3 c = v3_add(at, v3(rng_range(&r, -1.5f, 1.5f), 1.2f + 0.3f * (f32)i, rng_range(&r, -1.5f, 1.5f)));
         M4 xf = m4_trs(c, v3(1, 1, 1), rng_range(&r, 0, 2 * PI_F), rng_range(&r, 0, 2 * PI_F), rng_range(&r, 0, 2 * PI_F));
         V3 w = v3(rng_range(&r, -3, 3), rng_range(&r, -3, 3), rng_range(&r, -3, 3));

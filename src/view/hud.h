@@ -36,7 +36,7 @@ typedef struct Hud {
     bool win_inv, win_char;     // окна инвентаря и персонажа
     u8   look_kind;             // кого показывает панель выбранного и окна
     u32  look;                  // номер в отряде или в ростере арены
-    Item held;                  // вещь на курсоре
+    ItemStack held;                  // вещь на курсоре
     f32  last_click_t;
     i32  last_click_card;
     i32  focus;                 // запрос камере: навестись на члена отряда, -1 — нет

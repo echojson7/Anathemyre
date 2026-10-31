@@ -76,7 +76,7 @@ typedef struct LookData {
     f32 hp[PART_COUNT], blood, blood_max, bleed, height, mass;
     u8  fracture, severed;
     const f32 *skill;
-    Item equip[SLOT_COUNT + 1];
+    ItemStack equip[SLOT_COUNT + 1];
     CharSheet *sheet;   // свои: вещи можно перекладывать
     const Player *body; // свои: режим шага
 } LookData;
@@ -345,9 +345,9 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
         o->bleed = cw->bleed[i];
         o->fracture = cw->fracture[i];
         o->severed = cw->severed[i];
-        if (!cw->disarmed[i]) o->equip[SLOT_WEAPON] = item_make(IK_WEAPON, cw->weapon[i], cw->weapon_q[i], 1);
+        if (!cw->disarmed[i]) o->equip[SLOT_WEAPON] = item_of_weapon(cw->weapon[i], cw->weapon_q[i]);
         for (u32 sl = 0; sl < SLOT_COUNT; sl++)
-            if (cw->armor[sl][i] != ARMOR_NONE) o->equip[sl] = item_make(IK_ARMOR, cw->armor[sl][i], Q_WORN, 1);
+            if (cw->armor[sl][i] != ARMOR_NONE) o->equip[sl] = item_of_armor(cw->armor[sl][i], Q_WORN);
         return true;
     }
     // Между боями: из ростера; нули в hp и крови значат «здоров»
@@ -357,9 +357,9 @@ static bool look_data(u8 kind, u32 look, const HudWorld *w, LookData *o)
     o->blood = fresh ? o->blood_max : f->d.blood;
     o->fracture = f->d.fracture;
     o->severed = f->d.severed;
-    o->equip[SLOT_WEAPON] = item_make(IK_WEAPON, f->d.weapon, f->d.weapon_q, 1);
+    o->equip[SLOT_WEAPON] = item_of_weapon(f->d.weapon, f->d.weapon_q);
     for (u32 sl = 0; sl < SLOT_COUNT; sl++)
-        if (f->d.armor[sl] != ARMOR_NONE) o->equip[sl] = item_make(IK_ARMOR, f->d.armor[sl], Q_WORN, 1);
+        if (f->d.armor[sl] != ARMOR_NONE) o->equip[sl] = item_of_armor(f->d.armor[sl], Q_WORN);
     return true;
 }
 
@@ -398,7 +398,7 @@ static i32 item_at(const HudWorld *w, f32 mx, f32 my)
     i32 best = -1;
     f32 bd = ITEM_PICK_PX * ITEM_PICK_PX;
     for (u32 k = 0; k < w->ground->count; k++) {
-        if (!w->ground->item[k].kind) continue;
+        if (!w->ground->item[k].def) continue;
         u32 b = (u32)w->ground->body[k];
         f32 sx, sy;
         if (!project(w->view_proj, v3_lerp(w->phys->x_tick[b], w->phys->x[b], w->alpha), &sx, &sy)) continue;
@@ -420,9 +420,9 @@ i32 hud_pick_item(const Hud *h, const Input *in, const HudWorld *w)
 // Вещь с курсора обратно в мешок; некуда — false, окно не закрывается
 static bool drop_held(Hud *h, Squad *sq)
 {
-    if (!h->held.kind) return true;
+    if (!h->held.def) return true;
     if (h->look_kind != LOOK_SQUAD || !inv_add(&squad_sheet(sq, h->look)->inv, h->held)) return false;
-    h->held.kind = IK_NONE;
+    h->held = (ItemStack){ 0 };
     return true;
 }
 
@@ -445,30 +445,30 @@ static void inventory_input(Hud *h, const Layout *L, CharSheet *c, bool lmb, boo
 {
     i32 gx, gy, slot = slot_under(L);
     bool in_cell = cell_under(L, &gx, &gy);
-    Item old;
-    if (lmb && !h->held.kind) {
+    ItemStack old;
+    if (lmb && !h->held.def) {
         i32 at = in_cell ? inv_at(&c->inv, gx, gy) : -1;
         if (at >= 0) h->held = inv_take(&c->inv, at);
-        else if (slot >= 0 && c->equip[slot].kind) {
+        else if (slot >= 0 && c->equip[slot].def) {
             h->held = c->equip[slot];
-            sheet_equip(c, (u8)slot, (Item){ 0 }, &old);
+            sheet_equip(c, (u8)slot, (ItemStack){ 0 }, &old);
         }
     } else if (lmb) {
-        if (in_cell && inv_put(&c->inv, h->held, gx, gy)) h->held.kind = IK_NONE;
+        if (in_cell && inv_put(&c->inv, h->held, gx, gy)) h->held = (ItemStack){ 0 };
         else if (slot >= 0 && sheet_equip(c, (u8)slot, h->held, &old)) h->held = old;
-    } else if (rmb && !h->held.kind) {
+    } else if (rmb && !h->held.def) {
         // ПКМ: надеть из мешка или снять в мешок
         i32 at = in_cell ? inv_at(&c->inv, gx, gy) : -1;
         if (at >= 0 && item_slot(c->inv.item[at]) != SLOT_NONE) {
-            Item it = inv_take(&c->inv, at);
+            ItemStack it = inv_take(&c->inv, at);
             u8 sl = item_slot(it);
             sheet_equip(c, sl, it, &old);
-            if (old.kind && !inv_add(&c->inv, old)) {
+            if (old.def && !inv_add(&c->inv, old)) {
                 sheet_equip(c, sl, old, &it);
                 inv_add(&c->inv, it);
             }
-        } else if (slot >= 0 && c->equip[slot].kind && inv_add(&c->inv, c->equip[slot])) {
-            sheet_equip(c, (u8)slot, (Item){ 0 }, &old);
+        } else if (slot >= 0 && c->equip[slot].def && inv_add(&c->inv, c->equip[slot])) {
+            sheet_equip(c, (u8)slot, (ItemStack){ 0 }, &old);
         }
     }
 }
@@ -492,7 +492,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
     h->focus = -1;
 
     // Панель показывает первого выбранного, пока не щёлкнули по другому
-    if (h->look_kind == LOOK_SQUAD && (h->look >= sq->count || !sq->selected[h->look]) && !h->held.kind) {
+    if (h->look_kind == LOOK_SQUAD && (h->look >= sq->count || !sq->selected[h->look]) && !h->held.def) {
         i32 p = squad_primary(sq);
         if (p >= 0) hud_look(h, LOOK_SQUAD, (u32)p);
         else h->look_kind = LOOK_NONE;
@@ -532,7 +532,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
     }
     if (h->win_inv && inside(L.mx, L.my, L.iwx, L.iwy, INV_WIN_W, INV_WIN_H)) {
         over = true;
-        if (lmb && !h->held.kind && !close_hot(&L, L.iwx, L.iwy, INV_WIN_W) && L.my < L.iwy + WIN_HEAD_H) {
+        if (lmb && !h->held.def && !close_hot(&L, L.iwx, L.iwy, INV_WIN_W) && L.my < L.iwy + WIN_HEAD_H) {
             h->win_drag = 1;
             h->grab_x = L.mx - L.iwx;
             h->grab_y = L.my - L.iwy;
@@ -610,7 +610,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
 
     // Вещь с курсора — в мир: бросает тот, чей мешок открыт, себе под ноги (упадёт на следующем шаге мира)
     GroundAsks *ask = w->ground_ask;
-    if (lmb && !over && h->held.kind && h->look_kind == LOOK_SQUAD && h->look < sq->count && ask && ask->n < GROUND_ASKS &&
+    if (lmb && !over && h->held.def && h->look_kind == LOOK_SQUAD && h->look < sq->count && ask && ask->n < GROUND_ASKS &&
         L.my < L.bottom_top) {
         const Player *b = &w->view[sq->member[h->look]];
         f32 hs = sinf(b->heading), hc = cosf(b->heading);
@@ -619,12 +619,12 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
         ask->yaw[ask->n] = b->heading;
         ask->who[ask->n] = (u8)h->look;
         ask->n++;
-        h->held.kind = IK_NONE;
+        h->held = (ItemStack){ 0 };
         lmb = false;
     }
 
     // Мир: щелчок выбирает, протяжка тянет рамку
-    if (lmb && !over && !h->held.kind) {
+    if (lmb && !over && !h->held.def) {
         h->dragging = true;
         h->drag_live = false;
         h->drag_x = L.mx;
@@ -672,7 +672,7 @@ bool hud_input(Hud *h, const Input *in, HudWorld *w)
             }
         }
     }
-    return over || h->held.kind != IK_NONE || h->dragging;
+    return over || h->held.def != ITEM_NONE || h->dragging;
 }
 
 // ---------------------------------------------------------------- оформление
@@ -859,10 +859,13 @@ static void portrait(f32 x, f32 y, f32 size, u32 slot, i32 px)
     ui_image(x, y, size, size, u0, (f32)px / th, u1, 0.0f, UI_RGBA(255, 255, 255, 255));
 }
 
-static void draw_item_cell(f32 x, f32 y, f32 w, f32 h, Item it, u32 edge)
+static void draw_item_cell(f32 x, f32 y, f32 w, f32 h, ItemStack it, u32 edge)
 {
     static const u32 fill_t[4] = { 0, UI_RGBA(66, 54, 42, 250), UI_RGBA(52, 56, 50, 250), UI_RGBA(60, 52, 36, 250) };
-    ui_rect_grad(x, y, w, h, fill_t[it.kind], darker(fill_t[it.kind], 0.6f));
+    // Цвет клетки по виду вещи: оружие, броня, прочее
+    const ItemDef *d = item_def(it);
+    u32 k = !item_live(it) ? 0 : d->weapon != COMP_NONE ? 1 : d->armor != COMP_NONE ? 2 : 3;
+    ui_rect_grad(x, y, w, h, fill_t[k], darker(fill_t[k], 0.6f));
     ui_frame(x, y, w, h, edge);
     // В клетку влезает несколько букв; полное имя во всплывающей подсказке
     char ab[32];
@@ -877,31 +880,32 @@ static void draw_item_cell(f32 x, f32 y, f32 w, f32 h, Item it, u32 edge)
         utf8_head(ab, sizeof ab, name, chars);
     }
     ui_text(x + 2, y + 2, C_TEXT, ab);
-    if (it.kind == IK_GOODS && it.count > 1) {
+    if (it.count > 1) {
         char n[8];
         snprintf(n, sizeof n, "%u", it.count);
         num_right(x + w - 2, y + h - 7, C_ACCENT, n);
     }
 }
 
-static void tooltip(const Layout *L, Item it)
+static void tooltip(const Layout *L, ItemStack it)
 {
     char lines[4][64];
     u32 n = 0;
     snprintf(lines[n++], 64, "%s", item_name(it));
-    if (it.kind == IK_WEAPON) {
-        const WeaponDef *d = &g_weapons[it.id];
+    const ItemDef *id = item_def(it);
+    if (id->weapon != COMP_NONE) {
+        const WeaponDef *d = &g_weapons[id->weapon];
         snprintf(lines[n++], 64, "%s", g_quality_name[it.quality]);
         snprintf(lines[n++], 64, "РЕЗ %.0f  ДРОБ %.0f  УКОЛ %.0f", (f64)d->cut, (f64)d->blunt, (f64)d->pierce);
         snprintf(lines[n++], 64, "ДЛИНА %.1f М  ВЕС %.0f КГ", (f64)d->length, (f64)d->weight);
-    } else if (it.kind == IK_ARMOR) {
-        const ArmorDef *d = &g_armors[it.id];
+    } else if (id->armor != COMP_NONE) {
+        const ArmorDef *d = &g_armors[id->armor];
         snprintf(lines[n++], 64, "%s, %s", g_slot_name[d->slot], g_quality_name[it.quality]);
         snprintf(lines[n++], 64, "ЗАЩИТА: РЕЗ %.0f%% ДРОБ %.0f%% УКОЛ %.0f%%", (f64)(d->res_cut * 100.0f),
                  (f64)(d->res_blunt * 100.0f), (f64)(d->res_pierce * 100.0f));
         snprintf(lines[n++], 64, "ВЕС %.0f КГ", (f64)d->weight);
     } else {
-        const GoodsDef *d = &g_goods[it.id];
+        const ItemDef *d = id;
         snprintf(lines[n++], 64, "%s", d->desc);
         if (d->slot != SLOT_NONE) snprintf(lines[n++], 64, "НАДЕВАЕТСЯ: %s", g_slot_name[d->slot]);
         snprintf(lines[n++], 64, "ВЕС %.1f КГ", (f64)item_weight(it));
@@ -935,8 +939,8 @@ static void draw_selected(const Hud *h, const Layout *L, const HudWorld *w)
     const char *cond = condition(&d);
     ui_text(tx, ty + 10, !strcmp(cond, "ЦЕЛ") ? C_DIM : C_BAD, cond);
     if (d.bleed > 0.01f) ui_text(tx + ui_text_width(cond) + 6, ty + 10, C_BAD, "КРОВЬ ТЕЧЁТ");
-    Item wp = d.equip[SLOT_WEAPON];
-    snprintf(buf, sizeof buf, "%s", wp.kind ? item_name(wp) : "БЕЗ ОРУЖИЯ");
+    ItemStack wp = d.equip[SLOT_WEAPON];
+    snprintf(buf, sizeof buf, "%s", wp.def ? item_name(wp) : "БЕЗ ОРУЖИЯ");
     text_fit(tx, ty + 22, 124, C_DIM, buf);
     small_label(tx, ty + 34, "КРОВЬ");
     snprintf(buf, sizeof buf, "%.0f/%.0f", (f64)d.blood, (f64)d.blood_max);
@@ -1043,9 +1047,9 @@ static void draw_inventory(const Hud *h, const Layout *L, const HudWorld *w)
         u8 sl = g_slot_order[k];
         f32 sx, sy;
         slot_rect(L, k, &sx, &sy);
-        bool fits = h->held.kind && item_slot(h->held) == sl;
+        bool fits = h->held.def && item_slot(h->held) == sl;
         u32 edge = fits ? C_SEL : (hover_slot == sl ? C_TEXT : C_EDGE);
-        if (d.equip[sl].kind) {
+        if (d.equip[sl].def) {
             draw_item_cell(sx, sy, SLOT_W, SLOT_H, d.equip[sl], edge);
             ui_text(sx + 2, sy + SLOT_H - 9, C_DIM, g_slot_name[sl]);
         } else {
@@ -1066,7 +1070,7 @@ static void draw_inventory(const Hud *h, const Layout *L, const HudWorld *w)
             for (i32 gx = 0; gx < INV_W; gx++) ui_rect(L->ix + gx * CELL, L->iy + gy * CELL, CELL - 1, CELL - 1, C_CELL);
         i32 hx, hy;
         bool in_cell = cell_under(L, &hx, &hy);
-        if (h->held.kind && in_cell) {
+        if (h->held.def && in_cell) {
             // Куда ляжет вещь с курсора
             u8 iw, ih;
             item_size(h->held, &iw, &ih);
@@ -1093,15 +1097,15 @@ static void draw_inventory(const Hud *h, const Layout *L, const HudWorld *w)
         small_label(nx, ny + 108, "    СНЯТЬ");
     }
 
-    if (!h->held.kind) {
-        Item tip = { 0 };
+    if (!h->held.def) {
+        ItemStack tip = { 0 };
         i32 gx, gy;
         if (hover_slot >= 0) tip = d.equip[hover_slot];
         else if (d.sheet && cell_under(L, &gx, &gy)) {
             i32 at = inv_at(&d.sheet->inv, gx, gy);
             if (at >= 0) tip = d.sheet->inv.item[at];
         }
-        if (tip.kind) tooltip(L, tip);
+        if (tip.def) tooltip(L, tip);
     }
 }
 
@@ -1218,7 +1222,7 @@ void hud_draw(const Hud *h, const Input *in, const HudWorld *w)
     if (h->win_char) draw_character(h, &L, w);
     if (h->win_inv) draw_inventory(h, &L, w);
 
-    if (h->held.kind) {
+    if (h->held.def) {
         u8 iw, ih;
         item_size(h->held, &iw, &ih);
         draw_item_cell(L.mx - 4, L.my - 4, iw * CELL - 1, ih * CELL - 1, h->held, C_ACCENT);

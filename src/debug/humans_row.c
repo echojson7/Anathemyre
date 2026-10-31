@@ -10,7 +10,7 @@ void humans_row_init(HumansRow *h, Arena *perm, GroundFn ground)
     *h = (HumansRow){ 0 };
     h->bones = ARENA_PUSH_ARRAY(perm, M4, HUMANS_N * RENDER_MAX_BONES);
     h->looks = ARENA_PUSH_ARRAY(perm, M4, HUMANS_LOOKS * RENDER_MAX_BONES);
-    for (u32 j = 0; j < HUMANS_LOOKS; j++) {
+    for (u32 j = 0; j < g_gear_count + 1; j++) {
         f32 x = -1.0f - 0.75f * (f32)j;
         for (u32 b = 0; b < RENDER_MAX_BONES; b++) h->looks[j * RENDER_MAX_BONES + b] = m4_translate(v3(x, ground(x, 22.0f), 22.0f));
         CharLook lk;
@@ -55,19 +55,23 @@ u32 humans_row_draw(const HumansRow *h, const CharMeshes *m, DrawItem *items)
         items[n++] = (DrawItem){ .mesh = &h->mesh[k], .bones = h->bones + k * RENDER_MAX_BONES };
         if (h->has_hair[k]) items[n++] = (DrawItem){ .mesh = &h->hair[k], .bones = h->bones + k * RENDER_MAX_BONES };
     }
-    for (u32 j = 0; j < HUMANS_LOOKS; j++) {
-        // Каждый в одной вещи по порядку GEAR_*, последний — во всём сразу
-        static const u8 kit[] = { GEAR_QUILT, GEAR_PLATE, GEAR_BUCKET, GEAR_GREAVES, GEAR_BOOTS, GEAR_MITTS, GEAR_PACK, GEAR_BELT };
+    for (u32 j = 0; j < g_gear_count + 1; j++) {
+        // Каждый в одной вещи по порядку сеток описаний, последний — во всём сразу
+        static const char *const kit_name[] = { "quilt", "plate", "bucket", "greaves", "boots", "mitts", "pack", "belt" };
         u8 one = (u8)j;
         const M4 *lb = h->looks + j * RENDER_MAX_BONES;
         const GpuMesh *row = m->gear + (j % BODY_KIND_COUNT) * GEAR_ROW;
         items[n++] = (DrawItem){ .mesh = &m->body[j % BODY_KIND_COUNT], .bones = lb };
         // И причёски по кругу, кроме худого (он бритый) и тех, кто в кожухе
-        u8 cut = (u8)(GEAR_COUNT + (j / BODY_KIND_COUNT) % (j % BODY_KIND_COUNT == BODY_FEMALE ? 4u : 3u));
-        if (j % BODY_KIND_COUNT != BODY_THIN && j != GEAR_BUCKET && j < GEAR_COUNT) items[n++] = (DrawItem){ .mesh = &row[cut], .bones = lb };
-        if (j < GEAR_COUNT) items[n++] = (DrawItem){ .mesh = &row[one], .bones = lb };
+        u8 cut = (u8)(GEAR_CAP + (j / BODY_KIND_COUNT) % (j % BODY_KIND_COUNT == BODY_FEMALE ? 4u : 3u));
+        bool hat = j < g_gear_count && (g_gear_hides[j] & GEAR_HIDES_HAIR);
+        if (j % BODY_KIND_COUNT != BODY_THIN && !hat && j < g_gear_count) items[n++] = (DrawItem){ .mesh = &row[cut], .bones = lb };
+        if (j < g_gear_count) items[n++] = (DrawItem){ .mesh = &row[one], .bones = lb };
         else
-            for (u32 g = 0; g < ARRAY_COUNT(kit); g++) items[n++] = (DrawItem){ .mesh = &row[kit[g]], .bones = lb };
+            for (u32 g = 0; g < ARRAY_COUNT(kit_name); g++) {
+                u8 k = gear_find(kit_name[g]);
+                if (k != GEAR_NONE) items[n++] = (DrawItem){ .mesh = &row[k], .bones = lb };
+            }
     }
     return n;
 }

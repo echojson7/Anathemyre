@@ -77,8 +77,8 @@ void watchers_add(People *p, V3 center, f32 floor_y, u32 count, u8 team, GroundF
         u8 weapon = def_weapon(k % 2 ? "sekach" : "ressora");
         sheet_random(&p->sheet[i], &sr, name_next(p->variant[i] == BODY_FEMALE), k % 5 == 2 ? 1 : 0, weapon);
         if (!armed) {
-            Item old;
-            sheet_equip(&p->sheet[i], SLOT_WEAPON, (Item){ 0 }, &old);
+            ItemStack old;
+            sheet_equip(&p->sheet[i], SLOT_WEAPON, (ItemStack){ 0 }, &old);
         }
         p->sheet[i].role = "ЗРИТЕЛЬ АРЕНЫ";
         p->body[i].phase = rng_f32(&sr);
@@ -160,15 +160,15 @@ void mobs_add(People *p, Rng *rng, GroundFn ground)
         for (u32 s = 0; s < SLOT_COUNT; s++) c.d.armor[s] = ARMOR_NONE;
         for (u32 q = 0; q < PART_COUNT; q++) c.d.hp[q] = g_part_hp[q];
         c.d.blood = 100.0f * c.d.mass / 75.0f;
-        Item old;
+        ItemStack old;
         c.d.weapon = def_weapon(d->weapon);
-        sheet_equip(&c, SLOT_WEAPON, item_make(IK_WEAPON, c.d.weapon, Q_WORN, 1), &old);
+        sheet_equip(&c, SLOT_WEAPON, item_of_weapon(c.d.weapon, Q_WORN), &old);
         for (u32 a = 0; a < 3 && d->armor[a]; a++) {
-            Item it = item_make(IK_ARMOR, def_armor(d->armor[a]), Q_WORN, 1);
+            ItemStack it = item_of_armor(def_armor(d->armor[a]), Q_WORN);
             sheet_equip(&c, item_slot(it), it, &old);
         }
-        sheet_equip(&c, SLOT_BACK, item_make(IK_GOODS, def_goods("pack"), Q_WORN, 1), &old);
-        sheet_equip(&c, SLOT_PANTS, item_make(IK_ARMOR, def_armor("pants"), Q_WORN, 1), &old);
+        sheet_equip(&c, SLOT_BACK, item_make(def_item("pack"), Q_WORN, 1), &old);
+        sheet_equip(&c, SLOT_PANTS, item_of_armor(def_armor("pants"), Q_WORN), &old);
         // Разнесены по кругу, у каждого своя точка старта. Одна шайка: вступаются друг за друга
         u32 at = (k * 7u + 1u) % MOB_ROUTE;
         V2 a = g_route[at], b = g_route[(at + 1) % MOB_ROUTE];
