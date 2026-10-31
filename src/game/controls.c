@@ -22,7 +22,7 @@ const char *const g_light_preset_name[LIGHT_PRESET_COUNT] = { "ПРЕЖНИЙ", 
 static const u8 light_preset_parts[LIGHT_PRESET_COUNT][9] = {
     { LIGHT_MAT_OLD, LIGHT_CURVE_ACES, 0, 0, LIGHT_GI_SIMPLE, 0, 0, 0, LIGHT_AO_SSAO },
     { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 0, 0, LIGHT_GI_SKY, 1, 0, 1, LIGHT_AO_SSAO },
-    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 1, 1, LIGHT_GI_SKY, 1, 1, 1, LIGHT_AO_GTAO },
+    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 1, 1, LIGHT_GI_PROBES, 1, 1, 1, LIGHT_AO_GTAO },
 };
 
 void light_preset_apply(RenderSettings *rs, LightPreset p)
@@ -69,10 +69,10 @@ static void menu_light(Hud *h, Settings *s, World *w, RtsCamera *cam, const Fram
         log_info("СВЕТ: набор %s", g_light_preset_name[p]);
     }
     hud_form_head(f, "ОТРАЖЁННЫЙ СВЕТ");
-    static const char *gi_name[LIGHT_GI_COUNT] = { "ПРОСТОЙ", "НЕБО ПО СЕТКЕ" };
+    static const char *gi_name[LIGHT_GI_COUNT] = { "ПРОСТОЙ", "НЕБО ПО СЕТКЕ", "ЗОНДЫ" };
     if ((d = hud_form_step(f, "СПОСОБ", gi_name[rs->light_gi])))
         rs->light_gi = (u8)((rs->light_gi + LIGHT_GI_COUNT + (u32)d) % LIGHT_GI_COUNT);
-    if (rs->light_gi == LIGHT_GI_SKY) {
+    if (rs->light_gi != LIGHT_GI_SIMPLE) {
         u32 done, total;
         char sv[64];
         bool ready = render_sky_progress(&done, &total);

@@ -76,4 +76,4 @@ float casc1_weight(vec3 p)
 }
 
 // Контактная тень этого пикселя (0 — закрыто вблизи)
-float contact_shadow() { return u_shade.z != 0 ? texelFetch(u_contact, ivec2(gl_FragCoord.xy), 0).r : 1.0; }
+float contact_shadow(ivec2 px) { return u_shade.z != 0 ? texelFetch(u_contact, px, 0).r : 1.0; }

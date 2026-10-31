@@ -134,7 +134,7 @@ typedef struct RenderSettings {
 enum { LIGHT_MAT_OLD, LIGHT_MAT_GGX, LIGHT_MAT_COUNT };
 enum { LIGHT_CURVE_ACES, LIGHT_CURVE_AGX, LIGHT_CURVE_NEUTRAL, LIGHT_CURVE_COUNT };
 // ПРОСТОЙ — небо сверху, земля снизу всюду одинаково; НЕБО ПО СЕТКЕ — по доле видимого неба (запекается)
-enum { LIGHT_GI_SIMPLE, LIGHT_GI_SKY, LIGHT_GI_COUNT };
+enum { LIGHT_GI_SIMPLE, LIGHT_GI_SKY, LIGHT_GI_PROBES, LIGHT_GI_COUNT };
 // SSAO — прежнее, поверх всего кадра в атмосфере; GTAO — по горизонтам, гасит только рассеянный свет
 enum { LIGHT_AO_SSAO, LIGHT_AO_GTAO, LIGHT_AO_COUNT };
 
