@@ -13,12 +13,12 @@
 | `wrap_angle` — угол в −π..π | `src/core/math3d.h` | копии в player.c, fight_anim.c, arena_view.c |
 | `m4_trs(c, size, rx, ry, rz)` — матрица детали постройки | `src/core/math3d.h` | `xf_box` в testroom.c и arena_view.c, `xf` в town.c, выражение в valley_view.c |
 | `prop_*` — ящики, бочки, мешки, фонари, заборы, кабели, трубы, лом на земле (docs/props.md) | `src/game/props.c` | свои `static` в town.c, `cable` и `pipe` в ostov.c, `flora_prop` в flora.c |
-| `PAL_*` — общие бетон, тёмный бетон, ржавчина, песок, металл, свет ламп, красный и зелёный знак | `src/core/palette.h` | `C_CONCRETE`, `C_CONC`, `C_RUST`, `C_SAND`, `C_GLYPH_*` в testroom.c, arena_view.c, town.c, ostov.c, map.c |
+| `g_mat.*` — материалы по имени из `data/defs/materials.txt`: бетон, ржавчина, песок, металл, ткани, листы, свет ламп, знаки ([materials.md](materials.md)) | `src/defs/material.h`, `src/game/props.h` | `palette.h` (`PAL_*`), палитры `g_pal_cloth`/`g_pal_sheet`, свои `C_*` в ostov.c, showhall.c, town.c, arena_view.c, scrap.c |
 
 Правила:
 - Новый помощник, нужный двум файлам, — сразу в `core/`, не второй `static`. Новый предмет — в `props.c`, не в файл локации.
 - Свой цвет у постройки — только если он отличается намеренно (выбеленный бетон и своя ржавчина Остова,
-  свет ламп Скудели); общий материал берётся из `palette.h`.
+  свет ламп Скудели), и тогда это своя запись в `materials.txt`, а не число в коде; общий берётся как `g_mat.rust`.
 - Хеши с другим перемешиванием (`hash2` в map.c и valley.c, `hash3` в ostov.c и flora.c) пока свои:
   замена сдвинет рельеф и растения. Свести их — отдельный шаг с новым эталоном кадра.
 - Скелет не пишется числами в коде: суставы каждого тела лежат в `data/meshes/<тело>.skel` (конвертер), в коде
