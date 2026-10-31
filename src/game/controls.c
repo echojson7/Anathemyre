@@ -12,17 +12,17 @@
 #include "showhall.h"
 
 const char *const g_stage_name[STAGE_COUNT] = {
-    "ПУСТО", "ТЕНИ", "НЕБО И ТУМАН", "ЛУЧИ", "AO", "ПИКСЕЛЬНОСТЬ", "ФИЛЬТР", "РАСТЕНИЯ", "ШАГ МИРА", "ЛЮДИ", "СУТКИ И ОГНИ", "ПОЛНАЯ",
+    "ПУСТО", "ТЕНИ", "НЕБО И ТУМАН", "ЛУЧИ", "AO", "ПИКСЕЛЬНОСТЬ", "ФИЛЬТР", "РАСТЕНИЯ", "СВЕТ", "ШАГ МИРА", "ЛЮДИ", "СУТКИ И ОГНИ", "ПОЛНАЯ",
 };
 
 const char *const g_light_preset_name[LIGHT_PRESET_COUNT] = { "ПРЕЖНИЙ", "БЫСТРЫЙ", "РЕАЛИСТИЧНЫЙ" };
 
 // Части СВЕТА в наборе: материалы, кривая, автоэкспозиция, свечение, отражённый свет, каскады, мягкий край,
-// контактные тени, углы
-static const u8 light_preset_parts[LIGHT_PRESET_COUNT][9] = {
-    { LIGHT_MAT_OLD, LIGHT_CURVE_ACES, 0, 0, LIGHT_GI_SIMPLE, 0, 0, 0, LIGHT_AO_SSAO },
-    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 0, 0, LIGHT_GI_SKY, 1, 0, 1, LIGHT_AO_SSAO },
-    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 1, 1, LIGHT_GI_PROBES, 1, 1, 1, LIGHT_AO_GTAO },
+// контактные тени, углы, тени огней
+static const u8 light_preset_parts[LIGHT_PRESET_COUNT][10] = {
+    { LIGHT_MAT_OLD, LIGHT_CURVE_ACES, 0, 0, LIGHT_GI_SIMPLE, 0, 0, 0, LIGHT_AO_SSAO, 0 },
+    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 0, 0, LIGHT_GI_SKY, 1, 0, 1, LIGHT_AO_SSAO, 0 },
+    { LIGHT_MAT_GGX, LIGHT_CURVE_NEUTRAL, 1, 1, LIGHT_GI_PROBES, 1, 1, 1, LIGHT_AO_GTAO, 1 },
 };
 
 void light_preset_apply(RenderSettings *rs, LightPreset p)
@@ -37,6 +37,7 @@ void light_preset_apply(RenderSettings *rs, LightPreset p)
     rs->light_soft = v[6];
     rs->light_contact = v[7];
     rs->light_ao = v[8];
+    rs->light_torch = v[9];
 }
 
 LightPreset light_preset_of(const RenderSettings *rs)
@@ -45,7 +46,7 @@ LightPreset light_preset_of(const RenderSettings *rs)
         const u8 *v = light_preset_parts[p];
         if (rs->light_mat == v[0] && rs->light_curve == v[1] && rs->light_expo == v[2] && rs->light_bloom == v[3] &&
             rs->light_gi == v[4] && rs->light_casc == v[5] && rs->light_soft == v[6] && rs->light_contact == v[7] &&
-            rs->light_ao == v[8])
+            rs->light_ao == v[8] && rs->light_torch == v[9])
             return (LightPreset)p;
     }
     return LIGHT_PRESET_COUNT;
@@ -84,6 +85,8 @@ static void menu_light(Hud *h, Settings *s, World *w, RtsCamera *cam, const Fram
     hud_form_check(f, "КАСКАДЫ ДО 700 М", &rs->light_casc);
     hud_form_check(f, "МЯГКИЙ КРАЙ", &rs->light_soft);
     hud_form_check(f, "КОНТАКТНЫЕ ТЕНИ", &rs->light_contact);
+    hud_form_head(f, "ТЕНИ ОГНЕЙ");
+    hud_form_check(f, "4 БЛИЖНИХ ОГНЯ", &rs->light_torch);
     hud_form_head(f, "УГЛЫ");
     static const char *ao_name[LIGHT_AO_COUNT] = { "SSAO", "GTAO" };
     if ((d = hud_form_step(f, "ЗАТЕНЕНИЕ", ao_name[rs->light_ao])))
@@ -119,6 +122,15 @@ RenderSettings stage_render(const Settings *s)
     rs.pixel &= s->stage >= STAGE_PIXEL;
     rs.post &= s->stage >= STAGE_POST;
     rs.flora = s->stage >= STAGE_FLORA;
+    // Части СВЕТА: каскады, мягкий край, контактные тени и тени огней — вместе с ТЕНЯМИ, GTAO — с AO,
+    // остальное до этапа СВЕТ как в наборе ПРЕЖНИЙ
+    if (s->stage < STAGE_SHADOWS) rs.light_casc = rs.light_soft = rs.light_contact = rs.light_torch = false;
+    if (s->stage < STAGE_LIGHT) {
+        rs.light_mat = LIGHT_MAT_OLD;
+        rs.light_curve = LIGHT_CURVE_ACES;
+        rs.light_expo = rs.light_bloom = false;
+        rs.light_gi = LIGHT_GI_SIMPLE;
+    }
     return rs;
 }
 

@@ -432,7 +432,7 @@ void main()
         float sp = spec * pow(max(dot(N, H), 0.0), gloss) * sh;
         col = albedo * (u_sun_color * ndl * sh + ambient * ao) + u_sun_color * sp + emissive;
     }
-    // Факелы и фонари: свет без теней, считается в том же квадрате TEXEL
+    // Факелы и фонари в том же квадрате TEXEL; у ближних — тень по кубической карте (torch.glsl)
     for (int i = 0; i < l_count.x; i++) {
         vec3 d = l_pos[i].xyz - W;
         float d2 = dot(d, d);
@@ -447,6 +447,10 @@ void main()
         // Стены помещения: лампы внутри не светят наружу, огни снаружи — внутрь
         if (u_room_lo.w > 0.5) k *= 1.0 - abs(room_inside(l_pos[i].xyz) - inside);
         if (k <= 0.0) continue;
+        int ts = torch_slot(i);
+        float tsh = ts >= 0 ? torch_shadow(ts, W, N) : 1.0;
+        k *= tsh;
+        cone *= tsh;
         vec3 li = l_col[i].rgb * (k * light_falloff(d2, r));
         if (ggx) col += albedo * li + l_col[i].rgb * (cone * light_falloff(d2, r)) * ggx_spec(N, V, Ld, a2, F0);
         else col += albedo * li + li * spec * pow(max(dot(N, normalize(Ld + V)), 0.0), gloss);
