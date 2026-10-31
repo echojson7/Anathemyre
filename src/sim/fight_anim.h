@@ -13,12 +13,11 @@ typedef struct FightAnim {
     f32  guard, block, dodge, dodge_side, stagger, flinch, wield, limp;
     f32  swing;                       // замах 0..1, удар 1..2, возврат 2..3 (CharAction.swing)
     f32  calm;                        // сколько бой стоит (w->halted), с
-    f32  vt;                          // время в текущем состоянии, с
     f32  clock;                       // время жизни вида, с (дыхание лёжа)
     f32  seed;
     f32  hp_prev[PART_COUNT];
     u8   vst, dodge_kind, flinch_part;
-    bool prone, from_stand, from_kneel, turn, dropped;
+    bool prone, dropped;
     // Клип всем телом сейчас и до смены состояния: из прежнего в новый — плавно за fade_s
     u8   clip, pclip;
     f32  clip_t, pclip_t, fade, fade_s;

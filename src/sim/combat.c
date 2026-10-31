@@ -4,6 +4,8 @@
 
 #include "../core/hash.h"
 #include "../core/jobs.h"
+#include "action.h"
+#include "anim.h"
 #include "combat_tune.h"
 
 CombatTune g_tune;
@@ -40,12 +42,28 @@ void combat_events_done(CombatWorld *w)
     w->ev_count = 0;
 }
 
+static void act_update(CombatWorld *w, u32 i);
+
 void combat_set_state(CombatWorld *w, u32 i, u8 s, f32 dur)
 {
-    // Как ляжет (prone), решают go_down, begin_getup и check_body до смены состояния
+    // Как ляжет (prone), решают go_down, begin_getup и check_body до смены состояния.
+    // Новое состояние — новое действие всем телом: откуда пришёл, решает клип падения и переворот
+    u8 old = w->state[i];
+    if (s != old) {
+        bool lay = fs_lying(old);
+        f32 frac = combat_act_frac(w, i, 0.0f);
+        u8 was_front = w->act_flags[i] & ACTF_WAS_FRONT, fl = was_front;
+        if ((!lay && old != FS_SURRENDER) || (old == FS_KNOCKED && frac < 0.25f) || (old == FS_GETUP && frac > 0.8f))
+            fl |= ACTF_STAND;
+        if (old == FS_SURRENDER) fl |= ACTF_KNEEL;
+        if (s == FS_CRAWL && lay && !was_front) fl |= ACTF_TURN;
+        w->act_flags[i] = fl;
+        w->act_t[i] = 0.0f;
+    }
     w->state[i] = s;
     w->timer[i] = dur;
     w->dur[i] = dur;
+    act_update(w, i);
 }
 
 static f32 sat01(f32 x) { return clampf(x, 0.0f, 1.0f); }
@@ -196,12 +214,61 @@ static void enter_ready(CombatWorld *w, u32 i)
     combat_set_state(w, i, FS_READY, 0.0f);
 }
 
-// Сбит с ног: падение, подъём со спины и ничком, подбор оружия, с. Падать помогает тяжесть, вставать
-// приходится через силу: подъём вдвое дольше падения. От навыков не зависят
-#define KNOCKED_S 1.1f
-#define GETUP_BACK_S 2.2f
-#define GETUP_FRONT_S 2.0f
-#define PICKUP_S 0.9f
+// Длительности действий — из набора действий по классу оружия (data/defs/actionsets.txt)
+static const ActionDef *act_of(const CombatWorld *w, u32 i, ActionId a) { return action_of(weapon_of(w, i)->wclass, a); }
+static f32 act_time(const CombatWorld *w, u32 i, ActionId a, f32 roll)
+{
+    return action_time(act_of(w, i, a), roll, weapon_of(w, i)->weight, sk(w, i, SK_TOUGHNESS));
+}
+
+// Клип действия, с: длительность с темпом клипа
+static f32 clip_s(const CombatWorld *w, u32 i, ActionId a) { return act_of(w, i, a)->time / act_of(w, i, a)->speed; }
+
+// Какой клип всем телом идёт сейчас и сколько он длится: по состоянию, по тому, откуда пришёл, и по времени в нём.
+// Стоя — смерть от удара, от потери крови или обморок; с колен — оседает дальше; лёжа — так и лежит
+static void act_update(CombatWorld *w, u32 i)
+{
+    u8 st = w->state[i], fl = w->act_flags[i], c = CLIP_NONE;
+    f32 t = w->act_t[i], t0 = 0.0f, d = 0.0f;
+    ActionId a = ACT_COUNT;
+    switch (st) {
+    case FS_KNOCKED: a = w->fall[i] == FALL_FRONT ? ACT_FALL_FRONT : ACT_FALL_BACK; break;
+    case FS_GETUP: a = w->prone[i] == LIE_FRONT ? ACT_GETUP_FRONT : ACT_GETUP_BACK; break;
+    case FS_PICKUP: a = ACT_PICKUP; break;
+    case FS_SURRENDER: a = ACT_KNEEL; break;
+    case FS_DOWN: c = act_of(w, i, ACT_DOWN)->clip; break;
+    case FS_UNCONSCIOUS:
+    case FS_DEAD: {
+        ActionId how = st == FS_UNCONSCIOUS ? ACT_COLLAPSE : w->blood[i] <= 0.0f ? ACT_BLEED : ACT_DIE;
+        f32 col = clip_s(w, i, ACT_COLLAPSE);
+        if ((fl & ACTF_KNEEL) && t < 0.6f * col) {
+            c = act_of(w, i, ACT_COLLAPSE)->clip;
+            t0 = 0.4f;
+            d = col;
+        } else if ((fl & ACTF_STAND) && t < clip_s(w, i, how)) {
+            a = how;
+        } else {
+            c = CLIP_LIE;
+        }
+        break;
+    }
+    case FS_CRAWL:
+        if ((fl & ACTF_STAND) && t < clip_s(w, i, ACT_SINK)) a = ACT_SINK;
+        else if ((fl & ACTF_TURN) && t < clip_s(w, i, ACT_TURN)) a = ACT_TURN;
+        else c = CLIP_CRAWL;
+        break;
+    default: break;
+    }
+    if (a != ACT_COUNT) {
+        c = act_of(w, i, a)->clip;
+        // Падение, подъём и подбор длятся, сколько состояние боя; остальное — сколько клип
+        d = st == FS_KNOCKED || st == FS_GETUP || st == FS_PICKUP ? w->dur[i] / act_of(w, i, a)->speed : clip_s(w, i, a);
+    }
+    w->act[i] = c;
+    w->act_t0[i] = t0;
+    w->act_dur[i] = d;
+    w->act_flags[i] = (u8)((fl & ~ACTF_WAS_FRONT) | (w->prone[i] == LIE_FRONT ? ACTF_WAS_FRONT : 0));
+}
 
 static bool legs_hold(const CombatWorld *w, u32 i)
 {
@@ -216,7 +283,7 @@ static void begin_getup(CombatWorld *w, u32 i)
         combat_set_state(w, i, FS_CRAWL, 0.0f);
         return;
     }
-    combat_set_state(w, i, FS_GETUP, w->prone[i] == LIE_FRONT ? GETUP_FRONT_S : GETUP_BACK_S);
+    combat_set_state(w, i, FS_GETUP, act_time(w, i, w->prone[i] == LIE_FRONT ? ACT_GETUP_FRONT : ACT_GETUP_BACK, 0.0f));
     combat_event(w, EV_GETUP, i, i);
 }
 
@@ -241,7 +308,7 @@ static void after_getup(CombatWorld *w, u32 i)
         w->prone[i] = LIE_FRONT;
         combat_set_state(w, i, FS_CRAWL, 0.0f);
     } else if (w->loose[i]) {
-        combat_set_state(w, i, FS_PICKUP, PICKUP_S);
+        combat_set_state(w, i, FS_PICKUP, act_time(w, i, ACT_PICKUP, 0.0f));
     } else {
         enter_ready(w, i);
     }
@@ -319,10 +386,10 @@ static u8 apply_damage(CombatWorld *w, u32 t, u32 part, f32 cut, f32 blunt, f32 
     bool standing = !fs_lying(s) && !fs_out(s);
     // Резкий скачок шока валит с ног; стойкость поднимает порог
     if (standing && dshock > g_tune.knock_shock * (1.0f + sk(w, t, SK_TOUGHNESS) / 100.0f)) {
-        go_down(w, t, FS_KNOCKED, KNOCKED_S, 0.0f, 0);
+        go_down(w, t, FS_KNOCKED, act_time(w, t, w->fall[t] == FALL_FRONT ? ACT_FALL_FRONT : ACT_FALL_BACK, 0.0f), 0.0f, 0);
         combat_event(w, EV_FALL, t, t);
     } else if (standing && blunt > g_tune.stagger_blunt * (1.0f + sk(w, t, SK_TOUGHNESS) / 100.0f)) {
-        combat_set_state(w, t, FS_STAGGER, (0.4f + 0.6f * combat_roll(w, t, 0, 21)) * (1.0f - sk(w, t, SK_TOUGHNESS) / 200.0f));
+        combat_set_state(w, t, FS_STAGGER, act_time(w, t, ACT_STAGGER, combat_roll(w, t, 0, 21)));
         flags |= EVF_STAGGER;
     }
     gain(w, t, SK_TOUGHNESS, g_tune.gain_tough * total / 10.0f * (w->state[t] == FS_UNCONSCIOUS ? g_tune.gain_tough_ko_mul : 1.0f), sk(w, t, SK_TOUGHNESS));
@@ -487,11 +554,6 @@ static u8 roll_react(CombatWorld *w, u32 def, u32 att, u8 kind, f32 lead)
     return REACT_NONE;
 }
 
-// Проводка удара после касания: лёгкое проходит за 0.12 с, балка 18 кг — за 0.24 с
-static f32 strike_time(const CombatWorld *w, u32 i)
-{
-    return clampf(0.12f + 0.01f * (weapon_of(w, i)->weight - 3.0f), 0.12f, 0.24f);
-}
 
 static f32 windup_time(const CombatWorld *w, u32 i, u8 kind)
 {
@@ -520,10 +582,10 @@ void combat_begin_attack(CombatWorld *w, u32 i, u8 kind, u32 t, bool counter)
     u8 r = roll_react(w, t, i, kind, wt);
     w->react[i] = r;
     if (r == REACT_BLOCK) {
-        f32 hold = wt + 0.2f;
+        f32 hold = wt + act_of(w, t, ACT_BLOCK)->time;
         if (w->state[t] != FS_BLOCK || w->timer[t] < hold) combat_set_state(w, t, FS_BLOCK, hold);
     } else if (r == REACT_DODGE) {
-        combat_set_state(w, t, FS_DODGE, wt + 0.2f);
+        combat_set_state(w, t, FS_DODGE, wt + act_of(w, t, ACT_DODGE)->time);
     }
 }
 
@@ -600,7 +662,7 @@ static void resolve_strike(CombatWorld *w, u32 i)
             f32 fd = weapon_of(w, t)->weight * (1.0f + sk(w, t, SK_STRENGTH) / 100.0f);
             if (fa > g_tune.guard_break * fd) {
                 w->ev[w->last_ev].flags |= EVF_STAGGER;
-                combat_set_state(w, t, FS_STAGGER, (0.4f + 0.6f * combat_roll(w, t, i, 41)) * (1.0f - sk(w, t, SK_TOUGHNESS) / 200.0f));
+                combat_set_state(w, t, FS_STAGGER, act_time(w, t, ACT_STAGGER, combat_roll(w, t, i, 41)));
                 apply_damage(w, t, PART_ARM_R, 0, wd->blunt * g_tune.guard_break_arm * g_quality_mul[w->weapon_q[i]], 0);
                 check_body(w, t);
             } else {
@@ -669,7 +731,7 @@ static void resolve_strike(CombatWorld *w, u32 i)
                 f32 push = g_tune.knock_push_min + combat_roll(w, i, t, 70);
                 w->x[t] += dx / l * push;
                 w->z[t] += dz / l * push;
-                go_down(w, t, FS_KNOCKED, KNOCKED_S, 0.0f, 0);
+                go_down(w, t, FS_KNOCKED, act_time(w, t, w->fall[t] == FALL_FRONT ? ACT_FALL_FRONT : ACT_FALL_BACK, 0.0f), 0.0f, 0);
                 // Сильный удар выбивает оружие из рук: чем больше перевес силы, тем вернее
                 f32 p_drop = clampf(g_tune.drop_base + g_tune.drop_k * (force / resist - 1.0f), g_tune.drop_base, g_tune.drop_max) *
                              (1.0f - sk(w, t, SK_STRENGTH) / g_tune.drop_str_div);
@@ -722,15 +784,14 @@ static void tick_state(CombatWorld *w, u32 i, u32 *strikes, u32 *ns)
     if (w->timer[i] > 0.0f) return;
     switch (s) {
     case FS_WINDUP:
-        combat_set_state(w, i, FS_STRIKE, strike_time(w, i));
+        combat_set_state(w, i, FS_STRIKE, act_time(w, i, ACT_STRIKE, 0.0f));
         strikes[(*ns)++] = i;
         break;
     case FS_STRIKE:
-        combat_set_state(w, i, FS_RECOVER, 0.45f * (0.7f + weapon_of(w, i)->weight / 20.0f));
+        combat_set_state(w, i, FS_RECOVER, act_time(w, i, ACT_RECOVER, 0.0f));
         break;
     case FS_KNOCKED: {
-        f32 down = (1.0f + 1.5f * combat_roll(w, i, 0, 81)) * (1.0f - sk(w, i, SK_TOUGHNESS) / 200.0f);
-        combat_set_state(w, i, FS_DOWN, down);
+        combat_set_state(w, i, FS_DOWN, act_time(w, i, ACT_DOWN, combat_roll(w, i, 0, 81)));
         break;
     }
     case FS_DOWN:
@@ -926,6 +987,12 @@ void combat_tick(CombatWorld *w)
 {
     combat_sync_grid(w);
     u32 ns = 0;
+    // Время действия всем телом: до решений этого шага, чтобы новое действие начиналось с нуля
+    for (u32 i = 0; i < w->count; i++)
+        if (!w->idle[i]) {
+            w->act_t[i] += COMBAT_DT;
+            act_update(w, i);
+        }
     for (u32 i = 0; i < w->count; i++)
         if (!w->idle[i]) tick_body(w, i);
     for (u32 i = 0; i < w->count; i++)
@@ -960,6 +1027,7 @@ void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap)
     for (u32 p = 0; p < PART_COUNT; p++) w->hp[p] = ARENA_PUSH_ARRAY(a, f32, cap);
     F(blood); F(blood_max); F(bleed); F(shock); F(morale); F(morale_base); F(mass); F(height);
     B(fracture); B(severed); B(disarmed); B(fall); B(prone); B(loose);
+    B(act); B(act_flags); F(act_t); F(act_t0); F(act_dur);
     for (u32 s = 0; s < SK_COUNT; s++) w->skill[s] = ARENA_PUSH_ARRAY(a, f32, cap);
     B(weapon); B(weapon_q);
     for (u32 s = 0; s < SLOT_COUNT; s++) w->armor[s] = ARENA_PUSH_ARRAY(a, u8, cap);
@@ -989,6 +1057,7 @@ void combat_ser(Ser *s, CombatWorld *w)
     for (u32 p = 0; p < PART_COUNT; p++) C(hp[p]);
     C(blood); C(blood_max); C(bleed); C(shock); C(morale); C(morale_base); C(mass); C(height);
     C(fracture); C(severed); C(disarmed); C(fall); C(prone); C(loose); C(gitem);
+    C(act); C(act_flags); C(act_t); C(act_t0); C(act_dur);
     for (u32 k = 0; k < SK_COUNT; k++) C(skill[k]);
     C(weapon); C(weapon_q);
     for (u32 k = 0; k < SLOT_COUNT; k++) C(armor[k]);
@@ -1081,8 +1150,14 @@ void combat_load(CombatWorld *w, u32 i, const FighterDesc *d)
     for (u32 s = 0; s < SLOT_COUNT; s++) w->armor[s][i] = d->armor[s];
     w->pause[i] = g_tune.first_pause + combat_roll(w, i, 0, 1);
     w->grid_dirty = true;
+    // Действие всем телом с нуля: входит в бой уже в нынешнем состоянии, без клипа падения
+    w->state[i] = FS_READY;
+    w->act_flags[i] = 0;
+    w->act_t[i] = 0.0f;
     combat_set_state(w, i, FS_READY, 0.0f);
     check_body(w, i);
+    w->act_flags[i] &= ACTF_WAS_FRONT;
+    act_update(w, i);
 }
 
 void combat_store(const CombatWorld *w, u32 i, FighterDesc *d)

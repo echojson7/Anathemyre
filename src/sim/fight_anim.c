@@ -3,15 +3,10 @@
 #include <string.h>
 
 #include "../core/hash.h"
+#include "action.h"
 
-// Длительности клипов вида, с. Темп по тяжести: обмякшее тело падает почти свободно, живой
-// притормаживает; падение сбитого (1.1) и подъём (2.0–2.2) задаёт бой (combat.c)
-#define COLLAPSE_S 1.1f   // теряет сознание стоя: оседает на колени и валится
-#define DIE_S 0.8f        // убит ударом стоя: падает мешком
-#define BLEED_S 2.0f      // истёк кровью стоя: шатается, колено, бок
-#define SINK_S 1.1f       // ноги не держат: оседает, ловит себя руками
-#define TURN_S 1.2f       // со спины на живот, прежде чем ползти
-#define KNEEL_S 1.6f      // опускается на колени
+// Какой клип всем телом и на какой доле, решает бой (CombatWorld.act*, длительности — наборы действий);
+// здесь только показ: сглаживание между шагами и переход из прежнего клипа
 #define FADE_S 0.35f      // переход из прежнего клипа в новый
 #define DRAW_S 0.6f       // достать или убрать оружие: основа, с, и прибавка за килограмм (DRAW_KG)
 #define DRAW_KG 0.04f     // клинок 3 кг — 0.72 с, балка 18 кг — 1.3 с
@@ -148,52 +143,13 @@ void fight_anim_pre_tick(FightAnim *f, const CombatWorld *w, u32 i)
     f->prev_h = w->heading[i];
 }
 
-// Какой клип всем телом показывать сейчас и на какой доле
+// Клип всем телом сейчас: решён боем; доля — с поправкой на время после шага. Лёжа и ползком — время вида
 static void clip_now(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha)
 {
-    u8 st = w->state[i];
-    u8 c = CLIP_NONE;
-    f32 t = 0.0f;
-    switch (st) {
-    case FS_KNOCKED: c = CLIP_FALL; t = state_progress(w, i, alpha); break;
-    case FS_GETUP: c = CLIP_GETUP; t = state_progress(w, i, alpha); break;
-    case FS_PICKUP: c = CLIP_PICKUP; t = state_progress(w, i, alpha); break;
-    case FS_SURRENDER: c = CLIP_KNEEL; t = f->vt / KNEEL_S; break;
-    case FS_UNCONSCIOUS:
-    case FS_DEAD: {
-        // Стоя: смерть от удара, от потери крови или обморок; с колен (сдался) — оседает дальше;
-        // лёжа — так и лежит
-        bool bleed = st == FS_DEAD && w->blood[i] <= 0.0f;
-        f32 dur = st == FS_UNCONSCIOUS ? COLLAPSE_S : bleed ? BLEED_S : DIE_S;
-        if (f->from_kneel && f->vt < 0.6f * COLLAPSE_S) {
-            c = CLIP_COLLAPSE;
-            t = 0.4f + f->vt / COLLAPSE_S;
-        } else if (f->from_stand && f->vt < dur) {
-            c = st == FS_UNCONSCIOUS ? CLIP_COLLAPSE : bleed ? CLIP_BLEED : CLIP_DIE;
-            t = f->vt / dur;
-        } else {
-            c = CLIP_LIE;
-            t = f->clock;
-        }
-        break;
-    }
-    case FS_DOWN: c = CLIP_LIE; t = f->clock; break;
-    case FS_CRAWL:
-        if (f->from_stand && f->vt < SINK_S) {
-            c = CLIP_SINK;
-            t = f->vt / SINK_S;
-        } else if (f->turn && f->vt < TURN_S) {
-            c = CLIP_TURN;
-            t = f->vt / TURN_S;
-        } else {
-            c = CLIP_CRAWL;
-            t = f->phase * 2.6f + f->vt;
-        }
-        break;
-    default: break;
-    }
-    f->clip = c;
-    f->clip_t = t;
+    f->clip = w->act[i];
+    f->clip_t = f->clip == CLIP_LIE ? f->clock
+              : f->clip == CLIP_CRAWL ? f->phase * 2.6f + w->act_t[i] + alpha * COMBAT_DT
+              : combat_act_frac(w, i, alpha * COMBAT_DT);
 }
 
 void fight_anim_update(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, f32 dt)
@@ -207,13 +163,6 @@ void fight_anim_update(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, f32
         f->pside = f->side;
         f->fade = 0.0f;
         f->fade_s = f->vst == FS_SURRENDER ? 0.6f : FADE_S;
-        // Ещё стоя: не лежал, или только начал падать, или почти встал
-        bool lay = fs_lying(f->vst);
-        f->from_stand = (!lay && f->vst != FS_SURRENDER) || (f->vst == FS_KNOCKED && f->clip_t < 0.25f) ||
-                        (f->vst == FS_GETUP && f->clip_t > 0.8f);
-        f->from_kneel = f->vst == FS_SURRENDER;
-        // Ползти со спины: сначала перевернуться на живот
-        f->turn = st == FS_CRAWL && lay && !f->prone;
         if (st == FS_DODGE) {
             u32 h = (u32)(f->seed * 71.0f) + w->tick * 7u;
             f->dodge_kind = (u8)(hashf(h) * DODGE_COUNT);
@@ -229,9 +178,6 @@ void fight_anim_update(FightAnim *f, const CombatWorld *w, u32 i, f32 alpha, f32
             f->lock_z = w->z[w->target[i]];
         }
         f->vst = st;
-        f->vt = 0.0f;
-    } else {
-        f->vt += dt;
     }
     f->clock += dt;
     // Как лежит, решает бой: ничком, на спине или на боку (убитый сбоку, истёкший кровью).
@@ -383,7 +329,9 @@ bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha,
     if (st == FS_DEAD)
         a->fall_dir = f->side > 0 ? FALL_LEFT : f->side < 0 ? FALL_RIGHT : f->prone ? FALL_FRONT : FALL_BACK;
     a->dead = st == FS_DEAD;
-    a->still = f->vt - (f->from_stand ? (w->blood[i] <= 0.0f ? BLEED_S : DIE_S) : 0.0f);
+    // Сколько мёртв: после клипа смерти стоя (бой) — от его конца
+    const ActionDef *die = action_of(g_weapons[w->weapon[i]].wclass, w->blood[i] <= 0.0f ? ACT_BLEED : ACT_DIE);
+    a->still = w->act_t[i] + alpha * COMBAT_DT - ((w->act_flags[i] & ACTF_STAND) ? die->time / die->speed : 0.0f);
     a->prev_clip = f->pclip;
     a->prev_t = f->pclip_t;
     a->prev_prone = f->pprone;
@@ -394,19 +342,17 @@ bool fight_anim_pose(const FightAnim *f, const CombatWorld *w, u32 i, f32 alpha,
 
 f32 fight_anim_contact(const CombatWorld *w, u32 i, u8 ev_kind)
 {
-    // Касание земли в клипах: сбит — сел на землю (вперёд — колени), убит ударом — таз о землю,
+    // Касание земли — метка contact действия: сбит — сел на землю (вперёд — колени), убит ударом — таз о землю,
     // истёк кровью — колено, без сознания — колени, ноги отказали — колени
-    u8 st = w->state[i];
+    u8 st = w->state[i], wc = g_weapons[w->weapon[i]].wclass;
+    ActionId a;
     switch (ev_kind) {
-    case EV_KNOCKDOWN:
-        return w->fall[i] == FALL_FRONT ? 0.55f * 1.1f : 0.64f * 1.1f;
-    case EV_FALL:
-        return st == FS_KNOCKED ? (w->fall[i] == FALL_FRONT ? 0.55f * 1.1f : 0.64f * 1.1f) : 0.45f * SINK_S;
-    case EV_KO:
-        return 0.50f * COLLAPSE_S;
-    case EV_DEATH:
-        return w->blood[i] <= 0.0f ? 0.40f * BLEED_S : 0.55f * DIE_S;
-    default:
-        return 0.4f;
+    case EV_KNOCKDOWN: a = w->fall[i] == FALL_FRONT ? ACT_FALL_FRONT : ACT_FALL_BACK; break;
+    case EV_FALL: a = st != FS_KNOCKED ? ACT_SINK : w->fall[i] == FALL_FRONT ? ACT_FALL_FRONT : ACT_FALL_BACK; break;
+    case EV_KO: a = ACT_COLLAPSE; break;
+    case EV_DEATH: a = w->blood[i] <= 0.0f ? ACT_BLEED : ACT_DIE; break;
+    default: return 0.4f;
     }
+    const ActionDef *d = action_of(wc, a);
+    return d->contact * d->time;
 }

@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "../core/log.h"
+#include "action.h"
 #include "items.h"
 
 AnimClip g_anim_clip[AC_COUNT];
@@ -55,5 +56,12 @@ bool anim_clips_load(Arena *mem, const char *data_dir)
         }
         g_anim_clip[c] = (AnimClip){ key, head[3] };
     }
+    // Стойки наборов действий — ключи клипа weapon_guard
+    for (u32 s = 0; s < AS_COUNT; s++)
+        if (g_actions[s][ACT_STANCE].key >= CLIP_N(AC_WEAPON_GUARD)) {
+            log_error("КЛИПЫ: стойка набора действий %u — ключ %u, а в weapon_guard их %u", s, g_actions[s][ACT_STANCE].key,
+                      CLIP_N(AC_WEAPON_GUARD));
+            return false;
+        }
     return true;
 }

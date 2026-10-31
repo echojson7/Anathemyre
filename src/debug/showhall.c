@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "../sim/action.h"
 #include "../sim/look.h"
 #include "../content/ostov.h"
 #include "../core/log.h"
@@ -48,22 +49,21 @@
 #define SH_MOVE_PRE 2.5f // стоит перед движением
 #define SH_WAIT   1.5f   // ходок стоит у края галереи
 #define SH_NEAR   60.0f  // фигуры считаются, если глаз ближе, м
-// Сроки клипов всем телом — те же, что в бою: падение KNOCKED_S, подъём со спины GETUP_BACK_S и ничком
-// GETUP_FRONT_S (sim/combat.c), оседание COLLAPSE_S (fight_anim.c)
-#define SH_FALL_S     1.1f
-#define SH_GETUP_S    2.2f
-#define SH_GETUP_FRONT_S 2.0f
-#define SH_COLLAPSE_S 1.1f
+// Сроки клипов всем телом — те же, что в бою: действия набора human (data/defs/actionsets.txt). В таблице кругов
+// действие записано отрицательным числом SH_ACT, срок берёт step_s; лёжа и стоя — свои секунды
+#define SH_ACT(a)     (-1.0f - (f32)(a))
+#define SH_FALL_S     SH_ACT(ACT_FALL_BACK)
+#define SH_GETUP_S    SH_ACT(ACT_GETUP_BACK)
+#define SH_GETUP_FRONT_S SH_ACT(ACT_GETUP_FRONT)
+#define SH_COLLAPSE_S SH_ACT(ACT_COLLAPSE)
+#define SH_DIE_S      SH_ACT(ACT_DIE)
+#define SH_BLEED_S    SH_ACT(ACT_BLEED)
+#define SH_SINK_S     SH_ACT(ACT_SINK)
+#define SH_TURN_S     SH_ACT(ACT_TURN)
+#define SH_KNEEL_S    SH_ACT(ACT_KNEEL)
+#define SH_PICKUP_S   SH_ACT(ACT_PICKUP)
 #define SH_LIE_S      3.0f
 #define SH_STAND_S    3.0f
-// Смерть DIE_S, истёк кровью BLEED_S, оседает SINK_S, переворот TURN_S, сдача KNEEL_S (fight_anim.c),
-// подбор оружия PICKUP_S (sim/combat.c)
-#define SH_DIE_S      0.8f
-#define SH_BLEED_S    2.0f
-#define SH_SINK_S     1.1f
-#define SH_TURN_S     1.2f
-#define SH_KNEEL_S    1.6f
-#define SH_PICKUP_S   0.9f
 
 // Ряды первого этажа: A — позы отдыха, B — движения стоя, вразбежку, чтобы задний ряд был виден
 #define ROW_A_X(k) (-15.0f + 5.0f * (f32)(k))
@@ -405,6 +405,12 @@ typedef struct Step {
     f32 s;
     bool rev;
 } Step;
+static f32 step_s(const Step *st)
+{
+    if (st->s >= 0.0f) return st->s;
+    const ActionDef *a = &g_actions[AS_HUMAN][(u32)(-1.0f - st->s)];
+    return a->time / a->speed;
+}
 typedef struct ClipLoop {
     const char *title;
     Step st[4];
@@ -468,11 +474,11 @@ static void clip_cycle(Exhibit *e, f32 T, CharAction *a)
     const Step *st = c->st;
     snprintf(e->line[0], sizeof e->line[0], "%s", c->title);
     *a = (CharAction){ 0 };
-    f32 cyc = st[0].s + st[1].s + st[2].s + st[3].s, lt = wrapf(T + e->shift, cyc);
+    f32 cyc = step_s(&st[0]) + step_s(&st[1]) + step_s(&st[2]) + step_s(&st[3]), lt = wrapf(T + e->shift, cyc);
     u32 k = 0;
-    while (k < 3 && lt >= st[k].s) lt -= st[k++].s;
+    while (k < 3 && lt >= step_s(&st[k])) lt -= step_s(&st[k++]);
     a->clip = st[k].clip;
-    f32 u = lt / st[k].s;
+    f32 u = lt / step_s(&st[k]);
     // Лёжа и ползком клип идёт по времени; поза на коленях держит конец входа
     if (a->clip == CLIP_LIE || a->clip == CLIP_CRAWL) a->clip_t = lt;
     else if (a->clip == CLIP_KNEEL && k == 2) a->clip_t = 1.0f;
@@ -484,7 +490,7 @@ static void clip_cycle(Exhibit *e, f32 T, CharAction *a)
     a->dead = c->dead;
     a->still = c->dead && a->clip == CLIP_LIE ? lt : 9.0f;
     if (c->dead || (c->faint && (a->clip == CLIP_COLLAPSE || a->clip == CLIP_LIE))) a->limp = 1.0f;
-    snprintf(e->line[1], sizeof e->line[1], "%s %.1f / %.1f С", st[k].name, (f64)lt, (f64)st[k].s);
+    snprintf(e->line[1], sizeof e->line[1], "%s %.1f / %.1f С", st[k].name, (f64)lt, (f64)step_s(&st[k]));
 }
 
 static f32 gallery_ground(f32 x, f32 z) { return showhall_ground(x, z, F2); }
