@@ -74,7 +74,8 @@ prefab skudel
 - Огни (`lights_collect`, `view/lights.c`) — из экземпляров с `light` ближе 300 м к камере. Вместо
   `scene_hall_lights` и `scene_ring_lights`: лампы зала и свет ринга — объекты `hall_lamp`, `ring_spot`,
   `ring_lamp` в заготовках `hall_lamps` и `ring_lights` (сетки зала и ринга пока в коде, переедут в PR 2).
-  Огни Мерильни — `debug_lights` (отладка), факел в руке — `figures.c`.
+  Огни Мерильни — `debug_lights` (отладка). Факел в руке — компонент `light` вещи `torch` (data/defs/goods.txt):
+  `figures.c` берёт его по имени и строит огонь той же `lights_item` из view/lights.c.
 - Физика (`objects_solids` → `phys_static_add`): коробки объектов, которые стоят намертво. Лом и вещи упираются
   в стены, ярусы, прилавки ([physics.md](physics.md)). Высоты, по которым ходят люди (`town_ground`), пока кодом.
 
