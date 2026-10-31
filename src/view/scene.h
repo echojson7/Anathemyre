@@ -1,31 +1,32 @@
-// Статика мира на экране: зал, мегаструктуры, Скудель, Остов, долина, лом и вещи на земле; свет зала и ринга.
+// Статика мира на экране: зал, мегаструктуры, объекты (Скудель), Остов, долина, лом и вещи на земле.
 // Сетки строит content/ при старте; мир (World) о них не знает
 #ifndef ANA_SCENE_H
 #define ANA_SCENE_H
 
 #include "../render/render.h"
 #include "../sim/arena_ring.h"
+#include "../world/objects.h"
 #include "../world/town.h"
 #include "loot_view.h"
 #include "scrap_view.h"
 #include "valley_view.h"
 
-#define SCENE_STATICS 4
+#define SCENE_BATCHES 64  // статических пакетов объектов: локация × чанк × тень
+#define SCENE_STATICS (3 + SCENE_BATCHES)
 
 typedef struct Scene {
-    GpuMesh     hall, far, town, ostov;  // зал с рингом и обломки, мегаструктуры, посёлок, руина Остов
+    GpuMesh     hall, far, ostov;        // зал с рингом и обломки, мегаструктуры, руина Остов
+    GpuMesh    *batch;                   // объекты (world/objects.h): Скудель
+    bool       *batch_no_shadow;
+    u32         batches;
     ValleyView *valley;                  // долина у реки: вода, руины, растения
     ScrapView   scrap;
     LootView    loot;
 } Scene;
 
-// Сетки статики и видов; места жителей Скудели — в town (их собирает та же постройка, что и сетку)
-bool scene_init(Scene *s, MeshBuilder *mb, Arena *perm, u64 seed, Town *town);
-// SCENE_STATICS элементов кадра: статика с тенями и мегаструктуры без них
+// Сетки статики и видов из экземпляров objs; места жителей Скудели — в town
+bool scene_init(Scene *s, MeshBuilder *mb, Arena *perm, u64 seed, const Objects *objs, Town *town);
+// До SCENE_STATICS элементов кадра: статика с тенями и мегаструктуры без них
 u32  scene_statics(const Scene *s, DrawItem *out);
-// Лампы над стойками с оружием в зале: горят всегда
-u32  scene_hall_lights(PointLight *out, u32 max);
-// Свет арены: зажигается с темнотой night (Sky.night), в out — до RING_LIGHTS источников
-u32  scene_ring_lights(f32 night, f32 time, PointLight *out);
 
 #endif

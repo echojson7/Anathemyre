@@ -53,6 +53,12 @@ typedef struct PhysHit {
     u16 other;       // обо что: user другого тела или PHYS_GROUND
 } PhysHit;
 
+// Неподвижные коробки построек (стены, плиты, ящики): тела упираются в них, как в землю. Добавляются при
+// старте из описаний объектов (world/objects.c), в сохранение не идут — строятся из зерна заново
+#define PHYS_STATICS     16384
+#define PHYS_STATIC_CELL 8.0f    // ячейка поиска, м
+#define PHYS_STATIC_NEAR 16      // коробок у одного тела за шаг
+
 // Как стоит расставленная вещь: осесть при первом попадании в зону, висеть, пока не тронут, или намертво
 typedef enum PhysMode { PHYS_SETTLE, PHYS_HANG, PHYS_FIXED } PhysMode;
 
@@ -90,6 +96,14 @@ typedef struct Phys {
     V3  *hit_p;
     u16 *hit_o;
     bool on;           // выключено — всё стоит как есть
+    // Коробки построек: середина, половины размеров, поворот вокруг вертикали. Поиск — ячейки по хешу
+    u32  nstatic;
+    V3  *st_c, *st_half;
+    f32 *st_cos, *st_sin;
+    u32 *st_start, *st_ref, nref;
+    bool st_dirty;
+    u16 *st_near;      // PHYS_STATIC_NEAR на тело: коробки рядом на этот шаг
+    u8  *st_nnear;
 } Phys;
 
 void phys_init(Phys *p, Arena *perm);
@@ -97,6 +111,9 @@ void phys_init(Phys *p, Arena *perm);
 // Только из шага мира. -1 — мест нет
 i32  phys_spawn(Phys *p, const PhysDesc *d, M4 xf, V3 vel, V3 angvel, u8 mode, u16 user);
 void phys_free(Phys *p, u32 h);
+// Неподвижная коробка: середина c, половины размеров half, поворот yaw вокруг вертикали. Только при старте.
+// false — мест нет
+bool phys_static_add(Phys *p, V3 c, V3 half, f32 yaw);
 // Поза вещи: после шага (alpha 1) или между двумя шагами для кадра
 M4   phys_pose(const Phys *p, u32 h, f32 alpha);
 // Разбудить всё в круге (толчок, взрыв, кто-то прошёл)

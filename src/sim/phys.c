@@ -17,6 +17,8 @@
 #define PAIR_PUSH    0.01f   // вещи расходятся за подшаг не больше, м (3.6 м/с)
 #define AIR_DAMP     0.5f    // гашение вращения в воздухе, 1/с
 #define ROLL_DAMP    6.0f    // на земле
+#define STATIC_BUCKETS 4096u // ячеек поиска коробок по хешу, степень двойки
+#define STATIC_REFS  65536u  // коробка × ячейка
 
 // ---------------------------------------------------------------- кватернионы xyzw
 
@@ -112,7 +114,137 @@ void phys_init(Phys *p, Arena *perm)
     p->zone_z = ARENA_PUSH_ARRAY(perm, f32, n);
     p->pair = ARENA_PUSH_ARRAY(perm, u32, PAIR_MAX);
     grid_init(&p->grid, perm, n, 1u << 16, 1.0f);
+    p->st_c = ARENA_PUSH_ARRAY(perm, V3, PHYS_STATICS);
+    p->st_half = ARENA_PUSH_ARRAY(perm, V3, PHYS_STATICS);
+    p->st_cos = ARENA_PUSH_ARRAY(perm, f32, PHYS_STATICS);
+    p->st_sin = ARENA_PUSH_ARRAY(perm, f32, PHYS_STATICS);
+    p->st_start = ARENA_PUSH_ARRAY(perm, u32, STATIC_BUCKETS + 1);
+    p->st_ref = ARENA_PUSH_ARRAY(perm, u32, STATIC_REFS);
+    p->st_near = ARENA_PUSH_ARRAY(perm, u16, (size_t)n * PHYS_STATIC_NEAR);
+    p->st_nnear = ARENA_PUSH_ARRAY(perm, u8, n);
     p->on = true;
+}
+
+// ---------------------------------------------------------------- коробки построек
+
+static u32 st_bucket(i32 cx, i32 cz) { return ((u32)cx * 73856093u ^ (u32)cz * 19349663u) & (STATIC_BUCKETS - 1); }
+
+static void st_cells(const Phys *p, u32 b, i32 *x0, i32 *x1, i32 *z0, i32 *z1)
+{
+    // Охват повёрнутой коробки по XZ
+    V3 c = p->st_c[b], h = p->st_half[b];
+    f32 ex = fabsf(p->st_cos[b]) * h.x + fabsf(p->st_sin[b]) * h.z, ez = fabsf(p->st_sin[b]) * h.x + fabsf(p->st_cos[b]) * h.z;
+    *x0 = (i32)floorf((c.x - ex) / PHYS_STATIC_CELL), *x1 = (i32)floorf((c.x + ex) / PHYS_STATIC_CELL);
+    *z0 = (i32)floorf((c.z - ez) / PHYS_STATIC_CELL), *z1 = (i32)floorf((c.z + ez) / PHYS_STATIC_CELL);
+}
+
+bool phys_static_add(Phys *p, V3 c, V3 half, f32 yaw)
+{
+    if (p->nstatic == PHYS_STATICS) return false;
+    u32 b = p->nstatic++;
+    p->st_c[b] = c;
+    p->st_half[b] = half;
+    p->st_cos[b] = cosf(yaw);
+    p->st_sin[b] = sinf(yaw);
+    p->st_dirty = true;
+    return true;
+}
+
+// Ячейки → коробки подсчётом: коробка в каждой ячейке, которую задевает. Один раз после добавления
+static void st_build(Phys *p)
+{
+    p->st_dirty = false;
+    memset(p->st_start, 0, sizeof(u32) * (STATIC_BUCKETS + 1));
+    for (u32 pass = 0; pass < 2; pass++) {
+        if (pass) {
+            for (u32 k = 0; k < STATIC_BUCKETS; k++) p->st_start[k + 1] += p->st_start[k];
+            p->nref = 0;
+        }
+        u32 total = 0;
+        for (u32 b = 0; b < p->nstatic; b++) {
+            i32 x0, x1, z0, z1;
+            st_cells(p, b, &x0, &x1, &z0, &z1);
+            // Ссылок не хватает — дальние по номеру коробки отбрасываются
+            total += (u32)((x1 - x0 + 1) * (z1 - z0 + 1));
+            if (!pass && total > STATIC_REFS) {
+                p->nstatic = b;
+                break;
+            }
+            for (i32 z = z0; z <= z1; z++)
+                for (i32 x = x0; x <= x1; x++) {
+                    u32 k = st_bucket(x, z);
+                    if (!pass) {
+                        p->st_start[k + 1]++;
+                        continue;
+                    }
+                    // Второй проход пишет с конца ячейки: st_start[k] сдвигается к началу
+                    p->st_ref[--p->st_start[k + 1]] = b;
+                    p->nref++;
+                }
+        }
+    }
+    // После второго прохода st_start[k + 1] = начало ячейки k; сдвиг назад
+    memmove(p->st_start, p->st_start + 1, sizeof(u32) * STATIC_BUCKETS);
+    p->st_start[STATIC_BUCKETS] = p->nref;
+}
+
+// Коробки у тела на этот шаг (с запасом на путь), по возрастанию номера — порядок не зависит от ячеек
+static void st_gather(Phys *p, u32 h, f32 dt)
+{
+    u8 n = 0;
+    u16 *out = p->st_near + (size_t)h * PHYS_STATIC_NEAR;
+    f32 r = p->bound[h] + v3_len(p->v[h]) * dt + 0.1f;
+    V3 x = p->x[h];
+    i32 x0 = (i32)floorf((x.x - r) / PHYS_STATIC_CELL), x1 = (i32)floorf((x.x + r) / PHYS_STATIC_CELL);
+    i32 z0 = (i32)floorf((x.z - r) / PHYS_STATIC_CELL), z1 = (i32)floorf((x.z + r) / PHYS_STATIC_CELL);
+    for (i32 cz = z0; cz <= z1; cz++)
+        for (i32 cx = x0; cx <= x1; cx++) {
+            u32 k = st_bucket(cx, cz);
+            for (u32 i = p->st_start[k]; i < p->st_start[k + 1]; i++) {
+                u32 b = p->st_ref[i];
+                // Близко ли: точка тела в осях коробки, расстояние до неё по осям
+                V3 d = v3_sub(x, p->st_c[b]), hb = p->st_half[b];
+                f32 lx = p->st_cos[b] * d.x - p->st_sin[b] * d.z, lz = p->st_sin[b] * d.x + p->st_cos[b] * d.z;
+                if (fabsf(lx) > hb.x + r || fabsf(d.y) > hb.y + r || fabsf(lz) > hb.z + r) continue;
+                bool have = false;
+                for (u32 j = 0; j < n; j++) have |= out[j] == b;
+                if (have) continue;
+                if (n == PHYS_STATIC_NEAR) goto done;
+                // Вставка по возрастанию
+                u32 j = n++;
+                while (j > 0 && out[j - 1] > b) out[j] = out[j - 1], j--;
+                out[j] = (u16)b;
+            }
+        }
+done:
+    p->st_nnear[h] = n;
+}
+
+// Шар (центр w мира, радиус rad) и коробка b: глубина и нормаль наружу. false — не касается
+static bool st_touch(const Phys *p, u32 b, V3 w, f32 rad, V3 *n, f32 *pen)
+{
+    V3 d = v3_sub(w, p->st_c[b]), h = p->st_half[b];
+    f32 c = p->st_cos[b], s = p->st_sin[b];
+    // В оси коробки: x' = R^T·d при повороте вокруг Y (локальная x → (c, 0, -s), z → (s, 0, c))
+    V3 q = v3(c * d.x - s * d.z, d.y, s * d.x + c * d.z);
+    V3 k = v3(clampf(q.x, -h.x, h.x), clampf(q.y, -h.y, h.y), clampf(q.z, -h.z, h.z));
+    V3 e = v3_sub(q, k);
+    f32 l2 = v3_dot(e, e);
+    V3 nl;
+    if (l2 > 1e-12f) {
+        if (l2 >= rad * rad) return false;
+        f32 l = sqrtf(l2);
+        nl = v3_mul(e, 1.0f / l);
+        *pen = rad - l;
+    } else {
+        // Центр внутри: наружу через ближнюю грань
+        f32 fx = h.x - fabsf(q.x), fy = h.y - fabsf(q.y), fz = h.z - fabsf(q.z);
+        if (fx <= fy && fx <= fz) nl = v3(q.x < 0 ? -1.0f : 1.0f, 0, 0), *pen = rad + fx;
+        else if (fy <= fz) nl = v3(0, q.y < 0 ? -1.0f : 1.0f, 0), *pen = rad + fy;
+        else nl = v3(0, 0, q.z < 0 ? -1.0f : 1.0f), *pen = rad + fz;
+    }
+    *n = v3(c * nl.x + s * nl.z, nl.y, -s * nl.x + c * nl.z);
+    return true;
 }
 
 // Шары формы в осях вещи; вес шара — его объём
@@ -386,6 +518,35 @@ typedef struct Contact {
     f32 lam, vn0;  // толчок положения по нормали (м·кг), нормальная скорость до шага
 } Contact;
 
+// Касание шара i тела h: вдавленность pen по нормали n (наружу) выталкивается, трение покоя держит точку.
+// r — смещение шара от центра масс, sl — оно же в осях вещи. Касание — в c (для скоростей)
+static void touch(Phys *p, u32 h, u32 i, V3 r, V3 n, f32 pen, const V3 *xp, const V4 *qp, Contact *c, u32 *nc, u16 other)
+{
+    const V4 *s = p->sph + (size_t)h * PHYS_SPHERES;
+    V3 rc = v3_sub(r, v3_mul(n, s[i].w));  // точка касания на поверхности шара
+    f32 wn = gen_w(p, h, rc, n);
+    if (wn <= 0.0f) return;
+    f32 vn0 = v3_dot(point_v(p, h, rc), n);
+    hit_note(p, h, -vn0, v3_add(p->x[h], rc), other);
+    f32 lam = pen / wn;
+    push(p, h, rc, v3_mul(n, lam));
+    // Трение покоя: точка не скользит, пока нужный для этого толчок меньше трения × толчок по нормали
+    r = qrot(p->q[h], v3(s[i].x, s[i].y, s[i].z));
+    rc = v3_sub(r, v3_mul(n, s[i].w));
+    // Сдвиг точки за подшаг: перенос центра плюс малый поворот от прошлой позы
+    V4 dq = qmul(p->q[h], (V4){ -qp->x, -qp->y, -qp->z, qp->w });
+    V3 th = v3_mul(qv(dq), dq.w < 0.0f ? -2.0f : 2.0f);
+    V3 dp = v3_add(v3_sub(p->x[h], *xp), v3_cross(th, rc));
+    V3 dt = v3_sub(dp, v3_mul(n, v3_dot(dp, n)));
+    f32 lt = v3_len(dt);
+    if (lt > 1e-7f) {
+        V3 t = v3_mul(dt, 1.0f / lt);
+        f32 wt = gen_w(p, h, rc, t);
+        if (wt > 0.0f && lt / wt < PHYS_FRICTION * lam) push(p, h, rc, v3_mul(t, -lt / wt));
+    }
+    if (*nc < PHYS_SPHERES) c[(*nc)++] = (Contact){ rc, n, lam, vn0 };
+}
+
 // Подшаг одного тела о землю: позиции. Касания — в c (для скоростей)
 static u32 ground_contacts(Phys *p, u32 h, Plane pl, const V3 *xp, const V4 *qp, const V3 *wr, f32 sh, Contact *c)
 {
@@ -406,30 +567,33 @@ static u32 ground_contacts(Phys *p, u32 h, Plane pl, const V3 *xp, const V4 *qp,
         f32 was_in = fmaxf(pl.d - (v3_dot(pl.n, v3_add(*xp, qrot(*qp, sl))) - s[i].w), 0.0f);
         pen -= was_in - fminf(was_in, DEPEN_V * sh);
         if (pen <= 0.0f) continue;
-        V3 rc = v3_sub(r, v3_mul(pl.n, s[i].w));  // точка касания на поверхности шара
-        f32 wn = gen_w(p, h, rc, pl.n);
-        if (wn <= 0.0f) continue;
-        f32 vn0 = v3_dot(point_v(p, h, rc), pl.n);
-        hit_note(p, h, -vn0, v3_add(p->x[h], rc), PHYS_GROUND);
-        f32 lam = pen / wn;
-        push(p, h, rc, v3_mul(pl.n, lam));
-        // Трение покоя: точка не скользит, пока нужный для этого толчок меньше трения × толчок по нормали
-        r = qrot(p->q[h], v3(s[i].x, s[i].y, s[i].z));
-        rc = v3_sub(r, v3_mul(pl.n, s[i].w));
-        // Сдвиг точки за подшаг: перенос центра плюс малый поворот от прошлой позы
-        V4 dq = qmul(p->q[h], (V4){ -qp->x, -qp->y, -qp->z, qp->w });
-        V3 th = v3_mul(qv(dq), dq.w < 0.0f ? -2.0f : 2.0f);
-        V3 dp = v3_add(v3_sub(p->x[h], *xp), v3_cross(th, rc));
-        V3 dt = v3_sub(dp, v3_mul(pl.n, v3_dot(dp, pl.n)));
-        f32 lt = v3_len(dt);
-        if (lt > 1e-7f) {
-            V3 t = v3_mul(dt, 1.0f / lt);
-            f32 wt = gen_w(p, h, rc, t);
-            if (wt > 0.0f && lt / wt < PHYS_FRICTION * lam) push(p, h, rc, v3_mul(t, -lt / wt));
-        }
-        if (nc < PHYS_SPHERES) c[nc++] = (Contact){ rc, pl.n, lam, vn0 };
+        touch(p, h, i, r, pl.n, pen, xp, qp, c, &nc, PHYS_GROUND);
     }
     return nc;
+}
+
+// Подшаг одного тела о коробки построек рядом (st_gather): как о землю, нормаль — от ближней точки коробки
+static void static_contacts(Phys *p, u32 h, const V3 *xp, const V4 *qp, const V3 *wr, f32 sh, Contact *c, u32 *nc)
+{
+    const V4 *s = p->sph + (size_t)h * PHYS_SPHERES;
+    const u16 *near = p->st_near + (size_t)h * PHYS_STATIC_NEAR;
+    for (u32 k = 0; k < p->st_nnear[h]; k++) {
+        u32 b = near[k];
+        for (u32 i = 0; i < p->ns[h]; i++) {
+            V3 n;
+            f32 pen;
+            if (!st_touch(p, b, v3_add(p->x[h], wr[i]), s[i].w + 0.01f, &n, &pen)) continue;
+            V3 r = qrot(p->q[h], v3(s[i].x, s[i].y, s[i].z));
+            if (!st_touch(p, b, v3_add(p->x[h], r), s[i].w, &n, &pen)) continue;
+            V3 sl = v3(s[i].x, s[i].y, s[i].z);
+            V3 n0;
+            f32 was_in = 0.0f;
+            if (!st_touch(p, b, v3_add(*xp, qrot(*qp, sl)), s[i].w, &n0, &was_in)) was_in = 0.0f;
+            pen -= was_in - fminf(was_in, DEPEN_V * sh);
+            if (pen <= 0.0f) continue;
+            touch(p, h, i, r, n, pen, xp, qp, c, nc, PHYS_GROUND);
+        }
+    }
 }
 
 // Шары двух тел: выталкивание пополам по обобщённым массам. Спящее для считающегося — стена.
@@ -517,6 +681,8 @@ static void substep(Phys *p, f32 sh, const Plane *pl, V3 *xp, V4 *qp, V3 *wr, Co
     for (u32 h = 0; h < p->count; h++) {
         if (p->state[h] != PS_ACTIVE) continue;
         ncs[h] = ground_contacts(p, h, pl[h], &xp[h], &qp[h], wr + (size_t)h * PHYS_SPHERES, sh, cs + (size_t)h * PHYS_SPHERES);
+        if (p->st_nnear[h])
+            static_contacts(p, h, &xp[h], &qp[h], wr + (size_t)h * PHYS_SPHERES, sh, cs + (size_t)h * PHYS_SPHERES, &ncs[h]);
     }
     for (u32 h = 0; h < p->count; h++) {
         if (p->state[h] != PS_ACTIVE) continue;
@@ -562,7 +728,10 @@ void phys_tick(Phys *p, f32 dt, PhysGround ground)
     static Contact cs[PHYS_MAX * PHYS_SPHERES];
     static u32 ncs[PHYS_MAX];
     static V3 wr[PHYS_MAX * PHYS_SPHERES];
+    if (p->st_dirty) st_build(p);
     for (u32 h = 0; h < p->count; h++) {
+        p->st_nnear[h] = 0;
+        if (p->state[h] == PS_ACTIVE && p->nstatic) st_gather(p, h, dt);
         if (p->state[h] == PS_ACTIVE) pl[h] = ground_plane(ground, p->x[h]);
         if (p->state[h] == PS_ASLEEP) turn_spheres(p, h, wr);
         ncs[h] = 0;

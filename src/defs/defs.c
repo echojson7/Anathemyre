@@ -6,6 +6,7 @@
 #include "../core/mesh.h"
 #include "deftext.h"
 #include "material.h"
+#include "objects.h"
 
 #define ARMOR_CAP ARMOR_NONE  // 255 — «пусто»
 #define GOODS_CAP 255
@@ -692,6 +693,7 @@ static bool check(void)
 bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
 {
     g_weapon_count = g_armor_count = g_goods_count = g_mat_count = 0;
+    objdefs_reset();
     memset(s_part_mat, 0, sizeof s_part_mat);
     memset(&g_mat, 0, sizeof g_mat);
     g_weapons = s_weapons;
@@ -705,8 +707,14 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
     bool bad = false, ok = true;
     while (deftext_next(&s_text, &l, &bad)) {
         static const char *const kinds[] = { "weapon", "armor", "goods", "attack", "quality", "material" };
+        i32 obj = 0;
         if (def_word(&l.tok[0], kinds, ARRAY_COUNT(kinds)) >= 0) {
+            objdefs_end();
             ok = header(&l, &b, mem);
+        } else if ((obj = objdefs_line(&l, mem)) != 0) {
+            // Объекты и заготовки (objects.c)
+            ok = obj > 0;
+            b.kind = -1;
         } else if (b.kind < 0) {
             def_error(&l, "поле вне записи: сначала weapon, armor, goods, attack, quality или material");
             ok = false;
@@ -724,7 +732,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
         }
         if (!ok) break;
     }
-    if (bad || !ok || !check()) return false;
+    if (bad || !ok || !check() || !objdefs_check()) return false;
     g_weapon_pool_count = 0;
     for (u32 i = 0; i < g_weapon_count; i++)
         if (s_weapons[i].common) g_weapon_pool[g_weapon_pool_count++] = (u8)i;
@@ -738,8 +746,8 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
         if (s_armors[i].look < GEAR_COUNT) g_gear_hides[s_armors[i].look] |= s_armors[i].hides;
     for (u32 i = 0; i < g_goods_count; i++)
         if (s_goods[i].look < GEAR_COUNT) g_gear_hides[s_goods[i].look] |= s_goods[i].hides;
-    log_info("ОПИСАНИЯ: оружия %u, брони %u, вещей %u, материалов %u, файлов %u, модов %u", g_weapon_count, g_armor_count,
-             g_goods_count, g_mat_count, s_text.files, s_text.mods);
+    log_info("ОПИСАНИЯ: оружия %u, брони %u, вещей %u, материалов %u, объектов %u, заготовок %u, файлов %u, модов %u",
+             g_weapon_count, g_armor_count, g_goods_count, g_mat_count, g_object_count, g_prefab_count, s_text.files, s_text.mods);
     return true;
 }
 

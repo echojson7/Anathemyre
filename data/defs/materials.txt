@@ -222,3 +222,8 @@ material tape_black
     surface cloth
     impact soft
     color 0.08 0.08 0.08
+
+# Древняя стена за Скуделью: бетон старше посёлка, ровнее и светлее
+material concrete_wall
+    parent concrete
+    color 0.34 0.33 0.31

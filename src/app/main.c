@@ -23,6 +23,7 @@
 #include "../view/hud.h"
 #include "../sim/look.h"
 #include "../view/sfx.h"
+#include "../view/lights.h"
 #include "../view/scene.h"
 #include "ground.h"
 #include "../content/weapon.h"
@@ -307,7 +308,9 @@ int main(int argc, char **argv)
     f64 map_t0 = time_now();
     bool built = map_init(&perm, opt.seed);
     if (built) log_stat("МИР: карта %.2f с", time_now() - map_t0);
-    built = built && scene_init(scene, &mb, &perm, opt.seed, &town) &&
+    // Объекты построек по заготовкам: из них вид строит сетки и огни, физика — стены
+    Objects *objs = ARENA_PUSH_ARRAY(&perm, Objects, 1);
+    built = built && objects_build(objs, &perm, opt.seed) && scene_init(scene, &mb, &perm, opt.seed, objs, &town) &&
             world_init(world, &perm, opt.seed, opt.tod, !opt.day_stop, &town, app_ground) &&
             figures_init(fig, cm, &mb, &perm, data_dir) &&
             ((dbg = debug_init(&perm, &mb, data_dir, world, &opt.dbg)) || !g_debug);
@@ -317,6 +320,7 @@ int main(int argc, char **argv)
         platform_shutdown();
         return 1;
     }
+    objects_solids(objs, world->phys);
     figures_view(fig, world->people, world->field, world->alpha, app_ground);
     // Рельеф карты и растения долины — на весь сеанс
     render_set_terrain(map_fill, NULL);
@@ -594,11 +598,10 @@ int main(int argc, char **argv)
         Sky sky;
         // До этапа СУТКИ свет утра, как при замере кадра
         sky_at(st_day ? world_tod(world) : BENCH_TOD, &sky);
-        u32 nl = scene_ring_lights(sky.night, wtime, lights);
+        u32 nl = lights_collect(objs, fv.cam_pos, sky.night, wtime, lights, TORCH_LIGHTS_MAX);
         u32 n = scene_statics(scene, items);
         // Мерильня: лампы горят всегда, фигуры — когда камера рядом; вещи арены, ряд людей, стенд
         nl += dbg ? debug_lights(wtime, lights + nl, TORCH_LIGHTS_MAX - nl) : 0;
-        nl += scene_hall_lights(lights + nl, TORCH_LIGHTS_MAX - nl);
         if (dbg) n += debug_draw(dbg, cm, world, fv.cam_pos, wtime, st_live ? dt : 0.0f, st_people, items + n);
         n += valley_view_draw(valley, fv.cam_pos, items + n);
         n += scrap_draw(&scene->scrap, world->phys, world->alpha, fv.cam_pos, items + n, RENDER_MAX_ITEMS / 8);

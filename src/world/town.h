@@ -21,7 +21,6 @@ typedef struct TownSpot {
 typedef struct Town {
     u32      spot_count;
     TownSpot spot[TOWN_MAX_SPOTS];
-    u32      stalls, houses;
 } Town;
 
 // Жители (People, ROLE_TOWN): торговцы, сторожа и зеваки стоят на местах, прохожие ходят по узлам улиц
