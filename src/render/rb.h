@@ -192,6 +192,10 @@ void rb_timer_mark(u32 set, u32 mark);
 bool rb_timer_ready(u32 set, u32 mark);
 u64  rb_timer_get(u32 set, u32 mark);   // нс
 
+// CPU в ожидании с прошлого вызова, с: slot — свободный слот кадра (GPU ещё делает кадр RB_FRAMES назад),
+// present — картинка окна, отправка кадра и показ. Счётчики обнуляются
+void rb_take_waits(f64 *slot, f64 *present);
+
 // Кадр в окне, RGB построчно снизу вверх
 void rb_read_window(u8 *rgb, i32 w, i32 h);
 

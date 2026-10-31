@@ -901,6 +901,10 @@ void render_take_stats(RenderStats *out)
     }
     out->items = R.stat_items;
     out->prep_ms = R.stat_prep * 1000.0 * k;
+    f64 ws, wp;
+    rb_take_waits(&ws, &wp);
+    out->wait_ms = ws * 1000.0 * k;
+    out->present_ms = wp * 1000.0 * k;
     for (u32 p = 0; p < PASS_COUNT; p++) out->cpu_ms[p] = R.stat_cpu[p] * 1000.0 * k;
     memset(R.stat_cpu, 0, sizeof R.stat_cpu);
     out->poses = R.stat_poses * k;
