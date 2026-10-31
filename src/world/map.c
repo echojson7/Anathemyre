@@ -74,14 +74,14 @@ static f32 town_flat(f32 x, f32 z)
     return clampf((sqrtf(dx * dx + dz * dz) - 30.0f) / 50.0f, 0.0f, 1.0f);
 }
 
-// Площадка Остова (руина к западу от зала, game/ostov.c) ровная, с запасом вокруг
+// Площадка Остова (руина к западу от зала, content/ostov.c) ровная, с запасом вокруг
 static f32 ostov_flat(f32 x, f32 z)
 {
     f32 dx = fmaxf(fmaxf(-100.0f - x, x + 60.0f), 0.0f), dz = fmaxf(fmaxf(-52.0f - z, z - 22.0f), 0.0f);
     return clampf((sqrtf(dx * dx + dz * dz) - 6.0f) / 40.0f, 0.0f, 1.0f);
 }
 
-// Площадка Мерильни (цех к югу от зала, game/showhall.c) ровная, с запасом вокруг
+// Площадка Мерильни (цех к югу от зала, view/showhall.c) ровная, с запасом вокруг
 static f32 showhall_flat(f32 x, f32 z)
 {
     f32 dx = fmaxf(fmaxf(-22.0f - x, x - 22.0f), 0.0f), dz = fmaxf(fmaxf(-96.0f - z, z + 68.0f), 0.0f);

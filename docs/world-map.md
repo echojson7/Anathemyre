@@ -2,7 +2,7 @@
 
 Состояние на 2026-10-29 (этап 3, часть 1). Код: `src/world/map.c` (высота и цвет земли),
 `src/world/valley.c` (долина), `src/render/terrain.c` (рельеф на экране), `data/shaders/scene.vert`
-(режим 3) и `scene.frag` (`MAT_TERRAIN`), `src/game/world.c`, `src/main.c` (камера).
+(режим 3) и `scene.frag` (`MAT_TERRAIN`), `src/world/world.c`, `src/app/main.c` (камера).
 
 ## Что это
 

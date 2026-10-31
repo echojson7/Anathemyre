@@ -12,13 +12,13 @@ import numpy as np
 # Кости игры, порядок как в src/sim/body.h
 (ROOT, PELVIS, SPINE, CHEST, NECK, HEAD, CLAV_L, UA_L, FA_L, HAND_L, CLAV_R, UA_R, FA_R, HAND_R,
  TH_L, SH_L, FT_L, TH_R, SH_R, FT_R) = range(20)
-MAT_RUST, MAT_CLOTH, MAT_LEATHER, MAT_SKIN, MAT_METAL = 1, 3, 4, 7, 8  # как Material в src/render/mesh.h
+MAT_RUST, MAT_CLOTH, MAT_LEATHER, MAT_SKIN, MAT_METAL = 1, 3, 4, 7, 8  # как Material в src/core/mesh.h
 HEIGHT = 1.80
 # Треугольников тела на LOD0..4 (без оболочки волос). LOD0 — для крупных планов (редактор, портреты, вплотную)
 LOD_TRIS = (16000, 8500, 1800, 500, 320)
 NL = len(LOD_TRIS)
 
-# Сложение и цвета как у нашей тройки (src/main.c human_shape), чтобы сравнивать честно
+# Сложение и цвета как у нашей тройки (src/app/main.c human_shape), чтобы сравнивать честно
 # Пропорции (переработка 2026-10-29, замеры при росте 1.80 м): голова около 7.7 высоты тела у мужчин и 7.65 у женщин
 # (у MakeHuman 7.1 — голова крупная), талия в профиль 21 см у мужчины и 18 см у женщины (была тоньше, чем видно спереди)
 # Руки до нормы: локоть на 0.635 роста, запястье на 0.49, размах около роста (было 0.67 и 0.52, размах 1.67 м)
@@ -107,7 +107,7 @@ def morph(base, Z, p):
 
 
 # Морфы внешности: у каждого свой поток сдвигов вершин, игра смешивает их весами экземпляра
-# (порядок как LOOK_* в src/game/look.h)
+# (порядок как LOOK_* в src/sim/look.h)
 # Лицо — только местные морфы: морфы расы MakeHuman меняли и рост, и плечи, и голову
 _eyes = lambda d: {'eyes/%s-%s' % (s, k): w for s in 'lr' for k, w in d.items()}
 MORPHS = (
@@ -604,10 +604,10 @@ def build(p, base, faces, Z, skel, W):
     return lods, J, gear, hair
 
 
-# Одежда и броня: имя файла -> вещь игры (src/game/look.h, GEAR_*)
+# Одежда и броня: имя файла -> вещь игры (src/sim/look.h, GEAR_*)
 GEAR = ('rags', 'quilt', 'jacket', 'plate', 'bucket', 'greaves', 'wrap', 'boots', 'mitts', 'pack', 'belt', 'pants')
 GEAR_SEGS = (20, 16, 10, 6, 5)  # сегментов по кругу у жёстких вещей на LOD0..4
-# Причёски: имя файла -> вид у тела этого пола (src/game/look.c, g_hair_file)
+# Причёски: имя файла -> вид у тела этого пола (src/sim/look.c, g_hair_file)
 HAIR_FEMALE = ('tail', 'bun', 'braid', 'crop', 'bob', 'loose', 'side')
 HAIR_MALE = ('crop', 'shag', 'tied', 'buzz', 'slick', 'long')
 LOCKS = (1.0, 0.5, 0.15, 0.0, 0.0)  # доля прядей на LOD0..4

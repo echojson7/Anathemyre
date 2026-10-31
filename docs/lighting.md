@@ -2,7 +2,7 @@
 
 Состояние на 2026-10-31. Код: `data/shaders/scene.frag` (материалы), `data/shaders/style.frag` (кривые, свечение
 в кадре), `data/shaders/expo.comp`, `bloom_down.frag`, `bloom_up.frag`, `shadow_sun.glsl` и `contact.frag` (тени солнца), `gtao.frag` и `gtao_blur.frag` (углы), `probes.glsl`, `probes.comp`, `vox_clear.comp` (зонды), `torch.glsl` (тени огней), `src/render/render.c` (проходы),
-`src/game/controls.c` (меню и наборы), `src/main.c` (флаги).
+`src/app/controls.c` (меню и наборы), `src/app/main.c` (флаги).
 
 ## Зачем
 Цель — картинка «как в жизни» (тональный реализм уровня UE5) без аппаратных лучей RTX: их не будет никогда

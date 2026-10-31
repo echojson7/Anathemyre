@@ -2,7 +2,7 @@
 
 Состояние на 2026-10-31 (этап 2 плана переиспользования). Данные: `data/defs/materials.txt`. Код: вид `material`
 в `src/defs/defs.c`, таблица и `g_mat` в `src/defs/material.h`, помощники `mat_tint`, `prop_paint`, `prop_mat`
-в `src/game/props.h`.
+в `src/content/props.h`.
 
 ## Что это
 

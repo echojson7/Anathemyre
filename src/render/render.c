@@ -274,6 +274,7 @@ static struct {
     Target block;     // частота шейдинга блоков 4x4 (R8UI)
     Target rate;      // карта частоты шейдинга (R8UI), клетка vrs_tile пикселей
     bool   vrs;       // есть карта частоты шейдинга
+    u32    mesh_order; // номер следующей загруженной сетки (GpuMesh.order)
     i32    vrs_tile[2];
     Target portrait;  // атлас портретов: ячейки RENDER_PORTRAIT_PX в ряд, HDR
     bool   timer_pending[TIMER_FRAMES];
@@ -700,6 +701,7 @@ static void mesh_finish(GpuMesh *gm, const MeshBuilder *mb);
 bool gpu_mesh_upload(GpuMesh *gm, const MeshBuilder *mb)
 {
     gm->pooled = false;
+    gm->order = R.mesh_order++;
     gm->vbo = rb_buf_make(mb->vcount * sizeof(Vertex), RB_BUF_VERTEX, mb->v);
     gm->ibo = rb_buf_make(mb->icount * sizeof(u32), RB_BUF_INDEX, mb->idx);
     // Без весов костей сетка рисуется с потоком нулей: вес первой кости 0 — жёсткий скиннинг
@@ -744,6 +746,7 @@ bool gpu_mesh_upload_pooled(GpuMesh *gm, const MeshBuilder *mb)
     }
     memset(gm, 0, sizeof *gm);
     gm->pooled = true;
+    gm->order = R.mesh_order++;
     gm->pool_vbase = R.pool_verts;
     gm->pool_ibase = R.pool_indices;
     gm->pool_moff = (u32)R.pool_words;
@@ -1007,11 +1010,11 @@ static const GpuMesh *pick_lod(const GpuMesh *m, V4 s, const PassView *pv)
 static int inst_cmp(const void *pa, const void *pb)
 {
     const Inst *a = pa, *b = pb;
-    if (a->mesh != b->mesh) return (uintptr_t)a->mesh < (uintptr_t)b->mesh ? -1 : 1;
+    if (a->mesh != b->mesh) return a->mesh->order < b->mesh->order ? -1 : 1;
     return a->pose < b->pose ? -1 : (a->pose > b->pose);
 }
 
-// Видимые экземпляры прохода, сгруппированные по сетке: сетки по возрастанию адреса, внутри сетки —
+// Видимые экземпляры прохода, сгруппированные по сетке: сетки по порядку загрузки (GpuMesh.order), внутри сетки —
 // по возрастанию набора костей, статика последней (тот же порядок, что сортировка по паре).
 // Корзины по сеткам за линейное время: элементы и так идут по возрастанию набора
 #define SORT_HASH 512   // степень двойки, больше разных сеток в проходе
@@ -1062,10 +1065,10 @@ static u32 gather(const DrawItem *items, u32 count, const PassView *pv, bool sha
         qsort(out, n, sizeof *out, inst_cmp);
         return n;
     }
-    // Корзины по адресу сетки (вставками: их десятки), затем раскладка с сохранением порядка
+    // Корзины по порядку сеток (вставками: их десятки), затем раскладка с сохранением порядка
     for (u32 b = 0; b < nb; b++) {
         u32 j = b;
-        for (; j > 0 && (uintptr_t)bm[border[j - 1]] > (uintptr_t)bm[b]; j--) border[j] = border[j - 1];
+        for (; j > 0 && bm[border[j - 1]]->order > bm[b]->order; j--) border[j] = border[j - 1];
         border[j] = b;
     }
     for (u32 k = 0, off = 0; k < nb; k++) {
