@@ -4,6 +4,7 @@
 # make run        собрать релиз и запустить
 # make shot       снять кадр без окна на экране (Linux, нужен Xvfb)
 # make vkcheck    проверка Vulkan-бэкенда отдельной программой (build/vkcheck, на Linux отладочная с ASan)
+# make anims      записать клипы data/anims/*.anim из tools/animbake/keys.c и проверить хеш поз (build/animbake)
 # make clean
 #
 # TARGET_OS=windows  собрать .exe (MinGW-w64): на Windows в MSYS2 выбирается сам,
@@ -63,7 +64,7 @@ DBG_BIN := build/$(TARGET)_debug$(EXE)
 REL_FLAGS := $(CSTD) $(WARN) -O2 -DNDEBUG -MMD -MP
 DBG_FLAGS := $(CSTD) $(WARN) -O0 -g3 $(SANITIZE) -MMD -MP
 
-.PHONY: all release debug run run-debug shot vkcheck clean
+.PHONY: all release debug run run-debug shot vkcheck animbake anims clean
 
 all: release
 
@@ -103,7 +104,21 @@ vkcheck: $(VK_BIN)
 $(VK_BIN): $(VK_OBJ)
 	$(CC) $(DBG_FLAGS) -o $@ $^ $(LDLIBS)
 
+# Клипы: офлайн-запекание, без рендера и звука (ядро, слой мира, platform)
+AB_SRC := $(wildcard tools/animbake/*.c src/core/*.c src/defs/*.c src/sim/*.c src/ai/*.c src/world/*.c src/io/*.c) $(PLATFORM)
+AB_OBJ := $(AB_SRC:%.c=$(REL_DIR)/%.o)
+AB_BIN := build/animbake$(EXE)
+
+animbake: $(AB_BIN)
+
+$(AB_BIN): $(AB_OBJ)
+	$(CC) $(REL_FLAGS) -o $@ $^ $(LDLIBS)
+
+anims: $(AB_BIN)
+	./$(AB_BIN) write data
+	./$(AB_BIN) check data
+
 clean:
 	rm -rf build
 
--include $(REL_OBJ:.o=.d) $(DBG_OBJ:.o=.d) $(VK_OBJ:.o=.d)
+-include $(REL_OBJ:.o=.d) $(DBG_OBJ:.o=.d) $(VK_OBJ:.o=.d) $(AB_OBJ:.o=.d)

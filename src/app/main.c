@@ -15,6 +15,7 @@
 #include "../defs/defs.h"
 #include "../debug/debug.h"
 #include "../sim/anim.h"
+#include "../sim/anim_keys.h"
 #include "bench.h"
 #include "../view/camera.h"
 #include "controls.h"
@@ -263,6 +264,8 @@ int main(int argc, char **argv)
     // Скелет и капсулы тела — после описаний (стойка берёт оружие) и тоже до замеров боя
     if (!look_load_skeletons(data_dir)) return 1;
     if (!body_load(data_dir)) return 1;
+    static Arena anim_mem;
+    if (!arena_init(&anim_mem, ANIM_MEM) || !anim_clips_load(&anim_mem, data_dir)) return 1;
     anim_bake_hit_guard();
     if (opt.sound_demo) return audio_demo(opt.sound_demo);
     if (opt.bench_name) {
