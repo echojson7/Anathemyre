@@ -24,6 +24,11 @@ PersonId persons_add(Persons *ps, Role role, V3 pos, f32 heading, u8 team, u8 ff
     ps->last[i] = b;
     ps->mode[i] = BODY_ANIM;
     memset(&ps->sheet[i], 0, sizeof ps->sheet[i]);
+    FighterDesc none;
+    memset(&none, 0, sizeof none);
+    person_set_fighter(ps, i, &none);
+    ps->act[i] = ps->act_flags[i] = 0;
+    ps->act_t[i] = ps->act_t0[i] = ps->act_dur[i] = 0.0f;
     ps->seed[i] = ps->height[i] = ps->width[i] = 0.0f;
     ps->look_seed[i] = ps->gear_seed[i] = 0;
     ps->look_from[i] = LOOK_FROM_SEED;
@@ -44,6 +49,44 @@ void persons_free(Persons *ps, u32 i)
     ps->torch[i] = false;
     ps->move[i].moving = false;
     ps->move[i].speed = 0.0f;
+}
+
+void person_set_fighter(Persons *ps, u32 i, const FighterDesc *d)
+{
+    for (u32 p = 0; p < PART_COUNT; p++) ps->hp[p][i] = d->hp[p];
+    ps->blood[i] = d->blood;
+    ps->fracture[i] = d->fracture;
+    ps->severed[i] = d->severed;
+    for (u32 s = 0; s < SK_COUNT; s++) ps->skill[s][i] = d->skill[s];
+    ps->mass[i] = d->mass;
+    ps->stature[i] = d->height;
+    ps->morale_base[i] = d->morale_base;
+    CharSheet *c = &ps->sheet[i];
+    c->weapon = d->weapon;
+    c->weapon_q = d->weapon_q;
+    memcpy(c->armor, d->armor, sizeof c->armor);
+}
+
+FighterDesc person_fighter(const Persons *ps, u32 i, u8 team)
+{
+    FighterDesc d;
+    memset(&d, 0, sizeof d);
+    d.team = team;
+    for (u32 s = 0; s < SK_COUNT; s++) d.skill[s] = ps->skill[s][i];
+    const CharSheet *c = &ps->sheet[i];
+    d.weapon = c->weapon;
+    d.weapon_q = c->weapon_q;
+    memcpy(d.armor, c->armor, sizeof d.armor);
+    d.mass = ps->mass[i];
+    d.height = ps->stature[i];
+    d.morale_base = ps->morale_base[i];
+    for (u32 p = 0; p < PART_COUNT; p++) d.hp[p] = ps->hp[p][i];
+    d.blood = ps->blood[i];
+    d.fracture = ps->fracture[i];
+    d.severed = ps->severed[i];
+    d.pos = person_pos(ps, i);
+    d.heading = ps->heading[i];
+    return d;
 }
 
 void person_walk(Persons *ps, u32 i, f32 dt, GroundFn ground)
@@ -80,7 +123,7 @@ void persons_dress(Persons *ps, u32 i)
     CharLook *lk = &ps->lk[i];
     ps->look_from[i] = LOOK_FROM_SHEET;
     if (!ps->lk_own[i]) {
-        look_make(lk, ps->variant[i], ps->look_seed[i], cs->d.mass, cs->d.height, cs->d.skill[SK_STRENGTH]);
+        look_make(lk, ps->variant[i], ps->look_seed[i], ps->mass[i], ps->stature[i], ps->skill[SK_STRENGTH][i]);
         ps->look[i] = look_matrix(lk, ps->variant[i]);
     }
     ps->ngear[i] = (u8)gear_from_sheet(cs, ps->gear[i]);
@@ -137,11 +180,26 @@ void persons_ser(Ser *s, Persons *ps)
     SER_N(s, ps->move, n);
     SER_N(s, ps->last, n);
     SER_N(s, ps->mode, n);
+    for (u32 p = 0; p < PART_COUNT; p++) SER_N(s, ps->hp[p], n);
+    SER_N(s, ps->blood, n);
+    SER_N(s, ps->fracture, n);
+    SER_N(s, ps->severed, n);
+    for (u32 k = 0; k < SK_COUNT; k++) SER_N(s, ps->skill[k], n);
+    SER_N(s, ps->mass, n);
+    SER_N(s, ps->stature, n);
+    SER_N(s, ps->morale_base, n);
+    SER_N(s, ps->act, n);
+    SER_N(s, ps->act_flags, n);
+    SER_N(s, ps->act_t, n);
+    SER_N(s, ps->act_t0, n);
+    SER_N(s, ps->act_dur, n);
     for (u32 i = 0; i < n; i++) {
         CharSheet *c = &ps->sheet[i];
         ser_str(s, &c->name);
         ser_str(s, &c->role);
-        SER(s, c->d);
+        SER(s, c->weapon);
+        SER(s, c->weapon_q);
+        SER(s, c->armor);
         SER(s, c->equip);
         SER(s, c->inv);
     }

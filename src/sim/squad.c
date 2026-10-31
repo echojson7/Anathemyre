@@ -30,15 +30,18 @@ static const MemberDef g_start[] = {
       { GOODS("water", 1), GOODS("bandage", 6), GOODS("meat", 5), GOODS("ressora", 1) } },
 };
 
-static void member_init(CharSheet *c, const MemberDef *m, u8 weapon, Rng *rng)
+static void member_init(Persons *ps, u32 i, const MemberDef *m, u8 weapon, Rng *rng)
 {
+    CharSheet *c = &ps->sheet[i];
     memset(c, 0, sizeof *c);
     c->name = m->name;
-    arena_random_fighter(&c->d, rng, m->tier);
-    for (u32 s = 0; s < SLOT_COUNT; s++) c->d.armor[s] = ARMOR_NONE;
-    for (u32 p = 0; p < PART_COUNT; p++) c->d.hp[p] = g_part_hp[p];
-    c->d.blood = 100.0f * c->d.mass / 75.0f;
-    c->d.skill[SK_WEAPON + g_weapons[weapon].wclass] = fminf(100.0f, c->d.skill[SK_ATTACK] + 5.0f);
+    FighterDesc d;
+    arena_random_fighter(&d, rng, m->tier);
+    for (u32 s = 0; s < SLOT_COUNT; s++) d.armor[s] = ARMOR_NONE;
+    for (u32 p = 0; p < PART_COUNT; p++) d.hp[p] = g_part_hp[p];
+    d.blood = 100.0f * d.mass / 75.0f;
+    d.skill[SK_WEAPON + g_weapons[weapon].wclass] = fminf(100.0f, d.skill[SK_ATTACK] + 5.0f);
+    person_set_fighter(ps, i, &d);
 
     ItemStack old;
     sheet_equip(c, SLOT_WEAPON, item_of_weapon(weapon, m->weapon_q), &old);
@@ -56,11 +59,11 @@ static void member_init(CharSheet *c, const MemberDef *m, u8 weapon, Rng *rng)
     }
 }
 
-void sheet_random(CharSheet *c, Rng *rng, const char *name, u32 tier, u8 weapon)
+void person_random(Persons *ps, u32 i, Rng *rng, const char *name, u32 tier, u8 weapon)
 {
     MemberDef m = { .name = name, .tier = (u8)tier, .weapon_q = tier ? Q_WORN : Q_JUNK, .armor = { "rags", "pants" } };
     if (tier >= 2) m.armor[2] = "quilt";
-    member_init(c, &m, weapon, rng);
+    member_init(ps, i, &m, weapon, rng);
 }
 
 void squad_init(Squad *s, Persons *ps, Rng *rng, V3 origin, f32 heading, GroundFn ground)
@@ -73,20 +76,20 @@ void squad_init(Squad *s, Persons *ps, Rng *rng, V3 origin, f32 heading, GroundF
         f32 x = origin.x + (f32)(i % 2) * 1.2f - 0.6f, z = origin.z - (f32)(i / 2) * 1.3f;
         s->member[i] = persons_add(ps, ROLE_SQUAD, v3(x, ground(x, z), z), heading, TEAM_SQUAD, FF_PLAYER | FF_ASSIST);
         u32 k = squad_at(s, i);
-        member_init(&ps->sheet[k], &g_start[i], def_weapon(g_start[i].weapon), rng);
+        member_init(ps, k, &g_start[i], def_weapon(g_start[i].weapon), rng);
         ps->variant[k] = g_start[i].body;
         ps->seed[k] = 7.0f + (f32)i * 5.3f;
-        ps->height[k] = body_scale(ps->sheet[k].d.height);
+        ps->height[k] = body_scale(ps->stature[k]);
         ps->look_seed[k] = 1000u + i;
         persons_dress(ps, k);
     }
     s->formation = true;
     // Старая рана: левая рука в бинтах, крови меньше
-    CharSheet *hurt = squad_sheet(s, 2);
-    hurt->d.hp[PART_ARM_L] = 22.0f;
-    hurt->d.hp[PART_STOMACH] = 61.0f;
-    hurt->d.blood *= 0.82f;
-    hurt->d.fracture = (u8)(1u << PART_ARM_L);
+    u32 hurt = squad_at(s, 2);
+    ps->hp[PART_ARM_L][hurt] = 22.0f;
+    ps->hp[PART_STOMACH][hurt] = 61.0f;
+    ps->blood[hurt] *= 0.82f;
+    ps->fracture[hurt] = (u8)(1u << PART_ARM_L);
 }
 
 void squad_place(Squad *s, V3 origin, f32 heading, GroundFn ground)
@@ -145,23 +148,24 @@ void squad_set_gait(Squad *s, Gait g)
         if (s->selected[i]) squad_move(s, i)->gait = (u8)g;
 }
 
-static f32 leg_factor(const FighterDesc *d, u32 part)
+static f32 leg_factor(const Persons *ps, u32 i, u32 part)
 {
-    if (d->severed & (1u << part)) return 0.2f;
-    if (d->fracture & (1u << part)) return 0.4f;
-    return 0.5f + 0.5f * clampf(d->hp[part] / g_part_hp[part], 0.0f, 1.0f);
+    if (ps->severed[i] & (1u << part)) return 0.2f;
+    if (ps->fracture[i] & (1u << part)) return 0.4f;
+    return 0.5f + 0.5f * clampf(ps->hp[part][i] / g_part_hp[part], 0.0f, 1.0f);
 }
 
-f32 squad_member_speed(const Squad *s, u32 i, Gait g) { return sheet_speed(squad_sheet(s, i), g); }
+f32 squad_member_speed(const Squad *s, u32 i, Gait g) { return person_speed(s->ps, squad_at(s, i), g); }
 
-f32 sheet_speed(const CharSheet *c, Gait g)
+f32 person_speed(const Persons *ps, u32 i, Gait g)
 {
+    const CharSheet *c = &ps->sheet[i];
     // Хромает на худшую ногу
-    f32 v = g_gait_speed[g] * fminf(leg_factor(&c->d, PART_LEG_L), leg_factor(&c->d, PART_LEG_R));
+    f32 v = g_gait_speed[g] * fminf(leg_factor(ps, i, PART_LEG_L), leg_factor(ps, i, PART_LEG_R));
     // Атлетика решает на бегу, шагом все ходят одинаково
-    if (g != GAIT_WALK) v *= 0.85f + 0.003f * c->d.skill[SK_ATHLETICS];
+    if (g != GAIT_WALK) v *= 0.85f + 0.003f * ps->skill[SK_ATHLETICS][i];
     // Ноша: до предела немного тормозит, сверх предела — сильно
-    f32 over = sheet_load(c) / fmaxf(1.0f, sheet_carry_max(c));
+    f32 over = sheet_load(c) / fmaxf(1.0f, sheet_carry_max(c, ps->skill[SK_STRENGTH][i]));
     v *= 1.0f - 0.15f * clampf(over, 0.0f, 1.0f);
     if (over > 1.0f) v *= fmaxf(0.3f, 2.0f - over);
     return fmaxf(0.3f, v);

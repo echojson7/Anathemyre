@@ -52,7 +52,7 @@ static int bench_scene(Arena *mem, u64 seed)
         u8 team = k < 3 ? 1 : (u8)(k - 1), ff = k < 3 ? FF_ASSIST : 0;
         u32 i = person_place(persons_add(ps, ROLE_WANDER, p, PI_F, team, ff));
         ps->move[i].gait = GAIT_WALK;
-        sheet_random(&ps->sheet[i], &rng, names[k], k == 0 ? 1 : 0, g_weapon_pool[k % g_weapon_pool_count]);
+        person_random(ps, i, &rng, names[k], k == 0 ? 1 : 0, g_weapon_pool[k % g_weapon_pool_count]);
         field_join(f, i, team, ff);
     }
     printf("СЦЕНКА: ОТРЯД (4) АТАКУЕТ %s; С НИМ ДВОЕ СВОИХ, РЯДОМ ДВОЕ ПРОХОЖИХ\n", names[0]);
@@ -76,9 +76,7 @@ static int bench_scene(Arena *mem, u64 seed)
     }
     print_slots(f, t);
     u32 tgt = sq->count;
-    bool ok = fs_out(f->w.state[tgt]) || ps->sheet[tgt].d.blood < 0.5f * 100.0f * ps->sheet[tgt].d.mass / 75.0f;
     printf("ИТОГ: %s, ЦЕЛЬ %s, БОЙ ЗАТИХ: %s\n\n", names[0], g_state_name[f->w.state[tgt]], done ? "ДА" : "НЕТ");
-    (void)ok;
     return done ? 0 : 1;
 }
 
@@ -104,7 +102,7 @@ static int bench_scale(Arena *mem, u32 n, u64 seed)
         persons_add(ps, ROLE_WANDER, v3(x, 0, z), side ? PI_F : 0.0f, side, ff);
         ps->move[i].gait = GAIT_RUN;
         f32 roll = rng_f32(&rng);
-        sheet_random(&ps->sheet[i], &rng, side ? "ЧУЖОЙ" : "СВОЙ", roll < 0.5f ? 0 : (roll < 0.85f ? 1 : 2), g_weapon_pool[(u32)rng_range(&rng, 0, (f32)g_weapon_pool_count - 0.01f)]);
+        person_random(ps, i, &rng, side ? "ЧУЖОЙ" : "СВОЙ", roll < 0.5f ? 0 : (roll < 0.85f ? 1 : 2), g_weapon_pool[(u32)rng_range(&rng, 0, (f32)g_weapon_pool_count - 0.01f)]);
         field_join(f, i, side, ff);
     }
     log_set_echo(false);

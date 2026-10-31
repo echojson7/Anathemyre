@@ -27,8 +27,9 @@ static inline Motion    *squad_move(const Squad *s, u32 i) { return &s->ps->move
 static inline CharSheet *squad_sheet(const Squad *s, u32 i) { return &s->ps->sheet[squad_at(s, i)]; }
 static inline V3         squad_pos(const Squad *s, u32 i) { return person_pos(s->ps, squad_at(s, i)); }
 
-// Лист чужого: случайный боец уровня tier (0 новичок .. 2 ветеран), оружие weapon (номер описания), лохмотья
-void sheet_random(CharSheet *c, Rng *rng, const char *name, u32 tier, u8 weapon);
+// Тело и лист чужого (место i реестра): случайный боец уровня tier (0 новичок .. 2 ветеран), оружие weapon
+// (номер описания), лохмотья
+void person_random(Persons *ps, u32 i, Rng *rng, const char *name, u32 tier, u8 weapon);
 // Стартовый отряд из четырёх у точки origin: люди дописываются в реестр
 void squad_init(Squad *s, Persons *ps, Rng *rng, V3 origin, f32 heading, GroundFn ground);
 // Переставить весь отряд в другое место (переход между локациями): стоят строем у origin
@@ -39,8 +40,8 @@ void squad_order_move(Squad *s, V3 target);
 void squad_order_pick(Squad *s, i32 k, V3 at);
 // Режим передвижения выбранным
 void squad_set_gait(Squad *s, Gait g);
-// Предел скорости персонажа в режиме g: ноги, атлетика, ноша
-f32  sheet_speed(const CharSheet *c, Gait g);
+// Предел скорости человека i в режиме g: ноги, атлетика, ноша
+f32  person_speed(const Persons *ps, u32 i, Gait g);
 f32  squad_member_speed(const Squad *s, u32 i, Gait g);
 void squad_update(Squad *s, f32 dt, GroundFn ground);
 // Сохранение: состав, выбор, метка приказа; люди — в реестре

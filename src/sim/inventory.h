@@ -18,11 +18,12 @@ typedef struct Inventory {
     u8   x[INV_MAX], y[INV_MAX];
 } Inventory;
 
-// Лист персонажа отряда: имя, тело и навыки в описании бойца, снаряжение, вещи
+// Лист человека: имя, что видит бой из надетого, снаряжение, вещи. Тело, раны и навыки — столбцы реестра (persons.h)
 typedef struct CharSheet {
     const char *name;
     const char *role;   // кто он для чужих глаз (ТОРГОВЕЦ, СТОРОЖ, ЗРИТЕЛЬ); NULL — ПРОХОЖИЙ
-    FighterDesc d;
+    u8  weapon, weapon_q;     // чем бьёт: последнее взятое в руки оружие (без оружия бьёт им же, безоружным)
+    u8  armor[SLOT_COUNT];    // броня по слотам для боя; ARMOR_NONE — пусто
     ItemStack equip[SLOT_COUNT + 1];  // + SLOT_WEAPON
     Inventory inv;
 } CharSheet;
@@ -46,6 +47,6 @@ f32  inv_weight(const Inventory *inv);
 // Надеть вещь в слот; в *old — снятое (пустая стопка, если слот был пуст). false — не тот слот
 bool sheet_equip(CharSheet *c, u8 slot, ItemStack it, ItemStack *old);
 f32  sheet_load(const CharSheet *c);       // ноша, кг
-f32  sheet_carry_max(const CharSheet *c);  // сколько унесёт без перегруза
+f32  sheet_carry_max(const CharSheet *c, f32 strength);  // сколько унесёт без перегруза при такой силе
 
 #endif

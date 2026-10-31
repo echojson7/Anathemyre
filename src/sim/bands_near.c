@@ -20,7 +20,7 @@ bool near_init(NearBands *n, Persons *ps, Field *f)
     for (u32 k = 0; k < NEAR_BODIES; k++) {
         u32 i = person_place(persons_add(ps, ROLE_FREE, v3(0, 0, 0), 0.0f, TEAM_FREE, 0));
         // Лист — любой годный: слот поля читает из него тело, пока свободен — не нужен
-        sheet_random(&ps->sheet[i], &rng, "", 0, 0);
+        person_random(ps, i, &rng, "", 0, 0);
         field_join(f, i, TEAM_FREE, FF_ABSENT);
         field_free(f, i);
         n->who[k] = PERSON_NONE;
@@ -90,13 +90,13 @@ void near_show(NearBands *n, Bands *b, Persons *ps, Field *f, u32 bi, GroundFn g
             PersonId id = persons_add(ps, ROLE_BAND, at, h, team, FF_ASSIST | FF_AGGRO);
             if (id == PERSON_NONE) break;
             u32 i = person_place(id);
-            sheet_random(&ps->sheet[i], &rng, name_next(female), (u32)t, g_weapon_pool[rng_below(&rng, g_weapon_pool_count)]);
+            person_random(ps, i, &rng, name_next(female), (u32)t, g_weapon_pool[rng_below(&rng, g_weapon_pool_count)]);
             ps->sheet[i].role = "ИЗ ОТРЯДА";
             ps->move[i].gait = GAIT_WALK;
             ps->move[i].phase = rng_f32(&rng);
             ps->variant[i] = female ? BODY_FEMALE : face % 4 == 2 ? BODY_THIN : BODY_MALE;
             ps->seed[i] = rng_range(&rng, 0.0f, 100.0f);
-            ps->height[i] = body_scale(ps->sheet[i].d.height);
+            ps->height[i] = body_scale(ps->stature[i]);
             ps->width[i] = 1.0f + 0.08f * sinf(ps->seed[i] * 3.17f + 1.0f);
             ps->look_seed[i] = 30000u + face;
             persons_dress(ps, i);

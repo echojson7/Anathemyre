@@ -58,7 +58,17 @@ typedef struct Persons {
     Motion    move[PERSONS_MAX];      // ходьба: скорость, походка, приказ, поза отдыха
     Player    last[PERSONS_MAX];      // тело на прошлом шаге мира: кадр сглаживает между ним и нынешним
     u8        mode[PERSONS_MAX];      // BodyMode
-    // Лист: навыки, части тела, кровь; надетое и мешок
+    // Тело в бою: раны, кровь, сложение, навыки. Мир боя поля читает и пишет их же (field.h)
+    f32       hp[PART_COUNT][PERSONS_MAX];  // hp == 0 у всех и blood == 0 — здоров (полное при входе в бой)
+    f32       blood[PERSONS_MAX];
+    u8        fracture[PERSONS_MAX], severed[PERSONS_MAX];  // маски частей
+    f32       skill[SK_COUNT][PERSONS_MAX];
+    f32       mass[PERSONS_MAX], stature[PERSONS_MAX];      // кг, рост в м
+    f32       morale_base[PERSONS_MAX];
+    // Действие всем телом (sim/action.h): решает бой, идёт в сохранение
+    u8        act[PERSONS_MAX], act_flags[PERSONS_MAX];
+    f32       act_t[PERSONS_MAX], act_t0[PERSONS_MAX], act_dur[PERSONS_MAX];
+    // Лист: имя, что видит бой из надетого, надетое и мешок
     CharSheet sheet[PERSONS_MAX];
     // Внешность: зерно позы, рост и ширина (множители), зёрна лица и одежды, откуда она; заданная редактором
     f32       seed[PERSONS_MAX];
@@ -107,6 +117,9 @@ void persons_init(Persons *ps);
 PersonId persons_add(Persons *ps, Role role, V3 pos, f32 heading, u8 team, u8 fflags);
 // Место свободно: поколение растёт, старые номера его больше не находят
 void persons_free(Persons *ps, u32 i);
+// Тело в бою из описания бойца (сложение, навыки, раны) и обратно, с оружием и бронёй листа, местом и командой
+void person_set_fighter(Persons *ps, u32 i, const FighterDesc *d);
+FighterDesc person_fighter(const Persons *ps, u32 i, u8 team);
 // Шаг ходьбы (player.c) телом из столбцов
 void person_walk(Persons *ps, u32 i, f32 dt, GroundFn ground);
 // Прошлый шаг = нынешний: перед шагом мира и после переноса (кадр не тянет тело через карту)

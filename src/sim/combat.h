@@ -127,9 +127,9 @@ typedef struct CombatWorld {
     f32 fence_r;     // > 0: бой внутри круга этого радиуса
     u32 foe[COMBAT_MAX_TEAMS];  // с кем враждует команда: биты команд; по умолчанию со всеми чужими
 
-    // Горячие данные каждого тика. Место и курс могут быть чужими столбцами (combat_bind_place)
+    // Горячие данные каждого тика. Место, курс и тело могут быть чужими столбцами (combat_bind_body)
     f32 *x, *z, *heading;
-    bool place_ext;  // место и курс — столбцы реестра людей: пишет в сохранение он
+    bool body_ext;   // место, тело, навыки и действие — столбцы реестра людей: пишет в сохранение он
     u8  *state, *team, *attack, *react;  // react — ответ цели на текущий удар, REACT_*
     f32 *aim_x, *aim_y, *aim_s;  // куда идёт удар: точка на цели в плоскости взгляда (м, поза привязки) и наклон следа
     f32 *timer;      // осталось в состоянии, с
@@ -183,8 +183,18 @@ static inline u32 combat_foe_tags(const CombatWorld *w, u8 team) { return w->foe
 
 void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap);
 void combat_reset(CombatWorld *w, u64 seed);
-// Место и курс бойцов — чужие столбцы (реестр людей, persons.h): слот i — их i-я строка. До первого бойца
-void combat_bind_place(CombatWorld *w, f32 *x, f32 *z, f32 *heading);
+// Столбцы бойца, которые живут у человека, а не у слота: место, тело, навыки, действие всем телом
+typedef struct CombatBody {
+    f32 *x, *z, *heading;
+    f32 *hp[PART_COUNT];
+    f32 *blood, *mass, *height, *morale_base;
+    u8  *fracture, *severed;
+    f32 *skill[SK_COUNT];
+    u8  *act, *act_flags;
+    f32 *act_t, *act_t0, *act_dur;
+} CombatBody;
+// Эти столбцы — чужие (реестр людей, persons.h): слот i — их i-я строка. До первого бойца
+void combat_bind_body(CombatWorld *w, const CombatBody *b);
 u32  combat_add(CombatWorld *w, const FighterDesc *d);
 // Заново заполнить слот i из описания: тело, навыки, снаряжение, место; состояние — стойка
 void combat_load(CombatWorld *w, u32 i, const FighterDesc *d);

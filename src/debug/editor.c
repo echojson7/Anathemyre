@@ -56,16 +56,15 @@ static void remember(Editor *e, const Persons *p, u32 i)
     e->variant = p->variant[i];
     e->height = p->height[i];
     e->width = p->width[i];
-    e->sheet_h = p->sheet[i].d.height;
+    e->sheet_h = p->stature[i];
 }
 
-// Рост — настоящий: лист и поле боя тоже (досягаемость в бою)
+// Рост — настоящий: тело в реестре, его же читает бой (досягаемость)
 static void set_height(World *w, u32 i, f32 hs, f32 sheet_h)
 {
     Persons *p = w->persons;
     p->height[i] = hs;
-    p->sheet[i].d.height = sheet_h;
-    if (i < w->field->w.count) w->field->w.height[i] = sheet_h;
+    p->stature[i] = sheet_h;
 }
 
 // Линейный цвет в образец интерфейса
@@ -134,10 +133,9 @@ static void widgets(Editor *e, World *w, u32 i)
 
     f->row += 4;
     if (hud_form_button(f, "СЛУЧАЙНО")) {
-        const CharSheet *cs = &p->sheet[i];
-        bool sheet = cs->d.mass > 0.0f && cs->d.height > 0.0f;
-        look_make(l, p->variant[i], p->look_seed[i] ^ (++e->rolls * 0x9E3779B9u), sheet ? cs->d.mass : 72.0f,
-                  sheet ? cs->d.height : 1.8f, sheet ? cs->d.skill[SK_STRENGTH] : 30.0f);
+        bool sheet = p->mass[i] > 0.0f && p->stature[i] > 0.0f;
+        look_make(l, p->variant[i], p->look_seed[i] ^ (++e->rolls * 0x9E3779B9u), sheet ? p->mass[i] : 72.0f,
+                  sheet ? p->stature[i] : 1.8f, sheet ? p->skill[SK_STRENGTH][i] : 30.0f);
         changed = true;
     }
     if (hud_form_button(f, "ВЕРНУТЬ КАК БЫЛО")) {
