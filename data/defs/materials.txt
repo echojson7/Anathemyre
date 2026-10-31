@@ -227,3 +227,32 @@ material tape_black
 material concrete_wall
     parent concrete
     color 0.34 0.33 0.31
+
+# ---- Зал и горизонт ----
+
+# Ржавчина бака и контейнеров зала: темнее и бурее общей
+material rust_tank
+    parent rust
+    color 0.26 0.19 0.14
+
+material rust_box
+    parent rust
+    color 0.30 0.18 0.11
+
+# Мегаструктуры у горизонта: мост темнее стены, труба бурая
+material concrete_far
+    parent concrete
+    color 0.27 0.26 0.25
+
+material rust_far
+    parent rust
+    color 0.30 0.20 0.13
+
+# Сигнальные огни: красный на колоннах зала, янтарный на машине
+material lamp_red
+    parent lamp
+    color 0.9 0.12 0.06
+
+material lamp_amber
+    parent lamp
+    color 0.9 0.6 0.25

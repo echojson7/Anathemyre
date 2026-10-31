@@ -1,7 +1,7 @@
 # Объекты: части построек и мелочи локаций. Что это и зачем — docs/objects.md
 #
 # shape имя — генератор формы (content/shapes.c и файлы локаций); без shape объект только светит
-# size x y z — размер по умолчанию, м; строка put в заготовке может задать свой
+# size x y z — размер по умолчанию, м (без строки — 1 1 1); put в заготовке задаёт свой, 0 по оси — из описания
 # mat имя, mat2 имя — материалы слотов 0 и 1 (materials.txt); put может заменить
 # tint a — разброс цвета по зерну экземпляра
 # place settle|hang|fixed — как стоит (sim/phys.h); пока все стоят намертво
@@ -279,10 +279,12 @@ object scrap_heap
 object water_tower
     shape water_tower
 
-# ---- Только свет: лампы зала и ринга (их сетки пока в content/hall.c и ring.c) ----
+# ---- Свет: лампы зала и ринга ----
 
-# Лампа над стойкой с оружием: горит всегда, конусом вниз и от стены
+# Лампа над стойкой с оружием: горит всегда, конусом вниз и от стены. size.z — до стены
 object hall_lamp
+    shape hall_lamp
+    size 0 0 1.5
     light lamp_sodium 1.5
     light_at 0 -0.044 -0.0235
     light_dir 0 -0.88 -0.47
@@ -290,8 +292,9 @@ object hall_lamp
     light_radius 6
     light_glow 0.0009
 
-# Прожектор на мачте ринга: узкий конус в середину, зажигается с темнотой, дрожит
+# Прожектор на мачте ринга: узкий конус в середину, зажигается с темнотой, дрожит. Точка — под фонарём, +z — к середине
 object ring_spot
+    shape ring_mast
     light lamp_white 90
     light_at 0 10 0
     light_dir 0 -0.728 0.6856
@@ -300,11 +303,256 @@ object ring_spot
     light_glow 0.00012
     light_night 0.30 0.18
     light_flicker hum
+    solid 0 5.2 -0.9 0.16 5.2 0.16
 
-# Лампа в сетке на стойке ворот ринга
+# Лампа в сетке на стойке ворот ринга: +z — к середине
 object ring_lamp
+    shape ring_cage
     light lamp_white 2.2
     light_radius 9
     light_glow 0.0015
     light_night 0.30 0.18
     light_flicker hum
+
+# ---- Общие: знаки и трубы ----
+
+# Знак на стене: светится сам, лицом вдоль +z. size — ширина и высота
+object glyph
+    shape panel
+    mat glyph_green
+
+# Прут арматуры: от точки вдоль +x на size.x с подъёмом size.y
+object rebar
+    shape pipe
+    mat rust
+    size 0 0 0.025
+
+# ---- Зал: плита, колонны, перекрытие, стены (раскладка — заготовка hall) ----
+
+object hall_block
+    shape box
+    mat concrete
+    solid full
+
+# Без физики: обломки и всё наклонное (коробка физики только с поворотом вокруг вертикали). var — наклоны, градусы
+object hall_tilted
+    shape box
+    mat concrete
+
+object hall_part
+    shape box
+    mat concrete
+
+# Трубы вдоль стены, стояки, муфты: size.z — радиус
+object hall_pipe
+    shape pipe
+    mat rust
+    size 0 0 0
+
+object tank
+    shape pipe
+    mat rust_tank
+    size 0 0 0
+
+object container
+    shape box
+    mat rust_box
+    solid full
+
+object container_fallen
+    parent container
+    solid none
+
+# Машина неизвестного назначения
+object machine
+    shape box
+    mat metal
+    solid full
+
+object signal_lamp
+    shape box
+    mat lamp_red
+
+# Оружейная: точка — середина низа у стены, size — ширина и высота. Вещи — по списку в content/hall.c
+object rack_board
+    shape rack_board
+
+object rack_two
+    shape rack_two
+
+object rack_heavy
+    shape rack_heavy
+
+object rack_pole
+    shape rack_pole
+
+# ---- Ринг (заготовка ring) ----
+
+object ring_slab
+    shape box
+    mat concrete
+    solid full
+
+object ring_sand
+    shape box
+    mat arena_floor
+    solid full
+
+# Знак на песке: светится снизу вверх
+object ring_glyph
+    shape decal
+    mat glyph_dim
+
+object ring_post
+    shape box
+    mat rust_dark
+    solid full
+
+object ring_block
+    shape box
+    mat concrete_dark
+    solid full
+
+# Трубы ограды и прутья: от точки вдоль +x, size.z — радиус
+object ring_rail
+    shape pipe
+    mat rust
+    size 0 0 0.04
+
+object ring_bar
+    shape pipe
+    mat rust_dark
+    size 0 0 0.016
+
+# ---- Горизонт: мегаструктуры (заготовка horizon). Без тени и физики ----
+
+object mega_block
+    shape box
+    mat concrete_dark
+    shadow no
+
+object mega_pipe
+    shape pipe
+    mat rust_far
+    size 0 0 0
+    shadow no
+
+# ---- Остов: неровный бетон (раскладка — заготовка ostov) ----
+# Точка — середина. var[0] — невидимые грани, var[1] — сломанные; биты: 1 низ, 2 верх, 4 −z, 8 +x, 16 +z, 32 −x
+
+object ostov_wall
+    shape ostov_wall
+    mat concrete_pale
+    tint 0.05
+    solid full
+
+# Балки, колонны, плиты галереи, пояса
+object ostov_block
+    parent ostov_wall
+    shape ostov_block
+
+# Пилястры, ступени, скамья
+object ostov_trim
+    parent ostov_wall
+    shape ostov_trim
+
+object ostov_plinth
+    parent ostov_wall
+    shape ostov_plinth
+    tint 0.03
+
+object ostov_capital
+    parent ostov_wall
+    shape ostov_capital
+    tint 0.04
+
+# Стена с наклонной внутренней гранью; физика — по нижней половине
+object ostov_buttress
+    shape ostov_buttress
+    mat concrete_pale
+    tint 0.04
+    size 6.5 6.8 23.4
+    solid 0.6 0 0 2.65 3.4 11.7
+
+# Обломок вдоль +x: size — ширина, высота, длина; var[0] — сломанные грани (4 у начала, 16 у конца), var[1] — наклон, градусы
+object ostov_piece
+    shape ostov_piece
+    mat concrete_pale
+    tint 0.05
+
+object ostov_floor_plate
+    shape ostov_floor_plate
+    mat concrete_pale_dark
+    tint 0.05
+
+# Плита павильона на колоннах: пролом, круглое окно с обечайкой, прутья и крюки. Точка — середина верха
+object ostov_roof
+    shape ostov_roof
+    mat concrete_pale
+    size 33 1.1 24
+
+object ostov_column
+    shape ostov_column
+    mat concrete_pale
+    size 0 6.8 0
+    solid 0 3.4 0 0.35 3.4 0.35
+
+# Песок: холм (size.x радиус, size.y высота) и нанос у стены (вдоль +x на ±size.x, от стены на size.z)
+object ostov_mound
+    shape ostov_mound
+    mat sand
+
+object ostov_drift
+    shape ostov_drift
+    mat sand
+
+# Обломки кругом: size.x радиус, size.y и size.z — крупный и мелкий, var[0] — сколько
+object ostov_rubble
+    shape ostov_rubble
+    mat concrete_pale
+    mat2 concrete_pale_dark
+
+# ---- Остов: мелочи на стенах. Стена позади, лицом вдоль +z ----
+
+object ostov_hatch
+    shape ostov_hatch
+    mat rust_pale
+
+# Тёмный проём двери: size — ширина и высота
+object ostov_door
+    shape panel
+    mat hollow
+
+object ostov_vent
+    shape ostov_vent
+
+object ostov_plate
+    shape ostov_plate
+
+# size.y — трубка вверх
+object ostov_junction
+    shape ostov_junction
+
+object ostov_scupper
+    shape ostov_scupper
+
+# size.x — длина лотка
+object ostov_tray
+    shape ostov_tray
+
+object ostov_staples
+    shape ostov_staples
+
+# Участок трубы: от точки вдоль +x на size.x (меньше нуля — назад) с подъёмом size.y, радиус size.z.
+# var[0] = 1 — без хомутов, var[1] = 1 — колено в конце
+object ostov_pipe
+    shape wall_pipe
+    mat rust_pale
+    mat2 iron
+    size 0 0 0
+
+# Кабель с провисом size.z; var[0] — толщина, мм
+object ostov_cable
+    shape wire
+    mat cable
+    size 0 0 0

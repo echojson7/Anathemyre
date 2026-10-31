@@ -273,7 +273,7 @@ static bool prefab_field(const DefLine *l, Arena *mem)
     *p = (PrefabPut){ .file = l->file, .line = l->line };
     f32 v[3];
     if (l->n < 5 || l->tok[1].quoted || !nums_at(l, 2, 3, v)) {
-        def_error(l, "put что x y z [yaw d] [size w h d] [mat имя] [mat2 имя]");
+        def_error(l, "put что x y z [yaw d] [size w h d] [var a b] [mat имя] [mat2 имя]");
         return false;
     }
     p->ref = def_copy(mem, &l->tok[1]);
@@ -286,6 +286,16 @@ static bool prefab_field(const DefLine *l, Arena *mem)
         } else if (def_is(k, "size") && nums_at(l, i + 1, 3, v)) {
             p->size = v3(v[0], v[1], v[2]);
             i += 4;
+        } else if (def_is(k, "var") && nums_at(l, i + 1, 2, v)) {
+            // Целые −128..255: знаковые (наклон в градусах) хранятся как u8
+            for (u32 j = 0; j < 2; j++) {
+                if (v[j] < -128.0f || v[j] > 255.0f || v[j] != floorf(v[j])) {
+                    def_error(l, "var — целые от -128 до 255");
+                    return false;
+                }
+                p->var[j] = (u8)(i32)v[j];
+            }
+            i += 3;
         } else if ((def_is(k, "mat") || def_is(k, "mat2")) && i + 1 < l->n) {
             p->mat_ref[def_is(k, "mat2")] = def_copy(mem, &l->tok[i + 1]);
             i += 2;
