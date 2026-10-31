@@ -4,7 +4,7 @@
 
 #include "../core/arena.h"
 #include "../core/math3d.h"
-#include "mesh.h"
+#include "../core/mesh.h"
 #include "rb.h"
 
 #define RENDER_MAX_BONES 24

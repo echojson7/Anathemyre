@@ -3,8 +3,8 @@
 #include <string.h>
 
 #include "../audio/audio.h"
-#include "../game/look.h"
-#include "../render/mesh.h"
+#include "../sim/look.h"
+#include "../core/mesh.h"
 #include "deftext.h"
 #include "material.h"
 

@@ -24,7 +24,7 @@ ifeq ($(WERROR),1)
 WARN    += -Werror
 endif
 
-SRC_COMMON := $(wildcard src/*.c src/core/*.c src/render/*.c src/game/*.c src/sim/*.c src/ai/*.c src/world/*.c src/audio/*.c src/io/*.c src/defs/*.c)
+SRC_COMMON := $(wildcard src/core/*.c src/defs/*.c src/sim/*.c src/ai/*.c src/world/*.c src/io/*.c src/content/*.c src/view/*.c src/app/*.c src/render/*.c src/audio/*.c)
 
 ifeq ($(TARGET_OS),windows)
 EXE      := .exe
