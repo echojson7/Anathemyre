@@ -41,7 +41,7 @@ enum {
 typedef enum RbTexKind { RB_TEX_2D, RB_TEX_2D_ARRAY, RB_TEX_3D } RbTexKind;
 
 // Назначение текстуры
-enum { RB_TEX_SAMPLED = 1, RB_TEX_TARGET = 2, RB_TEX_STORAGE = 4 };
+enum { RB_TEX_SAMPLED = 1, RB_TEX_TARGET = 2, RB_TEX_STORAGE = 4, RB_TEX_RATE = 8 };   // RATE — карта частоты (RbPass.rate)
 
 typedef struct RbTexDesc {
     RbTexKind kind;

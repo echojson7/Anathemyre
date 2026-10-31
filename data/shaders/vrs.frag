@@ -1,4 +1,5 @@
-// Карта частоты шейдинга (GL_NV_shading_rate_image): клетка карты — самая мелкая частота её блоков 4x4
+// Карта частоты шейдинга (VK_KHR_fragment_shading_rate): клетка карты — самая мелкая частота её блоков 4x4.
+// Уровень 0..2 — блок 1, 2, 4 пикселя; в карте Vulkan размер (log2 w << 2) | log2 h, то есть уровень * 5
 
 layout(binding = 14) uniform usampler2D u_block;  // vrs_block.frag
 
@@ -14,5 +15,5 @@ void main()
             ivec2 b = b0 + ivec2(x, y);
             if (b.x < size.x && b.y < size.y) r = min(r, texelFetch(u_block, b, 0).r);
         }
-    o_rate = r;
+    o_rate = r * 5u;
 }

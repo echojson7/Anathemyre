@@ -1,6 +1,6 @@
 # Шейдеры Vulkan: рецепт на строку, собираются в data/spv. После правки шейдеров: ./tools/spv/build.sh
 # <стадия vert|frag|comp> [-DИМЯ[=ЗНАЧ] ...] <файлы из data/shaders, склеиваются по порядку после rb.glsl>
-# Дописывается сама: ANA_SPV_LIST=tools/spv/list.txt ./build/anathemyre (игра под GL дописывает рецепты своих конвейеров)
+# Дописывается сама: ANA_SPV_LIST=tools/spv/list.txt ./build/anathemyre (игра дописывает рецепты своих конвейеров)
 vert vkcheck.vert
 frag vkcheck.frag
 vert -DSHADOW_PASS frame.glsl skin.glsl scene.vert
@@ -32,3 +32,4 @@ comp -DPROBE_WRITE probes.glsl vox_clear.comp
 comp -DPROBE_WRITE frame.glsl sky.glsl shadow_sun.glsl probes.glsl probes.comp
 frag frame.glsl common.glsl sky.glsl shadow_sun.glsl probes.glsl torch.glsl scene.frag
 frag -DVOXEL_PASS frame.glsl common.glsl sky.glsl shadow_sun.glsl probes.glsl torch.glsl scene.frag
+frag -DRB_VRS frame.glsl common.glsl sky.glsl shadow_sun.glsl probes.glsl torch.glsl scene.frag
