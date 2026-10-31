@@ -17,6 +17,17 @@ CombatTune g_tune;
 
 // Случайное число без общего потока: зависит только от seed, тика и участников,
 // поэтому порядок обработки бойцов (и потоки) на исход не влияют
+u32 combat_think_phase(u64 seed, u32 slot)
+{
+    u32 h = hash_u32((u32)seed ^ hash_u32((u32)(seed >> 32)));
+    return hash_u32(h ^ hash_u32(slot)) % COMBAT_THINK_TICKS;
+}
+
+bool combat_thinks(const CombatWorld *w, u32 slot)
+{
+    return w->tick % COMBAT_THINK_TICKS == combat_think_phase(w->seed, slot);
+}
+
 bool combat_prefer(u32 seeker, u32 a, u32 b)
 {
     u32 ha = hash_u32(seeker * 0x9E3779B9u ^ hash_u32(a));
@@ -570,6 +581,7 @@ static f32 windup_time(const CombatWorld *w, u32 i, u8 kind)
 
 void combat_begin_attack(CombatWorld *w, u32 i, u8 kind, u32 t, bool counter)
 {
+    w->swing_paid[i] = 0;
     f32 wt = windup_time(w, i, kind) * (counter ? g_tune.counter_windup : 1.0f);
     combat_set_state(w, i, FS_WINDUP, wt);
     w->attack[i] = kind;
@@ -581,7 +593,11 @@ void combat_begin_attack(CombatWorld *w, u32 i, u8 kind, u32 t, bool counter)
     w->react[i] = roll_react(w, t, i, kind, wt);
 }
 
-static bool fresh_windup(const CombatWorld *w, u32 i);
+// Замах ещё не тикал: таймер равен полной длительности. У контратаки так до следующего tick_state.
+static bool fresh_windup(const CombatWorld *w, u32 i)
+{
+    return w->state[i] == FS_WINDUP && w->dur[i] > 0.0f && w->timer[i] == w->dur[i];
+}
 
 static void grant_swing(CombatWorld *w, u32 i, f32 opp, u32 t)
 {
@@ -592,36 +608,24 @@ static void grant_swing(CombatWorld *w, u32 i, f32 opp, u32 t)
         gain(w, i, SK_DEXTERITY, g_tune.gain_dex, sk(w, t, SK_DEXTERITY));
 }
 
-// Опыт за все замахи прохода. Сила защиты цели снята до записей, чтобы младший слот
-// не поднимал навык раньше, чем его прочитает старший.
+// Опыт за новые замахи прохода. Защита цели снята до записей, чтобы чужой опыт
+// не менял снимок. Повторно не выдаём: контратака конца тика ещё «свежая» в следующем мышлении.
 void combat_grant_swings(CombatWorld *w)
 {
     u32 n = w->count;
     for (u32 i = 0; i < n; i++) {
-        w->guard_kind[i] = 0;
-        if (w->idle[i] || !fresh_windup(w, i)) continue;
+        w->swing_due[i] = 0;
+        if (w->swing_paid[i] || w->idle[i] || !fresh_windup(w, i)) continue;
         i32 ti = w->target[i];
-        w->guard_kind[i] = 1;
-        w->guard_hold[i] = (ti >= 0 && (u32)ti < n) ? defense_eff(w, (u32)ti) : 0.0f;
+        w->swing_due[i] = 1;
+        w->swing_opp[i] = (ti >= 0 && (u32)ti < n) ? defense_eff(w, (u32)ti) : 0.0f;
     }
     for (u32 i = 0; i < n; i++) {
-        if (!w->guard_kind[i]) continue;
+        if (!w->swing_due[i]) continue;
         i32 ti = w->target[i];
-        grant_swing(w, i, w->guard_hold[i], ti >= 0 ? (u32)ti : n);
+        grant_swing(w, i, w->swing_opp[i], ti >= 0 ? (u32)ti : n);
+        w->swing_paid[i] = 1;
     }
-}
-
-// Замах этого прохода: таймер ещё равен полной длительности, тик его не уменьшал
-static bool fresh_windup(const CombatWorld *w, u32 i)
-{
-    return w->state[i] == FS_WINDUP && w->dur[i] > 0.0f && w->timer[i] == w->dur[i];
-}
-
-// Реакция остаётся в react и проверяется в момент удара. В состояние блока цель не переводим:
-// иначе пауза замирает и тот, у кого она кончилась на тик раньше, не даёт копии ударить в ответ.
-void combat_seal_guards(CombatWorld *w)
-{
-    (void)w;
 }
 
 static u8 best_counter_kind(const CombatWorld *w, u32 i)
@@ -797,11 +801,11 @@ static void plan_strike(CombatWorld *w, u32 i, u32 *nh)
 // Опыт, раны и журнал — по уже посчитанному плану. Падение решается по всем ударам цели сразу.
 static void apply_hits(CombatWorld *w, u32 nh)
 {
-    memset(w->guard_kind, 0, w->count);
+    memset(w->hit_def, 0, w->count);
     for (u32 n = 0; n < nh; n++) {
         CombatHit *h = &w->hits[n];
         u32 i = h->att, t = h->def;
-        w->guard_kind[t] = 1;
+        w->hit_def[t] = 1;
         if (h->oc == OC_BLOCK || h->oc == OC_BREAK) {
             combat_event(w, EV_BLOCK, i, t);
             if (h->oc == OC_BREAK) w->ev[w->last_ev].flags |= EVF_STAGGER;
@@ -830,7 +834,7 @@ static void apply_hits(CombatWorld *w, u32 nh)
     }
 
     for (u32 t = 0; t < w->count; t++) {
-        if (!w->guard_kind[t]) continue;
+        if (!w->hit_def[t]) continue;
         bool shock = false, force = false, drop = false, stagger = false;
         f32 push_x = 0, push_z = 0, stag_dur = 0, knock_dur = 0, best_shock = -1, best_push = -1;
         u8 fall = FALL_BACK;
@@ -892,22 +896,20 @@ static void apply_hits(CombatWorld *w, u32 nh)
     }
 
     for (u32 i = 0; i < w->count; i++) w->strikes[i] = ~0u;
-    memset(w->guard_kind, 0, w->count);
     for (u32 n = 0; n < nh; n++) {
         CombatHit *h = &w->hits[n];
         if (!h->counter || w->state[h->def] != FS_BLOCK) continue;
         u32 t = h->def;
         if (w->strikes[t] == ~0u || (u32)w->target[t] == h->att) {
             w->strikes[t] = h->att;
-            w->guard_kind[t] = h->counter_kind;
+            w->counter_kind[t] = h->counter_kind;
         }
     }
     for (u32 t = 0; t < w->count; t++) {
         if (w->strikes[t] == ~0u || w->state[t] != FS_BLOCK) continue;
-        combat_begin_attack(w, t, w->guard_kind[t], w->strikes[t], true);
+        combat_begin_attack(w, t, w->counter_kind[t], w->strikes[t], true);
     }
     combat_grant_swings(w);
-    combat_seal_guards(w);
 }
 
 // ---------------------------------------------------------------- тик
@@ -1218,7 +1220,7 @@ void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap)
 #define F(name) w->name = ARENA_PUSH_ARRAY(a, f32, cap)
 #define B(name) w->name = ARENA_PUSH_ARRAY(a, u8, cap)
     F(x); F(z); F(heading); F(timer); F(dur); F(pause); F(since_hit); F(mvx); F(mvz);
-    B(state); B(team); B(attack); B(react); F(aim_x); F(aim_y); F(aim_s);
+    B(state); B(team); B(attack); B(react); B(swing_paid); F(aim_x); F(aim_y); F(aim_s);
     w->target = ARENA_PUSH_ARRAY(a, i32, cap);
     w->gitem = ARENA_PUSH_ARRAY(a, i32, cap);
     w->order = ARENA_PUSH_ARRAY(a, i32, cap);
@@ -1238,8 +1240,10 @@ void combat_init(CombatWorld *w, Arena *a, u32 cap, u32 ev_cap)
     w->strikes = ARENA_PUSH_ARRAY(a, u32, cap);
     w->hit_cap = cap * (u32)MAX_STRIKE_TARGETS;
     w->hits = ARENA_PUSH_ARRAY(a, CombatHit, w->hit_cap);
-    w->guard_kind = ARENA_PUSH_ARRAY(a, u8, cap);
-    w->guard_hold = ARENA_PUSH_ARRAY(a, f32, cap);
+    w->swing_opp = ARENA_PUSH_ARRAY(a, f32, cap);
+    w->swing_due = ARENA_PUSH_ARRAY(a, u8, cap);
+    w->hit_def = ARENA_PUSH_ARRAY(a, u8, cap);
+    w->counter_kind = ARENA_PUSH_ARRAY(a, u8, cap);
     w->grid_tag = ARENA_PUSH_ARRAY(a, u8, cap);
     grid_init(&w->grid, a, cap, 128 * 128 * 4, 2.0f);
     w->fear = true;
@@ -1263,7 +1267,7 @@ void combat_ser(Ser *s, CombatWorld *w)
         C(act); C(act_flags); C(act_t); C(act_t0); C(act_dur);
         for (u32 k = 0; k < SK_COUNT; k++) C(skill[k]);
     }
-    C(state); C(team); C(attack); C(react); C(aim_x); C(aim_y); C(aim_s);
+    C(state); C(team); C(attack); C(react); C(swing_paid); C(aim_x); C(aim_y); C(aim_s);
     C(timer); C(dur); C(pause); C(target); C(since_hit); C(mvx); C(mvz); C(idle); C(order);
     C(blood_max); C(bleed); C(shock); C(morale);
     C(disarmed); C(fall); C(prone); C(loose); C(gitem);
@@ -1344,6 +1348,7 @@ void combat_load(CombatWorld *w, u32 i, const FighterDesc *d)
     w->mvx[i] = w->mvz[i] = 0.0f;
     w->since_hit[i] = 100.0f;
     w->react[i] = REACT_NONE;
+    w->swing_paid[i] = 0;
     w->attack[i] = ATK_SWING;
     w->aim_x[i] = w->aim_s[i] = 0.0f;
     w->aim_y[i] = 1.3f;

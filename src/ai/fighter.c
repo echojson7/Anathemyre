@@ -2,7 +2,6 @@
 
 #include <string.h>
 
-#include "../core/jobs.h"
 #include "../sim/combat_tune.h"
 
 enum { ACT_ATTACK = 1, ACT_RETREAT = 2, ACT_RALLY = 4, ACT_SURRENDER = 8 };
@@ -281,18 +280,6 @@ static void apply_attack(FighterAI *ai, CombatWorld *w, u32 i)
     combat_begin_attack(w, i, ai->kind[i], (u32)tt, false);
 }
 
-typedef struct ThinkCtx {
-    FighterAI  *ai;
-    CombatWorld *w;
-} ThinkCtx;
-
-static void decide_job(void *p, u32 b, u32 e)
-{
-    ThinkCtx *c = p;
-    for (u32 i = b; i < e; i++)
-        if (c->w->tick % COMBAT_THINK_TICKS == 0) decide(c->ai, c->w, i);
-}
-
 void fighter_ai_init(FighterAI *ai, Arena *a, u32 cap)
 {
     ai->cap = cap;
@@ -338,20 +325,19 @@ void fighter_think_all(FighterAI *ai, CombatWorld *w)
             ai->cx[t] /= (f32)ai->cn[t];
             ai->cz[t] /= (f32)ai->cn[t];
         }
-    // Все думают в одни тики. Фаза от номера слота давала младшим замах раньше старших.
-    if (w->tick % COMBAT_THINK_TICKS == 0) {
-        ThinkCtx c = { ai, w };
-        jobs_for(w->count, 16, decide_job, &c);
-        for (u32 i = 0; i < w->count; i++)
-            if (ai->morale_set[i]) {
-                w->morale[i] = ai->next_morale[i];
-                ai->morale_set[i] = 0;
-            }
-        // Сначала своё состояние у всех, потом все замахи.
-        // Иначе меньший номер успевает закрыть цель блоком до её собственного удара.
-        for (u32 i = 0; i < w->count; i++) apply_self(ai, w, i);
-        for (u32 i = 0; i < w->count; i++) apply_attack(ai, w, i);
+    // Фаза — хеш слота и зерна, не общий тик: иначе раз в 0.25 с думают все и худший шаг толстый.
+    // В том же потоке: будить рабочих на пятую часть ростера каждый тик дороже самих решений.
+    // Внутри фазы по-прежнему два прохода: своё состояние, потом замахи.
+    for (u32 i = 0; i < w->count; i++)
+        if (combat_thinks(w, i)) decide(ai, w, i);
+    for (u32 i = 0; i < w->count; i++) {
+        if (!combat_thinks(w, i) || !ai->morale_set[i]) continue;
+        w->morale[i] = ai->next_morale[i];
+        ai->morale_set[i] = 0;
     }
+    for (u32 i = 0; i < w->count; i++)
+        if (combat_thinks(w, i)) apply_self(ai, w, i);
+    for (u32 i = 0; i < w->count; i++)
+        if (combat_thinks(w, i)) apply_attack(ai, w, i);
     combat_grant_swings(w);
-    combat_seal_guards(w);
 }

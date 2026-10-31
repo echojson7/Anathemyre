@@ -6,7 +6,7 @@
 
 #include "../core/ser.h"
 
-#define SAVE_VERSION 12
+#define SAVE_VERSION 13
 
 typedef void (*SerFn)(Ser *s, void *user);
 

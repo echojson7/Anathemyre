@@ -320,7 +320,7 @@ static void rules_tick(Field *f, GroundFn ground)
                 }
                 continue;
             }
-            if (w->tick % COMBAT_THINK_TICKS) continue;
+            if (!combat_thinks(w, i)) continue;
             if ((f->flags[i] & FF_PLAYER) && p->moving) continue;
             if (nearest_foe(f, i, WAKE_R, false) >= 0) {
                 do_wake[i] = 1;
