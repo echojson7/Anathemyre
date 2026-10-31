@@ -22,9 +22,9 @@ u32 obj_chunk_of(f32 x, f32 z)
     return (u32)cz * OBJ_SIDE + (u32)cx;
 }
 
-static i16 cm(f32 v)
+static i16 cm(f32 v, f32 unit)
 {
-    f32 c = v * 100.0f + (v < 0.0f ? -0.5f : 0.5f);
+    f32 c = v * unit + (v < 0.0f ? -0.5f : 0.5f);
     return (i16)(c > 32767.0f ? 32767.0f : c < -32767.0f ? -32767.0f : c);
 }
 
@@ -54,14 +54,17 @@ static void spread(Spread *s, u32 pre, V3 at, f32 yaw, u32 seed, const MatDef *c
         const ObjectDef *od = &g_objects[what];
         u32 k = s->n++;
         o->def[k] = what;
-        o->flags[k] = (u8)((od->lit ? OBJF_LIT : 0) | (od->cast ? 0 : OBJF_NO_SHADOW));
+        bool big = fmaxf(fabsf(p->size.x), fmaxf(fabsf(p->size.y), fabsf(p->size.z))) > 327.0f;
+        o->flags[k] = (u8)((od->lit ? OBJF_LIT : 0) | (od->cast ? 0 : OBJF_NO_SHADOW) | (big ? OBJF_BIG : 0));
         o->group[k] = g;
         o->seed[k] = sd;
         o->pos[k] = pos;
         f32 turn = y * (65536.0f / (2.0f * PI_F));
         turn -= 65536.0f * floorf(turn / 65536.0f);
         o->yaw[k] = (u16)((u32)(turn + 0.5f) & 0xFFFFu);
-        o->size[k][0] = cm(p->size.x), o->size[k][1] = cm(p->size.y), o->size[k][2] = cm(p->size.z);
+        f32 unit = big ? 1.0f : 100.0f;
+        o->size[k][0] = cm(p->size.x, unit), o->size[k][1] = cm(p->size.y, unit), o->size[k][2] = cm(p->size.z, unit);
+        o->var[k][0] = p->var[0], o->var[k][1] = p->var[1];
         for (u32 j = 0; j < OBJ_MATS; j++) o->mat[k][j] = m[j] ? (u8)(m[j] - g_mats) : 255;
         s->chunk_of[k] = obj_chunk_of(pos.x, pos.z);
     }
@@ -86,6 +89,7 @@ bool objects_build(Objects *o, Arena *perm, u64 seed)
     t.yaw = ARENA_PUSH_ARRAY(perm, u16, OBJ_MAX);
     t.size = (i16(*)[3])ARENA_PUSH_ARRAY(perm, i16, OBJ_MAX * 3);
     t.mat = (u8(*)[OBJ_MATS])ARENA_PUSH_ARRAY(perm, u8, OBJ_MAX * OBJ_MATS);
+    t.var = (u8(*)[2])ARENA_PUSH_ARRAY(perm, u8, OBJ_MAX * 2);
     Spread s = { .o = &t, .chunk_of = ARENA_PUSH_ARRAY(perm, u32, OBJ_MAX) };
     const MatDef *none[OBJ_MATS] = { 0 };
     spread(&s, (u32)world, v3(0, 0, 0), 0.0f, hash_u32((u32)seed ^ (u32)(seed >> 32) ^ 0x0B1EC7u), none, 0, 0);
@@ -112,6 +116,7 @@ bool objects_build(Objects *o, Arena *perm, u64 seed)
     f.yaw = ARENA_PUSH_ARRAY(perm, u16, n + 1);
     f.size = (i16(*)[3])ARENA_PUSH_ARRAY(perm, i16, (n + 1) * 3);
     f.mat = (u8(*)[OBJ_MATS])ARENA_PUSH_ARRAY(perm, u8, (n + 1) * OBJ_MATS);
+    f.var = (u8(*)[2])ARENA_PUSH_ARRAY(perm, u8, (n + 1) * 2);
     u32 lit = 0;
     for (u32 i = 0; i < n; i++) {
         u32 j = to[i];
@@ -119,6 +124,7 @@ bool objects_build(Objects *o, Arena *perm, u64 seed)
         f.pos[j] = t.pos[i], f.yaw[j] = t.yaw[i];
         memcpy(f.size[j], t.size[i], sizeof f.size[j]);
         memcpy(f.mat[j], t.mat[i], sizeof f.mat[j]);
+        memcpy(f.var[j], t.var[i], sizeof f.var[j]);
         lit += (t.flags[i] & OBJF_LIT) != 0;
     }
     // Всё нужное — в начало занятой памяти: временное снимается
@@ -140,6 +146,7 @@ bool objects_build(Objects *o, Arena *perm, u64 seed)
     KEEP(yaw, u16, n + 1)
     KEEP(size, i16, (n + 1) * 3)
     KEEP(mat, u8, (n + 1) * OBJ_MATS)
+    KEEP(var, u8, (n + 1) * 2)
 #undef KEEP
     // Сдвиг вниз безопасен: источник всегда выше приёмника (временные массивы раньше и не меньше)
     perm->used = mark + ((at + 15) & ~(size_t)15);
@@ -152,15 +159,16 @@ bool objects_build(Objects *o, Arena *perm, u64 seed)
     o->lit = ARENA_PUSH_ARRAY(perm, u32, lit + 1);
     for (u32 i = 0; i < n; i++)
         if (o->flags[i] & OBJF_LIT) o->lit[o->lit_count++] = i;
-    log_info("ОБЪЕКТЫ: экземпляров %u (%u Б), со светом %u, локаций %u", n, n * 30u, o->lit_count, o->groups);
+    log_info("ОБЪЕКТЫ: экземпляров %u (%u Б), со светом %u, локаций %u", n, n * 32u, o->lit_count, o->groups);
     return true;
 }
 
 V3 obj_size(const Objects *o, u32 i)
 {
     const i16 *s = o->size[i];
-    if (!s[0] && !s[1] && !s[2]) return g_objects[o->def[i]].size;
-    return v3((f32)s[0] * 0.01f, (f32)s[1] * 0.01f, (f32)s[2] * 0.01f);
+    V3 d = g_objects[o->def[i]].size;
+    f32 u = o->flags[i] & OBJF_BIG ? 1.0f : 0.01f;
+    return v3(s[0] ? (f32)s[0] * u : d.x, s[1] ? (f32)s[1] * u : d.y, s[2] ? (f32)s[2] * u : d.z);
 }
 
 const MatDef *obj_mat(const Objects *o, u32 i, u32 slot)
@@ -180,7 +188,7 @@ void objects_solids(const Objects *o, Phys *p)
         V3 sz = obj_size(o, i);
         f32 yaw = obj_yaw(o, i);
         M4 L = obj_frame(o, i);
-        if (d->solid_full) n += phys_static_add(p, o->pos[i], v3_mul(sz, 0.5f), yaw);
+        if (d->solid_full) n += phys_static_add(p, o->pos[i], v3_mul(v3(fabsf(sz.x), fabsf(sz.y), fabsf(sz.z)), 0.5f), yaw);
         // Коробки описания растягиваются вместе с размером экземпляра
         // Ось без размера (у провода, забора) не растягивает
         V3 k = v3(d->size.x != 0.0f && sz.x != 0.0f ? sz.x / d->size.x : 1.0f, d->size.y != 0.0f && sz.y != 0.0f ? sz.y / d->size.y : 1.0f,

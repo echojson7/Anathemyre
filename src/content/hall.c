@@ -1,159 +1,13 @@
+// Зал: формы стоек с оружием и ламп над ними (data/defs/objects.txt). Раскладка зала, ринга и мегаструктур —
+// заготовки hall и horizon в data/defs/prefabs.txt
 #include "hall.h"
-#include "props.h"
+
 #include "../defs/defs.h"
-
-#include <string.h>
-
-#include "../world/map.h"
-#include "ostov.h"
+#include "props.h"
+#include "shapes.h"
 #include "weapon.h"
 
-// Цвета поверхностей (альбедо, линейные)
-
-static void box(MeshBuilder *mb, V3 c, V3 size)
-{
-    mb_box(mb, m4_trs(c, size, 0, 0, 0));
-}
-
-static void glyph_panel(MeshBuilder *mb, V3 c, V3 normal, f32 hw, f32 hh, V3 color)
-{
-    mb_set(mb, color, MAT_GLYPH, BONE_NONE);
-    V3 right = v3_norm(v3_cross(v3(0, 1, 0), normal));
-    mb_quad(mb, v3_add(c, v3_mul(normal, 0.03f)), v3_mul(right, hw), v3(0, hh, 0));
-}
-
-static void weapon_racks(MeshBuilder *mb);
-
-static void hall(MeshBuilder *mb, Rng *rng)
-{
-    prop_mat(mb, g_mat.concrete);
-
-    // Плита пола
-    box(mb, v3(0, -0.3f, -2), v3(64, 0.8f, 52));
-
-    // Две колоннады
-    for (int row = -1; row <= 1; row += 2)
-        for (int k = 0; k < 7; k++) {
-            f32 x = (f32)row * 9.0f, z = -18.0f + (f32)k * 6.0f;
-            bool broken = row == 1 && k == 6;
-            f32 h = broken ? 5.5f : 15.0f;
-            box(mb, v3(x, h * 0.5f, z), v3(1.6f, h, 1.6f));
-            // Утолщение у основания
-            box(mb, v3(x, 0.5f, z), v3(2.2f, 1.0f, 2.2f));
-            if (broken) {
-                mb_box(mb, m4_trs(v3(x + 3.5f, 0.9f, z + 2.0f), v3(1.6f, 1.6f, 7.5f), 0.08f, 0.9f, 0.1f));
-                mb_box(mb, m4_trs(v3(x + 1.5f, 0.6f, z - 1.5f), v3(1.3f, 1.2f, 1.6f), 0.3f, 0.4f, 0.2f));
-            }
-        }
-
-    // Балки поверх колонн и перекрытие полосами: свет проходит в щели
-    for (int k = 0; k < 6; k++) {
-        f32 z = -18.0f + (f32)k * 6.0f;
-        box(mb, v3(0, 15.6f, z), v3(20.0f, 1.2f, 1.4f));
-    }
-    box(mb, v3(-9, 16.7f, -3), v3(1.8f, 1.0f, 38.0f));
-    box(mb, v3(9, 16.7f, -6), v3(1.8f, 1.0f, 32.0f));
-    for (int k = 0; k < 6; k++) {
-        f32 z = -19.0f + (f32)k * 2.9f;
-        box(mb, v3(0, 17.5f, z), v3(19.0f, 0.6f, 1.9f));
-    }
-
-    // Задняя стена с проёмами
-    f32 wz = -22.0f, wh = 22.0f;
-    f32 gates[] = { -14.0f, 0.0f, 14.0f };
-    f32 gw = 6.0f, gh = 10.0f;
-    f32 x0 = -34.0f;
-    for (u32 g = 0; g <= ARRAY_COUNT(gates); g++) {
-        f32 x1 = g < ARRAY_COUNT(gates) ? gates[g] - gw * 0.5f : 34.0f;
-        box(mb, v3((x0 + x1) * 0.5f, wh * 0.5f, wz), v3(x1 - x0, wh, 2.4f));
-        if (g < ARRAY_COUNT(gates)) {
-            box(mb, v3(gates[g], (gh + wh) * 0.5f, wz), v3(gw, wh - gh, 2.4f));
-            x0 = gates[g] + gw * 0.5f;
-        }
-    }
-    // Контрфорсы
-    for (int k = -3; k <= 3; k++) {
-        f32 x = (f32)k * 9.5f + 4.7f;
-        if (fabsf(x) > 33.0f) continue;
-        mb_box(mb, m4_trs(v3(x, 7.0f, wz - 3.5f), v3(1.4f, 16.0f, 5.0f), -0.28f, 0, 0));
-    }
-
-    // Обрушенная боковая стена: ступенчатые обломки
-    prop_mat(mb, g_mat.concrete_dark);
-    for (int k = 0; k < 12; k++) {
-        f32 z = -20.0f + (f32)k * 2.6f;
-        f32 h = fmaxf(1.0f, 13.0f - (f32)k * 1.1f + rng_range(rng, -1.5f, 1.5f));
-        box(mb, v3(-25.0f, h * 0.5f, z), v3(2.0f, h, 2.7f));
-    }
-
-    // Обломки и арматура
-    for (int i = 0; i < 70; i++) {
-        f32 ang = rng_range(rng, 0, 2 * PI_F);
-        f32 r = rng_range(rng, 2.0f, 30.0f);
-        f32 s = rng_range(rng, 0.25f, 1.4f);
-        V3 c = v3(cosf(ang) * r, s * 0.3f, sinf(ang) * r - 4.0f);
-        if (fabsf(c.x) < 6.5f && c.z > -16.0f) continue; // проход по центру
-        mb_set(mb, rng_f32(rng) < 0.5f ? mat_c(g_mat.concrete) : mat_c(g_mat.concrete_dark), MAT_CONCRETE, BONE_NONE);
-        mb_box(mb, m4_trs(c, v3(s * rng_range(rng, 0.8f, 2.0f), s, s * rng_range(rng, 0.7f, 1.5f)),
-                          rng_range(rng, -0.4f, 0.4f), rng_range(rng, 0, PI_F), rng_range(rng, -0.4f, 0.4f)));
-        if (rng_f32(rng) < 0.35f) {
-            prop_mat(mb, g_mat.rust);
-            V3 tip = v3_add(c, v3(rng_range(rng, -0.6f, 0.6f), rng_range(rng, 0.8f, 1.8f), rng_range(rng, -0.6f, 0.6f)));
-            mb_cylinder(mb, c, tip, 0.025f, 6);
-        }
-    }
-
-    // Трубы вдоль задней стены
-    prop_mat(mb, g_mat.rust);
-    for (int i = 0; i < 2; i++) {
-        f32 y = 4.0f + (f32)i * 1.3f, r = 0.45f - (f32)i * 0.1f;
-        mb_cylinder(mb, v3(-33, y, wz + 1.9f), v3(33, y, wz + 1.9f), r, 14);
-        for (f32 x = -32.0f; x <= 32.0f; x += 4.0f)
-            mb_cylinder(mb, v3(x - 0.1f, y, wz + 1.9f), v3(x + 0.1f, y, wz + 1.9f), r + 0.12f, 14);
-        for (f32 x = -26.0f; x <= 26.0f; x += 13.0f)
-            box(mb, v3(x, y - 0.3f - (f32)i * 0.2f, wz + 1.5f), v3(0.3f, 0.2f, 0.9f));
-    }
-    mb_cylinder(mb, v3(20, 0, wz + 1.9f), v3(20, 22, wz + 1.9f), 0.6f, 14);
-    mb_cylinder(mb, v3(-6, 0, wz + 1.9f), v3(-6, 5.3f, wz + 1.9f), 0.3f, 10);
-
-    // Лежащий резервуар
-    mb_set(mb, v3(0.26f, 0.19f, 0.14f), MAT_RUST, BONE_NONE);
-    mb_cylinder(mb, v3(16, 3.0f, 10), v3(22, 3.4f, -2), 3.0f, 24);
-    for (int i = 0; i < 4; i++) {
-        f32 t = 0.15f + 0.23f * (f32)i;
-        V3 c = v3_lerp(v3(16, 3.0f, 10), v3(22, 3.4f, -2), t);
-        V3 d = v3_mul(v3_norm(v3(6, 0.4f, -12)), 0.15f);
-        mb_cylinder(mb, v3_sub(c, d), v3_add(c, d), 3.15f, 24);
-    }
-
-    // Контейнеры
-    mb_set(mb, v3(0.30f, 0.18f, 0.11f), MAT_RUST, BONE_NONE);
-    mb_box(mb, m4_trs(v3(-15, 1.3f, 8), v3(2.4f, 2.6f, 6.0f), 0, 0.15f, 0));
-    mb_box(mb, m4_trs(v3(-14.2f, 3.4f, 4.5f), v3(2.4f, 2.6f, 6.0f), 0.12f, -0.35f, 0.25f));
-
-    // Машина неизвестного назначения со знаками
-    mb_set(mb, v3(0.22f, 0.21f, 0.20f), MAT_METAL, BONE_NONE);
-    box(mb, v3(-4, 1.6f, -15), v3(5.0f, 3.2f, 3.0f));
-    prop_mat(mb, g_mat.rust);
-    box(mb, v3(-4, 3.6f, -15.5f), v3(3.6f, 0.8f, 2.0f));
-    mb_cylinder(mb, v3(-6, 4.0f, -15.5f), v3(-6, 7.5f, -16.5f), 0.25f, 10);
-    glyph_panel(mb, v3(-4, 1.8f, -13.5f), v3(0, 0, 1), 1.8f, 0.7f, mat_c(g_mat.glyph_green));
-
-    // Знаки на стене и колоннах
-    glyph_panel(mb, v3(0, 13.5f, wz + 1.2f), v3(0, 0, 1), 6.0f, 1.6f, mat_c(g_mat.glyph_green));
-    glyph_panel(mb, v3(-24.0f, 16.0f, wz + 1.2f), v3(0, 0, 1), 3.0f, 0.4f, mat_c(g_mat.glyph_red));
-    glyph_panel(mb, v3(-9, 4.5f, 6.8f), v3(0, 0, 1), 0.65f, 1.6f, mat_c(g_mat.glyph_red));
-    glyph_panel(mb, v3(9, 6.0f, -5.2f), v3(0, 0, 1), 0.65f, 2.2f, mat_c(g_mat.glyph_green));
-
-    // Красные огни на колоннах
-    mb_set(mb, v3(0.9f, 0.12f, 0.06f), MAT_EMISSIVE, BONE_NONE);
-    box(mb, v3(-9, 8.0f, 6.85f), v3(0.18f, 0.18f, 0.1f));
-    box(mb, v3(9, 8.0f, -5.15f), v3(0.18f, 0.18f, 0.1f));
-    mb_set(mb, v3(0.9f, 0.6f, 0.25f), MAT_EMISSIVE, BONE_NONE);
-    box(mb, v3(-4, 3.25f, -13.4f), v3(0.4f, 0.12f, 0.05f));
-
-    weapon_racks(mb);
-}
+static void box(MeshBuilder *mb, V3 c, V3 size) { mb_box(mb, m4_trs(c, size, 0, 0, 0)); }
 
 // ---------------------------------------------------------------- стойки с оружием
 
@@ -228,10 +82,7 @@ static void rack_wall(MeshBuilder *mb, f32 x0, f32 x1, f32 wall_z, f32 y0, f32 y
     }
 }
 
-// Лампы над стойками: кронштейн из стены под трубами, колпак наклонён к стойке
-const V3 g_hall_lamp[HALL_LAMPS] = { { 5.1f, 3.25f, -19.3f }, { 8.9f, 3.25f, -19.3f }, { -8.75f, 3.25f, -19.2f },
-                                            { -4.4f, 3.25f, -19.2f }, { 23.6f, 3.25f, -18.9f } };
-
+// Лампа: кронштейн из стены (wall_z) к точке p, колпак наклонён к стойке
 static void rack_lamp(MeshBuilder *mb, V3 p, f32 wall_z)
 {
     mb_set(mb, v3(0.05f, 0.05f, 0.05f), MAT_METAL, BONE_NONE);
@@ -245,61 +96,50 @@ static void rack_lamp(MeshBuilder *mb, V3 p, f32 wall_z)
     mb_capsule(mb, v3_sub(p, v3_mul(d, 0.06f)), v3_sub(p, v3_mul(d, 0.02f)), 0.06f, 0.06f, 8, 1.0f, 1.0f);
 }
 
-// Оружейная у задней стены зала: одноручное на доске, двуручное и древковое в напольных стойках.
-// Пока только вид; подбирать их будет можно, когда вещи на земле станут телами (тред физики)
-static void weapon_racks(MeshBuilder *mb)
+// Стойки строятся в осях экземпляра: точка — середина низа у стены, size.x — ширина, size.y — высота
+static const char *const k_one[] = { "lopast", "zatochka", "rezak", "polosa", "ressora", "sekach", "teslo" };
+static const char *const k_two[] = { "dolgaya", "dolgaya", "dolgaya", "resheto", "otval", "otval", "otval" };
+static const u8 k_two_q[] = { Q_JUNK, Q_WORN, Q_SOUND, Q_SOUND, Q_JUNK, Q_WORN, Q_SOUND };
+static const char *const k_heavy[] = { "balka", "balka", "balka" };
+static const u8 k_heavy_q[] = { Q_JUNK, Q_WORN, Q_SOUND };
+static const char *const k_pole[] = { "bagor", "bagor", "bagor", "kosa", "kosa", "kosa", "vereteno", "truba", "truba", "truba" };
+static const u8 k_pole_q[] = { Q_JUNK, Q_WORN, Q_SOUND, Q_JUNK, Q_WORN, Q_SOUND, Q_SOUND, Q_JUNK, Q_WORN, Q_SOUND };
+
+// Доска на стене: одноручное по рядам, слева направо по качеству
+static void sh_rack_board(const ShapeCtx *c)
 {
-    const f32 wall = -20.8f;
-    static const char *const one[] = { "lopast", "zatochka", "rezak", "polosa", "ressora", "sekach", "teslo" };
-    rack_wall(mb, 3.3f, 10.7f, wall, 0.45f, 2.9f, one, ARRAY_COUNT(one));
-    static const char *const two[] = { "dolgaya", "dolgaya", "dolgaya", "resheto", "otval", "otval", "otval" };
-    static const u8 two_q[] = { Q_JUNK, Q_WORN, Q_SOUND, Q_SOUND, Q_JUNK, Q_WORN, Q_SOUND };
-    rack_stand(mb, -10.6f, -6.9f, wall + 0.55f, 1.55f, two, two_q, ARRAY_COUNT(two), true);
-    static const char *const heavy[] = { "balka", "balka", "balka" };
-    static const u8 heavy_q[] = { Q_JUNK, Q_WORN, Q_SOUND };
-    rack_stand(mb, -5.2f, -3.6f, wall + 0.55f, 1.4f, heavy, heavy_q, ARRAY_COUNT(heavy), false);
-    static const char *const pole[] = { "bagor", "bagor", "bagor", "kosa", "kosa", "kosa", "vereteno", "truba", "truba", "truba" };
-    static const u8 pole_q[] = { Q_JUNK, Q_WORN, Q_SOUND, Q_JUNK, Q_WORN, Q_SOUND, Q_SOUND, Q_JUNK, Q_WORN, Q_SOUND };
-    rack_stand(mb, 21.6f, 25.6f, wall + 0.75f, 2.6f, pole, pole_q, ARRAY_COUNT(pole), false);
-    for (u32 k = 0; k < HALL_LAMPS; k++) rack_lamp(mb, g_hall_lamp[k], wall);
+    u32 v0 = c->mb->vcount;
+    f32 w = c->size.x * 0.5f;
+    rack_wall(c->mb, -w, w, 0.0f, 0.45f, c->size.y, k_one, ARRAY_COUNT(k_one));
+    shape_to_world(c->mb, v0, c->L);
 }
 
-// Мегаструктуры у горизонта: стена, башня, пилоны, мост
-static void megastructures(MeshBuilder *mb, Rng *rng)
+// Напольная стойка: arg 0 — двуручное рукоятью вверх, 1 — тяжёлое, 2 — древковое
+static void sh_rack_stand(const ShapeCtx *c)
 {
-    mb_set(mb, v3(0.30f, 0.29f, 0.27f), MAT_CONCRETE, BONE_NONE);
-    f32 wz = -720.0f;
-    box(mb, v3(0, 260.0f, wz), v3(3600.0f, 560.0f, 70.0f));
-    for (int k = -14; k <= 14; k++) {
-        f32 x = (f32)k * 130.0f;
-        f32 h = 620.0f + rng_range(rng, -40.0f, 90.0f);
-        box(mb, v3(x, h * 0.5f - 20.0f, wz + 45.0f), v3(42.0f, h, 40.0f));
-        if (rng_f32(rng) < 0.4f) box(mb, v3(x, h + 10.0f, wz + 30.0f), v3(12.0f, 60.0f, 12.0f));
-    }
-    // Башня с кольцами
-    box(mb, v3(420.0f, 450.0f, -560.0f), v3(90.0f, 1000.0f, 90.0f));
-    for (int i = 0; i < 5; i++)
-        box(mb, v3(420.0f, 180.0f + (f32)i * 150.0f, -560.0f), v3(150.0f, 14.0f, 150.0f));
-    // Наклонный пилон
-    mb_box(mb, m4_trs(v3(-520.0f, 220.0f, -420.0f), v3(60.0f, 600.0f, 60.0f), 0.0f, 0.3f, -0.35f));
-    // Мост на опорах над пустыней
-    mb_set(mb, v3(0.27f, 0.26f, 0.25f), MAT_CONCRETE, BONE_NONE);
-    box(mb, v3(-200.0f, 140.0f, -330.0f), v3(1400.0f, 22.0f, 40.0f));
-    for (int k = -3; k <= 2; k++)
-        box(mb, v3((f32)k * 220.0f, 65.0f, -330.0f), v3(28.0f, 150.0f, 28.0f));
-    // Огромная труба
-    mb_set(mb, v3(0.30f, 0.20f, 0.13f), MAT_RUST, BONE_NONE);
-    mb_cylinder(mb, v3(-1500.0f, 60.0f, -600.0f), v3(1500.0f, 90.0f, -650.0f), 32.0f, 24);
+    u32 v0 = c->mb->vcount;
+    f32 w = c->size.x * 0.5f;
+    if (c->arg == 0) rack_stand(c->mb, -w, w, 0.0f, c->size.y, k_two, k_two_q, ARRAY_COUNT(k_two), true);
+    else if (c->arg == 1) rack_stand(c->mb, -w, w, 0.0f, c->size.y, k_heavy, k_heavy_q, ARRAY_COUNT(k_heavy), false);
+    else rack_stand(c->mb, -w, w, 0.0f, c->size.y, k_pole, k_pole_q, ARRAY_COUNT(k_pole), false);
+    shape_to_world(c->mb, v0, c->L);
 }
 
-void hall_build_near(MeshBuilder *mb, Rng *rng)
+// Лампа над стойкой: точка — колпак, стена позади на size.z
+static void sh_hall_lamp(const ShapeCtx *c)
 {
-    hall(mb, rng);
+    u32 v0 = c->mb->vcount;
+    rack_lamp(c->mb, v3(0, 0, 0), -c->size.z);
+    shape_to_world(c->mb, v0, c->L);
 }
 
-void hall_build_far(MeshBuilder *mb, Rng *rng)
-{
-    megastructures(mb, rng);
-}
+const Shape g_hall_shapes[] = {
+    { "rack_board", sh_rack_board, 0 },
+    { "rack_two", sh_rack_stand, 0 },
+    { "rack_heavy", sh_rack_stand, 1 },
+    { "rack_pole", sh_rack_stand, 2 },
+    { "hall_lamp", sh_hall_lamp, 0 },
+};
+const u32 g_hall_shape_count = ARRAY_COUNT(g_hall_shapes);
 
 bool hall_floor(f32 x, f32 z) { return fabsf(x) <= 32.0f && z >= -28.0f && z <= 24.0f; }

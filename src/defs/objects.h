@@ -68,7 +68,8 @@ typedef struct PrefabPut {
     u8  picks;
     V3  pos;
     f32 yaw;              // радианы
-    V3  size;             // 0 — размер объекта
+    V3  size;             // 0 по оси — размер объекта по этой оси
+    u8  var[2];           // два числа формы (смысл у каждой формы свой, docs/objects.md)
     const MatDef *mat[OBJ_MATS];  // NULL — материал объекта
     const char   *ref;    // имена до проверки: «a|b|c»
     const char   *mat_ref[OBJ_MATS];
