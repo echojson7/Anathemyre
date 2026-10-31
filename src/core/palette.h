@@ -9,6 +9,9 @@
 #define PAL_CONCRETE_DARK v3(0.30f, 0.29f, 0.27f)
 #define PAL_RUST          v3(0.42f, 0.24f, 0.13f)
 #define PAL_SAND          v3(0.40f, 0.34f, 0.26f)
+#define PAL_METAL         v3(0.22f, 0.21f, 0.20f)
+// Тёплый свет ламп и фонарей
+#define PAL_LAMP          v3(0.55f, 0.34f, 0.11f)
 // Редкие яркие знаки — только для важного
 #define PAL_GLYPH_RED     v3(0.95f, 0.18f, 0.10f)
 #define PAL_GLYPH_GREEN   v3(0.25f, 1.0f, 0.40f)
