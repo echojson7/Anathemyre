@@ -1806,18 +1806,18 @@ static Xf frame_axes(V3 tip, V3 edge, V3 pos)
     return (Xf){ v3_cross(tip, edge), tip, edge, pos };
 }
 
-// Ножны относительно кости-носителя, поза привязки (пространство модели)
+// Ножны относительно кости-носителя (точка крепления тела), поза привязки (пространство модели)
 static Xf sheath_frame(u8 w, u8 *bone)
 {
     Carry c = weapon_carry(w);
     if (c == CARRY_BELT) {
         // Левое бедро, рукоять вперёд-вверх под правую руку
-        *bone = BONE_PELVIS;
-        V3 s = g_body_sockets[SOCKET_BELT].pos;
+        *bone = g_body.socket[SOCKET_SHEATH].bone;
+        V3 s = g_body.socket[SOCKET_SHEATH].pos;
         return frame_axes(v3(0.18f, -1.0f, -0.62f), v3(0.0f, 0.3f, -1.0f), v3(fabsf(s.x) + 0.04f, s.y + 0.06f, s.z + 0.11f));
     }
-    *bone = BONE_CHEST;
-    V3 s = g_body_sockets[SOCKET_BACK].pos;
+    *bone = g_body.socket[SOCKET_BACK].bone;
+    V3 s = g_body.socket[SOCKET_BACK].pos;
     if (c == CARRY_BACK_HIGH)
         // Рукоять над правым плечом, клинок наискосок к левому бедру — сквозь рюкзак
         return frame_axes(v3(0.42f, -1.0f, -0.04f), v3(0.0f, 0.0f, -1.0f), v3(s.x - 0.17f, s.y + 0.30f, s.z + 0.01f));
@@ -2430,7 +2430,7 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
         Xf sh_rel = xf_mul(&bind_inv, &sh_local);
         Xf sheath = xf_mul(&wld[sb], &sh_rel);
         Xf g = grip_frame();
-        g.t = v3_sub(g_body_sockets[SOCKET_HAND_R].pos, g_body_bones[BONE_HAND_R].joint);
+        g.t = v3_sub(g_body.socket[SOCKET_GRIP].pos, g_body_bones[BONE_HAND_R].joint);
         // Поворот кисти, при котором рукоять ложится в ножны
         Xf ginv = { v3(g.x.x, g.y.x, g.z.x), v3(g.x.y, g.y.y, g.z.y), v3(g.x.z, g.y.z, g.z.z), v3(0, 0, 0) };
         const f32 GRAB = 0.45f;
@@ -2564,8 +2564,9 @@ void character_pose(const CharPose *p, const CharAction *act, M4 *out)
     out[CHAR_BONE_WEAPON] = xf_m4(&ww);
     // Факел: древко в левом кулаке так же, как рукоять оружия в правом
     Xf tg = grip_frame();
-    tg.t = v3_sub(g_body_sockets[SOCKET_HAND_L].pos, g_body_bones[BONE_HAND_L].joint);
-    Xf torch = xf_mul(&wld[BONE_HAND_L], &tg);
+    const SocketDef *ts = &g_body.socket[SOCKET_TORCH];
+    tg.t = v3_sub(ts->pos, g_body_bones[ts->bone].joint);
+    Xf torch = xf_mul(&wld[ts->bone], &tg);
     if (a->severed & (1u << PART_ARM_L)) torch = (Xf){ v3(0, 0, 0), v3(0, 0, 0), v3(0, 0, 0), torch.t };
     Xf tw_world = xf_mul(&root, &torch);
     out[CHAR_BONE_TORCH] = xf_m4(&tw_world);
@@ -2602,7 +2603,7 @@ void anim_bake_hit_guard(void)
     CharAction a = { .guard = 1.0f, .wield = 1.0f };
     M4 bones[CHAR_BONES];
     character_pose(&p, &a, bones);
-    for (u32 c = 0; c < g_body_hit_count; c++) {
+    for (u32 c = 0; c < g_body.hits; c++) {
         HitCapsule h = g_body_hit[c];
         V3 pa = m4_point(bones[h.bone], h.a), pb = m4_point(bones[h.bone], h.b);
         h.a = v3(roundf(pa.x * 1000.0f) / 1000.0f, roundf(pa.y * 1000.0f) / 1000.0f, roundf(pa.z * 1000.0f) / 1000.0f);

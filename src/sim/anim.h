@@ -157,7 +157,7 @@ static inline f32 char_run_from_speed(f32 v) { return clampf((v - 1.6f) / 3.2f, 
 
 // Пишет CHAR_BONES матриц скиннинга; act == NULL — только походка и позы ожидания
 void character_pose(const CharPose *p, const CharAction *act, M4 *out_bones);
-// Капсулы боевой стойки (g_body_hit_guard) с позы guard = 1 с одноручным. После body_hit_build
+// Капсулы боевой стойки (g_body_hit_guard) с позы guard = 1 с одноручным. После body_load
 void anim_bake_hit_guard(void);
 
 // Оружие отдельной сеткой (content/weapon.h); кости — слот CHAR_BONE_WEAPON

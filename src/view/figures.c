@@ -425,6 +425,6 @@ void figures_portrait_arena(Figures *f, const FrameView *base, const CharMeshes 
     M4 lm = arena_ring_look(s, ri, &lk);
     ng += look_hair(&lk, gear, ng);
     portrait(base, slot, size, kind, &m->body[kind], &m->weapon[weapon_mesh(d->weapon, d->weapon_q)], d->weapon, seed,
-             d->height / 1.8f, 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), lm, m->gear + kind * GEAR_ROW, gear, ng,
+             body_scale(d->height), 1.0f + 0.08f * sinf(seed * 3.17f + 1.0f), lm, m->gear + kind * GEAR_ROW, gear, ng,
              f->portrait + RENDER_MAX_BONES);
 }

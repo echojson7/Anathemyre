@@ -1,12 +1,12 @@
-// Стандарт тела гуманоида: скелет, части тела, хит-объёмы, слоты, классы телосложения.
-// Одна топология для всех людей; крупные расы позже — тот же скелет с другими множителями.
-// Не зависит от рендера: размеры в метрах, поза привязки класса H.
+// Стандарт тела гуманоида: роли костей, части тела, хит-объёмы, слоты, крепления.
+// Одна топология для всех людей; числа тела — в описании (data/defs/bodies.txt, docs/body.md).
+// Не зависит от рендера: размеры в метрах, поза привязки.
 #ifndef ANA_BODY_H
 #define ANA_BODY_H
 
 #include "../core/math3d.h"
 
-// Скелет: 20 костей, родитель всегда раньше ребёнка
+// Роли костей: 20, родитель всегда раньше ребёнка. Код знает роли, имена костей в файле — описание тела
 typedef enum BodyBone {
     BONE_ROOT, BONE_PELVIS, BONE_SPINE, BONE_CHEST, BONE_NECK, BONE_HEAD,
     BONE_CLAVICLE_L, BONE_UPPER_ARM_L, BONE_FOREARM_L, BONE_HAND_L,
@@ -49,8 +49,13 @@ typedef enum EquipSlot {
     SLOT_COUNT
 } EquipSlot;
 
+// Точки крепления на теле. Точка хвата на самом оружии — в описании вещи
 typedef enum Socket {
-    SOCKET_HAND_R, SOCKET_HAND_L, SOCKET_BACK, SOCKET_BELT,
+    SOCKET_GRIP,    // хват: правый кулак
+    SOCKET_GRIP2,   // второй хват: левый кулак
+    SOCKET_SHEATH,  // ножны на поясе
+    SOCKET_BACK,    // за спиной
+    SOCKET_TORCH,   // факел в левом кулаке
     SOCKET_COUNT
 } Socket;
 
@@ -59,44 +64,55 @@ typedef struct SocketDef {
     V3 pos;  // в позе привязки
 } SocketDef;
 
+// Часть ragdoll: капсула от сустава bone до сустава to, доля массы тела и сустав к родительской части.
+// Пределы — в осях сустава (sim/phys.h, PhysJointDesc), радианы: шар — отклонение не больше cone, кручение lo..hi;
+// петля — сгиб lo..hi, 0 — как в позе привязки
+typedef enum RagJoint { RAG_ROOT, RAG_BALL, RAG_HINGE } RagJoint;  // по номерам как PhysJointKind
+typedef struct RagPart {
+    u8  bone, to, parent, joint;  // parent — номер части выше по списку
+    f32 r, mass;
+    f32 lo, hi, cone;
+} RagPart;
+
+#define BODY_MAX_HIT_CAPSULES 12
+#define BODY_RAG_MAX 16
+
+// Описание тела (data/defs/bodies.txt, вид body): скелет, роли костей, крепления, хит-капсулы, ragdoll.
+// Заполняет defs при старте; docs/body.md
 typedef enum BodyClassId {
     BODY_H,  // человек: основные персонажи и почти всё население
     BODY_CLASS_COUNT
 } BodyClassId;
 
-typedef struct BodyClass {
-    f32 height_min, height_max;  // м
-    f32 mass_min, mass_max;      // кг
-    f32 hp_mul;                  // множитель HP частей
-    f32 radius;                  // общая капсула тела для толпы и сетки
-    f32 stride;                  // длина полного цикла шага
-    f32 knock_resist;            // множитель сопротивления сбиванию
-} BodyClass;
+typedef struct BodyDef {
+    f32 height;                      // рост скелета в позе привязки, м: от него множитель роста человека
+    const char *skeleton;            // общий скелет боя и креплений: data/meshes/<skeleton>.skel
+    char bone_name[BONE_COUNT][16];  // имя кости в .skel для каждой роли BONE_*
+    SocketDef socket[SOCKET_COUNT];
+    HitDef hit[BODY_MAX_HIT_CAPSULES];
+    u32 hits;
+    RagPart rag[BODY_RAG_MAX];
+    u32 rags;
+} BodyDef;
 
-// Поза привязки класса H, рост 1.80 м
-#define BODY_BASE_HEIGHT 1.80f
-#define BODY_MAX_HIT_CAPSULES 12
-
-// Родители — стандарт гуманоида; суставы — мужское тело, заполняются при старте (look_load_skeletons)
+extern BodyDef g_body;
+// Родители — стандарт гуманоида; суставы — из g_body.skeleton (body_load)
 extern BoneDef          g_body_bones[BONE_COUNT];
-extern const char *const g_bone_name[BONE_COUNT];
-extern const BodyClass  g_body_classes[BODY_CLASS_COUNT];
-extern const HitDef     g_body_hit_def[BODY_MAX_HIT_CAPSULES];
-extern const u32        g_body_hit_count;
-// Капсулы в позе привязки (body_hit_build) и в боевой стойке с одноручным (ставит вид при старте,
+// Капсулы в позе привязки (body_load) и в боевой стойке с одноручным (ставит вид при старте,
 // anim_bake_hit_guard). По стойке считается, куда пришёлся удар по стоящему
 extern HitCapsule       g_body_hit[BODY_MAX_HIT_CAPSULES];
 extern HitCapsule       g_body_hit_guard[BODY_MAX_HIT_CAPSULES];
-extern const SocketDef  g_body_sockets[SOCKET_COUNT];
-extern const f32        g_part_hp[PART_COUNT];      // HP класса H
-extern const f32        g_part_hit_share[PART_COUNT]; // доля попаданий без учёта вида удара
+extern f32              g_part_hp[PART_COUNT];      // HP частей (описание тела)
 extern const char      *g_part_name[PART_COUNT];
 
-// Скелет из файла .skel (tools/humanconv): суставы в позе привязки по ролям BONE_*. Кости находят роль по имени,
-// родители сверяются со стандартом g_body_bones. false — файла нет или он не по стандарту
+// Множитель роста человека от роста в метрах
+static inline f32 body_scale(f32 height_m) { return height_m / g_body.height; }
+
+// Скелет из файла .skel (tools/humanconv): суставы в позе привязки по ролям BONE_*. Кости находят роль по имени
+// (g_body.bone_name), родители сверяются со стандартом g_body_bones. false — файла нет или он не по стандарту
 bool body_skeleton_load(const char *path, V3 *joints);
-// Капсулы позы привязки из суставов g_body_bones: после загрузки скелета
-void body_hit_build(void);
+// Общий скелет и капсулы позы привязки: после описаний (defs_load)
+bool body_load(const char *data_dir);
 
 // Жизненная часть: при HP <= порога — нокаут, при <= -max — смерть
 static inline bool body_part_vital(BodyPart p) { return p <= PART_STOMACH; }

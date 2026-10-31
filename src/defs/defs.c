@@ -8,6 +8,7 @@
 #include "../sim/combat_tune.h"
 #include "deftext.h"
 #include "material.h"
+#include "bodydef.h"
 
 #define ARMOR_CAP ARMOR_NONE  // 255 — «пусто»
 #define COMP_CAP 32           // свет, ёмкость, тело
@@ -104,8 +105,8 @@ typedef struct Block {
     const char *mat_ref;  // paint по имени материала
 } Block;
 
-enum { BK_ITEM, BK_ATTACK, BK_QUALITY, BK_MATERIAL, BK_TUNING };
-static const char *const g_kinds[] = { "item", "attack", "quality", "material", "tuning" };
+enum { BK_ITEM, BK_ATTACK, BK_QUALITY, BK_MATERIAL, BK_TUNING, BK_BODY };
+static const char *const g_kinds[] = { "item", "attack", "quality", "material", "tuning", "body" };
 // Компоненты вещи: строка с этим словом открывает его поля
 enum { SEC_ITEM, SEC_WEAPON, SEC_ARMOR, SEC_WEAR, SEC_LIGHT, SEC_CONTAINER, SEC_PHYS, SEC_COUNT };
 static const char *const g_sect_word[SEC_COUNT] = { "", "weapon", "armor", "wear", "light", "container", "phys" };
@@ -666,6 +667,7 @@ static bool header(const DefLine *l, Block *b, Arena *mem)
         return false;
     }
     const DefTok *t = &l->tok[1];
+    if (kind == BK_BODY) return bodydef_header(l);
     if (kind == BK_TUNING) {
         u8 w;
         if (!word(l, 1, g_tuning_word, ARRAY_COUNT(g_tuning_word), &w)) return false;
@@ -895,6 +897,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
     g_item_count = 1;
     g_items = s_items;
     memset(s_tune_set, 0, sizeof s_tune_set);
+    bodydef_reset();
     g_weapons = s_weapons;
     g_weapon_parts = s_parts;
     g_weapon_pts = s_pts;
@@ -910,7 +913,7 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
         if (def_word(&l.tok[0], g_kinds, ARRAY_COUNT(g_kinds)) >= 0) {
             ok = header(&l, &b, mem);
         } else if (b.kind < 0) {
-            def_error(&l, "поле вне записи: сначала item, attack, quality, material или tuning");
+            def_error(&l, "поле вне записи: сначала item, attack, quality, material, tuning или body");
             ok = false;
         } else {
             b.lines++;
@@ -920,12 +923,13 @@ bool defs_load(Arena *mem, const char *base_dir, const char *mods_dir)
                 case BK_ATTACK: ok = attack_field(&l, &b, mem); break;
                 case BK_MATERIAL: ok = material_field(&l, &b); break;
                 case BK_TUNING: ok = tuning_field(&l); break;
+                case BK_BODY: ok = bodydef_field(&l, mem); break;
                 default: ok = quality_field(&l, &b, mem); break;
                 }
         }
         if (!ok) break;
     }
-    if (bad || !ok || !check()) return false;
+    if (bad || !ok || !check() || !bodydef_check()) return false;
     g_weapon_pool_count = 0;
     for (u32 i = 0; i < g_weapon_count; i++)
         if (s_weapons[i].common) g_weapon_pool[g_weapon_pool_count++] = (u8)i;

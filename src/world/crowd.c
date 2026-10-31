@@ -181,7 +181,7 @@ void mobs_add(People *p, Rng *rng, GroundFn ground)
         p->node[i] = (u8)((at + 1) % MOB_ROUTE);
         p->variant[i] = (u8)(k % 4 % BODY_KIND_COUNT);
         p->seed[i] = rng_range(rng, 0.0f, 100.0f);
-        p->height[i] = c.d.height / 1.8f;
+        p->height[i] = body_scale(c.d.height);
         p->width[i] = 1.0f + 0.08f * sinf(p->seed[i] * 3.17f + 1.0f);
         p->look_seed[i] = 2000u + k;
         // Ночью шайка ходит с огнём: первый и последний, у них вторая рука свободна
