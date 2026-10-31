@@ -42,6 +42,11 @@ typedef enum Sfx {
     SFX_FAR_GROAN, SFX_FAR_BANG, SFX_FAR_RADIO,
     // Ветер треплет обломки: лист железа дребезжит, металл скрипит
     SFX_WIND_RATTLE, SFX_WIND_CREAK,
+    // Удар и падение вещи по классу материала (impact в materials.txt): один удар, отскоки — свои события
+    SFX_IMPACT_METAL, // железо: короткий лязг, глохнет сразу
+    SFX_IMPACT_WOOD,  // сухое дерево: стук
+    SFX_IMPACT_STONE, // бетон, камень: глухой тяжёлый стук и крошка
+    SFX_IMPACT_SOFT,  // ткань, кожа, свёрток: глухой шлепок
     SFX_COUNT
 } Sfx;
 

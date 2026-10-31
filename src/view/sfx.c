@@ -8,6 +8,7 @@
 #include "../content/hall.h"
 #include "../content/ring.h"
 #include "../content/town_build.h"
+#include "../sim/scrap.h"
 
 #define STEP_MIN_SPEED 0.25f
 
@@ -237,9 +238,8 @@ static void fighter(WorldSound *s, SfxFight *f, u32 i, const FightAnim *a, V3 fo
     f32 w0 = f->wield[i];
     f->wield[i] = a->wield;
     bool near = dist2(p, s->lis) < 30.0f * 30.0f;
-    if (a->dropped && !f->dropped[i]) {
-        audio_play(SFX_DROP_METAL, foot, 1.0f, 1.0f, 0.4f);  // падает из руки ~0.4 с
-    } else if (near && !a->dropped) {
+    // Выроненное оружие звучит само, когда коснётся земли (sfx_phys)
+    if (near && !a->dropped && !f->dropped[i]) {
         if (w0 < 0.3f && a->wield >= 0.3f) audio_play(SFX_DRAW, p, 1.0f, 1.0f, 0.0f);
         if (w0 > 0.7f && a->wield <= 0.7f) audio_play(SFX_SHEATH, p, 1.0f, 1.0f, 0.0f);
     }
@@ -292,4 +292,81 @@ void sfx_arena(WorldSound *s, const ArenaRing *v, const ArenaSession *a)
     f->origin = v3(s->arena_center.x, v->floor_y, s->arena_center.z);
     for (u32 i = 0; i < w->count && i < ARENA_MAX_BOUT; i++)
         fighter(s, f, i, &v->fa[i], v3(v->fa[i].disp_x + f->origin.x, f->origin.y, v->fa[i].disp_z + f->origin.z));
+}
+
+// ---------------------------------------------------------------- удары вещей
+
+#define HIT_MAX_FRAME 6     // звуков ударов за кадр: самые громкие
+#define HIT_V_FULL    4.0f  // м/с: с этой скорости удар звучит в полную силу
+#define HIT_GAIN_MIN  0.06f // тише — не звучит
+
+u8 impact_sfx(u8 impact)
+{
+    static const u8 t[IMP_COUNT] = { [IMP_METAL] = SFX_IMPACT_METAL, [IMP_WOOD] = SFX_IMPACT_WOOD,
+                                     [IMP_STONE] = SFX_IMPACT_STONE, [IMP_SOFT] = SFX_IMPACT_SOFT };
+    return impact < IMP_COUNT ? t[impact] : SFX_IMPACT_STONE;
+}
+
+// Из чего тело с физикой. Вещи на земле — до одной записи item (шаг 2в): оружие железное, остальное свёрток
+static const MatDef *body_mat(u16 user, const Ground *g)
+{
+    if (user >= SCRAP_USER && user < SCRAP_USER + SCRAP_COUNT) return scrap_mat(user - SCRAP_USER);
+    if (user >= GROUND_USER && user < GROUND_USER + GROUND_MAX && g && user - GROUND_USER < g->count)
+        return g->item[user - GROUND_USER].kind == IK_WEAPON ? g_mat.iron : g_mat.cloth;
+    return g_mat.iron;
+}
+
+typedef struct HitSound {
+    u8  sfx;
+    f32 gain, pitch;
+    V3  pos;
+} HitSound;
+
+void sfx_phys(WorldSound *s, const Phys *p, const Ground *g)
+{
+    // Кольцо после загрузки начинается заново
+    if (s->hit_seen > p->hit_seq || p->hit_seq - s->hit_seen > PHYS_HITS) s->hit_seen = p->hit_seq > PHYS_HITS ? p->hit_seq - PHYS_HITS : 0;
+    HitSound top[HIT_MAX_FRAME * 2];
+    u32 n = 0;
+    for (; s->hit_seen < p->hit_seq; s->hit_seen++) {
+        const PhysHit *h = &p->hit[s->hit_seen % PHYS_HITS];
+        f32 g0 = clampf((h->speed - PHYS_HIT_V) / (HIT_V_FULL - PHYS_HIT_V), 0.0f, 1.0f);
+        g0 = 0.15f + 0.85f * g0;
+        u8 sfx = impact_sfx(mat_impact(body_mat(h->user, g)));
+        f32 far = audio_max_dist(sfx);
+        if (dist2(h->pos, s->lis) > far * far) continue;
+        f32 pitch = 0.94f + 0.12f * (f32)(hash32(s->hit_seen * 0x9E3779B9u) & 1023u) / 1023.0f;
+        HitSound a[2] = { { sfx, g0, pitch, h->pos }, { 0 } };
+        u32 na = 1;
+        if (h->other == PHYS_GROUND) {
+            // Земля: песок и трава глушат и подкладывают мягкий удар, бетон звучит как есть
+            u8 ground = surface(h->pos.x, h->pos.z);
+            if (ground != SFX_STEP_CONCRETE) {
+                a[0].gain *= sfx == SFX_IMPACT_SOFT ? 1.0f : 0.5f;
+                if (sfx != SFX_IMPACT_SOFT) a[na++] = (HitSound){ SFX_IMPACT_SOFT, g0 * 0.6f, 0.8f, h->pos };
+            }
+        } else {
+            // Вещь о вещь: каждая звучит своим материалом (у второй своё событие), тише удара о землю
+            a[0].gain *= 0.7f;
+        }
+        for (u32 k = 0; k < na; k++) {
+            if (a[k].gain < HIT_GAIN_MIN) continue;
+            if (n < ARRAY_COUNT(top)) {
+                top[n++] = a[k];
+                continue;
+            }
+            u32 lo = 0;
+            for (u32 j = 1; j < n; j++)
+                if (top[j].gain < top[lo].gain) lo = j;
+            if (top[lo].gain < a[k].gain) top[lo] = a[k];
+        }
+    }
+    // Не больше HIT_MAX_FRAME основных ударов: самые громкие
+    for (u32 played = 0; played < HIT_MAX_FRAME && n; played++) {
+        u32 hi = 0;
+        for (u32 j = 1; j < n; j++)
+            if (top[j].gain > top[hi].gain) hi = j;
+        audio_play(top[hi].sfx, top[hi].pos, top[hi].gain, top[hi].pitch, 0.0f);
+        top[hi] = top[--n];
+    }
 }

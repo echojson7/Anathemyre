@@ -4,6 +4,7 @@
 #define ANA_SCRAP_H
 
 #include "../core/rng.h"
+#include "../defs/material.h"
 #include "phys.h"
 
 typedef enum ScrapKind { SCRAP_PIPE, SCRAP_REBAR, SCRAP_SHEET, SCRAP_CHUNK, SCRAP_CHANNEL, SCRAP_KEG, SCRAP_COUNT } ScrapKind;
@@ -11,6 +12,8 @@ typedef enum ScrapKind { SCRAP_PIPE, SCRAP_REBAR, SCRAP_SHEET, SCRAP_CHUNK, SCRA
 #define SCRAP_USER  0x1000u  // user тела лома: SCRAP_USER + вид
 
 extern const PhysDesc g_scrap_phys[SCRAP_COUNT];
+// Из чего вид лома (основной материал): по нему звучит удар
+const MatDef *scrap_mat(u32 kind);
 
 // n штук лома над точкой at: падают кучей (PHYS_SETTLE, брошены сверху)
 void scrap_drop(Phys *p, Rng *rng, V3 at, u32 n);

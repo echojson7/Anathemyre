@@ -35,9 +35,23 @@ typedef struct PhysDesc {
     PhysPart part[PHYS_PARTS];
     u8  parts;
     f32 mass;      // кг
-    f32 friction;  // трение покоя о землю: 0.6 бетон, 0.9 песок
-    f32 bounce;    // отскок 0..1
 } PhysDesc;
+
+// Трение и отскок одни на весь мир: у материала физики нет (решение пользователя, docs/physics.md)
+#define PHYS_FRICTION 0.6f
+#define PHYS_BOUNCE   0.15f
+
+// Удар: тело коснулось земли или другого тела со скоростью сближения не меньше PHYS_HIT_V.
+// По одному самому сильному на тело за шаг. Кольцо для вида (звук): мир его не читает, в сохранение не идёт
+#define PHYS_HIT_V   0.4f   // м/с
+#define PHYS_HITS    64     // кольцо, степень двойки
+#define PHYS_GROUND  0xFFFFu
+typedef struct PhysHit {
+    V3  pos;
+    f32 speed;       // м/с по нормали
+    u16 user;        // кто ударился (Phys.user)
+    u16 other;       // обо что: user другого тела или PHYS_GROUND
+} PhysHit;
 
 // Как стоит расставленная вещь: осесть при первом попадании в зону, висеть, пока не тронут, или намертво
 typedef enum PhysMode { PHYS_SETTLE, PHYS_HANG, PHYS_FIXED } PhysMode;
@@ -56,7 +70,7 @@ typedef struct Phys {
     V4  *q, *q_tick;   // кватернион xyzw
     V3  *com;          // центр масс в осях вещи: поза вещи = поворот, затем сдвиг x - R·com
     V3  *inv_i;        // обратный момент инерции по осям вещи
-    f32 *inv_m, *bound, *sleep_t, *out_t, *friction, *bounce;
+    f32 *inv_m, *bound, *sleep_t, *out_t;
     V4  *sph;          // шары: центр от центра масс в осях вещи и радиус, PHYS_SPHERES на тело
     u8  *ns, *state, *mode, *settled, *wake, *touch;  // wake и touch — на один шаг
     u16 *user;         // кто это для вида: вид лома, номер вещи
@@ -69,6 +83,12 @@ typedef struct Phys {
     V3   pts[PHYS_ZONE_PTS];
     u32  npts;
     PhysStats st;
+    // Удары: hit[seq % PHYS_HITS], hit_seq — всего записано. Сильнейший удар тела за шаг копится в hit_v
+    PhysHit hit[PHYS_HITS];
+    u32  hit_seq;
+    f32 *hit_v;
+    V3  *hit_p;
+    u16 *hit_o;
     bool on;           // выключено — всё стоит как есть
 } Phys;
 

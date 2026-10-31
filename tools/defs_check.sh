@@ -5,7 +5,8 @@
 #   2) мод правит поле и добавляет запись через parent
 #   3) сохранение с вещью мода без мода не читается, мир не тронут
 #   4) ошибка в файле мода: файл и строка в журнале, игра не стартует
-#   5) мод правит материал и добавляет свой; оружие с несуществующим материалом не стартует
+#   5) мод правит материал (цвет, impact) и добавляет свой; оружие с несуществующим материалом не стартует
+#   6) неизвестный класс impact у материала мода: файл и строка в журнале, игра не стартует
 # Код выхода прогонов с окном не смотрим (под ASan драйвер Vulkan оставляет утечку), только журнал.
 # ./tools/defs_check.sh [бинарник] [папка], на Linux без экрана — под xvfb-run
 set -e
@@ -16,8 +17,9 @@ DIR=${2:-build}
 DEFS=data/defs
 CAM="--cam 1026 249 2.0 0.3 9"
 sum() { grep "МИР: шаг" | tail -1 | sed 's/.*сумма //'; }
-rm -rf "$DIR/defs_rot" "$DIR/mods_ok" "$DIR/mods_bad" "$DIR/mods_bad2" "$DIR/mods_none"
-mkdir -p "$DIR/defs_rot" "$DIR/mods_ok/proba" "$DIR/mods_bad/slom" "$DIR/mods_bad2/kraska" "$DIR/mods_none"
+rm -rf "$DIR/defs_rot" "$DIR/mods_ok" "$DIR/mods_bad" "$DIR/mods_bad2" "$DIR/mods_bad3" "$DIR/mods_none"
+mkdir -p "$DIR/defs_rot" "$DIR/mods_ok/proba" "$DIR/mods_bad/slom" "$DIR/mods_bad2/kraska" "$DIR/mods_bad3/zvuk" \
+    "$DIR/mods_none"
 cp $DEFS/*.txt "$DIR/defs_rot/"
 # Заголовки раньше всех файлов: номера идут задом наперёд, поля заполняются из обычных файлов
 cat > "$DIR/defs_rot/0order.txt" <<'END'
@@ -57,13 +59,15 @@ weapon ressora_stal
     damage 28 4 14
 END
 cat > "$DIR/mods_ok/proba/materials.txt" <<'END'
-# Проба: ржавчина темнее везде, своя сталь от клинковой
+# Проба: ржавчина темнее везде и звучит деревом, своя сталь от клинковой
 material rust
     color 0.38 0.2 0.11
+    impact wood
 material proba_stal
     parent blade_steel
     color 0.3 0.3 0.31
 END
+printf 'material rust\n    impact plastic\n' > "$DIR/mods_bad3/zvuk/materials.txt"
 printf 'weapon kosa_kraska\n    parent sekach\n    paint nosuch\n    rod 0 0.5 0.02 0\n' > "$DIR/mods_bad2/kraska/weapons.txt"
 printf 'weapon kosa_slom\n    parent sekach\n    damage 30 много 0\n' > "$DIR/mods_bad/slom/weapons.txt"
 
@@ -90,4 +94,6 @@ if $BIN --mods "$DIR/mods_bad" --bench arena 1 > "$DIR/defs6.txt" 2>&1; then exi
 grep -q "slom/weapons.txt:3: не число" "$DIR/defs6.txt"
 if $BIN --mods "$DIR/mods_bad2" --bench arena 1 > "$DIR/defs7.txt" 2>&1; then exit 1; fi
 grep -q "kosa_kraska красится материалом nosuch" "$DIR/defs7.txt"
+if $BIN --mods "$DIR/mods_bad3" --bench arena 1 > "$DIR/defs8.txt" 2>&1; then exit 1; fi
+grep -q "zvuk/materials.txt:2: неизвестное слово: plastic" "$DIR/defs8.txt"
 echo "моды: правка и parent читаются, материал мода читается, сохранение без мода отклонено, ошибки указаны"

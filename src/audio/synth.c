@@ -655,6 +655,53 @@ static u32 gen_wind_creak(f32 *b)
     return n;
 }
 
+// ---------------------------------------------------------------- удары вещей по материалу
+
+static u32 gen_impact_metal(f32 *b)
+{
+    u32 n = at(0.6f);
+    // Один удар: лязг гаснет быстро, вещь не в руке, но и не колокол — дребезг и глухой низ
+    clank(b, 0, n, rr(480.0f, 900.0f), NULL, 8, 0.3f, 0.9f, rr(0.07f, 0.1f), 0.7f, 0.4f);
+    thump(b, 0, n, 160.0f, 85.0f, 0.45f, 0.014f);
+    grains(0, n, 10, 0.05f, 0.15f, 0.003f);
+    aux_add(b, n, 5000.0f, 1500.0f, 1.0f);
+    return n;
+}
+
+static u32 gen_impact_wood(f32 *b)
+{
+    u32 n = at(0.3f);
+    // Сухое дерево ниже и глуше древка багра
+    static const f32 wood[] = { 1.0f, 2.57f, 4.9f, 7.6f };
+    clank(b, 0, n, rr(230.0f, 380.0f), wood, 4, 0.0f, 0.8f, rr(0.015f, 0.025f), 1.4f, 0.15f);
+    lpburst(b, 0, n, 1000.0f, 0.5f, 0.0005f, 0.007f);
+    thump(b, 0, n, 150.0f, 85.0f, 0.5f, 0.02f);
+    return n;
+}
+
+static u32 gen_impact_stone(f32 *b)
+{
+    u32 n = at(0.35f);
+    // Тяжёлый тупой стук без звона, сверху сухой щелчок и крошка
+    thump(b, 0, n, 130.0f, 60.0f, 0.8f, 0.028f);
+    burst(b, 0, n, rr(1100.0f, 1700.0f), 1.0f, 0.6f, 0.0004f, 0.01f);
+    lpburst(b, 0, n, 600.0f, 0.5f, 0.001f, 0.025f);
+    grains(at(0.01f), n, 30, 0.12f, 0.35f, 0.004f);
+    aux_add(b, n, 4500.0f, 900.0f, 1.0f);
+    return n;
+}
+
+static u32 gen_impact_soft(f32 *b)
+{
+    u32 n = at(0.3f);
+    // Свёрток, ткань, кожа: шлепок без высоты
+    thump(b, 0, n, 85.0f, 45.0f, 0.6f, 0.035f);
+    lpburst(b, 0, n, 380.0f, 0.8f, 0.002f, 0.035f);
+    grains(0, n, 25, 0.08f, 0.2f, 0.004f);
+    aux_add(b, n, 2200.0f, 250.0f, 1.0f);
+    return n;
+}
+
 // ---------------------------------------------------------------- сборка
 
 static u32 gen(u8 sfx, f32 *b)
@@ -692,6 +739,10 @@ static u32 gen(u8 sfx, f32 *b)
     case SFX_FAR_RADIO:     return gen_far_radio(b);
     case SFX_WIND_RATTLE:   return gen_wind_rattle(b);
     case SFX_WIND_CREAK:    return gen_wind_creak(b);
+    case SFX_IMPACT_METAL:  return gen_impact_metal(b);
+    case SFX_IMPACT_WOOD:   return gen_impact_wood(b);
+    case SFX_IMPACT_STONE:  return gen_impact_stone(b);
+    case SFX_IMPACT_SOFT:   return gen_impact_soft(b);
     default:                return 0;
     }
 }
@@ -707,6 +758,7 @@ static const u8 g_variants[SFX_COUNT] = {
     [SFX_BODYFALL] = 3, [SFX_DROP_METAL] = 3, [SFX_DRAW] = 3, [SFX_SHEATH] = 2, [SFX_SCUFF] = 3,
     [SFX_UI_TICK] = 1, [SFX_UI_ORDER] = 1, [SFX_FAR_GROAN] = 3, [SFX_FAR_BANG] = 3, [SFX_FAR_RADIO] = 2,
     [SFX_WIND_RATTLE] = 4, [SFX_WIND_CREAK] = 4,
+    [SFX_IMPACT_METAL] = 4, [SFX_IMPACT_WOOD] = 3, [SFX_IMPACT_STONE] = 4, [SFX_IMPACT_SOFT] = 3,
 };
 
 bool synth_build(SfxBank *bank, Arena *perm)

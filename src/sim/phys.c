@@ -96,8 +96,9 @@ void phys_init(Phys *p, Arena *perm)
     p->bound = ARENA_PUSH_ARRAY(perm, f32, n);
     p->sleep_t = ARENA_PUSH_ARRAY(perm, f32, n);
     p->out_t = ARENA_PUSH_ARRAY(perm, f32, n);
-    p->friction = ARENA_PUSH_ARRAY(perm, f32, n);
-    p->bounce = ARENA_PUSH_ARRAY(perm, f32, n);
+    p->hit_v = ARENA_PUSH_ARRAY(perm, f32, n);
+    p->hit_p = ARENA_PUSH_ARRAY(perm, V3, n);
+    p->hit_o = ARENA_PUSH_ARRAY(perm, u16, n);
     p->sph = ARENA_PUSH_ARRAY(perm, V4, (size_t)n * PHYS_SPHERES);
     p->ns = ARENA_PUSH_ARRAY(perm, u8, n);
     p->state = ARENA_PUSH_ARRAY(perm, u8, n);
@@ -189,8 +190,6 @@ i32 phys_spawn(Phys *p, const PhysDesc *d, M4 xf, V3 vel, V3 angvel, u8 mode, u1
     p->inv_m[h] = mode == PHYS_FIXED ? 0.0f : 1.0f / mass;
     if (mode == PHYS_FIXED) p->inv_i[h] = v3(0, 0, 0);
     p->bound[h] = bound;
-    p->friction[h] = d->friction;
-    p->bounce[h] = d->bounce;
     p->mode[h] = mode;
     p->user[h] = user;
     p->sleep_t[h] = p->out_t[h] = 0.0f;
@@ -373,6 +372,15 @@ static void find_pairs(Phys *p, f32 dt)
     }
 }
 
+// Удар тела: копится сильнейший за шаг, в кольцо — после шага
+static void hit_note(Phys *p, u32 h, f32 v, V3 at, u16 other)
+{
+    if (v <= p->hit_v[h]) return;
+    p->hit_v[h] = v;
+    p->hit_p[h] = at;
+    p->hit_o[h] = other;
+}
+
 typedef struct Contact {
     V3  r, n;
     f32 lam, vn0;  // толчок положения по нормали (м·кг), нормальная скорость до шага
@@ -402,6 +410,7 @@ static u32 ground_contacts(Phys *p, u32 h, Plane pl, const V3 *xp, const V4 *qp,
         f32 wn = gen_w(p, h, rc, pl.n);
         if (wn <= 0.0f) continue;
         f32 vn0 = v3_dot(point_v(p, h, rc), pl.n);
+        hit_note(p, h, -vn0, v3_add(p->x[h], rc), PHYS_GROUND);
         f32 lam = pen / wn;
         push(p, h, rc, v3_mul(pl.n, lam));
         // Трение покоя: точка не скользит, пока нужный для этого толчок меньше трения × толчок по нормали
@@ -416,7 +425,7 @@ static u32 ground_contacts(Phys *p, u32 h, Plane pl, const V3 *xp, const V4 *qp,
         if (lt > 1e-7f) {
             V3 t = v3_mul(dt, 1.0f / lt);
             f32 wt = gen_w(p, h, rc, t);
-            if (wt > 0.0f && lt / wt < p->friction[h] * lam) push(p, h, rc, v3_mul(t, -lt / wt));
+            if (wt > 0.0f && lt / wt < PHYS_FRICTION * lam) push(p, h, rc, v3_mul(t, -lt / wt));
         }
         if (nc < PHYS_SPHERES) c[nc++] = (Contact){ rc, pl.n, lam, vn0 };
     }
@@ -449,6 +458,11 @@ static void pair_contacts(Phys *p, u32 a, u32 b, const V3 *wr)
             if (p->state[b] == PS_ASLEEP && pen > WAKE_DEPTH) p->wake[b] = 1;
             if (p->state[a] == PS_ASLEEP && pen > WAKE_DEPTH) p->wake[a] = 1;
             V3 ca = v3_sub(ra[i], v3_mul(n, sa[i].w)), cb = v3_add(rb[j], v3_mul(n, sb[j].w));
+            // Сближение точек касания по нормали (n от b к a)
+            f32 vc = -v3_dot(v3_sub(point_v(p, a, ca), point_v(p, b, cb)), n);
+            V3 at = v3_add(p->x[a], ca);
+            hit_note(p, a, vc, at, p->user[b]);
+            hit_note(p, b, vc, at, p->user[a]);
             f32 wa = gen_w(p, a, ca, n), wb = gen_w(p, b, cb, n);
             if (wa + wb <= 0.0f) continue;
             f32 lam = pen / (wa + wb);
@@ -470,10 +484,10 @@ static void ground_velocities(Phys *p, u32 h, const Contact *c, u32 nc, f32 sh)
         if (lt > 1e-6f) {
             V3 t = v3_mul(vt, 1.0f / lt);
             f32 wt = gen_w(p, h, c[k].r, t);
-            if (wt > 0.0f) push_v(p, h, c[k].r, v3_mul(t, -fminf(lt / wt, p->friction[h] * c[k].lam / sh)));
+            if (wt > 0.0f) push_v(p, h, c[k].r, v3_mul(t, -fminf(lt / wt, PHYS_FRICTION * c[k].lam / sh)));
         }
         // Отскок только от заметного удара: иначе дрожь на месте
-        f32 e = fabsf(c[k].vn0) > 2.0f * GRAVITY * sh ? p->bounce[h] : 0.0f;
+        f32 e = fabsf(c[k].vn0) > 2.0f * GRAVITY * sh ? PHYS_BOUNCE : 0.0f;
         f32 want = fmaxf(-e * c[k].vn0, 0.0f);
         vn = v3_dot(point_v(p, h, c[k].r), n);
         f32 wn = gen_w(p, h, c[k].r, n);
@@ -540,6 +554,7 @@ void phys_tick(Phys *p, f32 dt, PhysGround ground)
     }
     find_pairs(p, dt);
     memset(p->touch, 0, p->count);
+    for (u32 h = 0; h < p->count; h++) p->hit_v[h] = 0.0f;
     // Рабочие массивы на стеке шага: по одному на тело
     static V3 xp[PHYS_MAX];
     static V4 qp[PHYS_MAX];
@@ -556,6 +571,9 @@ void phys_tick(Phys *p, f32 dt, PhysGround ground)
     if (nsub < 1) nsub = 1;
     f32 sh = dt / (f32)nsub;
     for (u32 k = 0; k < nsub; k++) substep(p, sh, pl, xp, qp, wr, cs, ncs);
+    for (u32 h = 0; h < p->count; h++)
+        if (p->hit_v[h] >= PHYS_HIT_V)
+            p->hit[p->hit_seq++ % PHYS_HITS] = (PhysHit){ p->hit_p[h], p->hit_v[h], p->user[h], p->hit_o[h] };
     // Сон и пробуждение
     p->st = (PhysStats){ .pairs = p->npair };
     for (u32 h = 0; h < p->count; h++) {
@@ -600,8 +618,6 @@ void phys_ser(Ser *s, Phys *p)
     SER_N(s, p->bound, n);
     SER_N(s, p->sleep_t, n);
     SER_N(s, p->out_t, n);
-    SER_N(s, p->friction, n);
-    SER_N(s, p->bounce, n);
     SER_N(s, p->sph, (size_t)n * PHYS_SPHERES);
     SER_N(s, p->ns, n);
     SER_N(s, p->state, n);
