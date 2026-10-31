@@ -9,7 +9,7 @@
 #include "player.h"
 #include "../render/render.h"
 
-#define SHOWHALL_MAX 20
+#define SHOWHALL_MAX 28
 
 // Камера на первом этаже у тамбура, лицом к рядам и галерее (кнопка КАМЕРА: В МЕРИЛЬНЮ)
 #define SHOWHALL_CAM ((RtsCamera){ .target = { 0.0f, 0.0f, -79.0f }, .yaw = 0.0f, .pitch = 0.45f, .dist = 9.0f })
