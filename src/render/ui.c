@@ -1,169 +1,75 @@
 #include "ui.h"
 
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#include "../core/log.h"
 
 #include "rb.h"
 #include "render.h"
 
 #define UI_MAX_QUADS 16384
-#define ATLAS 128
-#define CELL 8   // ячейка буквы в атласе
 
 typedef struct UiVertex {
     f32 x, y, u, v;
     u32 color;
 } UiVertex;
 
-// Шрифт: 7 строк по 5 точек через '|'. alias — взять рисунок другой буквы (кириллица = латиница)
-typedef struct GlyphArt {
-    u32 cp;
-    const char *art;
-    u32 alias;
-} GlyphArt;
+// Формат .font (tools/fontconv/fontconv.py), little-endian:
+// "AFNT", u32 версия 1, u16 ширина и высота атласа, u16 кеглей, u16 букв;
+// по кеглю: i16 размер, подъём, спуск, высота заглавной; u32 коды букв;
+// по кеглю по букве: u16 x, y в атласе, u8 w, h, i8 смещение от пера и от линии строки, u16 шаг пера ×64; атлас R8
+#define FONT_SIZES_MAX 48
+#define FONT_CHARS_MAX 160
+#define FONT_FILE "ui/plex.font"
+#define FONT_TRACK 0.04f   // разрядка заглавных, доля кегля
 
-static const GlyphArt g_font[] = {
-    { '!', "..#..|..#..|..#..|..#..|..#..|.....|..#..", 0 },
-    { '"', ".#.#.|.#.#.|.....|.....|.....|.....|.....", 0 },
-    { '#', ".#.#.|#####|.#.#.|.#.#.|.#.#.|#####|.#.#.", 0 },
-    { '%', "##..#|##.#.|...#.|..#..|.#...|.#.##|#..##", 0 },
-    { '\'', "..#..|..#..|.....|.....|.....|.....|.....", 0 },
-    { '(', "...#.|..#..|.#...|.#...|.#...|..#..|...#.", 0 },
-    { ')', ".#...|..#..|...#.|...#.|...#.|..#..|.#...", 0 },
-    { '*', ".....|..#..|#.#.#|.###.|#.#.#|..#..|.....", 0 },
-    { '+', ".....|..#..|..#..|#####|..#..|..#..|.....", 0 },
-    { ',', ".....|.....|.....|.....|.##..|..#..|.#...", 0 },
-    { '-', ".....|.....|.....|#####|.....|.....|.....", 0 },
-    { '.', ".....|.....|.....|.....|.....|.##..|.##..", 0 },
-    { '/', "....#|...#.|...#.|..#..|.#...|.#...|#....", 0 },
-    { '0', ".###.|#...#|#..##|#.#.#|##..#|#...#|.###.", 0 },
-    { '1', "..#..|.##..|..#..|..#..|..#..|..#..|.###.", 0 },
-    { '2', ".###.|#...#|....#|...#.|..#..|.#...|#####", 0 },
-    { '3', "#####|...#.|..#..|...#.|....#|#...#|.###.", 0 },
-    { '4', "...#.|..##.|.#.#.|#..#.|#####|...#.|...#.", 0 },
-    { '5', "#####|#....|####.|....#|....#|#...#|.###.", 0 },
-    { '6', "..##.|.#...|#....|####.|#...#|#...#|.###.", 0 },
-    { '7', "#####|....#|...#.|..#..|.#...|.#...|.#...", 0 },
-    { '8', ".###.|#...#|#...#|.###.|#...#|#...#|.###.", 0 },
-    { '9', ".###.|#...#|#...#|.####|....#|...#.|.##..", 0 },
-    { ':', ".....|.##..|.##..|.....|.##..|.##..|.....", 0 },
-    { ';', ".....|.##..|.##..|.....|.##..|..#..|.#...", 0 },
-    { '<', "...#.|..#..|.#...|#....|.#...|..#..|...#.", 0 },
-    { '=', ".....|.....|#####|.....|#####|.....|.....", 0 },
-    { '>', ".#...|..#..|...#.|....#|...#.|..#..|.#...", 0 },
-    { '?', ".###.|#...#|....#|...#.|..#..|.....|..#..", 0 },
-    { '[', ".###.|.#...|.#...|.#...|.#...|.#...|.###.", 0 },
-    { ']', ".###.|...#.|...#.|...#.|...#.|...#.|.###.", 0 },
-    { '_', ".....|.....|.....|.....|.....|.....|#####", 0 },
-    { '|', "..#..|..#..|..#..|..#..|..#..|..#..|..#..", 0 },
-    { 'A', ".###.|#...#|#...#|#####|#...#|#...#|#...#", 0 },
-    { 'B', "####.|#...#|#...#|####.|#...#|#...#|####.", 0 },
-    { 'C', ".###.|#...#|#....|#....|#....|#...#|.###.", 0 },
-    { 'D', "###..|#..#.|#...#|#...#|#...#|#..#.|###..", 0 },
-    { 'E', "#####|#....|#....|####.|#....|#....|#####", 0 },
-    { 'F', "#####|#....|#....|####.|#....|#....|#....", 0 },
-    { 'G', ".###.|#...#|#....|#.###|#...#|#...#|.####", 0 },
-    { 'H', "#...#|#...#|#...#|#####|#...#|#...#|#...#", 0 },
-    { 'I', ".###.|..#..|..#..|..#..|..#..|..#..|.###.", 0 },
-    { 'J', "..###|...#.|...#.|...#.|...#.|#..#.|.##..", 0 },
-    { 'K', "#...#|#..#.|#.#..|##...|#.#..|#..#.|#...#", 0 },
-    { 'L', "#....|#....|#....|#....|#....|#....|#####", 0 },
-    { 'M', "#...#|##.##|#.#.#|#.#.#|#...#|#...#|#...#", 0 },
-    { 'N', "#...#|#...#|##..#|#.#.#|#..##|#...#|#...#", 0 },
-    { 'O', ".###.|#...#|#...#|#...#|#...#|#...#|.###.", 0 },
-    { 'P', "####.|#...#|#...#|####.|#....|#....|#....", 0 },
-    { 'Q', ".###.|#...#|#...#|#...#|#.#.#|#..#.|.##.#", 0 },
-    { 'R', "####.|#...#|#...#|####.|#.#..|#..#.|#...#", 0 },
-    { 'S', ".####|#....|#....|.###.|....#|....#|####.", 0 },
-    { 'T', "#####|..#..|..#..|..#..|..#..|..#..|..#..", 0 },
-    { 'U', "#...#|#...#|#...#|#...#|#...#|#...#|.###.", 0 },
-    { 'V', "#...#|#...#|#...#|#...#|#...#|.#.#.|..#..", 0 },
-    { 'W', "#...#|#...#|#...#|#.#.#|#.#.#|#.#.#|.#.#.", 0 },
-    { 'X', "#...#|#...#|.#.#.|..#..|.#.#.|#...#|#...#", 0 },
-    { 'Y', "#...#|#...#|.#.#.|..#..|..#..|..#..|..#..", 0 },
-    { 'Z', "#####|....#|...#.|..#..|.#...|#....|#####", 0 },
-    { 0x0410, NULL, 'A' },
-    { 0x0411, "#####|#....|#....|####.|#...#|#...#|####.", 0 },
-    { 0x0412, NULL, 'B' },
-    { 0x0413, "#####|#....|#....|#....|#....|#....|#....", 0 },
-    { 0x0414, ".###.|.#.#.|.#.#.|.#.#.|.#.#.|#####|#...#", 0 },
-    { 0x0415, NULL, 'E' },
-    { 0x0401, ".#.#.|#####|#....|####.|#....|#....|#####", 0 },
-    { 0x0416, "#.#.#|#.#.#|.###.|..#..|.###.|#.#.#|#.#.#", 0 },
-    { 0x0417, ".###.|#...#|....#|..##.|....#|#...#|.###.", 0 },
-    { 0x0418, "#...#|#...#|#..##|#.#.#|##..#|#...#|#...#", 0 },
-    { 0x0419, ".#.#.|#...#|#..##|#.#.#|##..#|#...#|#...#", 0 },
-    { 0x041A, NULL, 'K' },
-    { 0x041B, "..###|.#..#|.#..#|.#..#|.#..#|.#..#|#...#", 0 },
-    { 0x041C, NULL, 'M' },
-    { 0x041D, NULL, 'H' },
-    { 0x041E, NULL, 'O' },
-    { 0x041F, "#####|#...#|#...#|#...#|#...#|#...#|#...#", 0 },
-    { 0x0420, NULL, 'P' },
-    { 0x0421, NULL, 'C' },
-    { 0x0422, NULL, 'T' },
-    { 0x0423, "#...#|#...#|#...#|.####|....#|....#|.###.", 0 },
-    { 0x0424, "..#..|.###.|#.#.#|#.#.#|#.#.#|.###.|..#..", 0 },
-    { 0x0425, NULL, 'X' },
-    { 0x0426, "#..#.|#..#.|#..#.|#..#.|#..#.|#####|....#", 0 },
-    { 0x0427, "#...#|#...#|#...#|.####|....#|....#|....#", 0 },
-    { 0x0428, "#.#.#|#.#.#|#.#.#|#.#.#|#.#.#|#.#.#|#####", 0 },
-    { 0x0429, "#.#.#|#.#.#|#.#.#|#.#.#|#.#.#|#####|....#", 0 },
-    { 0x042A, "##...|.#...|.#...|.###.|.#..#|.#..#|.###.", 0 },
-    { 0x042B, "#...#|#...#|#...#|##..#|#.#.#|#.#.#|##..#", 0 },
-    { 0x042C, "#....|#....|#....|####.|#...#|#...#|####.", 0 },
-    { 0x042D, ".###.|#...#|....#|..###|....#|#...#|.###.", 0 },
-    { 0x042E, "#..#.|#.#.#|#.#.#|###.#|#.#.#|#.#.#|#..#.", 0 },
-    { 0x042F, ".####|#...#|#...#|.####|..#.#|.#..#|#...#", 0 },
-    { 0x00D7, ".....|#...#|.#.#.|..#..|.#.#.|#...#|.....", 0 },  // ×
-    { 0x00B7, ".....|.....|.....|..#..|.....|.....|.....", 0 },  // ·
-    { 0x2014, NULL, '-' },                                     // —
-    { 0x2013, NULL, '-' },                                     // –
-    { 0x2192, ".....|..#..|...#.|#####|...#.|..#..|.....", 0 },  // →
-    // Глифы ушедших: знаки на стенах, смысл утерян
-    { 0xE000, "#.#.#|#.#.#|#####|..#..|#####|#...#|#.#.#", 0 },
-    { 0xE001, "###..|#.#..|#.###|..#.#|###.#|#...#|#####", 0 },
-    { 0xE002, "..#..|.#.#.|#...#|#####|#...#|.#.#.|..#..", 0 },
-    { 0xE003, "##.##|#...#|.#.#.|..#..|.#.#.|#...#|##.##", 0 },
-};
+typedef struct FontGlyph {
+    u16 x, y;
+    u8  w, h;
+    i8  ox, oy;
+    u16 adv;   // ×64
+} FontGlyph;
 
-// Мелкие цифры 3x5 для чисел на схемах и полосках
-static const GlyphArt g_small[] = {
-    { '0', "###|#.#|#.#|#.#|###", 0 }, { '1', ".#.|##.|.#.|.#.|###", 0 }, { '2', "##.|..#|.#.|#..|###", 0 },
-    { '3', "##.|..#|.#.|..#|##.", 0 }, { '4', "#.#|#.#|###|..#|..#", 0 }, { '5', "###|#..|##.|..#|##.", 0 },
-    { '6', ".##|#..|###|#.#|###", 0 }, { '7', "###|..#|.#.|.#.|.#.", 0 }, { '8', "###|#.#|###|#.#|###", 0 },
-    { '9', "###|#.#|###|..#|##.", 0 }, { '/', "..#|..#|.#.|#..|#..", 0 }, { '-', "...|...|###|...|...", 0 },
-    { '.', "...|...|...|...|.#.", 0 }, { '%', "#.#|..#|.#.|#..|#.#", 0 }, { '+', "...|.#.|###|.#.|...", 0 },
-    { ':', "...|.#.|...|.#.|...", 0 },
-};
+typedef struct FontSize {
+    i16 px, asc, desc, cap;
+} FontSize;
 
-#define FONT_COUNT ARRAY_COUNT(g_font)
-#define SMALL_COUNT ARRAY_COUNT(g_small)
-_Static_assert(FONT_COUNT + SMALL_COUNT < (ATLAS / CELL) * (ATLAS / CELL), "шрифт не влезает в атлас");
+// Кегли интерфейса на 1080p: основной, мелкий (числа в клетках), крупный (часы)
+static const f32 g_font_px[UI_FONTS] = { 14.0f, 11.0f, 19.0f };
 
 // Привязки текстур (ui.frag, upscale.frag)
 enum { B_UI_ATLAS = 20, B_UI_IMAGE = 21 };
 
 #define UI_BOXES 32
-#define UI_PAD   2.0f  // апскейл смешивает соседние пиксели цели: накладываем с запасом 1, чистим с запасом 2
+#define UI_PAD   2.0f  // запас вокруг занятых частей цели
 
 static struct {
     RbPipe pipe;
-    RbPipe pipe_up;            // слой рисуется в своём масштабе и ровно растягивается на окно
+    RbPipe pipe_up;            // слой рисуется в свою цель и накладывается на окно
     RbBuf vbo;                 // кольцо кадров: RB_FRAMES × UI_LAYERS кусков по слою
     RbTex tex, target[UI_LAYERS];
-    i32 tw[UI_LAYERS], th[UI_LAYERS];  // размер цели: одна точка шрифта — один пиксель цели
-    u8  lut_ascii[128];   // номер буквы + 1, 0 — нет
-    u8  lut_cyr[0x60];    // U+0400..U+045F
-    f32 scale[UI_LAYERS];  // пикселей окна на логическую единицу (рамки, отступы)
-    f32 text[UI_LAYERS];   // пикселей окна на точку шрифта
-    f32 f[UI_LAYERS];      // пикселей цели на логическую единицу: scale / text
-    f32 user_scale, user_text;  // ползунки отладочного меню
+    i32 tw[UI_LAYERS], th[UI_LAYERS];
+    // Шрифт
+    u32 aw, ah;                // атлас
+    u32 sizes, chars;
+    FontSize size[FONT_SIZES_MAX];
+    u32 cp[FONT_CHARS_MAX];
+    FontGlyph glyph[FONT_SIZES_MAX][FONT_CHARS_MAX];
+    u8  lut_ascii[128];        // номер буквы + 1, 0 — нет
+    u8  lut_cyr[0x60];         // U+0400..U+045F
+    u32 font;                  // текущий UI_FONT_*
+    u32 font_size[UI_FONTS];   // номер кегля в файле на этот кадр
+    f32 scale[UI_LAYERS];      // пикселей окна на логическую единицу
+    f32 text_k;                // кегль относительно 1080p с ползунком
+    f32 user_scale, user_text; // ползунки отладочного меню
     u32 layer;
     i32 win_w, win_h;
-    RbTex image;          // текстура для ui_image
+    RbTex image;               // текстура для ui_image
     f32 time;
-    u32 count[UI_LAYERS];  // вершин в кадре
+    u32 count[UI_LAYERS];      // вершин в кадре
     // Занятые части цели в кадре (x0, y0, x1, y1) с запасом UI_PAD, не пересекаются.
     // Чистятся и накладываются на окно только они
     f32 box[UI_LAYERS][UI_BOXES][4];
@@ -171,6 +77,7 @@ static struct {
     UiVertex v[UI_LAYERS][UI_MAX_QUADS * 6];
 } U;
 
+// Номер буквы + 1; строчные — как заглавные (интерфейс пишет заглавными), 0 — нет
 static u32 find_glyph(u32 cp)
 {
     if (cp >= 'a' && cp <= 'z') cp -= 32;
@@ -178,35 +85,51 @@ static u32 find_glyph(u32 cp)
     else if (cp == 0x0451) cp = 0x0401;
     if (cp < 128) return U.lut_ascii[cp];
     if (cp >= 0x0400 && cp < 0x0460) return U.lut_cyr[cp - 0x0400];
-    for (u32 i = 0; i < FONT_COUNT; i++)
-        if (g_font[i].cp == cp) return i + 1;
+    for (u32 i = 0; i < U.chars; i++)
+        if (U.cp[i] == cp) return i + 1;
     return 0;
 }
 
-bool ui_init(void)
+static bool font_load(const char *data_dir, u8 **pix)
 {
-    static u8 pix[ATLAS * ATLAS];
-    memset(pix, 0, sizeof pix);
-    for (u32 i = 0; i < FONT_COUNT; i++) {
-        const GlyphArt *g = &g_font[i];
-        if (g->cp < 128) U.lut_ascii[g->cp] = (u8)(i + 1);
-        else if (g->cp >= 0x0400 && g->cp < 0x0460) U.lut_cyr[g->cp - 0x0400] = (u8)(i + 1);
+    char path[512];
+    snprintf(path, sizeof path, "%s/%s", data_dir, FONT_FILE);
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        log_error("ИНТЕРФЕЙС: нет шрифта %s", path);
+        return false;
     }
-    for (u32 i = 0; i < FONT_COUNT; i++) {
-        const char *art = g_font[i].art;
-        if (!art) art = g_font[find_glyph(g_font[i].alias) - 1].art;
-        u32 cx = (i % (ATLAS / CELL)) * CELL, cy = (i / (ATLAS / CELL)) * CELL;
-        for (u32 y = 0; y < UI_GLYPH_H; y++)
-            for (u32 x = 0; x < UI_GLYPH_W; x++)
-                if (art[y * 6 + x] == '#') pix[(cy + y) * ATLAS + cx + x] = 255;
+    char magic[4];
+    u32 ver = 0;
+    u16 hd[4];
+    bool ok = fread(magic, 4, 1, f) == 1 && !memcmp(magic, "AFNT", 4) && fread(&ver, 4, 1, f) == 1 && ver == 1 &&
+              fread(hd, sizeof hd, 1, f) == 1 && hd[2] >= 1 && hd[2] <= FONT_SIZES_MAX && hd[3] >= 1 && hd[3] <= FONT_CHARS_MAX;
+    if (ok) {
+        U.aw = hd[0], U.ah = hd[1], U.sizes = hd[2], U.chars = hd[3];
+        ok = fread(U.size, sizeof(FontSize), U.sizes, f) == U.sizes && fread(U.cp, sizeof(u32), U.chars, f) == U.chars;
+        for (u32 i = 0; ok && i < U.sizes; i++) ok = fread(U.glyph[i], sizeof(FontGlyph), U.chars, f) == U.chars;
     }
-    for (u32 i = 0; i < SMALL_COUNT; i++) {
-        u32 k = FONT_COUNT + i, cx = (k % (ATLAS / CELL)) * CELL, cy = (k / (ATLAS / CELL)) * CELL;
-        for (u32 y = 0; y < UI_SMALL_H; y++)
-            for (u32 x = 0; x < UI_SMALL_W; x++)
-                if (g_small[i].art[y * 4 + x] == '#') pix[(cy + y) * ATLAS + cx + x] = 255;
+    if (ok) {
+        *pix = malloc((size_t)U.aw * U.ah);  // один раз при запуске
+        ok = *pix && fread(*pix, (size_t)U.aw * U.ah, 1, f) == 1;
     }
-    pix[ATLAS * ATLAS - 1] = 255;  // сплошная заливка
+    fclose(f);
+    if (!ok) {
+        log_error("ИНТЕРФЕЙС: шрифт %s повреждён", path);
+        return false;
+    }
+    for (u32 i = 0; i < U.chars; i++) {
+        if (U.cp[i] < 128) U.lut_ascii[U.cp[i]] = (u8)(i + 1);
+        else if (U.cp[i] >= 0x0400 && U.cp[i] < 0x0460) U.lut_cyr[U.cp[i] - 0x0400] = (u8)(i + 1);
+    }
+    return true;
+}
+
+bool ui_init(const char *data_dir)
+{
+    u8 *pix = NULL;
+    if (!font_load(data_dir, &pix)) return false;
+    pix[U.aw * U.ah - 1] = 255;  // сплошная заливка
 
     // Слой копит цвет по альфе в свою цель; на окно — уже умноженным на альфу
     U.pipe = rb_pipe_make(&(RbPipeDesc){
@@ -218,9 +141,12 @@ bool ui_init(void)
     U.pipe_up = rb_pipe_make(&(RbPipeDesc){
         .vs = { "fullscreen.vert" }, .fs = { "upscale.frag" }, .name = "интерфейс на окно", .blend = RB_BLEND_PREMUL,
     });
+    if (U.pipe && U.pipe_up) {
+        U.tex = rb_tex_make(&(RbTexDesc){ .fmt = RB_FMT_R8, .w = (i32)U.aw, .h = (i32)U.ah, .usage = RB_TEX_SAMPLED });
+        rb_tex_write(U.tex, 0, 0, 0, 0, (i32)U.aw, (i32)U.ah, 1, pix, 0);
+    }
+    free(pix);
     if (!U.pipe || !U.pipe_up) return false;
-    U.tex = rb_tex_make(&(RbTexDesc){ .fmt = RB_FMT_R8, .w = ATLAS, .h = ATLAS, .usage = RB_TEX_SAMPLED });
-    rb_tex_write(U.tex, 0, 0, 0, 0, ATLAS, ATLAS, 1, pix, 0);
     U.vbo = rb_buf_make(RB_FRAMES * sizeof U.v, RB_BUF_VERTEX | RB_BUF_DYNAMIC, NULL);
     U.user_scale = U.user_text = 1.0f;
     return U.tex && U.vbo;
@@ -239,27 +165,41 @@ void ui_begin(i32 win_w, i32 win_h)
 {
     U.win_w = win_w;
     U.win_h = win_h;
-    // От высоты окна, база 1080p, шаг 0.25. 1440p: нижняя полоса ×1.75, окна и остальное ×2,
-    // текст везде ×1.5 (буква 10.5 пикселя). Текст мельче рамок, поэтому считается отдельно
+    // От высоты окна, база 1080p, шаг 0.25. 1440p: нижняя полоса ×1.75, окна и остальное ×2
     static const f32 k[UI_LAYERS] = { 1.3125f, 1.5f, 1.5f };
     const f32 base = (f32)win_h / 1080.0f;
     for (u32 i = 0; i < UI_LAYERS; i++) {
         U.scale[i] = fmaxf(1.0f, roundf(base * k[i] * U.user_scale * 4.0f) * 0.25f);
-        U.text[i] = fminf(U.scale[i], fmaxf(1.0f, roundf(base * 1.125f * U.user_text * 4.0f) * 0.25f));
-        U.f[i] = U.scale[i] / U.text[i];
         U.count[i] = 0;
         U.boxes[i] = 0;
     }
+    // Кегль — ровный размер из файла: ближайший к нужному, без растяжения
+    U.text_k = base * U.user_text;
+    for (u32 f = 0; f < UI_FONTS; f++) {
+        f32 want = g_font_px[f] * U.text_k;
+        u32 best = 0;
+        for (u32 i = 1; i < U.sizes; i++)
+            if (fabsf((f32)U.size[i].px - want) < fabsf((f32)U.size[best].px - want)) best = i;
+        U.font_size[f] = best;
+    }
+    U.font = UI_FONT_TEXT;
     U.layer = UI_TOP;
 }
 
 void ui_layer(u32 layer) { U.layer = MIN(layer, UI_LAYERS - 1); }
+u32 ui_current_layer(void) { return U.layer; }
+void ui_font(u32 font) { U.font = MIN(font, UI_FONTS - 1); }
 f32 ui_scale(void) { return U.scale[U.layer]; }
 f32 ui_width(void) { return floorf((f32)U.win_w / U.scale[U.layer]); }
 f32 ui_height(void) { return floorf((f32)U.win_h / U.scale[U.layer]); }
-f32 ui_text_scale(void) { return U.text[U.layer]; }
-f32 ui_advance(void) { return UI_ADVANCE / U.f[U.layer]; }
-f32 ui_line(void) { return UI_LINE / U.f[U.layer]; }
+f32 ui_text_scale(void) { return U.text_k; }
+f32 ui_hair(void) { return fmaxf(1.0f, roundf(U.scale[U.layer] * 0.67f)) / U.scale[U.layer]; }
+
+static const FontSize *cur_size(void) { return &U.size[U.font_size[U.font]]; }
+// Строка: заглавные по середине, сверху и снизу по трети высоты заглавной
+static f32 line_px(void) { return roundf((f32)cur_size()->cap * 1.9f); }
+f32 ui_line(void) { return line_px() / U.scale[U.layer]; }
+f32 ui_cap(void) { return (f32)cur_size()->cap / U.scale[U.layer]; }
 
 void ui_set_user_scale(f32 frames, f32 text)
 {
@@ -306,10 +246,10 @@ static void quad2_px(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1,
     *n += 6;
 }
 
-// Логический прямоугольник в пиксели цели: края по сетке, тонкая линия не пропадает
+// Логический прямоугольник в пиксели окна: края по сетке, тонкая линия не пропадает
 static void quad2(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 c, u32 c2)
 {
-    const f32 f = U.f[U.layer];
+    const f32 f = U.scale[U.layer];
     f32 x0 = roundf(x * f), y0 = roundf(y * f);
     f32 pw = fmaxf(roundf((x + w) * f) - x0, w > 0.0f ? 1.0f : 0.0f);
     f32 ph = fmaxf(roundf((y + h) * f) - y0, h > 0.0f ? 1.0f : 0.0f);
@@ -321,16 +261,62 @@ static void quad(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32
     quad2(x, y, w, h, u0, v0, u1, v1, c, c);
 }
 
+static void solid_uv(f32 *u, f32 *v)
+{
+    *u = ((f32)U.aw - 0.5f) / (f32)U.aw;
+    *v = ((f32)U.ah - 0.5f) / (f32)U.ah;
+}
+
 void ui_rect(f32 x, f32 y, f32 w, f32 h, u32 color)
 {
-    const f32 t = (ATLAS - 0.5f) / ATLAS;
-    quad(x, y, w, h, t, t, t, t, color);
+    f32 u, v;
+    solid_uv(&u, &v);
+    quad(x, y, w, h, u, v, u, v, color);
 }
 
 void ui_rect_grad(f32 x, f32 y, f32 w, f32 h, u32 top, u32 bottom)
 {
-    const f32 t = (ATLAS - 0.5f) / ATLAS;
-    quad2(x, y, w, h, t, t, t, t, top, bottom);
+    f32 u, v;
+    solid_uv(&u, &v);
+    quad2(x, y, w, h, u, v, u, v, top, bottom);
+}
+
+// Четыре цвета по углам: верх-лево, верх-право, низ-право, низ-лево
+static void quad4_px(f32 x, f32 y, f32 w, f32 h, u32 c0, u32 c1, u32 c2, u32 c3)
+{
+    u32 *n = &U.count[U.layer];
+    if (*n + 6 > ARRAY_COUNT(U.v[0]) || w <= 0.0f || h <= 0.0f) return;
+    f32 u, v;
+    solid_uv(&u, &v);
+    box_add(x, y, w, h);
+    UiVertex *q = &U.v[U.layer][*n];
+    UiVertex a = { x, y, u, v, c0 }, b = { x + w, y, u, v, c1 }, c = { x + w, y + h, u, v, c2 }, d = { x, y + h, u, v, c3 };
+    // Диагональ через непрозрачный угол: у угловых кусков растушёвка не ломается
+    if ((c1 >> 24) || (c3 >> 24)) {
+        q[0] = a, q[1] = b, q[2] = d, q[3] = b, q[4] = c, q[5] = d;
+    } else {
+        q[0] = a, q[1] = b, q[2] = c, q[3] = a, q[4] = c, q[5] = d;
+    }
+    *n += 6;
+}
+
+// Панель без рамки: заливка, края на feather логических единиц уходят в прозрачность
+void ui_soft(f32 x, f32 y, f32 w, f32 h, u32 color, f32 feather)
+{
+    const f32 f = U.scale[U.layer];
+    f32 x0 = roundf(x * f), y0 = roundf(y * f), x1 = roundf((x + w) * f), y1 = roundf((y + h) * f);
+    f32 e = fminf(roundf(feather * f), fminf((x1 - x0), (y1 - y0)) * 0.5f);
+    const u32 o = color & 0x00FFFFFFu, c = color;
+    f32 ix0 = x0 + e, iy0 = y0 + e, ix1 = x1 - e, iy1 = y1 - e;
+    quad4_px(ix0, iy0, ix1 - ix0, iy1 - iy0, c, c, c, c);
+    quad4_px(ix0, y0, ix1 - ix0, e, o, o, c, c);       // верх
+    quad4_px(ix0, iy1, ix1 - ix0, e, c, c, o, o);      // низ
+    quad4_px(x0, iy0, e, iy1 - iy0, o, c, c, o);       // лево
+    quad4_px(ix1, iy0, e, iy1 - iy0, c, o, o, c);      // право
+    quad4_px(x0, y0, e, e, o, o, c, o);                // углы
+    quad4_px(ix1, y0, e, e, o, o, o, c);
+    quad4_px(ix1, iy1, e, e, c, o, o, o);
+    quad4_px(x0, iy1, e, e, o, c, o, o);
 }
 
 // u < -0.5 — заливка панели: шейдер добавляет сканлайны и шум
@@ -348,12 +334,35 @@ void ui_image(f32 x, f32 y, f32 w, f32 h, f32 u0, f32 v0, f32 u1, f32 v1, u32 ti
 void ui_set_image(RbTex tex) { U.image = tex; }
 void ui_set_time(f32 t) { U.time = t; }
 
+// Тонкие линии — ровно в ui_hair, внутрь прямоугольника
+void ui_hline(f32 x, f32 y, f32 w, u32 color)
+{
+    const f32 f = U.scale[U.layer], t = ui_hair() * f;
+    f32 x0 = roundf(x * f), x1 = roundf((x + w) * f);
+    f32 u, v;
+    solid_uv(&u, &v);
+    quad2_px(x0, roundf(y * f), x1 - x0, t, u, v, u, v, color, color);
+}
+
+void ui_vline(f32 x, f32 y, f32 h, u32 color)
+{
+    const f32 f = U.scale[U.layer], t = ui_hair() * f;
+    f32 y0 = roundf(y * f), y1 = roundf((y + h) * f);
+    f32 u, v;
+    solid_uv(&u, &v);
+    quad2_px(roundf(x * f), y0, t, y1 - y0, u, v, u, v, color, color);
+}
+
 void ui_frame(f32 x, f32 y, f32 w, f32 h, u32 color)
 {
-    ui_rect(x, y, w, 1, color);
-    ui_rect(x, y + h - 1, w, 1, color);
-    ui_rect(x, y + 1, 1, h - 2, color);
-    ui_rect(x + w - 1, y + 1, 1, h - 2, color);
+    const f32 f = U.scale[U.layer], t = ui_hair() * f;
+    f32 x0 = roundf(x * f), y0 = roundf(y * f), x1 = roundf((x + w) * f), y1 = roundf((y + h) * f);
+    f32 u, v;
+    solid_uv(&u, &v);
+    quad2_px(x0, y0, x1 - x0, t, u, v, u, v, color, color);
+    quad2_px(x0, y1 - t, x1 - x0, t, u, v, u, v, color, color);
+    quad2_px(x0, y0 + t, t, y1 - y0 - 2 * t, u, v, u, v, color, color);
+    quad2_px(x1 - t, y0 + t, t, y1 - y0 - 2 * t, u, v, u, v, color, color);
 }
 
 static u32 utf8_next(const char **ps)
@@ -370,59 +379,94 @@ static u32 utf8_next(const char **ps)
     return c;
 }
 
-// Буква — ровно 5x7 пикселей цели; по высоте строка по центру логических 7 единиц, как раньше
+// Шаг пера с разрядкой, пиксели окна
+static f32 pen_step(const FontGlyph *g, const FontSize *fs)
+{
+    return (f32)g->adv / 64.0f + roundf((f32)fs->px * FONT_TRACK);
+}
+
+static const FontGlyph *glyph_of(u32 cp)
+{
+    u32 g = find_glyph(cp);
+    if (!g) g = find_glyph('?');
+    return g ? &U.glyph[U.font_size[U.font]][g - 1] : NULL;
+}
+
+// y — верх строки ui_line; заглавные по её середине. Буквы ставятся в целые пиксели окна
 f32 ui_text(f32 x, f32 y, u32 color, const char *s)
 {
-    const f32 inv = 1.0f / ATLAS, f = U.f[U.layer];
-    f32 px = roundf(x * f), py = roundf((y + UI_GLYPH_H * 0.5f) * f - UI_GLYPH_H * 0.5f);
+    const f32 f = U.scale[U.layer], iw = 1.0f / (f32)U.aw, ih = 1.0f / (f32)U.ah;
+    const FontSize *fs = cur_size();
+    f32 pen = roundf(x * f);
+    const f32 base = roundf(y * f) + roundf((line_px() + (f32)fs->cap) * 0.5f);
     while (*s) {
-        u32 g = find_glyph(utf8_next(&s));
-        if (g) {
-            g--;
-            f32 u0 = (f32)((g % (ATLAS / CELL)) * CELL) * inv, v0 = (f32)((g / (ATLAS / CELL)) * CELL) * inv;
-            quad2_px(px, py, UI_GLYPH_W, UI_GLYPH_H, u0, v0, u0 + UI_GLYPH_W * inv, v0 + UI_GLYPH_H * inv, color, color);
+        const FontGlyph *g = glyph_of(utf8_next(&s));
+        if (!g) continue;
+        if (g->w && g->h) {
+            f32 u0 = (f32)g->x * iw, v0 = (f32)g->y * ih;
+            quad2_px(roundf(pen) + g->ox, base + g->oy, g->w, g->h, u0, v0, u0 + g->w * iw, v0 + g->h * ih, color, color);
         }
-        px += UI_ADVANCE;
+        pen += pen_step(g, fs);
     }
-    return px / f;
-}
-
-f32 ui_num(f32 x, f32 y, u32 color, const char *s)
-{
-    const f32 inv = 1.0f / ATLAS;
-    for (; *s; s++) {
-        for (u32 i = 0; i < SMALL_COUNT; i++) {
-            if (g_small[i].cp != (u32)(u8)*s) continue;
-            u32 k = FONT_COUNT + i;
-            f32 u0 = (f32)((k % (ATLAS / CELL)) * CELL) * inv, v0 = (f32)((k / (ATLAS / CELL)) * CELL) * inv;
-            quad(x, y, UI_SMALL_W, UI_SMALL_H, u0, v0, u0 + UI_SMALL_W * inv, v0 + UI_SMALL_H * inv, color);
-            break;
-        }
-        x += UI_SMALL_W + 1;
-    }
-    return x;
-}
-
-f32 ui_num_width(const char *s)
-{
-    f32 n = (f32)strlen(s);
-    return n > 0 ? n * (UI_SMALL_W + 1) - 1 : 0;
+    return pen / f;
 }
 
 f32 ui_text_width(const char *s)
 {
+    const FontSize *fs = cur_size();
     f32 w = 0;
+    bool any = false;
     while (*s) {
-        utf8_next(&s);
-        w += UI_ADVANCE;
+        const FontGlyph *g = glyph_of(utf8_next(&s));
+        if (!g) continue;
+        w += pen_step(g, fs);
+        any = true;
     }
-    return w > 0 ? (w - 1) / U.f[U.layer] : 0;
+    if (any) w -= roundf((f32)fs->px * FONT_TRACK);
+    return w / U.scale[U.layer];
 }
 
-// Слой в свою цель, затем на окно: ровные пиксели при дробном масштабе (тот же фильтр, что у кадра)
+// Сколько байт строки влезает в ширину w
+u32 ui_text_fit(const char *s, f32 w)
+{
+    const FontSize *fs = cur_size();
+    const f32 lim = w * U.scale[U.layer];
+    const char *p = s;
+    f32 pen = 0;
+    while (*p) {
+        const char *q = p;
+        const FontGlyph *g = glyph_of(utf8_next(&q));
+        f32 step = g ? pen_step(g, fs) : 0.0f;
+        if (pen + step - roundf((f32)fs->px * FONT_TRACK) > lim) break;
+        pen += step;
+        p = q;
+    }
+    return (u32)(p - s);
+}
+
+// Числа — мелким кеглем, верх строки y
+f32 ui_num(f32 x, f32 y, u32 color, const char *s)
+{
+    u32 was = U.font;
+    U.font = UI_FONT_SMALL;
+    f32 r = ui_text(x, y, color, s);
+    U.font = was;
+    return r;
+}
+
+f32 ui_num_width(const char *s)
+{
+    u32 was = U.font;
+    U.font = UI_FONT_SMALL;
+    f32 r = ui_text_width(s);
+    U.font = was;
+    return r;
+}
+
+// Слой в свою цель (размер окна), затем на окно
 static void draw_layer(u32 l)
 {
-    i32 tw = (i32)floorf((f32)U.win_w / U.text[l]), th = (i32)floorf((f32)U.win_h / U.text[l]);
+    i32 tw = U.win_w, th = U.win_h;
     if (tw != U.tw[l] || th != U.th[l]) {
         rb_tex_free(&U.target[l]);
         U.target[l] = rb_tex_make(&(RbTexDesc){ .fmt = RB_FMT_RGBA8, .w = tw, .h = th, .usage = RB_TEX_TARGET | RB_TEX_SAMPLED });
@@ -453,7 +497,7 @@ static void draw_layer(u32 l)
     rb_bind_pipe(U.pipe_up);
     f32 out[4] = { (f32)U.win_w, (f32)U.win_h, 0.0f, 0.0f };
     rb_push(0, sizeof out, out);
-    rb_bind_tex(B_UI_ATLAS, U.target[l], RB_SMP_LINEAR);
+    rb_bind_tex(B_UI_ATLAS, U.target[l], RB_SMP_NEAREST);
     const f32 sx = (f32)U.win_w / (f32)tw, sy = (f32)U.win_h / (f32)th;
     for (u32 i = 0; i < U.boxes[l]; i++) {
         const f32 *b = U.box[l][i];

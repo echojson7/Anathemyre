@@ -203,7 +203,7 @@ static bool find_data_dir(char *out, size_t size)
 static bool gfx_start(const Options *o, Arena *scratch, const char *data_dir)
 {
     bool win = platform_init("ANATHEMYRE", o->width, o->height);
-    if (win && render_init(scratch, data_dir) && ui_init()) return true;
+    if (win && render_init(scratch, data_dir) && ui_init(data_dir)) return true;
     log_error("РЕНДЕР: Vulkan не запустился, нужна видеокарта с Vulkan 1.3");
     if (win) {
         ui_shutdown();
