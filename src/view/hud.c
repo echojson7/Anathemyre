@@ -29,41 +29,43 @@
 #define C_BAD     UI_RGBA(200, 70, 56, 255)
 #define C_BLOOD   UI_RGBA(150, 42, 34, 255)
 #define FEATHER   10.0f   // растушёвка края окна
+#define MARGIN    16.0f   // фон окна выходит за его прямоугольник: сплошной на 6, дальше растушёвка
+#define EDGE      20      // от края экрана до окна
 
 // Раскладка, логические пиксели
-#define BOTTOM_H   112
-#define SEL_W      430
-#define CARD_W     90
-#define CARD_GAP   6
+#define BOTTOM_H   106
+#define SEL_W      400
+#define CARD_W     80
+#define CARD_GAP   22
 #define BTN_W      122
 #define BTN_H      18
-#define WIN_TOP    52
+#define WIN_TOP    (EDGE + CLOCK_H + 28)
 #define WIN_HEAD_H 20     // шапка окна
 #define CLOCK_W    164
 #define CLOCK_H    40
 #define DOUBLE_CLICK_S 0.35f
 #define SELECT_RING_R 0.48f  // радиус кольца выбора под ногами, как в main.c
-#define DBG_W      250  // окно НАСТРОЙКИ
+#define DBG_W      280  // окно НАСТРОЙКИ
 #define DBG_ROW    16   // строка виджета
-#define DBG_LABEL  104  // ширина подписи у ползунка и выбора
+#define DBG_LABEL  128  // ширина подписи у ползунка и выбора
 #define DBG_BTN_W  96
 
 // Окно ИНВЕНТАРЬ: слева снаряжение и сумка на одной сетке клеток, справа состояние и навыки
-#define CELL       24   // клетка
-#define PAD        12
+#define CELL       22   // клетка
+#define PAD        18   // между снаряжением и правой колонкой
 #define COL_GAP    12   // между колонками слотов
 #define ROW_GAP    6
 #define LABEL_H    14   // подпись над слотом
 #define EQUIP_W    (INV_W * CELL)
-#define RCOL_W     168
-#define INV_WIN_W  (PAD + EQUIP_W + 2 * PAD + 1 + RCOL_W + PAD)
+#define RCOL_W     160
+#define INV_WIN_W  (EQUIP_W + 2 * PAD + 1 + RCOL_W)
 #define COL_X(c)   ((c) * (2 * CELL + COL_GAP))
 #define ROW0       LABEL_H
 #define ROW1       (ROW0 + 2 * CELL + ROW_GAP + LABEL_H)
 #define ROW2       (ROW1 + 3 * CELL + ROW_GAP + LABEL_H)
 #define EQUIP_H    (ROW2 + 3 * CELL)
 #define BAG_HEAD   20   // строка ВЕЩИ с ношей
-#define INV_WIN_H  (WIN_HEAD_H + 6 + EQUIP_H + 10 + BAG_HEAD + INV_H * CELL + PAD)
+#define INV_WIN_H  (WIN_HEAD_H + 8 + EQUIP_H + 10 + BAG_HEAD + INV_H * CELL)
 
 // Слоты: где лежат на сетке (x, y в логических от угла снаряжения) и сколько клеток
 typedef struct SlotCell {
@@ -137,7 +139,7 @@ static Layout layout(const Hud *h, const Input *in)
     f32 sb = ui_scale();
     L.bmx = floorf((f32)in->mouse_x / sb);
     L.bmy = floorf((f32)in->mouse_y / sb);
-    L.bottom = ui_height() - BOTTOM_H - 8;
+    L.bottom = ui_height() - BOTTOM_H - EDGE;
     ui_layer(UI_TOP);
     f32 s = ui_scale();
     L.bottom_top = floorf(L.bottom * sb / s);
@@ -145,20 +147,20 @@ static Layout layout(const Hud *h, const Input *in)
     L.h = ui_height();
     L.mx = floorf((f32)in->mouse_x / s);
     L.my = floorf((f32)in->mouse_y / s);
-    L.sel_x = 8;
-    L.cards_x = L.sel_x + SEL_W + 10;
-    L.btn_x = L.w - BTN_W - 8;
-    L.btn_y = L.h - 3 * BTN_H - 2 * 4 - 8;
-    L.clock_x = L.w - CLOCK_W - 8;
+    L.sel_x = EDGE;
+    L.cards_x = L.sel_x + SEL_W + CARD_GAP + 6;
+    L.btn_x = L.w - BTN_W - EDGE;
+    L.btn_y = L.h - 3 * BTN_H - 2 * 4 - EDGE;
+    L.clock_x = L.w - CLOCK_W - EDGE;
     // Инвентарь прижат к правому краю под часами
-    L.iwx = L.w - INV_WIN_W - 8;
+    L.iwx = L.w - INV_WIN_W - EDGE;
     L.iwy = WIN_TOP;
     win_place(&L.iwx, &L.iwy, INV_WIN_W, INV_WIN_H, L.w, L.h);
-    L.sx = L.iwx + PAD;
-    L.sy = L.iwy + WIN_HEAD_H + 6;
+    L.sx = L.iwx;
+    L.sy = L.iwy + WIN_HEAD_H + 8;
     L.ix = L.sx;
     L.iy = L.sy + EQUIP_H + 10 + BAG_HEAD;
-    L.rx = L.sx + EQUIP_W + 2 * PAD + 1;
+    L.rx = L.sx + EQUIP_W + PAD;
     return L;
 }
 
@@ -196,8 +198,10 @@ static bool cell_under(const Layout *L, i32 *cx, i32 *cy)
 }
 
 // Кнопки: режимы шага и строй в панели выбранного, окна внизу справа, скорость в часах
-#define SEL_TX 98   // колонка текста в панели выбранного
-#define SEL_BTN_Y 90
+#define SEL_TX 92   // колонка текста в панели выбранного
+#define SEL_PORTRAIT 72
+#define CARD_PORTRAIT 48
+#define SEL_BTN_Y 84
 // Ширина кнопки по надписи; считается в слое нижней полосы
 static f32 btn_width(const char *key, const char *label)
 {
@@ -223,8 +227,8 @@ static f32 win_btn_y(const Layout *L, u32 k) { return L->btn_y + (f32)k * (BTN_H
 const u8 g_speed_scale[4] = { 0, 1, 2, 5 };
 
 #define SPEED_W 24
-static f32 speed_btn_x(const Layout *L, u32 k) { return L->clock_x + CLOCK_W - 8 - (f32)(4 - k) * (SPEED_W + 2); }
-#define SPEED_Y 26
+static f32 speed_btn_x(const Layout *L, u32 k) { return L->clock_x + CLOCK_W - 2 - (f32)(4 - k) * (SPEED_W + 2); }
+#define SPEED_Y (EDGE + 18)
 
 // Экранная точка в логических координатах; false — за камерой
 static bool project(M4 vp, V3 p, f32 *sx, f32 *sy)
@@ -411,7 +415,7 @@ void hud_init(Hud *h)
     h->last_click_card = -1;
     h->focus = -1;
     h->speed = h->speed_before = 1;
-    h->dbg.f = (HudForm){ .x = 8, .y = 26, .w = DBG_W, .slider = -1 };
+    h->dbg.f = (HudForm){ .x = EDGE, .y = EDGE + 36, .w = DBG_W, .slider = -1 };
     h->dbg.journal = true;
     h->dbg.fps_on = true;
 }
@@ -549,7 +553,7 @@ static void select_only(Squad *sq, u32 i)
     for (u32 k = 0; k < sq->count; k++) sq->selected[k] = k == i;
 }
 
-static bool close_hot(const Layout *L, f32 x, f32 y, f32 w) { return inside(L->mx, L->my, x + w - 18, y + 2, 16, 16); }
+static bool close_hot(const Layout *L, f32 x, f32 y, f32 w) { return inside(L->mx, L->my, x + w - 16, y + 2, 16, 16); }
 
 bool hud_input(Hud *h, const Input *in, HudWorld *w)
 {
@@ -770,20 +774,20 @@ static void row(f32 x, f32 y, f32 w, const char *label, u32 lc, const char *valu
 // Окно в духе DD2: тёмный полупрозрачный фон без рамки, края растушёваны; шапка с линией под ней
 static void panel(f32 x, f32 y, f32 w, f32 h, const char *title, const char *right)
 {
-    ui_soft(x - FEATHER * 0.5f, y - FEATHER * 0.5f, w + FEATHER, h + FEATHER, C_WIN, FEATHER);
+    ui_soft(x - MARGIN, y - MARGIN, w + 2 * MARGIN, h + 2 * MARGIN, C_WIN, FEATHER);
     if (!title) return;
     f32 ty = y + floorf((WIN_HEAD_H - ui_line()) * 0.5f);
-    mark(x + 8, ty, C_TEXT);
-    f32 tx = ui_text(x + 17, ty, C_TEXT, title);
+    mark(x, ty, C_TEXT);
+    f32 tx = ui_text(x + 9, ty, C_TEXT, title);
     if (right) ui_text(tx + 8, ty, C_DIM, right);
-    ui_hline(x + 8, y + WIN_HEAD_H, w - 16, C_SEP);
+    ui_hline(x, y + WIN_HEAD_H, w, C_SEP);
 }
 
 static void close_btn(const Layout *L, f32 x, f32 y, f32 w)
 {
     bool hot = close_hot(L, x, y, w);
-    if (hot) ui_rect(x + w - 18, y + 2, 16, 16, C_BTN_HOT);
-    text_center(x + w - 18, 16, y + floorf((WIN_HEAD_H - ui_line()) * 0.5f), hot ? C_TEXT : C_DIM, "×");
+    if (hot) ui_rect(x + w - 16, y + 2, 16, 16, C_BTN_HOT);
+    text_center(x + w - 16, 16, y + floorf((WIN_HEAD_H - ui_line()) * 0.5f), hot ? C_TEXT : C_DIM, "×");
 }
 
 // Кнопка без рамки: тёмная подложка, под курсором светлее, включённая — светлая с линией снизу
@@ -929,8 +933,8 @@ static void draw_item_cell(f32 x, f32 y, f32 w, f32 h, ItemStack it, bool hot)
     ui_frame(x + m, y + m, w - 2 * m, h - 2 * m, hot ? C_TEXT : C_ITEM_EDGE);
     if (!item_live(it)) return;
     char ab[48];
-    short_name(ab, sizeof ab, item_name(it), w - 2 * m - 6);
-    ui_text(x + m + 3, y + m + 1, C_TEXT, ab);
+    short_name(ab, sizeof ab, item_name(it), w - 2 * m - 4);
+    ui_text(x + m + 2, y + m, C_TEXT, ab);
     if (it.count > 1) {
         char n[8];
         snprintf(n, sizeof n, "%u", it.count);
@@ -978,11 +982,10 @@ static void tooltip(const Layout *L, ItemStack it)
     const f32 lh = ui_line(), gap = 16;
     f32 w = fmaxf(ui_text_width(item_name(it)), ui_text_width(kind));
     for (u32 k = 0; k < n; k++) w = fmaxf(w, ui_text_width(lab[k]) + gap + ui_text_width(val[k]));
-    f32 bw = w + 20, bh = lh * (f32)(n + 2) + 14;
-    f32 x = fminf(L->mx + 14, L->w - bw - 4), y = fminf(L->my + 16, L->h - bh - 4);
-    panel(x, y, bw, bh, NULL, NULL);
-    ui_rect(x, y, bw, bh, UI_RGBA(6, 6, 6, 210));
-    f32 tx = x + 10, ty = y + 5;
+    f32 bw = w, bh = lh * (f32)(n + 2) + 4;
+    f32 x = fminf(L->mx + 24, L->w - bw - MARGIN), y = fminf(L->my + 26, L->h - bh - MARGIN);
+    ui_soft(x - MARGIN, y - MARGIN, bw + 2 * MARGIN, bh + 2 * MARGIN, UI_RGBA(6, 6, 6, 236), FEATHER);
+    f32 tx = x, ty = y;
     ui_text(tx, ty, C_TEXT, item_name(it));
     ui_hline(tx, ty + lh + 1, w, C_SEP);
     ty += lh + 4;
@@ -999,9 +1002,9 @@ static void draw_selected(const Hud *h, const Layout *L, const HudWorld *w)
     char buf[64];
     f32 x = L->sel_x, y = L->bottom;
     panel(x, y, SEL_W, BOTTOM_H, d.name, d.role);
-    portrait(x + 8, y + WIN_HEAD_H + 6, HUD_PORTRAIT_FOCUS_PX, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX);
+    portrait(x, y + WIN_HEAD_H + 6, SEL_PORTRAIT, HUD_PORTRAIT_FOCUS, HUD_PORTRAIT_FOCUS_PX);
 
-    const f32 lh = ui_line(), tx = x + SEL_TX, tw = SEL_W - SEL_TX - 64;
+    const f32 lh = ui_line(), tx = x + SEL_TX, tw = SEL_W - SEL_TX - 60;
     f32 ty = y + WIN_HEAD_H + 4;
     const char *cond = condition(&d);
     ui_text(tx, ty, C_TEXT, d.state);
@@ -1025,7 +1028,7 @@ static void draw_selected(const Hud *h, const Layout *L, const HudWorld *w)
     }
 
     // Схема тела справа
-    f32 fx = x + SEL_W - TPOSE_W * 2 - 10, fy = y + WIN_HEAD_H + 6;
+    f32 fx = x + SEL_W - TPOSE_W * 2, fy = y + WIN_HEAD_H + 6;
     tpose(fx, fy, 2, d.hp, d.fracture, d.severed, true);
     snprintf(buf, sizeof buf, "%.0f%%", (f64)(fmaxf(0.0f, vital_ratio(d.hp)) * 100.0f));
     ui_font(UI_FONT_SMALL);
@@ -1043,36 +1046,36 @@ static void draw_card(const Hud *h, const HudWorld *w, const Layout *L, u32 i)
     bool hot = inside(L->bmx, L->bmy, x, y, CARD_W, BOTTOM_H);
     bool look = h->look_kind == LOOK_SQUAD && h->look == i;
     panel(x, y, CARD_W, BOTTOM_H, NULL, NULL);
-    if (hot) ui_rect(x, y, CARD_W, BOTTOM_H, C_BTN_HOT);
+    if (hot) ui_soft(x - 6, y - 6, CARD_W + 12, BOTTOM_H + 12, C_BTN_HOT, 6);
     char n[4];
     snprintf(n, sizeof n, "%u", i + 1);
     ui_font(UI_FONT_SMALL);
-    ui_text(x + 5, y + 2, look ? C_TEXT : C_FAINT, n);
+    ui_text(x, y - 2, look ? C_TEXT : C_FAINT, n);
     ui_font(UI_FONT_TEXT);
     // Режим шага: одно, два или три деления; горят, пока идёт
     for (u32 g = 0; g <= pl->gait; g++)
-        ui_rect(x + CARD_W - 8 - (f32)g * 4, y + 6, 2, 6, pl->moving ? C_TEXT : C_FAINT);
-    const f32 px = floorf(x + (CARD_W - HUD_PORTRAIT_CARD_PX) * 0.5f);
-    portrait(px, y + 16, HUD_PORTRAIT_CARD_PX, i, HUD_PORTRAIT_CARD_PX);
-    const f32 lh = ui_line(), ty = y + 16 + HUD_PORTRAIT_CARD_PX + 1;
-    text_fit(x + 5, ty, CARD_W - 10, sq->selected[i] ? C_SEL : C_TEXT, c->name);
+        ui_rect(x + CARD_W - 2 - (f32)g * 4, y + 2, 2, 6, pl->moving ? C_TEXT : C_FAINT);
+    const f32 px = floorf(x + (CARD_W - CARD_PORTRAIT) * 0.5f);
+    portrait(px, y + 12, CARD_PORTRAIT, i, HUD_PORTRAIT_CARD_PX);
+    const f32 lh = ui_line(), ty = y + 12 + CARD_PORTRAIT + 2;
+    text_fit(x, ty, CARD_W, sq->selected[i] ? C_SEL : C_TEXT, c->name);
     // В бою — что делает в бою; выбыл — красным
     const Field *fd = w->field;
     ui_font(UI_FONT_SMALL);
     if (field_awake(fd, at)) {
         u8 st = fd->w.state[at];
-        text_fit(x + 5, ty + lh - 1, CARD_W - 10, fs_out(st) ? C_BAD : C_TEXT, fs_out(st) ? g_state_name[st] : "В БОЮ");
+        text_fit(x, ty + lh - 1, CARD_W, fs_out(st) ? C_BAD : C_TEXT, fs_out(st) ? g_state_name[st] : "В БОЮ");
     } else {
-        text_fit(x + 5, ty + lh - 1, CARD_W - 10, C_DIM, pl->ctrl == CTRL_CHASE ? "К ЦЕЛИ" : (pl->moving ? (pl->gait == GAIT_RUN ? "БЕЖИТ" : "ИДЁТ") : "СТОИТ"));
+        text_fit(x, ty + lh - 1, CARD_W, C_DIM, pl->ctrl == CTRL_CHASE ? "К ЦЕЛИ" : (pl->moving ? (pl->gait == GAIT_RUN ? "БЕЖИТ" : "ИДЁТ") : "СТОИТ"));
     }
     ui_font(UI_FONT_TEXT);
     f32 hp[PART_COUNT];
     for (u32 p = 0; p < PART_COUNT; p++) hp[p] = fd->ps->hp[p][at];
     f32 r = vital_ratio(hp);
-    bar(x + 5, y + BOTTOM_H - 9, CARD_W - 10, 2, r, health_color(r));
-    bar(x + 5, y + BOTTOM_H - 5, CARD_W - 10, 2, fd->ps->blood[at] / (100.0f * fd->ps->mass[at] / 75.0f), C_BLOOD);
+    bar(x, y + BOTTOM_H - 6, CARD_W, 2, r, health_color(r));
+    bar(x, y + BOTTOM_H - 2, CARD_W, 2, fd->ps->blood[at] / (100.0f * fd->ps->mass[at] / 75.0f), C_BLOOD);
     // Выбранный: бледно-зелёная черта сверху
-    if (sq->selected[i]) ui_rect(x, y, CARD_W, 2, C_SEL);
+    if (sq->selected[i]) ui_rect(x, y - 8, CARD_W, 2, C_SEL);
 }
 
 static void draw_buttons(const Hud *h, const Layout *L)
@@ -1088,16 +1091,16 @@ static void draw_buttons(const Hud *h, const Layout *L)
 static void draw_clock(const Hud *h, const Layout *L, const HudWorld *w)
 {
     char buf[32];
-    f32 x = L->clock_x, y = 8;
+    f32 x = L->clock_x, y = EDGE;
     panel(x, y, CLOCK_W, CLOCK_H, NULL, NULL);
     u32 minutes = (u32)(w->tod * 24.0f * 60.0f) % (24 * 60);
     snprintf(buf, sizeof buf, "ДЕНЬ %u", w->day);
     ui_font(UI_FONT_SMALL);
-    ui_text(x + 8, y + 3, C_DIM, buf);
-    text_right(x + CLOCK_W - 8, y + 3, C_FAINT, h->speed ? "ВРЕМЯ" : "ПАУЗА");
+    ui_text(x, y - 2, C_DIM, buf);
+    text_right(x + CLOCK_W, y - 2, C_FAINT, h->speed ? "ВРЕМЯ" : "ПАУЗА");
     ui_font(UI_FONT_BIG);
     snprintf(buf, sizeof buf, "%02u:%02u", minutes / 60, minutes % 60);
-    ui_text(x + 8, y + CLOCK_H - ui_line() - 2, C_TEXT, buf);
+    ui_text(x, y + CLOCK_H - ui_line() + 2, C_TEXT, buf);
     ui_font(UI_FONT_TEXT);
     static const char *labels[4] = { "II", ">", ">>", ">>>" };
     for (u32 k = 0; k < 4; k++) {
@@ -1181,8 +1184,8 @@ static void draw_inventory(const Hud *h, const Layout *L, const HudWorld *w)
     }
 
     // Правая колонка, отделена тонкой линией
-    const f32 rx = L->rx + PAD, rw = RCOL_W;
-    ui_vline(L->rx, L->sy, INV_WIN_H - (L->sy - y) - PAD, C_SEP);
+    const f32 rx = L->rx + PAD + 1, rw = RCOL_W;
+    ui_vline(L->rx, L->sy, INV_WIN_H - (L->sy - y), C_SEP);
     f32 ry = L->sy;
     ry = section(rx, ry, "СОСТОЯНИЕ");
     const char *cond = condition(&d);
@@ -1223,7 +1226,7 @@ static void draw_inventory(const Hud *h, const Layout *L, const HudWorld *w)
 
     if (d.sheet) {
         ui_font(UI_FONT_SMALL);
-        f32 by = y + INV_WIN_H - PAD - ui_line();
+        f32 by = y + INV_WIN_H - ui_line();
         ui_text(rx, by - ui_line(), C_FAINT, "ЛКМ — ВЗЯТЬ, ПОЛОЖИТЬ");
         ui_text(rx, by, C_FAINT, "ПКМ — НАДЕТЬ, СНЯТЬ");
         ui_font(UI_FONT_TEXT);
@@ -1327,7 +1330,7 @@ static bool form_window(HudForm *f, const char *title, const char *right)
     }
     win_place(&f->x, &f->y, f->w, f->h, ui_width(), ui_height());
     f32 x = f->x, y = f->y;
-    bool close = inside(f->mx, f->my, x + f->w - 18, y + 2, 16, 16);
+    bool close = inside(f->mx, f->my, x + f->w - 16, y + 2, 16, 16);
     if (inside(f->mx, f->my, x, y, f->w, f->h)) {
         f->over = true;
         if (f->lmb && close) {
@@ -1343,8 +1346,8 @@ static bool form_window(HudForm *f, const char *title, const char *right)
         }
     }
     panel(x, y, f->w, f->h, title, right);
-    if (close) ui_rect(x + f->w - 18, y + 2, 16, 16, C_BTN_HOT);
-    text_center(x + f->w - 18, 16, y + floorf((WIN_HEAD_H - ui_line()) * 0.5f), close ? C_TEXT : C_DIM, "×");
+    if (close) ui_rect(x + f->w - 16, y + 2, 16, 16, C_BTN_HOT);
+    text_center(x + f->w - 16, 16, y + floorf((WIN_HEAD_H - ui_line()) * 0.5f), close ? C_TEXT : C_DIM, "×");
     f->row = y + WIN_HEAD_H + 6;
     return true;
 }
@@ -1358,12 +1361,12 @@ bool hud_form_begin(HudForm *f, const Input *in, const char *title, const char *
 // Строка виджета: прямоугольник строки и горячая ли она
 static bool form_row(HudForm *f, f32 *x, f32 *y)
 {
-    *x = f->x + 10;
+    *x = f->x;
     *y = f->row;
     f->row += DBG_ROW;
     f->id++;
-    bool hot = inside(f->mx, f->my, *x - 4, *y, f->w - 12, DBG_ROW);
-    if (hot) ui_rect(*x - 4, *y, f->w - 12, DBG_ROW, C_CELL_HOT);
+    bool hot = inside(f->mx, f->my, *x - 4, *y, f->w + 8, DBG_ROW);
+    if (hot) ui_rect(*x - 4, *y, f->w + 8, DBG_ROW, C_CELL_HOT);
     return hot;
 }
 
@@ -1391,7 +1394,7 @@ bool hud_form_button(HudForm *f, const char *label)
 {
     f32 x, y;
     bool hot = form_row(f, &x, &y);
-    button(x, y + 1, f->w - 20, DBG_ROW - 2, NULL, label, false, hot);
+    button(x, y + 1, f->w, DBG_ROW - 2, NULL, label, false, hot);
     if (hot && f->lmb) {
         f->lmb = false;
         return true;
@@ -1403,7 +1406,7 @@ bool hud_form_slider(HudForm *f, const char *label, f32 *v, f32 lo, f32 hi, cons
 {
     f32 x, y;
     bool hot = form_row(f, &x, &y);
-    const f32 tx = x + DBG_LABEL, tw = f->w - 20 - DBG_LABEL - 40;
+    const f32 tx = x + DBG_LABEL, tw = f->w - DBG_LABEL - 40;
     text_fit(x, row_ty(y), DBG_LABEL - 6, hot || f->slider == f->id ? C_TEXT : C_DIM, label);
     if (hot && f->lmb && inside(f->mx, f->my, tx - 3, y, tw + 6, DBG_ROW)) {
         f->slider = f->id;
@@ -1419,7 +1422,7 @@ bool hud_form_slider(HudForm *f, const char *label, f32 *v, f32 lo, f32 hi, cons
     ui_rect(tx, my - 1, tw, 2, C_BAR_BG);
     ui_rect(tx, my - 1, floorf(tw * r), 2, C_BAR);
     ui_rect(floorf(tx + (tw - 3) * r), my - 4, 3, 8, f->slider == f->id || hot ? C_TEXT : C_DIM);
-    text_right(x + f->w - 20, row_ty(y), C_DIM, value);
+    text_right(x + f->w, row_ty(y), C_DIM, value);
     return changed;
 }
 
@@ -1428,14 +1431,14 @@ void hud_form_text(HudForm *f, const char *label, const char *value)
     f32 x, y;
     form_row(f, &x, &y);
     ui_text(x, row_ty(y), C_FAINT, label);
-    text_right(x + f->w - 20, row_ty(y), C_DIM, value);
+    text_right(x + f->w, row_ty(y), C_DIM, value);
 }
 
 i32 hud_form_step(HudForm *f, const char *label, const char *value)
 {
     f32 x, y;
     bool hot = form_row(f, &x, &y);
-    const f32 tx = x + DBG_LABEL, tw = f->w - 20 - DBG_LABEL;
+    const f32 tx = x + DBG_LABEL, tw = f->w - DBG_LABEL;
     bool hl = hot && inside(f->mx, f->my, tx - 2, y, 14, DBG_ROW);
     bool hr = hot && inside(f->mx, f->my, tx + tw - 12, y, 14, DBG_ROW);
     text_fit(x, row_ty(y), DBG_LABEL - 6, hot ? C_TEXT : C_DIM, label);
@@ -1452,7 +1455,7 @@ bool hud_form_tabs(HudForm *f, const char *const *names, u32 n, u8 *cur)
 {
     f32 x, y;
     bool hot = form_row(f, &x, &y);
-    f32 w = floorf((f->w - 20 - (f32)(n - 1) * 3) / (f32)n);
+    f32 w = floorf((f->w - (f32)(n - 1) * 3) / (f32)n);
     bool changed = false;
     for (u32 i = 0; i < n; i++) {
         f32 bx = x + (f32)i * (w + 3);
@@ -1469,15 +1472,15 @@ bool hud_form_tabs(HudForm *f, const char *const *names, u32 n, u8 *cur)
 
 void hud_form_head(HudForm *f, const char *label)
 {
-    f32 x = f->x + 10, y = f->row + 4;
+    f32 x = f->x, y = f->row + 4;
     f->row += DBG_ROW + 6;
     section(x, y, label);
-    ui_hline(x, y + ui_line() + 1, f->w - 20, C_SEP);
+    ui_hline(x, y + ui_line() + 1, f->w, C_SEP);
 }
 
 void hud_form_swatch(HudForm *f, u32 rgba)
 {
-    f32 x = f->x + f->w - 10 - 24, y = f->row - DBG_ROW + 3;
+    f32 x = f->x + f->w - 24, y = f->row - DBG_ROW + 3;
     ui_rect(x, y, 24, DBG_ROW - 6, rgba);
 }
 
@@ -1499,8 +1502,8 @@ bool hud_debug_begin(Hud *h, const Input *in)
 {
     HudForm *f = &h->dbg.f;
     form_input(f, in);
-    bool hot = inside(f->mx, f->my, 8, 8, DBG_BTN_W, 18);
-    button(8, 8, DBG_BTN_W, 18, NULL, "НАСТРОЙКИ", f->open, hot);
+    bool hot = inside(f->mx, f->my, EDGE, EDGE - 6, DBG_BTN_W, 18);
+    button(EDGE, EDGE - 6, DBG_BTN_W, 18, NULL, "НАСТРОЙКИ", f->open, hot);
     if (hot) {
         f->over = true;
         if (f->lmb) {
@@ -1512,8 +1515,8 @@ bool hud_debug_begin(Hud *h, const Input *in)
         char buf[32];
         snprintf(buf, sizeof buf, "%.0f К/С  %.2f МС", (f64)h->dbg.fps, (f64)h->dbg.fps_ms);
         f32 w = ui_text_width(buf) + 16, x = floorf((ui_width() - w) * 0.5f);
-        ui_soft(x, 8, w, 18, UI_RGBA(0, 0, 0, 150), 4);
-        text_center(x, w, 8 + floorf((18 - ui_line()) * 0.5f), C_TEXT, buf);
+        ui_soft(x, EDGE - 6, w, 18, UI_RGBA(0, 0, 0, 150), 4);
+        text_center(x, w, EDGE - 6 + floorf((18 - ui_line()) * 0.5f), C_TEXT, buf);
     }
     return f->open && form_window(f, "НАСТРОЙКИ", "ОТЛАДКА");
 }
@@ -1532,13 +1535,13 @@ void hud_debug_text(Hud *h, const char *label, const char *value) { hud_form_tex
 static void draw_journal(Hud *h)
 {
     HudForm *f = &h->dbg.f;
-    f32 x = f->x + f->w + 12, y = f->y, jh = fmaxf(f->h, 320);
+    f32 x = f->x + f->w + 2 * MARGIN + 4, y = f->y, jh = fmaxf(f->h, 320);
     if (inside(f->mx, f->my, x, y, JOURNAL_W, jh)) f->over = true;
     panel(x, y, JOURNAL_W, jh, "ЖУРНАЛ", NULL);
     ui_font(UI_FONT_SMALL);
-    const f32 lh = ui_line(), tw = JOURNAL_W - 20;
+    const f32 lh = ui_line(), tw = JOURNAL_W;
     const u32 rows = (u32)((jh - WIN_HEAD_H - 10) / lh);
-    f32 ty = y + jh - 6 - lh;
+    f32 ty = y + jh - lh;
     u32 used = 0, n = log_count();
     char seg[LOG_LINE_MAX];
     for (u32 i = n; i-- > 0 && used < rows;) {
@@ -1557,7 +1560,7 @@ static void draw_journal(Hud *h)
             u32 len = MIN(end - cut[k], (u32)sizeof seg - 1);
             memcpy(seg, line + cut[k], len);
             seg[len] = 0;
-            ui_text(x + 10, ty, c, seg);
+            ui_text(x, ty, c, seg);
         }
     }
     ui_font(UI_FONT_TEXT);
