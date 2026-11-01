@@ -37,8 +37,9 @@ typedef struct FontSize {
     i16 px, asc, desc, cap;
 } FontSize;
 
-// Кегли интерфейса на 1080p: основной, мелкий (числа в клетках), крупный (часы)
-static const f32 g_font_px[UI_FONTS] = { 14.0f, 11.0f, 19.0f };
+// Кегли интерфейса на 1080p по слоям: основной, мелкий (числа в клетках), крупный (часы).
+// Нижняя полоса мельче окон
+static const f32 g_font_px[UI_LAYERS][UI_FONTS] = { { 12.0f, 10.0f, 16.0f }, { 13.0f, 10.0f, 18.0f }, { 13.0f, 10.0f, 18.0f } };
 
 // Привязки текстур (ui.frag, upscale.frag)
 enum { B_UI_ATLAS = 20, B_UI_IMAGE = 21 };
@@ -61,7 +62,7 @@ static struct {
     u8  lut_ascii[128];        // номер буквы + 1, 0 — нет
     u8  lut_cyr[0x60];         // U+0400..U+045F
     u32 font;                  // текущий UI_FONT_*
-    u32 font_size[UI_FONTS];   // номер кегля в файле на этот кадр
+    u32 font_size[UI_LAYERS][UI_FONTS];  // номер кегля в файле на этот кадр
     f32 scale[UI_LAYERS];      // пикселей окна на логическую единицу
     f32 text_k;                // кегль относительно 1080p с ползунком
     f32 user_scale, user_text; // ползунки отладочного меню
@@ -165,8 +166,8 @@ void ui_begin(i32 win_w, i32 win_h)
 {
     U.win_w = win_w;
     U.win_h = win_h;
-    // От высоты окна, база 1080p, шаг 0.25. 1440p: нижняя полоса ×1.75, окна и остальное ×2
-    static const f32 k[UI_LAYERS] = { 1.3125f, 1.5f, 1.5f };
+    // От высоты окна, база 1080p, шаг 0.25. 1440p: нижняя полоса ×1.25, окна и остальное ×1.75
+    static const f32 k[UI_LAYERS] = { 1.0f, 1.25f, 1.25f };
     const f32 base = (f32)win_h / 1080.0f;
     for (u32 i = 0; i < UI_LAYERS; i++) {
         U.scale[i] = fmaxf(1.0f, roundf(base * k[i] * U.user_scale * 4.0f) * 0.25f);
@@ -175,13 +176,14 @@ void ui_begin(i32 win_w, i32 win_h)
     }
     // Кегль — ровный размер из файла: ближайший к нужному, без растяжения
     U.text_k = base * U.user_text;
-    for (u32 f = 0; f < UI_FONTS; f++) {
-        f32 want = g_font_px[f] * U.text_k;
-        u32 best = 0;
-        for (u32 i = 1; i < U.sizes; i++)
-            if (fabsf((f32)U.size[i].px - want) < fabsf((f32)U.size[best].px - want)) best = i;
-        U.font_size[f] = best;
-    }
+    for (u32 l = 0; l < UI_LAYERS; l++)
+        for (u32 f = 0; f < UI_FONTS; f++) {
+            f32 want = g_font_px[l][f] * U.text_k;
+            u32 best = 0;
+            for (u32 i = 1; i < U.sizes; i++)
+                if (fabsf((f32)U.size[i].px - want) < fabsf((f32)U.size[best].px - want)) best = i;
+            U.font_size[l][f] = best;
+        }
     U.font = UI_FONT_TEXT;
     U.layer = UI_TOP;
 }
@@ -195,7 +197,7 @@ f32 ui_height(void) { return floorf((f32)U.win_h / U.scale[U.layer]); }
 f32 ui_text_scale(void) { return U.text_k; }
 f32 ui_hair(void) { return fmaxf(1.0f, roundf(U.scale[U.layer] * 0.67f)) / U.scale[U.layer]; }
 
-static const FontSize *cur_size(void) { return &U.size[U.font_size[U.font]]; }
+static const FontSize *cur_size(void) { return &U.size[U.font_size[U.layer][U.font]]; }
 // Строка: заглавные по середине, сверху и снизу по трети высоты заглавной
 static f32 line_px(void) { return roundf((f32)cur_size()->cap * 1.9f); }
 f32 ui_line(void) { return line_px() / U.scale[U.layer]; }
@@ -389,7 +391,7 @@ static const FontGlyph *glyph_of(u32 cp)
 {
     u32 g = find_glyph(cp);
     if (!g) g = find_glyph('?');
-    return g ? &U.glyph[U.font_size[U.font]][g - 1] : NULL;
+    return g ? &U.glyph[U.font_size[U.layer][U.font]][g - 1] : NULL;
 }
 
 // y — верх строки ui_line; заглавные по её середине. Буквы ставятся в целые пиксели окна
