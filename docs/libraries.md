@@ -13,6 +13,8 @@
 
 Пока ни одной. Рантайм игры: libc, POSIX, X11/Win32, Vulkan через драйвер, ALSA/winmm.
 
+Ассеты чужих авторов: шрифт IBM Plex Sans Medium (SIL OFL 1.1, `tools/fontconv/OFL.txt`) — исходник для `data/ui/plex.font` (docs/ui.md).
+
 ## Кандидаты: когда и зачем
 
 | Библиотека | Лицензия | Язык | Задача | Когда брать | Цена |
@@ -31,6 +33,7 @@
 | cgltf | MIT | читать glTF из CC0-паков и MakeHuman в конвертере .mesh/.anim |
 | meshoptimizer | MIT | упрощение сеток для LOD, порядок вершин под кеш GPU |
 | stb_image | MIT / public domain | если появятся картинки-источники для .tex |
+| Pillow (FreeType) | HPND / FTL | tools/fontconv: TTF → атлас .font |
 
 ## Рассмотрены и не нужны
 
