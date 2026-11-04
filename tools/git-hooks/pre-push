@@ -1,0 +1,29 @@
+#!/bin/sh
+# Пускает push только в ветку v2 и только вперёд (без force и удаления).
+# Подключение: git config core.hooksPath tools/git-hooks
+# Ветку можно сменить: git config anathemyre.branch <ветка>
+allowed=$(git config --get anathemyre.branch)
+[ -n "$allowed" ] || allowed=claude/project-thread-vwjaxp
+zero=0000000000000000000000000000000000000000
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    if [ "$remote_ref" != "refs/heads/$allowed" ]; then
+        echo "pre-push: push в $remote_ref запрещён, можно только в $allowed" >&2
+        exit 1
+    fi
+    if [ "$local_sha" = "$zero" ]; then
+        echo "pre-push: удалять ветку нельзя" >&2
+        exit 1
+    fi
+    if [ "$remote_sha" != "$zero" ]; then
+        if ! git cat-file -e "$remote_sha" 2>/dev/null; then
+            echo "pre-push: на сервере есть новые коммиты, сначала git pull --ff-only" >&2
+            exit 1
+        fi
+        if ! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
+            echo "pre-push: это переписывание истории (force), запрещено" >&2
+            exit 1
+        fi
+    fi
+done
+exit 0

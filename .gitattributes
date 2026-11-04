@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.mesh binary
+*.skel binary
+*.anim binary
+*.spv binary
+*.font binary
+*.png binary
+*.jpg binary

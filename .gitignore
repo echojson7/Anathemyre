@@ -1,0 +1,7 @@
+build/
+*.o
+*.d
+*.exe
+*.spv.tmp
+/tools/**/__pycache__/
+/downloads/
