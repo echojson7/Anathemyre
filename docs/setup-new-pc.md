@@ -1,6 +1,6 @@
 # Новый компьютер: клон, ветка, доступ на push, зависимости
 
-Ветка v2: `claude/project-thread-vwjaxp`. Репозиторий: `github.com/echojson7/Anathemyre` (приватный).
+Ветка v2: `claude/project-v2`. Репозиторий: `github.com/echojson7/Anathemyre` (приватный).
 
 Схема: на Windows всё делается внутри WSL2 (Ubuntu). Там живут git, ключ, сборка и нейросеть. Игра
 собирается как Windows `.exe` (MinGW) и запускается из WSL на обычном драйвере видеокарты.
@@ -22,7 +22,7 @@ PowerShell от администратора:
         glslang-tools spirv-tools libasound2-dev \
         mingw-w64 python3 python3-numpy xvfb curl
 
-Что зачем: `build-essential`/`clang` — компиляторы и make; `mingw-w64` — сборка Windows `.exe`; `libx11-dev`,
+Что зачем: `build-essential`/`clang` — компиляторы и make; `mingw-w64` — запасная сборка Windows `.exe` (основная — llvm-mingw закреплённой версии, его скачивает `tools/run.sh` на этапе 0); `libx11-dev`,
 `libvulkan*`, `libasound2-dev` — Linux-версия; `glslang-tools`, `spirv-tools` — шейдеры в SPIR-V и проверка;
 `mesa-vulkan-drivers` + `xvfb` — запуск и кадры без окна (lavapipe); `python3-numpy` — конвертер людей.
 Позже для ретаргета захвата движения понадобится Blender 4.x (`sudo apt install -y blender` или с blender.org).
@@ -57,7 +57,7 @@ Repository access: Only select repositories → Anathemyre, Permissions → Cont
     cd ~
     git clone git@github.com:echojson7/Anathemyre.git anathemyre-v2
     cd anathemyre-v2
-    git checkout claude/project-thread-vwjaxp
+    git checkout claude/project-v2
 
 Клонировать в домашнюю папку Linux (`~`), а не в `/mnt/c/...`: там медленно и ломаются права и концы строк.
 
@@ -67,7 +67,7 @@ Repository access: Only select repositories → Anathemyre, Permissions → Cont
     git config user.email "86934594+echojson7@users.noreply.github.com"
     git config pull.ff only
     git config core.hooksPath tools/git-hooks
-    git config anathemyre.branch claude/project-thread-vwjaxp
+    git config anathemyre.branch claude/project-v2
 
 `core.hooksPath` включает хук `tools/git-hooks/pre-push`: он пускает push только в ветку v2, без force и
 удаления веток. Это защита от ошибки нейросети, а не от злого умысла: хук можно обойти `--no-verify`, и

@@ -6,7 +6,7 @@
 ## Папки
 
     Makefile
-    src/platform/  окно, ввод, время, звук, файлы: platform.h + platform_win32.c / platform_linux.c
+    src/platform/  окно, ввод, время, звук, файлы: platform.h, реализация на SDL3 (platform_sdl.cpp)
     src/core/      арены и пулы, RNG, математика, журнал, замер времени, сериализация
     src/asset/     чтение наших форматов: .mesh .skel .anim .spv .font (только чтение готового)
     src/render/    Vulkan: устройство, кадр, скиннинг, пост-обработка (пиксель, зерно, туман)
@@ -17,7 +17,8 @@
     src/debug/     тестовые сцены, стенды, замеры, отладочное меню (без неё — NODEBUG=1)
     src/app/       main, цикл, сборка мира, режимы запуска (--bench, --shot, --replay)
     data/          готовые ассеты в наших форматах и описания (свой текстовый формат)
-    tools/         конвертеры (humanconv, retarget, animconv, fontconv, vkgen, spv), run.sh, git-hooks
+    tools/         конвертеры (humanconv, retarget, animconv, meshconv, fontconv, spv), run.sh, git-hooks
+    third_party/   SDL3, Vulkan-Headers, volk, VMA, vk-bootstrap, QOA (+ Tracy, ImGui для отладки) с версиями
     docs/          что есть в игре и почему так
 
 ## Кто кого может включать
