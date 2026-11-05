@@ -20,11 +20,14 @@ PowerShell от администратора:
     sudo apt install -y build-essential clang git make pkg-config \
         libx11-dev libvulkan-dev libvulkan1 vulkan-tools mesa-vulkan-drivers \
         glslang-tools spirv-tools libasound2-dev \
-        mingw-w64 python3 python3-numpy xvfb curl
+        mingw-w64 python3 python3-numpy xvfb curl \
+        cmake ninja-build libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxkbcommon-dev
 
 Что зачем: `build-essential`/`clang` — компиляторы и make; `mingw-w64` — запасная сборка Windows `.exe` (основная — llvm-mingw закреплённой версии, его скачивает `tools/run.sh` на этапе 0); `libx11-dev`,
 `libvulkan*`, `libasound2-dev` — Linux-версия; `glslang-tools`, `spirv-tools` — шейдеры в SPIR-V и проверка;
-`mesa-vulkan-drivers` + `xvfb` — запуск и кадры без окна (lavapipe); `python3-numpy` — конвертер людей.
+`mesa-vulkan-drivers` + `xvfb` — запуск и кадры без окна (lavapipe); `python3-numpy` — конвертер людей;
+`cmake`, `ninja-build` и заголовки X11 — только для сборки SDL3 (`tools/third_party.sh`). Компилятор игры —
+не `clang` из apt, а закреплённый LLVM и llvm-mingw одной версии, их скачивает `tools/run.sh` (`docs/stack.md`).
 Позже для ретаргета захвата движения понадобится Blender 4.x (`sudo apt install -y blender` или с blender.org).
 Кода пока нет, так что сборка начнётся с этапа 0 — пакеты ставятся заранее.
 
