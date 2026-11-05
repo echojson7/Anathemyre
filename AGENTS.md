@@ -1,7 +1,9 @@
 # Anathemyre v2 — правила для нейросети
 
 Этот файл читает любая нейросеть, которая работает в репозитории (Codex, Cursor, Claude Code, Gemini и т.п.).
-Читай его первым, потом `docs/invariants.md`, потом `docs/roadmap.md` (где мы сейчас). Остальное — по мере надобности.
+Читай его первым, потом `docs/invariants.md`, потом `docs/roadmap.md` (где мы сейчас). Остальное — по мере надобности:
+стек `docs/stack.md`, устройство симуляции `docs/architecture.md`, отрисовка `docs/render.md`, решения
+`docs/decisions.md`, облик игры `docs/vision.md`, склад беты `docs/legacy.md`, новый компьютер `docs/setup-new-pc.md`.
 
 ## Что это за ветка
 Чистый старт игры Anathemyre на более высоком уровне качества. Старый проект (ветка `stage0/test-room`) — **склад
