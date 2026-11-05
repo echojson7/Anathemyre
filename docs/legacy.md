@@ -9,13 +9,12 @@
 ## Брать (с проверкой и уборкой при переносе)
 | Что | Где в складе | Зачем в v2 |
 |---|---|---|
-| Окно и ввод Win32 / X11 | `src/platform/platform_win32.c`, `platform_linux.c`, `platform.h` | этап 0 |
-| Звук Win32 / ALSA | `src/platform/audio_*.c` | позже |
-| Сборка Windows из WSL, запуск | `Makefile`, `tools/run.sh` | этап 0 |
-| Свой `vk.h` из `vk.xml` | `tools/vkgen/` | этап 0 |
+| Набор функций `platform.h` (что игре нужно от окна, ввода, времени) | `src/platform/platform.h` | этап 0, реализация теперь на SDL3 |
+| Сборка Windows из WSL, запуск | `Makefile`, `tools/run.sh` | этап 0, компилятор теперь llvm-mingw |
+| Синтез звуков | `src/audio/synth.c`, `music.c` | позже, вывод через SDL3 |
 | Шейдеры в SPIR-V и сверка | `tools/spv/` | этап 0 |
 | Vulkan-бэкенд | `src/render/rb_vk.c`, `rb.c`, `rb_backend.h` | этапы 0–1, как образец, не целиком |
-| Арены, RNG, журнал, замер, сериализация, сетка, jobs | `src/core/*` | этап 0 |
+| Арены, RNG, журнал, замер, сериализация, сетка, jobs | `src/core/*` | этап 0, переписать на C++ без STL |
 | Формат `.mesh` и чтение | `src/core/mesh.c/.h` | этап 1 |
 | Люди MakeHuman, 5 LOD, морфы, причёски | `tools/humanconv/` (`fetch.sh`, `humanconv.py`) | этап 1, скелет меняется |
 | Пиксельность и стиль кадра | `data/shaders/pixel.glsl`, `style.frag`, `docs/pixels.md` | после этапа 1 |
@@ -23,6 +22,14 @@
 | Реестр людей SoA с поколениями | `src/sim/persons.c/.h`, `docs/people.md` | этап 1–4, как образец |
 | Проверка слоёв в CI | `tools/layers.sh`, `docs/code.md` | этап 0 |
 | CI | `.github/workflows/build.yml` | этап 0, урезанный |
+
+## Не переносим (заменено стеком v2)
+Своё окно Win32/X11 и звук winmm/ALSA (теперь SDL3), свой генератор `vk.h` (`tools/vkgen`, теперь Vulkan-Headers
++ volk), выделение видеопамяти вручную (теперь VMA), порядок отрисовки по адресу `GpuMesh` (теперь явный ключ).
+
+## Решения склада — справка
+Решения старого проекта (его CLAUDE.md, docs, заметки) для v2 не обязательны. Цели вроде «3500–4000 к/с в
+тестовой сцене», «минимум GTX 970» и «чистый C» сняты. Что нужно, переносится строкой в `docs/decisions.md`.
 
 ## Не повторять
 - Позы и клипы формулами (`src/sim/anim.c`, `anim_keys.*`, `tools/animbake/keys.c`): результат любительский.
