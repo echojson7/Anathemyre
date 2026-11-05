@@ -22,7 +22,7 @@ PowerShell от администратора:
         glslang-tools spirv-tools libasound2-dev \
         mingw-w64 python3 python3-numpy xvfb curl
 
-Что зачем: `build-essential`/`clang` — компиляторы и make; `mingw-w64` — сборка Windows `.exe`; `libx11-dev`,
+Что зачем: `build-essential`/`clang` — компиляторы и make; `mingw-w64` — запасная сборка Windows `.exe` (основная — llvm-mingw закреплённой версии, его скачивает `tools/run.sh` на этапе 0); `libx11-dev`,
 `libvulkan*`, `libasound2-dev` — Linux-версия; `glslang-tools`, `spirv-tools` — шейдеры в SPIR-V и проверка;
 `mesa-vulkan-drivers` + `xvfb` — запуск и кадры без окна (lavapipe); `python3-numpy` — конвертер людей.
 Позже для ретаргета захвата движения понадобится Blender 4.x (`sudo apt install -y blender` или с blender.org).

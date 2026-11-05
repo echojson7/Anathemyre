@@ -6,7 +6,7 @@
 ## Папки
 
     Makefile
-    src/platform/  окно, ввод, время, звук, файлы: platform.h + platform_win32.c / platform_linux.c
+    src/platform/  окно, ввод, время, звук, файлы: platform.h, реализация на SDL3 (platform_sdl.cpp)
     src/core/      арены и пулы, RNG, математика, журнал, замер времени, сериализация
     src/asset/     чтение наших форматов: .mesh .skel .anim .spv .font (только чтение готового)
     src/render/    Vulkan: устройство, кадр, скиннинг, пост-обработка (пиксель, зерно, туман)
