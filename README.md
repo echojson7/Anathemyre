@@ -3,7 +3,8 @@
 Anathemyre («Анатемайр») — open-world sandbox на C++20 без движка. Устройство мира в духе Kenshi, картинка
 в духе Peripeteia, бой с прицелом на уровень Dragon's Dogma 2. Сеттинг, фракции и контент свои.
 
-Это ветка чистого старта. Кода пока нет: сначала договорённости, потом этап 0.
+Это ветка чистого старта. Запуск: `./tools/run.sh` (`docs/build.md`). Сейчас в игре каркас этапа 0: окно Vulkan,
+шаг мира с повтором бит в бит (`docs/sim.md`).
 
 | Файл | О чём |
 |---|---|
@@ -16,3 +17,5 @@ Anathemyre («Анатемайр») — open-world sandbox на C++20 без д�
 | [docs/decisions.md](docs/decisions.md) | журнал решений одной строкой |
 | [docs/legacy.md](docs/legacy.md) | что брать со склада (`stage0/test-room`) и чего не повторять |
 | [docs/setup-new-pc.md](docs/setup-new-pc.md) | новый компьютер: клон, ветка, доступ на push, зависимости |
+| [docs/build.md](docs/build.md) | сборка, компиляторы, сторонние библиотеки, CI |
+| [docs/sim.md](docs/sim.md) | хребет симуляции: таблицы, шаг, выписка, хеш, `--sim`, `--replay`, формат записи |

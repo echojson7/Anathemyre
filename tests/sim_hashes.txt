@@ -1,0 +1,13 @@
+# anathemyre --sim: хеш мира каждые 1000 шагов
+sim_version 1
+seed 1
+step 1000 518347d4e92111c0
+step 2000 cf80c8ddb5f13767
+step 3000 0a3689b0421e96fb
+step 4000 bd1b0dc0396ee392
+step 5000 6f3ccbc724ad5db1
+step 6000 8104f04f2ab7368d
+step 7000 e18f61c6c148f629
+step 8000 19df53f60afc4518
+step 9000 7f0f20b1c26c8542
+step 10000 64a36ba41a256696

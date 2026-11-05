@@ -21,7 +21,8 @@ PowerShell от администратора:
         libx11-dev libvulkan-dev libvulkan1 vulkan-tools mesa-vulkan-drivers \
         glslang-tools spirv-tools libasound2-dev \
         mingw-w64 python3 python3-numpy xvfb curl \
-        cmake ninja-build libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxkbcommon-dev
+        cmake ninja-build libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxkbcommon-dev \
+        libxfixes-dev libpulse-dev vulkan-validationlayers
 
 Что зачем: `build-essential`/`clang` — компиляторы и make; `mingw-w64` — запасная сборка Windows `.exe` (основная — llvm-mingw закреплённой версии, его скачивает `tools/run.sh` на этапе 0); `libx11-dev`,
 `libvulkan*`, `libasound2-dev` — Linux-версия; `glslang-tools`, `spirv-tools` — шейдеры в SPIR-V и проверка;
@@ -29,7 +30,9 @@ PowerShell от администратора:
 `cmake`, `ninja-build` и заголовки X11 — только для сборки SDL3 (`tools/third_party.sh`). Компилятор игры —
 не `clang` из apt, а закреплённый LLVM и llvm-mingw одной версии, их скачивает `tools/run.sh` (`docs/stack.md`).
 Позже для ретаргета захвата движения понадобится Blender 4.x (`sudo apt install -y blender` или с blender.org).
-Кода пока нет, так что сборка начнётся с этапа 0 — пакеты ставятся заранее.
+`vulkan-validationlayers` — слои проверки Vulkan для отладочной сборки и `--validation`. По желанию `wine64` —
+быстро проверить Windows `.exe` из Linux (`docs/build.md`). Первый `./tools/run.sh` сам скачает компилятор и
+соберёт SDL3: несколько минут, дальше — секунды.
 
 ## 3. Ключ для push (deploy key — доступ только к этому репозиторию)
 

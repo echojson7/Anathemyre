@@ -5,3 +5,5 @@ build/
 *.spv.tmp
 /tools/**/__pycache__/
 /downloads/
+compile_commands.json
+*.rec
