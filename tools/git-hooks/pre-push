@@ -3,7 +3,7 @@
 # Подключение: git config core.hooksPath tools/git-hooks
 # Ветку можно сменить: git config anathemyre.branch <ветка>
 allowed=$(git config --get anathemyre.branch)
-[ -n "$allowed" ] || allowed=claude/project-thread-vwjaxp
+[ -n "$allowed" ] || allowed=claude/project-v2
 zero=0000000000000000000000000000000000000000
 
 while read -r local_ref local_sha remote_ref remote_sha; do

@@ -115,6 +115,6 @@ visibility buffer при готовых швах — это замена дву�
 - Шрифт интерфейса: IBM Plex Sans (SIL OFL), конвертер `tools/fontconv` из склада.
 
 ## Инструменты разработки
-- git + GitHub (`echojson7/Anathemyre`), ветка v2 — `claude/project-thread-vwjaxp`.
+- git + GitHub (`echojson7/Anathemyre`), ветка v2 — `claude/project-v2`.
 - Python 3 + numpy для конвертеров, Blender 4.x для ретаргета, Xvfb + lavapipe для кадров без окна.
 - `tools/run.sh`: `git pull`, сборка, запуск. Пользователь запускает только его.
