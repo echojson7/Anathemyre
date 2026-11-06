@@ -1,5 +1,5 @@
 # CI v2 (docs/build.md): сборки обеих целей без предупреждений, запреты и слои, эталонные хеши --sim,
-# повтор записи Linux на настоящем Windows, окно под lavapipe со слоями проверки Vulkan
+# повтор записи Linux на настоящем Windows; окно под lavapipe со слоями проверки Vulkan — своей работой параллельно
 name: ci
 on:
   push:
@@ -60,20 +60,6 @@ jobs:
         run: |
           build/linux-release/anathemyre --sim 10000 --seed 1 --record linux.rec
           build/linux-debug/anathemyre --replay linux.rec
-      - name: Окно под lavapipe, слои проверки Vulkan, кадр сцены
-        env:
-          LSAN_OPTIONS: suppressions=${{ github.workspace }}/tools/lsan.supp
-        run: |
-          set -o pipefail  # иначе код выхода игры теряется за tail
-          . tools/versions.sh
-          export ASAN_SYMBOLIZER_PATH=~/.cache/anathemyre/llvm-$LLVM_VER/bin/llvm-symbolizer  # иначе подавления не видят имён функций
-          xvfb-run -a -s "-screen 0 1280x720x24" build/linux-debug/anathemyre --frames 300 --validation 2>&1 | tail -40
-          xvfb-run -a -s "-screen 0 1280x720x24" build/linux-release/anathemyre --frames 300 --validation --shot frame.bmp | tail -5
-      - uses: actions/upload-artifact@v4
-        with:
-          name: frame
-          path: frame.bmp
-          retention-days: 7
       - name: Для Windows-раннера
         run: |
           mkdir -p win
@@ -83,6 +69,50 @@ jobs:
         with:
           name: windows-exe
           path: win/
+          retention-days: 7
+
+  # Окно — отдельно и параллельно сборкам: lavapipe рисует ландшафт ~1 с на кадр, это самый долгий шаг
+  window:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Пакеты
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build glslang-tools spirv-tools \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev \
+            libxkbcommon-dev libasound2-dev libpulse-dev mesa-vulkan-drivers vulkan-validationlayers xvfb
+      - name: Кеш компиляторов и SDL3
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/anathemyre
+            build/third_party
+          key: tc-window-${{ runner.os }}-${{ hashFiles('tools/versions.sh', 'tools/toolchain.sh', 'tools/third_party.sh') }}
+      - name: Компиляторы и SDL3
+        run: |
+          make toolchain third_party TARGET=linux
+      - name: Сборки релиз и отладка
+        run: |
+          J=$(nproc)
+          make -s -j$J WERROR=1
+          make -s -j$J WERROR=1 MODE=debug
+      - name: Окно под lavapipe, слои проверки Vulkan, кадр сцены
+        env:
+          LSAN_OPTIONS: suppressions=${{ github.workspace }}/tools/lsan.supp
+        run: |
+          set -o pipefail  # иначе код выхода игры теряется за tail
+          . tools/versions.sh
+          export ASAN_SYMBOLIZER_PATH=~/.cache/anathemyre/llvm-$LLVM_VER/bin/llvm-symbolizer  # иначе подавления не видят имён функций
+          # ASan + слои проверки: ошибки Vulkan видны с первых кадров, малое окно — lavapipe считает пиксели
+          xvfb-run -a -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation --window 640 360 2>&1 | tail -40
+          # снимок в полный размер для глаза
+          xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 10 --validation --shot frame.bmp | tail -5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frame
+          path: frame.bmp
           retention-days: 7
 
   # Повтор Windows — на настоящем Windows (Wine не проверяет настоящий CRT), GPU не нужен

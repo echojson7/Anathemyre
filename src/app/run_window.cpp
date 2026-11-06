@@ -26,7 +26,7 @@ struct TimeCtl {
 };
 
 int run_window(const Args &a, AppMemory &m) {
-    if (!platform_window_open("Anathemyre", 1600, 900)) return 1;
+    if (!platform_window_open("Anathemyre", (i32)a.win_w, (i32)a.win_h)) return 1;
     RenderConfig rc;
     rc.vsync = a.vsync;
     rc.validation = a.validation;

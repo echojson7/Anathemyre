@@ -13,6 +13,7 @@ struct Args {
     const char *replay = nullptr;   // --replay файл.rec
     const char *hashes = nullptr;   // --hashes файл.txt: хеш каждые 1000 шагов
     u64 frames = 0;             // --frames N: окно закрывается после N кадров (CI)
+    u64 win_w = 1600, win_h = 900;  // --window W H: размер окна (CI берёт меньше: lavapipe считает пиксели)
     bool vsync = true;
     bool validation = false;
     const char *shot = nullptr;     // --shot файл.bmp: снимок последнего кадра (с --frames)
