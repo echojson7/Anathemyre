@@ -20,8 +20,10 @@ layout(buffer_reference, scalar) readonly buffer Materials { Material v[]; };
 layout(buffer_reference, scalar) readonly buffer Lines { LineVtx v[]; };
 layout(buffer_reference, scalar) readonly buffer Points { PointVtx v[]; };
 layout(buffer_reference, scalar) readonly buffer Words { uint v[]; };
+layout(buffer_reference, scalar) buffer Vec4s { vec4 v[]; };  // таблицы неба (пишут sky_*.comp)
 
-layout(buffer_reference, scalar) readonly buffer FrameData {
+// Не readonly: через него compute-шейдеры неба пишут свои таблицы (sky_*), сам буфер кадра никто не пишет
+layout(buffer_reference, scalar) buffer FrameData {
     Vertices vertices;
     Instances instances;
     Materials materials;
@@ -37,7 +39,7 @@ layout(buffer_reference, scalar) readonly buffer FrameData {
     float proj_x, proj_y, near_m, pixel_angle;
     float cell_min, cell_pixels;
     uint pixel, pad1;
-    vec4 sun_dir, sun_color, sky_color;
+    vec4 sun_dir, sun_color;  // временный свет: главный источник (солнце или луна) и его цвет у камеры
     vec2 viewport, ndc_per_pixel;
     // Земля: как Terrain в src/sim/terrain.h
     int t_chunk0, t_size, t_n, t_nm;
@@ -49,8 +51,23 @@ layout(buffer_reference, scalar) readonly buffer FrameData {
     int clip_n, clip_levels, clip_morph, clip_pad;
     ivec4 clip[12];
     uint ground_layers[8];  // материалы слоёв: песок, сухая земля, щебень, камень, трава, вода
-    vec4 fog;             // временная дымка: цвет (линейный) и 1/расстояние
     int t_mip[8];         // начало уровня k сглаженной сетки высот (шаг 8·2^k м) в буфере высот, номера u16
+    // Небо и дымка (docs/sky.md): таблицы неба и параметры атмосферы (SkyGpu в src/render/vk_state.h)
+    Vec4s sky_trans, sky_ms, sky_sun, sky_moon, sky_out;
+    vec4 a_sun;        // xyz — к солнцу, w — освещённость от солнца над атмосферой
+    vec4 a_moon;       // xyz — к луне, w — освещённость от луны над атмосферой
+    vec4 a_sun_t;      // rgb — пропускание атмосферы к солнцу от камеры, w — угловой радиус солнца
+    vec4 a_moon_t;     // rgb — пропускание к луне, w — угловой радиус луны
+    vec4 a_rayleigh;   // rgb — рассеяние 1/м на уровне моря, w — высота слоя, м
+    vec4 a_mie;        // rgb — рассеяние пыли высокого слоя, w — высота слоя
+    vec4 a_mie_abs;    // rgb — поглощение пыли, w — g фазовой функции (вперёд)
+    vec4 a_haze;       // rgb — рассеяние нижней дымки, w — высота слоя
+    vec4 a_haze_abs;   // rgb — поглощение дымки, w — высота нуля карты над уровнем моря, м
+    vec4 a_ozone;      // rgb — поглощение озона, w — альбедо луны
+    vec4 a_ground;     // rgb — альбедо планеты, w — ночное свечение неба (доля освещённости солнца)
+    vec4 a_star[3];    // строки поворота «вид → небесная сфера»; w у [0] — яркость звёзд
+    vec4 a_post;       // x — множитель экспозиции, y — степень привыкания глаза, z — освещённость «нормы», w — синева ночи
+    vec4 a_misc;       // x — множитель рассеянного света неба
 };
 
 layout(push_constant, scalar) uniform Push {

@@ -1,0 +1,52 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Многократное рассеяние (Hillaire 2020): для высоты и угла солнца — сколько света приходит после второго и
+// следующих рассеяний, при изотропной фазе. Ряд 1 + f + f² + … = 1 / (1 − f). Считается при смене параметров
+#include "atmosphere.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    if (id.x >= MS_N || id.y >= MS_N) return;
+    FrameData f = pc.frame;
+    float mu_s = float(id.x) / float(MS_N - 1) * 2.0 - 1.0;
+    float r = R_GROUND + max(float(id.y) / float(MS_N - 1) * (R_TOP - R_GROUND), 10.0);
+    vec3 sun = vec3(sqrt(max(1.0 - mu_s * mu_s, 0.0)), mu_s, 0.0);
+    const int DIRS = 64, N = 20;
+    vec3 L2 = vec3(0.0), fms = vec3(0.0);
+    for (int k = 0; k < DIRS; ++k) {
+        // Равномерно по сфере (спираль Фибоначчи)
+        float z = 1.0 - (float(k) + 0.5) / float(DIRS) * 2.0;
+        float ph = float(k) * 2.39996323;
+        float s = sqrt(1.0 - z * z);
+        vec3 dir = vec3(s * cos(ph), z, s * sin(ph));
+        float mu = dir.y;
+        bool ground = hits_ground(r, mu);
+        float len = ground ? ray_sphere(r, mu, R_GROUND) : ray_sphere(r, mu, R_TOP);
+        float dt = max(len, 0.0) / float(N);
+        vec3 T = vec3(1.0), Ls = vec3(0.0), Lf = vec3(0.0);
+        for (int i = 0; i < N; ++i) {
+            float t = (float(i) + 0.5) * dt;
+            vec3 p = vec3(0.0, r, 0.0) + dir * t;
+            float rr = length(p);
+            Medium m = atmo_medium(rr - R_GROUND);
+            vec3 sc = m.scat_r + m.scat_m + m.scat_h;
+            vec3 Ts = atmo_trans(rr, dot(p / rr, sun));
+            vec3 Tseg = exp(-m.ext * dt);
+            vec3 inv = 1.0 / max(m.ext, vec3(1e-12));
+            Ls += T * (sc * Ts / (4.0 * A_PI) - sc * Ts / (4.0 * A_PI) * Tseg) * inv;
+            Lf += T * (sc - sc * Tseg) * inv;
+            T *= Tseg;
+        }
+        if (ground) {
+            vec3 p = vec3(0.0, r, 0.0) + dir * len;
+            vec3 up = normalize(p);
+            float mus = dot(up, sun);
+            Ls += T * atmo_trans(length(p), mus) * max(mus, 0.0) * f.a_ground.rgb / A_PI;
+        }
+        L2 += Ls / float(DIRS);
+        fms += Lf / float(DIRS);
+    }
+    vec3 psi = L2 / max(1.0 - fms, vec3(1e-3));
+    f.sky_ms.v[id.y * MS_N + id.x] = vec4(psi, 1.0);
+}

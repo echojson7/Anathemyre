@@ -159,7 +159,6 @@ void vk_terrain_fill(FrameGpu &g, const RenderFrame &f) {
     g.clip_levels = CLIP_LEVELS;
     g.clip_morph = CLIP_MORPH;
     for (u32 k = 0; k < 8; ++k) g.ground_layers[k] = k < RENDER_GROUND_LAYERS ? f.ground_layers[k] : 0;
-    for (u32 k = 0; k < 4; ++k) g.fog[k] = f.fog[k];
     if (!t.on) return;
     // Камера в полуметрах от угла карты. Начало кольца — на решётке следующего кольца (шаг 2·2^L),
     // тогда край кольца ложится на вершины следующего, а дыра следующего сдвинута на n/2 или n/2+1

@@ -1,0 +1,48 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Вид неба от камеры для светила единичной освещённости (docs/sky.md): rgb — рассеянный свет, a — среднее
+// пропускание вдоль луча (им atmo_fog() делит дымку отрезка). pc.a: 0 — солнце, 1 — луна. Каждый кадр
+#include "atmosphere.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    FrameData f = pc.frame;
+    bool moon = pc.a != 0u;
+    int W = moon ? MOON_W : SKY_W, H = moon ? MOON_H : SKY_H;
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    if (id.x >= W || id.y >= H) return;
+    vec3 light = moon ? f.a_moon.xyz : f.a_sun.xyz;
+    float alt = atmo_cam_alt();
+    vec3 dir = sky_dir((vec2(id) + 0.5) / vec2(W, H), alt);
+    // Светило в той же плоскости: азимут 0, высота — как у настоящего
+    vec3 l = vec3(length(light.xz), light.y, 0.0);
+    float r = R_GROUND + alt;
+    float mu = dir.y;
+    bool ground = hits_ground(r, mu);
+    float len = ground ? ray_sphere(r, mu, R_GROUND) : ray_sphere(r, mu, R_TOP);
+    len = max(len, 0.0);
+    float c = dot(dir, l);
+    float pr = phase_rayleigh(c), pm = phase_mie(c, f.a_mie_abs.w);
+    const int N = 32;
+    vec3 T = vec3(1.0), L = vec3(0.0);
+    float t0 = 0.0;
+    for (int i = 0; i < N; ++i) {
+        // Шаги сгущаются у камеры: дымка нижнего слоя — первые километры
+        float x1 = (float(i) + 1.0) / float(N);
+        float t1 = len * x1 * x1;
+        float dt = t1 - t0;
+        float t = 0.5 * (t0 + t1);
+        t0 = t1;
+        vec3 p = vec3(0.0, r, 0.0) + dir * t;
+        float rr = length(p);
+        Medium m = atmo_medium(rr - R_GROUND);
+        float mus = dot(p / rr, l);
+        vec3 Ts = atmo_trans(rr, mus);
+        vec3 S = (m.scat_r * pr + (m.scat_m + m.scat_h) * pm) * Ts + (m.scat_r + m.scat_m + m.scat_h) * atmo_ms(rr, mus);
+        vec3 Tseg = exp(-m.ext * dt);
+        L += T * (S - S * Tseg) / max(m.ext, vec3(1e-12));
+        T *= Tseg;
+    }
+    Vec4s o = moon ? f.sky_moon : f.sky_sun;
+    o.v[id.y * W + id.x] = vec4(L, dot(T, vec3(1.0 / 3.0)));
+}

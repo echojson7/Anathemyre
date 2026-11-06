@@ -6,6 +6,9 @@ void world_init(World &w, Arena &arena, u64 seed, const TerrainDesc &terrain, Ar
     w = World{};
     terrain_generate(w.terrain, terrain, arena, scratch);
     rng_seed(w.rng, seed, 0xA11CEull);
+    w.clock.day_ticks = CLOCK_DAY_TICKS_DEFAULT;
+    w.clock.tick = (u64)CLOCK_DAY_TICKS_DEFAULT * 7 / 24;  // 7:00, сцена может задать своё
+    w.clock.rate = 1;
     Dots &d = w.dots;
     d.gen = arena_push<u16>(arena, DOTS_CAPACITY);
     d.alive = arena_push<u8>(arena, DOTS_CAPACITY);
@@ -106,6 +109,9 @@ u32 world_columns(const World &w, Column *out) {
     const u32 n = DOTS_CAPACITY;
     u32 k = 0;
     out[k++] = {"world.step", &w.step, sizeof w.step};
+    out[k++] = {"world.clock.tick", &w.clock.tick, sizeof w.clock.tick};
+    out[k++] = {"world.clock.day_ticks", &w.clock.day_ticks, sizeof w.clock.day_ticks};
+    out[k++] = {"world.clock.rate", &w.clock.rate, sizeof w.clock.rate};
     out[k++] = {"world.rng.state", &w.rng.state, sizeof w.rng.state};
     out[k++] = {"world.rng.inc", &w.rng.inc, sizeof w.rng.inc};
     out[k++] = {"world.attract_on", &w.attract_on, sizeof w.attract_on};

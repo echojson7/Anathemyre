@@ -26,6 +26,7 @@ void sim_extract(const World &w, Extract &e) {
     const Dots &d = w.dots;
     e.terrain = &w.terrain;
     e.step = w.step;
+    e.clock = w.clock;
     for (u32 i = 0; i < DOTS_CAPACITY; ++i) e.gen[i] = d.alive[i] ? d.gen[i] : 0;
     memcpy(e.cx, d.cx, DOTS_CAPACITY * sizeof *e.cx);
     memcpy(e.cz, d.cz, DOTS_CAPACITY * sizeof *e.cz);

@@ -9,7 +9,11 @@
 struct DebugState {
     bool step_once = false;   // «.» на паузе — один шаг
     bool lines = true;        // L — отладочные отрезки
+    i32 clock_hours = 0;      // [ ] — часы назад и вперёд на час (за этот кадр)
+    bool clock_speed = false; // T — следующая скорость суток (за этот кадр)
 };
+// Скорости суток по T: тиков часов за шаг (1 — обычный ход: сутки за 48 минут; 60 — за 48 секунд)
+constexpr u32 CLOCK_SPEEDS[] = {1, 20, 120, 0};
 
 #ifndef ANA_NODEBUG
 // Клавиши отладки за кадр

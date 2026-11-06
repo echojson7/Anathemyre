@@ -1,0 +1,22 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Таблица пропускания атмосферы (r, mu) → до верха атмосферы (docs/sky.md). Считается при смене параметров
+#include "atmosphere.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    if (id.x >= TRANS_W || id.y >= TRANS_H) return;
+    float r, mu;
+    trans_inv(vec2(id) / vec2(TRANS_W - 1, TRANS_H - 1), r, mu);
+    float len = ray_sphere(r, mu, R_TOP);
+    const int N = 40;
+    vec3 tau = vec3(0.0);
+    float dt = max(len, 0.0) / float(N);
+    for (int i = 0; i < N; ++i) {
+        float t = (float(i) + 0.5) * dt;
+        float h = sqrt(r * r + t * t + 2.0 * r * mu * t) - R_GROUND;
+        tau += atmo_medium(h).ext * dt;
+    }
+    pc.frame.sky_trans.v[id.y * TRANS_W + id.x] = vec4(exp(-tau), 1.0);
+}
