@@ -1,0 +1,73 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Свет всего неба на плоскость (docs/sky.md): таблицы вида неба солнца и луны → сферические гармоники
+// первого порядка, плюс отсвет земли снизу и ночное свечение. И экспозиция кадра по этой освещённости.
+// sky_out: [0] — постоянная часть, [1..3] — по x, y, z (atmo_ambient), [4] — x экспозиция, y освещённость
+#include "atmosphere.glsl"
+layout(local_size_x = 256) in;
+
+shared vec3 s_acc[256][4];
+
+// Тексель таблицы → вклад в гармоники. В таблице азимут 0..π, вторая половина неба — зеркальная: боковые
+// составляющие направления сокращаются, остальное удваивается
+void add_lut(Vec4s b, int W, int H, int k, vec3 light, float E, float alt, inout vec3 acc[4]) {
+    int x = k % W, y = k / W;
+    vec2 uv = (vec2(x, y) + 0.5) / vec2(W, H);
+    vec3 d = sky_dir(uv, alt);
+    float e0 = asin(sky_dir(vec2(uv.x, float(y) / float(H)), alt).y);
+    float e1 = asin(sky_dir(vec2(uv.x, float(y + 1) / float(H)), alt).y);
+    float dw = 2.0 * cos(asin(d.y)) * (A_PI / float(W)) * abs(e1 - e0);
+    vec4 v = b.v[k];
+    vec3 L = v.rgb * E * pc.frame.a_misc.x;
+    if (d.y < atmo_horizon(alt) + 1e-4) {
+        // Луч в землю: к рассеянному свету — земля в тени неба, освещённая светилами
+        FrameData f = pc.frame;
+        vec3 eg = f.a_sun.w * f.a_sun_t.rgb * max(f.a_sun.y, 0.0) + f.a_moon.w * f.a_moon_t.rgb * max(f.a_moon.y, 0.0);
+        L += v.a * f.a_ground.rgb / A_PI * eg * 0.5;
+    }
+    vec2 lh = normalize(light.xz + vec2(1e-6, 0.0));
+    vec3 wd = vec3(lh.x * d.x, d.y, lh.y * d.x);  // в осях мира, боковая часть (d.z) сокращается
+    acc[0] += L * dw;
+    acc[1] += L * dw * wd.x;
+    acc[2] += L * dw * wd.y;
+    acc[3] += L * dw * wd.z;
+}
+
+void main() {
+    FrameData f = pc.frame;
+    uint t = gl_LocalInvocationID.x;
+    float alt = atmo_cam_alt();
+    vec3 acc[4] = vec3[4](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0));
+    for (int k = int(t); k < SKY_W * SKY_H; k += 256) add_lut(f.sky_sun, SKY_W, SKY_H, k, f.a_sun.xyz, f.a_sun.w, alt, acc);
+    for (int k = int(t); k < MOON_W * MOON_H; k += 256)
+        add_lut(f.sky_moon, MOON_W, MOON_H, k, f.a_moon.xyz, f.a_moon.w, alt, acc);
+    for (int i = 0; i < 4; ++i) s_acc[t][i] = acc[i];
+    barrier();
+    for (uint s = 128u; s > 0u; s >>= 1) {
+        if (t < s)
+            for (int i = 0; i < 4; ++i) s_acc[t][i] += s_acc[t + s][i];
+        barrier();
+    }
+    if (t != 0u) return;
+    // Гармоники → освещённость: E(n) = π·Y00·c0 + 2π/3·Y1·c1·n; делим на π — яркость белой поверхности
+    const float Y0 = 0.282095, Y1 = 0.488603;
+    vec3 c0 = s_acc[0][0] * Y0;
+    vec3 a = c0 * Y0;  // π·Y0·c0 / π
+    vec3 bx = s_acc[0][1] * Y1 * Y1 * (2.0 / 3.0);
+    vec3 by = s_acc[0][2] * Y1 * Y1 * (2.0 / 3.0);
+    vec3 bz = s_acc[0][3] * Y1 * Y1 * (2.0 / 3.0);
+    // Ночное свечение неба — равномерно сверху
+    vec3 glow = vec3(0.55, 0.65, 1.0) * f.a_ground.w * f.a_sun.w;
+    a += glow * 0.5;
+    by += glow * 0.5;
+    f.sky_out.v[0] = vec4(a, 0.0);
+    f.sky_out.v[1] = vec4(bx, 0.0);
+    f.sky_out.v[2] = vec4(by, 0.0);
+    f.sky_out.v[3] = vec4(bz, 0.0);
+    // Экспозиция: глаз привыкает к освещённости горизонтальной земли (небо + главный свет), не полностью —
+    // ночь остаётся тёмной. Не по гистограмме кадра: одинаково при любом взгляде камеры
+    vec3 e_up = (a + by) * A_PI + f.sun_color.rgb * max(f.sun_dir.y, 0.0);
+    float lum = max(dot(e_up, vec3(0.2126, 0.7152, 0.0722)), 1e-12);
+    float ex = f.a_post.x * pow(f.a_post.z / lum, f.a_post.y);
+    f.sky_out.v[4] = vec4(ex, lum, 0.0, 0.0);
+}

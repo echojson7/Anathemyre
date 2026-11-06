@@ -9,7 +9,9 @@ static constexpr f32 DOTS_RESPAWN_RADIUS = 30.0f;
 static constexpr u32 ATTRACT_STEPS = 3 * SIM_HZ;
 static constexpr u32 BURST_COUNT = 40;
 
-// Читает: намерения шага. Пишет: attract_*, точки (BURST), rng
+static constexpr u64 CLOCK_RATE_MAX = 1u << 16;
+
+// Читает: намерения шага. Пишет: attract_*, точки (BURST), rng, clock
 static void step_intents(World &w, StepCtx &ctx) {
     for (const Intent &it : ctx.intents) {
         switch (it.kind) {
@@ -19,6 +21,8 @@ static void step_intents(World &w, StepCtx &ctx) {
             w.attract_until = w.step + ATTRACT_STEPS;
             break;
         case INTENT_RELEASE: w.attract_on = 0; break;
+        case INTENT_CLOCK_SET: w.clock.tick = clock_tick_at(w.clock, (u32)it.arg); break;
+        case INTENT_CLOCK_RATE: w.clock.rate = it.arg > CLOCK_RATE_MAX ? CLOCK_RATE_MAX : (u32)it.arg; break;
         case INTENT_BURST: {
             // Гибнут BURST_COUNT случайных живых, столько же рождается у цели
             u32 killed = 0;
@@ -87,6 +91,9 @@ static void step_dots_life(World &w, StepCtx &) {
     while (d.live < DOTS_TARGET && dots_spawn(w, origin, DOTS_RESPAWN_RADIUS)) {}
 }
 
+// Читает и пишет: clock.tick. Часы идут целыми тиками, без накопления float
+static void step_clock(World &w, StepCtx &) { w.clock.tick += w.clock.rate; }
+
 // Только отладочное рисование: курс первых точек и цель притяжения. Мир не меняет
 static void step_debug_draw(const World &w, StepCtx &ctx) {
     if (!ctx.dbg) return;
@@ -137,6 +144,7 @@ void sim_step(World &w, StepCtx &ctx) {
     step_dots_steer(w, ctx);
     step_dots_move(w, ctx);
     step_dots_life(w, ctx);
+    step_clock(w, ctx);
     w.step++;
     step_debug_draw(w, ctx);
     ANA_ASSERT(fpu_sim_ok());

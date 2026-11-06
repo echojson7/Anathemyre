@@ -119,6 +119,13 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
         if (!view.ground_layers[k]) log_warn("data/materials.txt: нет материала %s для слоя земли", layers[k]);
     }
 
+    // Небо (data/sky.txt): только кадр, в хеш описаний не входит
+    if (!read_data("sky.txt", m.world, &text, &size)) return false;
+    if (!sky_parse(view.sky, text, size, err, sizeof err)) {
+        log_error("data/sky.txt: %s", err);
+        return false;
+    }
+
     char dir[1024];
     snprintf(dir, sizeof dir, "%sdata/meshes", platform_exe_dir());
     MeshLoad L{&m, &mats, &view, 0};

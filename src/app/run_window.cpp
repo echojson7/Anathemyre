@@ -78,6 +78,11 @@ int run_window(const Args &a, AppMemory &m) {
     }
     TimeCtl tc;
     DebugState ds;
+    u32 clock_speed = 0;  // номер в CLOCK_SPEEDS
+    // Час дня → доля суток в оборотах (намерение часов)
+    auto hour_turn = [](f64 h) { return (u64)(u32)(u64)(h / 24.0 * 4294967296.0); };
+    if (a.hour_set) pending.push_back({0, INTENT_CLOCK_SET, WPos{}, hour_turn(a.hour)});
+    if (a.timelapse) pending.push_back({0, INTENT_CLOCK_RATE, WPos{}, 0});
     bool pixel = !a.nopixel;
     Input in{};
     TimeStat st_frame, st_step, st_cpu;
@@ -110,11 +115,30 @@ int run_window(const Args &a, AppMemory &m) {
         // Мышь → намерения игрока: левая — притянуть точки, с Ctrl — вспышка; R — отпустить
         WPos at;
         if (in.mouse_pressed[MOUSE_LEFT] && view_screen_to_ground(cam, ww, wh, in.mouse_x, in.mouse_y, w.terrain, at))
-            pending.push_back({0, in.key_down[KEY_CTRL] ? (u32)INTENT_BURST : (u32)INTENT_ATTRACT, at});
-        if (in.key_pressed[KEY_R]) pending.push_back({0, INTENT_RELEASE, WPos{}});
+            pending.push_back({0, in.key_down[KEY_CTRL] ? (u32)INTENT_BURST : (u32)INTENT_ATTRACT, at, 0});
+        if (in.key_pressed[KEY_R]) pending.push_back({0, INTENT_RELEASE, WPos{}, 0});
+        // Часы (отладка): [ ] — на час, T — скорость суток; через намерения, запись повтора их помнит
+        if (ds.clock_hours) {
+            f64 h = sky_hour(w.clock, (f64)w.clock.tick) + ds.clock_hours;
+            h -= 24.0 * (f64)(i64)(h / 24.0);
+            if (h < 0) h += 24.0;
+            pending.push_back({0, INTENT_CLOCK_SET, WPos{}, hour_turn(h)});
+        }
+        if (ds.clock_speed) {
+            clock_speed = (clock_speed + 1) % ANA_COUNTOF(CLOCK_SPEEDS);
+            pending.push_back({0, INTENT_CLOCK_RATE, WPos{}, CLOCK_SPEEDS[clock_speed]});
+        }
+        if (a.timelapse && a.frames > 1) {
+            f64 k = (f64)frames / (f64)(a.frames - 1);
+            f64 h = a.timelapse_hours[0] + (a.timelapse_hours[1] - a.timelapse_hours[0]) * k;
+            h -= 24.0 * (f64)(i64)(h / 24.0);
+            pending.push_back({0, INTENT_CLOCK_SET, WPos{}, hour_turn(h)});
+        }
 
         u32 nsteps = 0;
-        if (tc.paused) {
+        if (a.timelapse) {
+            nsteps = 1;  // кадр — один шаг: каждый кадр видит свой час
+        } else if (tc.paused) {
             if (ds.step_once) nsteps = 1;
             tc.acc = 0;
         } else {
@@ -153,13 +177,18 @@ int run_window(const Args &a, AppMemory &m) {
         // Замер CPU кадра: вид + запись команд, без шага мира и без ожидания GPU и показа (vsync)
         u64 tcpu = platform_time_ns();
         arena_reset(m.frame);
-        ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel, scatter};
+        ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused || a.timelapse ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel, scatter};
         if (!ds.lines) vi.dbg = nullptr;
         RenderFrame rf;
         view_build(cam, *assets, vi, m.frame, rf);
         bool last_frame = a.frames && frames + 1 >= a.frames;
-        if (last_frame && a.shot) render_capture_next();
+        if ((last_frame && a.shot) || a.timelapse) render_capture_next();
         if (!render_frame(rf)) { rc_exit = 1; break; }
+        if (a.timelapse) {
+            char path[1024];
+            snprintf(path, sizeof path, "%s_%04u.bmp", a.timelapse, (u32)frames);
+            if (!debug_write_shot(path, m.load)) { rc_exit = 1; break; }
+        }
         stat_add(st_cpu, (f64)(platform_time_ns() - tcpu) / 1e6 - render_wait_ms());
 
         frames++;
@@ -169,13 +198,14 @@ int run_window(const Args &a, AppMemory &m) {
             stat_roll(st_step);
             stat_roll(st_cpu);
             f64 secs = (f64)(now - window_t0) / 1e9;
+            i32 hour_hm = (i32)(sky_hour(w.clock, (f64)w.clock.tick) * 60.0f) % 1440;
             char title[320];
             snprintf(title, sizeof title,
                      "Anathemyre — %.0f к/с · кадр %.2f мс (макс %.2f) · CPU кадра %.2f мс · GPU %.2f мс · шаг %.3f мс · "
-                     "×%g%s%s · шаг %" PRIu64,
+                     "×%g%s%s · шаг %" PRIu64 " · %02d:%02d",
                      (f64)frames_window / secs, st_frame.avg_last, st_frame.max_last, st_cpu.avg_last, render_gpu_ms(),
                      st_step.avg_last, (f64)SPEEDS[tc.speed], tc.paused ? " · пауза" : "", pixel ? "" : " · без ячеек",
-                     w.step);
+                     w.step, hour_hm / 60, hour_hm % 60);
             platform_set_title(title);
             log_info("%s", title);
             frames_window = 0;

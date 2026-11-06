@@ -8,6 +8,7 @@
 #include "../render/render.h"
 #include "../sim/extract.h"
 #include "scatter.h"
+#include "sky.h"
 
 // Камера: орбита вокруг точки на земле или свободный полёт (F). yaw, pitch — направление от цели к глазу
 struct Camera {
@@ -32,6 +33,7 @@ struct ViewAssets {
     const MaterialTable *materials = nullptr;
     u32 ground_layers[RENDER_GROUND_LAYERS] = {};  // материалы слоёв земли по GroundKind
     u32 rocks[SCATTER_MESHES] = {};                 // сетки камней рассыпки
+    SkyDesc sky;                                    // небо и воздух (data/sky.txt)
 };
 
 struct ViewInput {

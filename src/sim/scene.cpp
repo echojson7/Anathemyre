@@ -31,7 +31,20 @@ bool scene_load(World &w, const u8 *text, usize size, char *err, usize err_cap) 
     TextLine l;
     while (text_next(r, l)) {
         if (l.count > TEXT_MAX_WORDS) { scene_err(err, err_cap, l.line, "слишком много слов"); return false; }
-        if (!str_eq(l.w[0], "prop")) { scene_err(err, err_cap, l.line, "неизвестное слово (ожидается prop)"); return false; }
+        if (str_eq(l.w[0], "clock")) {
+            // clock <час начала> <минут на сутки>: часы мира (docs/sky.md)
+            f32 hour = 0, minutes = 0;
+            if (l.count != 3 || !parse_f32(l.w[1], hour) || !parse_f32(l.w[2], minutes) || hour < 0 || hour >= 24 ||
+                minutes < 1 || minutes > 100000) {
+                scene_err(err, err_cap, l.line, "clock <час 0..24> <минут на сутки ≥ 1>");
+                return false;
+            }
+            // f64 точно держит f32, деление и умножение IEEE одинаковы на всех целях
+            w.clock.day_ticks = (u32)(u64)((f64)minutes * 60.0 * (f64)SIM_HZ);
+            w.clock.tick = (u64)((f64)hour / 24.0 * (f64)w.clock.day_ticks);
+            continue;
+        }
+        if (!str_eq(l.w[0], "prop")) { scene_err(err, err_cap, l.line, "неизвестное слово (ожидается prop или clock)"); return false; }
         if (l.count < 4) { scene_err(err, err_cap, l.line, "prop <сетка> <x> <z>"); return false; }
         f32 x = 0, z = 0, yaw = 0, scale = 1, lift = 0;
         u32 seed = l.line;

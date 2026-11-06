@@ -3,6 +3,7 @@
 #include "terrain.glsl"
 #include "surface.glsl"
 #include "light.glsl"
+#include "post.glsl"
 // Земля: точка → центр ячейки → нормаль → слой → surface() → light_surface(), как shade() у сеток.
 // Слой выбирают правила по уклону сетки 8 м и маскам (те же пороги, что ground_kind() у шага мира) с плавным
 // шумом, а на стыке двух лучших слоёв побеждает выступающий узор: песок затекает между камнями и травой
@@ -71,5 +72,5 @@ void main() {
         s = sw;
     }
     s.pos = p - f.cam_off;
-    o_color = vec4(light_surface(s), 1.0);
+    o_color = vec4(post_color(light_surface(s)), 1.0);
 }

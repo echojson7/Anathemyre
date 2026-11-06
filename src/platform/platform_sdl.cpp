@@ -129,6 +129,9 @@ static Key map_key(SDL_Keycode k) {
     case SDLK_L: return KEY_L;
     case SDLK_P: return KEY_P;
     case SDLK_R: return KEY_R;
+    case SDLK_T: return KEY_T;
+    case SDLK_LEFTBRACKET: return KEY_LEFTBRACKET;
+    case SDLK_RIGHTBRACKET: return KEY_RIGHTBRACKET;
     case SDLK_LSHIFT: case SDLK_RSHIFT: return KEY_SHIFT;
     case SDLK_LCTRL: case SDLK_RCTRL: return KEY_CTRL;
     case SDLK_F1: return KEY_F1;
