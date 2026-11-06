@@ -19,6 +19,7 @@ struct Args {
     bool cam_set = false;           // --cam yaw pitch dist x z (градусы, метры): камера для снимков
     f32 cam[5] = {};
     bool nopixel = false;           // --nopixel: без правила ячейки
+    const char *terrain_map = nullptr;  // --terrain-map файл.bmp: карта земли сверху и выход
 };
 
 // Память режима: всё выделяется один раз при старте
@@ -36,10 +37,13 @@ void app_memory_free(AppMemory &m);
 bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash);
 // Материалы и сетки для кадра (после render_init)
 bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view);
+// Земля мира — в видеопамять (после render_init)
+bool app_terrain_upload(const World &w);
 
 int run_window(const Args &a, AppMemory &m);
 int run_sim(const Args &a, AppMemory &m);
 int run_replay(const Args &a, AppMemory &m);
+int run_terrain_map(const Args &a, AppMemory &m);
 
 // Записать запись повтора в файл; false — ошибка с сообщением в журнале
 struct Recorder;

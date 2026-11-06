@@ -112,7 +112,7 @@ SHADER_SPV := $(patsubst data/shaders/%,$(OUT)/shaders/%.spv,$(SHADER_SRC))
 $(shell ./tools/matgen.sh $(OUT))
 
 # Данные рядом с исполняемым файлом: описания и сетки (.mesh пишет tools/meshgen.py, лежат в data/meshes)
-DATA_SRC := data/materials.txt data/scene.txt $(sort $(wildcard data/meshes/*.mesh))
+DATA_SRC := data/materials.txt data/scene.txt data/terrain.txt $(sort $(wildcard data/meshes/*.mesh))
 DATA_OUT := $(patsubst data/%,$(OUT)/data/%,$(DATA_SRC))
 
 .PHONY: all clean check sim-check sim-ref compdb toolchain third_party meshes

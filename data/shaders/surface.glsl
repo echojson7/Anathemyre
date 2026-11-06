@@ -1,6 +1,8 @@
 // Шов «материал ↔ свет» (docs/invariants.md, шов 6): материал отдаёт Surface, свет её освещает
 // (light_surface() в light.glsl). Узор считается в мировых координатах (без UV), раз на ячейку правила
 // пиксельности (docs/render.md). Виды материалов — data/shaders/materials/<вид>.glsl, функция surf_<вид>
+#ifndef SURFACE_GLSL
+#define SURFACE_GLSL
 #include "common.glsl"
 
 struct Surface {
@@ -10,13 +12,15 @@ struct Surface {
     float ao;       // 1 — без затенения
     vec3 pos;       // относительно камеры, центр ячейки
     vec3 emissive;
+    float height;   // высота узора 0..1: на стыке слоёв земли побеждает выступающий (docs/terrain.md)
 };
 
 // Вход вида материала
 struct SurfIn {
     vec3 p;         // точка мира: метры от начала чанка камеры (x, z), высота (y); центр ячейки
     vec3 n;         // нормаль
-    float cell;     // размер ячейки, м
+    float cell;     // размер ячейки, м (степень двойки — ступенями)
+    float foot;     // пиксель кадра на этой глубине, м (плавно): гасить узор мельче пикселя без ступенек
     uint seed;      // зерно экземпляра
     Material m;
 };
@@ -60,11 +64,12 @@ vec3 snap(vec3 p, float size) { return (floor(p / size) + 0.5) * size; }
 
 #include "materials.glsl"
 
-Surface surface(uint id, vec3 p, vec3 n, float cell, uint seed) {
+Surface surface(uint id, vec3 p, vec3 n, float cell, float foot, uint seed) {
     SurfIn i;
     i.p = p;
     i.n = n;
     i.cell = cell;
+    i.foot = foot;
     i.seed = seed;
     i.m = pc.frame.materials.v[id];
     Surface s = surface_kind(i.m.kind, i);
@@ -92,3 +97,4 @@ vec3 cell_snap(vec3 p, vec3 n, float cell) {
     if (a.y >= a.z) return vec3(s.x, p.y - sign(n.y) * IN, s.z);
     return vec3(s.x, s.y, p.z - sign(n.z) * IN);
 }
+#endif

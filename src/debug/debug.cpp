@@ -1,6 +1,7 @@
 #include "debug.h"
 #include "../core/log.h"
 #include "../render/render.h"
+#include "../core/math3.h"
 
 void debug_keys(const Input &in, DebugState &d) {
     if (in.key_pressed[KEY_PERIOD]) d.step_once = true;
@@ -33,14 +34,8 @@ static void put16(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); }
 static void put32(u8 *p, u32 v) { put16(p, v & 0xFFFF); put16(p + 2, v >> 16); }
 
 // BMP 24 бита снизу вверх: без сторонних библиотек, ffmpeg и любой просмотрщик его читают
-bool debug_write_shot(const char *path, Arena &scratch) {
+static bool write_bmp(const char *path, const u8 *rgba, u32 w, u32 h, Arena &scratch) {
     usize mark = arena_mark(scratch);
-    u8 *rgba = nullptr;
-    u32 w = 0, h = 0;
-    if (!render_capture_take(scratch, &rgba, &w, &h)) {
-        log_error("снимок не вышел (кадр не нарисован)");
-        return false;
-    }
     u32 row = (w * 3 + 3) & ~3u;
     u32 size = 54 + row * h;
     u8 *f = arena_push<u8>(scratch, size);
@@ -64,7 +59,56 @@ bool debug_write_shot(const char *path, Arena &scratch) {
     }
     bool ok = platform_write_file(path, f, size);
     arena_restore(scratch, mark);
+    return ok;
+}
+
+bool debug_write_shot(const char *path, Arena &scratch) {
+    usize mark = arena_mark(scratch);
+    u8 *rgba = nullptr;
+    u32 w = 0, h = 0;
+    if (!render_capture_take(scratch, &rgba, &w, &h)) {
+        log_error("снимок не вышел (кадр не нарисован)");
+        return false;
+    }
+    bool ok = write_bmp(path, rgba, w, h, scratch);
+    arena_restore(scratch, mark);
     if (ok) log_info("снимок: %s (%ux%u)", path, w, h);
+    else log_error("не записать %s", path);
+    return ok;
+}
+
+// Карта земли сверху: пиксель — 2×2 узла сетки 8 м, отмывка рельефа с северо-запада, цвет — по маскам
+// (песок — охра, шероховатое — серее), высота — светлее. Север сверху
+bool debug_write_terrain_map(const Terrain &t, const char *path, Arena &scratch) {
+    usize mark = arena_mark(scratch);
+    u32 w = (t.n - 1) / 2, h = w;
+    u8 *rgba = arena_push<u8>(scratch, (usize)w * h * 4);
+    for (u32 py = 0; py < h; ++py) {
+        u32 j = (h - 1 - py) * 2;  // север сверху
+        for (u32 px = 0; px < w; ++px) {
+            u32 i = px * 2;
+            auto H = [&](u32 a, u32 b) { return (f32)t.height[(usize)b * t.n + a] * 0.05f; };
+            f32 dx = (H(i + 2, j) - H(i, j)) / 16.0f, dz = (H(i, j + 2) - H(i, j)) / 16.0f;
+            Vec3 nn = normalize(Vec3{-dx, 1.0f, -dz});
+            f32 lit = f_clamp(dot(nn, normalize(Vec3{-0.6f, 0.55f, 0.6f})), 0.0f, 1.0f);
+            u32 m = t.mask[(usize)(j >> 2) * t.nm + (i >> 2)];
+            f32 rough = (f32)(m & 255) / 255.0f, sand = (f32)(m >> 8) / 255.0f;
+            f32 alt = f_clamp(H(i, j) / 1800.0f, 0.0f, 1.0f);
+            f32 c[3] = {0.55f, 0.45f, 0.33f};
+            const f32 sandc[3] = {0.86f, 0.70f, 0.45f}, rockc[3] = {0.50f, 0.48f, 0.46f};
+            for (u32 k = 0; k < 3; ++k) {
+                c[k] += (sandc[k] - c[k]) * sand;
+                c[k] += (rockc[k] - c[k]) * rough * 0.6f;
+                c[k] = c[k] * (0.25f + 0.85f * lit) * (0.8f + 0.4f * alt);
+            }
+            u8 *o = rgba + ((usize)py * w + px) * 4;
+            for (u32 k = 0; k < 3; ++k) o[k] = (u8)(f_clamp(c[k], 0.0f, 1.0f) * 255.0f);
+            o[3] = 255;
+        }
+    }
+    bool ok = write_bmp(path, rgba, w, h, scratch);
+    arena_restore(scratch, mark);
+    if (ok) log_info("карта земли: %s (%ux%u, пиксель 16 м)", path, w, h);
     else log_error("не записать %s", path);
     return ok;
 }

@@ -40,7 +40,7 @@ Windows, ~2 ГБ архив LLVM для Linux, распаковывается т
 Шейдеры `data/shaders/*.vert|frag` → `build/<цель>/shaders/*.spv` (`glslangValidator --depfile`,
 `spirv-val --scalar-block-layout`), игра ищет их рядом с исполняемым файлом. Пути `#include`: `data/shaders/` и
 `build/<цель>/shaders/gen/` (там `materials.glsl` от `tools/matgen.sh`, `docs/materials.md`).
-Данные (`data/materials.txt`, `data/scene.txt`, `data/meshes/*.mesh`) копируются в `build/<цель>/data/`; туда же
+Данные (`data/materials.txt`, `data/scene.txt`, `data/terrain.txt`, `data/meshes/*.mesh`) копируются в `build/<цель>/data/`; туда же
 `matgen.sh` пишет `material_kinds.txt`. Без них игра не стартует, и `--sim` тоже (сцена — часть мира).
 `make meshes` пересобирает заглушки `.mesh` (`tools/meshgen.py`).
 

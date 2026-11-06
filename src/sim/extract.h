@@ -4,10 +4,11 @@
 #include "world.h"
 
 struct Extract {
+    const Terrain *terrain;  // земля не меняется после создания мира: кадр читает её напрямую
     u64 step;
     u16 *gen;      // 0 — места нет или точка мертва
     i32 *cx, *cz;
-    f32 *x, *z;
+    f32 *x, *y, *z;
     u32 attract_on;
     WPos attract_at;
     // Статичные объекты: места 0..props_count, gen 0 — места нет

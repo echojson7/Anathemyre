@@ -9,6 +9,7 @@
 #include "../platform/platform.h"
 #include "../render/render.h"
 #include "../sim/scene.h"
+#include "../sim/world.h"
 #include "../view/view.h"
 #include <stdio.h>
 
@@ -21,17 +22,32 @@ static bool read_data(const char *rel, Arena &a, u8 **data, usize *size) {
 }
 
 bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash) {
-    world_init(w, m.world, seed);
     usize mark = arena_mark(m.load);
     u8 *text = nullptr;
     usize size = 0;
+    char err[256];
+    // Земля (data/terrain.txt) — первой: объекты сцены и точки ставятся на неё
+    TerrainDesc td;
+    if (!read_data("terrain.txt", m.load, &text, &size)) return false;
+    if (!terrain_desc_parse(text, size, td, err, sizeof err)) {
+        log_error("data/terrain.txt: %s", err);
+        arena_restore(m.load, mark);
+        return false;
+    }
+    u64 terrain_text = text_hash(text, size);
+    u64 t0 = platform_time_ns();
+    world_init(w, m.world, seed, td, m.load);
+    char hex[17];
+    log_info("земля: %d×%d чанков, сетка %u×%u, %.0f мс, хеш %s", w.terrain.chunks, w.terrain.chunks, w.terrain.n,
+             w.terrain.n, (f64)(platform_time_ns() - t0) / 1e6, hex_u64(w.terrain.hash, hex));
     bool ok = read_data("scene.txt", m.load, &text, &size);
     if (ok) {
-        char err[256];
         ok = scene_load(w, text, size, err, sizeof err);
         if (!ok) log_error("data/scene.txt: %s", err);
-        // Хеш описаний, которые читает шаг мира (пока одна сцена)
-        if (desc_hash) *desc_hash = hash_combine(0x5CE7Eull, text_hash(text, size));
+        // Хеш описаний, которые читает шаг мира: сцена, описание земли и сама сетка (её строит код генератора)
+        if (desc_hash)
+            *desc_hash = hash_combine(hash_combine(hash_combine(0x5CE7Eull, text_hash(text, size)), terrain_text),
+                                      w.terrain.hash);
     }
     arena_restore(m.load, mark);
     return ok;
@@ -96,8 +112,12 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
     arena_restore(m.load, mark);
     if (!ok) return false;
     view.materials = &mats;
-    view.ground_material = material_find(mats, hash_str("ground"));
-    if (!view.ground_material) log_warn("data/materials.txt: нет материала ground для земли");
+    // Слои земли по GroundKind (src/sim/ground.h): песок, сухая земля, щебень, камень
+    const char *layers[RENDER_GROUND_LAYERS] = {"sand", "dry_earth", "gravel", "rock"};
+    for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) {
+        view.ground_layers[k] = material_find(mats, hash_str(layers[k]));
+        if (!view.ground_layers[k]) log_warn("data/materials.txt: нет материала %s для слоя земли", layers[k]);
+    }
 
     char dir[1024];
     snprintf(dir, sizeof dir, "%sdata/meshes", platform_exe_dir());
@@ -106,6 +126,30 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
         log_error("нет папки %s (собери: make)", dir);
         return false;
     }
+    const char *rocks[SCATTER_MESHES] = {"rock_a", "rock_b", "rock_c"};
+    for (u32 k = 0; k < SCATTER_MESHES; ++k) {
+        u64 hname = hash_str(rocks[k]);
+        for (u32 i = 0; i < view.mesh_count; ++i)
+            if (view.meshes[i].name == hname) view.rocks[k] = view.meshes[i].id;
+        if (!view.rocks[k]) log_warn("нет сетки %s для рассыпки камней", rocks[k]);
+    }
     log_info("ассеты: материалов %u (видов %u), сеток %u", mats.count, mats.kind_count, view.mesh_count);
     return L.failed == 0;
+}
+
+bool app_terrain_upload(const World &w) {
+    const Terrain &t = w.terrain;
+    RenderTerrain rt{};
+    rt.height = t.height;
+    rt.n = t.n;
+    rt.mask = t.mask;
+    rt.nm = t.nm;
+    rt.chunk0 = t.chunk0;
+    rt.size_m = t.size_m;
+    static_assert(RENDER_TERRAIN_OCTAVES == TERRAIN_DETAIL_OCTAVES, "октавы деталей у кадра и шага мира");
+    for (u32 k = 0; k < RENDER_TERRAIN_OCTAVES; ++k) {
+        terrain_detail_octave(k, &rt.oct_lp[k], &rt.oct_amp[k]);
+        rt.oct_seed[k] = t.oct_seed[k];
+    }
+    return render_terrain_set(rt);
 }

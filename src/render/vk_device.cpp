@@ -290,6 +290,7 @@ void render_shutdown() {
     if (g_vk.device) {
         vkDeviceWaitIdle(g_vk.device);
         vk_destroy_pipelines();
+        vk_terrain_shutdown();
         vk_geometry_shutdown();
         vk_destroy_buffer(g_vk.capture);
         if (g_vk.queries) vkDestroyQueryPool(g_vk.device, g_vk.queries, nullptr);

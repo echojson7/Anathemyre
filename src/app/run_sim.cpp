@@ -30,8 +30,9 @@ int run_sim(const Args &a, AppMemory &m) {
     if (a.hashes) {
         text_cap = 128 + (a.sim_steps / 1000 + 1) * 48;
         text = arena_push<char>(m.load, text_cap);
-        text_len = (usize)snprintf(text, text_cap, "# anathemyre --sim: хеш мира каждые 1000 шагов\nsim_version %u\nseed %" PRIu64 "\n",
-                                   SIM_VERSION, a.seed);
+        char thex[17];
+        text_len = (usize)snprintf(text, text_cap, "# anathemyre --sim: хеш земли и хеш мира каждые 1000 шагов\nsim_version %u\nseed %" PRIu64 "\nterrain %s\n",
+                                   SIM_VERSION, a.seed, hex_u64(w.terrain.hash, thex));
     }
 
     f64 max_us = 0;
@@ -128,4 +129,10 @@ int run_replay(const Args &a, AppMemory &m) {
     log_info("повтор совпал: %" PRIu64 " шагов, %zu намерений, %.1f мс; хеш %s", rp.steps, rp.intents.count,
              (f64)(platform_time_ns() - t0) / 1e6, hex_u64(world_hash(w), hex));
     return 0;
+}
+
+int run_terrain_map(const Args &a, AppMemory &m) {
+    World w;
+    if (!app_world_create(w, m, a.seed, nullptr)) return 1;
+    return debug_write_terrain_map(w.terrain, a.terrain_map, m.load) ? 0 : 1;
 }

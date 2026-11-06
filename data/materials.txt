@@ -28,3 +28,39 @@ material rust_metal metal
 material ochre_paint flat
     color 0.45 0.32 0.10
     rough 0.8
+
+# Слои земли (docs/terrain.md): sand, dry_earth, gravel, rock — по GroundKind. Камни рассыпки — rock
+material sand sand
+    color 0.66 0.50 0.31
+    color2 0.55 0.40 0.24
+    rough 0.95
+    texel 0.0625
+    extra 0.25 0.45 24 0.6
+
+material dry_earth ground
+    color 0.40 0.30 0.21
+    color2 0.50 0.40 0.29
+    rough 0.95
+    texel 0.1
+    extra 16 0.5 0.35 0.7
+
+material gravel gravel
+    color 0.40 0.38 0.35
+    color2 0.34 0.27 0.20
+    rough 0.85
+    texel 0.0625
+    extra 0.0625 0.55 0.8 0.9
+
+material rock rock
+    color 0.45 0.35 0.27
+    color2 0.26 0.20 0.16
+    rough 0.8
+    texel 0.0625
+    extra 0.7 0.25 0.6 0.8
+
+material stone rock
+    color 0.47 0.39 0.31
+    color2 0.30 0.24 0.19
+    rough 0.75
+    texel 0.0625
+    extra 0.18 0.0625 0.7 0.3

@@ -1,10 +1,12 @@
 #include "view.h"
 #include "../core/math3.h"
+#include "../sim/ground.h"
 
 static constexpr f32 NEAR_M = 0.1f;
 static constexpr f32 PITCH_MIN = -1.45f, PITCH_MAX = 1.45f;
 static constexpr f32 ORBIT_PITCH_MIN = 0.05f;
-static constexpr f32 DIST_MIN = 2.0f, DIST_MAX = 3000.0f;
+static constexpr f32 DIST_MIN = 2.0f, DIST_MAX = 12000.0f;
+static constexpr f32 EYE_ABOVE_GROUND = 0.6f;  // глаз не ниже стольких метров над землёй
 static constexpr f32 MOUSE_RAD_PER_PX = 0.005f;
 
 // Направление от цели к глазу по yaw и pitch
@@ -44,7 +46,7 @@ static Basis basis(const Camera &cam) {
     return b;
 }
 
-void view_camera_control(Camera &cam, const Input &in, f32 dt) {
+void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &ground) {
     if (in.key_pressed[KEY_F]) {
         if (!cam.free) {
             cam.eye = view_eye(cam);
@@ -53,9 +55,10 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt) {
             // Назад на орбиту: цель — точка на земле перед глазом (или на прежнем расстоянии)
             Basis b = basis(cam);
             f32 d = cam.dist;
-            if (b.forward.y < -0.05f) d = f_clamp(-cam.eye.y / b.forward.y, DIST_MIN, DIST_MAX);
+            WPos hit;
+            if (view_screen_to_ground(cam, 2, 2, 1.0f, 1.0f, ground, hit))
+                d = f_clamp(length(delta(cam.eye, hit.cx, hit.cz, hit.x, hit.y, hit.z)), DIST_MIN, DIST_MAX);
             cam.target = offset(cam.eye, b.forward * d);
-            cam.target.y = 0.0f;
             cam.dist = d;
             cam.free = false;
             if (cam.pitch < ORBIT_PITCH_MIN) cam.pitch = ORBIT_PITCH_MIN;
@@ -84,8 +87,13 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt) {
     if (in.key_down[KEY_Q]) move += Vec3{0, -1, 0};
 
     if (cam.free) {
-        cam.eye = offset(cam.eye, move * (12.0f * fast * dt));
-        if (in.wheel != 0) cam.eye = offset(cam.eye, b.forward * (in.wheel * 2.0f * fast));
+        // Высоко над землёй летать медленно скучно: скорость растёт с высотой
+        f32 above = cam.eye.y - ground_at(ground, cam.eye).height;
+        f32 speed = 12.0f * f_max(1.0f, above / 20.0f);
+        cam.eye = offset(cam.eye, move * (speed * fast * dt));
+        if (in.wheel != 0) cam.eye = offset(cam.eye, b.forward * (in.wheel * 2.0f * fast * f_max(1.0f, above / 20.0f)));
+        f32 floor_y = ground_at(ground, cam.eye).height + EYE_ABOVE_GROUND;
+        if (cam.eye.y < floor_y) cam.eye.y = floor_y;
         return;
     }
     // Орбита: WASD и средняя кнопка двигают цель по земле, колесо — расстояние
@@ -99,9 +107,16 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt) {
     for (f32 w = in.wheel; w > 0.5f; w -= 1.0f) cam.dist *= 0.85f;
     for (f32 w = in.wheel; w < -0.5f; w += 1.0f) cam.dist /= 0.85f;
     cam.dist = f_clamp(cam.dist, DIST_MIN, DIST_MAX);
+    cam.target.y = ground_at(ground, cam.target).height;
+    // Глаз над землёй: если склон закрыл его, камера поднимается по высоте взгляда
+    for (u32 k = 0; k < 32; ++k) {
+        WPos e = view_eye(cam);
+        if (e.y >= ground_at(ground, e).height + EYE_ABOVE_GROUND || cam.pitch >= PITCH_MAX) break;
+        cam.pitch = f_min(cam.pitch + 0.02f, PITCH_MAX);
+    }
 }
 
-bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32 py, WPos &out) {
+bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32 py, const Terrain &ground, WPos &out) {
     if (width <= 0 || height <= 0) return false;
     Basis b = basis(cam);
     f32 s, c;
@@ -109,15 +124,27 @@ bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32
     f32 t = s / c, aspect = (f32)width / (f32)height;
     f32 nx = (px / (f32)width) * 2.0f - 1.0f;
     f32 ny = 1.0f - (py / (f32)height) * 2.0f;
-    Vec3 dir = b.forward + b.right * (nx * t * aspect) + b.up * (ny * t);
+    Vec3 dir = normalize(b.forward + b.right * (nx * t * aspect) + b.up * (ny * t));
     WPos eye = view_eye(cam);
-    f32 ground_y = cam.free ? 0.0f : cam.target.y;
-    if (dir.y > -1e-4f) return false;
-    f32 k = (ground_y - eye.y) / dir.y;
-    if (k <= 0.0f || k > 20000.0f) return false;
-    out = offset(eye, dir * k);
-    out.y = ground_y;
-    return true;
+    // Шаги растут с расстоянием, на пересечении — деление пополам
+    f32 k0 = 0.0f, k = 0.5f;
+    for (u32 i = 0; i < 400 && k < 30000.0f; ++i) {
+        WPos p = offset(eye, dir * k);
+        if (p.y <= ground_at(ground, p).height) {
+            for (u32 j = 0; j < 24; ++j) {
+                f32 m = (k0 + k) * 0.5f;
+                WPos q = offset(eye, dir * m);
+                if (q.y <= ground_at(ground, q).height) k = m;
+                else k0 = m;
+            }
+            out = offset(eye, dir * k);
+            out.y = ground_at(ground, out).height;
+            return true;
+        }
+        k0 = k;
+        k += f_max(0.5f, k * 0.02f);
+    }
+    return false;
 }
 
 static u32 find_mesh(const ViewAssets &a, u64 name) {
@@ -164,17 +191,27 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     v.near_m = NEAR_M;
     out.style.pixel = in.pixel;
 
-    // Временный свет (light.glsl): низкое солнце с юго-запада, тёплое; небо — холоднее и слабее
-    Vec3 sun = normalize(Vec3{-0.55f, 0.42f, -0.72f});
+    // Временный свет (light.glsl): низкое солнце с юго-запада, тёплое; небо — холоднее и слабее.
+    // Дымка — к цвету неба (очистки), иначе горизонт режет картинку
+    Vec3 sun = normalize(Vec3{-0.55f, 0.30f, -0.72f});
     out.light = {{sun.x, sun.y, sun.z}, {1.30f, 1.05f, 0.72f}, {0.28f, 0.29f, 0.32f}};
-    out.ground_material = assets.ground_material;
+    const f32 fog_srgb[3] = {out.clear[0], out.clear[1], out.clear[2]};
+    for (u32 k = 0; k < 3; ++k) {
+        f32 cc = fog_srgb[k];
+        out.fog[k] = cc * cc * f_sqrt(f_sqrt(cc)) * 0.98f;  // ≈ sRGB → линейный (степень 2.25)
+    }
+    out.fog[3] = 1.0f / 9000.0f;
+    out.ground = in.cur->terrain != nullptr;
+    for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) out.ground_layers[k] = assets.ground_layers[k];
 
     // Статичные объекты — из последней выписки (не двигаются, интерполяция не нужна)
     const Extract &p = *in.prev;
     const Extract &cur = *in.cur;
     u32 n = cur.props_count;
-    RenderInstance *inst = arena_push<RenderInstance>(frame, n ? n : 1);
-    RenderDraw *draws = arena_push<RenderDraw>(frame, n ? n : 1);
+    if (in.scatter && cur.terrain) scatter_update(*in.scatter, *cur.terrain, eye, assets.rocks);
+    u32 nscat = in.scatter ? in.scatter->count : 0;
+    RenderInstance *inst = arena_push<RenderInstance>(frame, n + nscat + 1);
+    RenderDraw *draws = arena_push<RenderDraw>(frame, n + nscat + 1);
     u32 ni = 0;
     for (u32 i = 0; i < n && ni < RENDER_MAX_INSTANCES; ++i) {
         if (!cur.prop_gen[i]) continue;
@@ -198,6 +235,16 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
         draws[ni] = {render_key(LAYER_OPAQUE, PIPE_MESH, mesh, dot(rel, b.forward)), ni, 0};
         ni++;
     }
+    // Рассыпка камней: позади камеры не рисуется
+    for (u32 i = 0; i < nscat && ni < RENDER_MAX_INSTANCES; ++i) {
+        const RenderInstance &r = in.scatter->items[i];
+        Vec3 rel = delta(eye, r.cx, r.cz, r.x, r.y, r.z);
+        f32 depth = dot(rel, b.forward);
+        if (depth < -2.0f) continue;
+        inst[ni] = r;
+        draws[ni] = {render_key(LAYER_OPAQUE, PIPE_MESH, r.mesh, depth), ni, 0};
+        ni++;
+    }
     out.instances = {inst, ni};
     out.draws = {draws, ni};
 
@@ -207,9 +254,9 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     f32 a = in.alpha;
     for (u32 i = 0; i < DOTS_CAPACITY && np < RENDER_MAX_POINTS; ++i) {
         if (!cur.gen[i]) continue;
-        Vec3 r1 = delta(eye, cur.cx[i], cur.cz[i], cur.x[i], 0.15f, cur.z[i]);
+        Vec3 r1 = delta(eye, cur.cx[i], cur.cz[i], cur.x[i], cur.y[i] + 0.15f, cur.z[i]);
         if (p.gen[i] == cur.gen[i]) {
-            Vec3 r0 = delta(eye, p.cx[i], p.cz[i], p.x[i], 0.15f, p.z[i]);
+            Vec3 r0 = delta(eye, p.cx[i], p.cz[i], p.x[i], p.y[i] + 0.15f, p.z[i]);
             r1 = r0 + (r1 - r0) * a;
         }
         RenderPoint &q = pts[np++];

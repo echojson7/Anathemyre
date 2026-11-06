@@ -4,6 +4,7 @@
 #include "../core/rng.h"
 #include "../platform/platform.h"
 #include "../sim/intent.h"
+#include "../sim/terrain.h"
 
 struct DebugState {
     bool step_once = false;   // «.» на паузе — один шаг
@@ -18,9 +19,12 @@ void autoplay_intents(u64 step, Rng &rng, FixedArray<Intent> &out);
 void debug_print_help();
 // Снимок кадра (render_capture_next перед кадром) → файл .bmp
 bool debug_write_shot(const char *path, Arena &scratch);
+// Карта земли сверху (отмывка рельефа и маски) → .bmp
+bool debug_write_terrain_map(const Terrain &t, const char *path, Arena &scratch);
 #else
 inline void debug_keys(const Input &, DebugState &) {}
 inline void autoplay_intents(u64, Rng &, FixedArray<Intent> &) {}
 inline void debug_print_help() {}
 inline bool debug_write_shot(const char *, Arena &) { return false; }
+inline bool debug_write_terrain_map(const Terrain &, const char *, Arena &) { return false; }
 #endif

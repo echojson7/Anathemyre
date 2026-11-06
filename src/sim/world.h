@@ -4,11 +4,12 @@
 #include "../core/dbgdraw.h"
 #include "../core/mem.h"
 #include "../core/rng.h"
+#include "terrain.h"
 
 constexpr u32 SIM_HZ = 60;
 constexpr f32 SIM_DT = 1.0f / 60.0f;
 // Меняется при правке шага мира, после которой старые записи не повторяются
-constexpr u32 SIM_VERSION = 2;
+constexpr u32 SIM_VERSION = 3;
 
 // Номер сущности: место (младшие 16 бит) + поколение (старшие 16). Связи в мире — только номерами
 struct Id {
@@ -27,6 +28,7 @@ struct Dots {
     u8 *alive;
     i32 *cx, *cz;  // чанк 256 м
     f32 *x, *z;    // смещение в чанке
+    f32 *y;        // высота земли под точкой (ground_at)
     f32 *vx, *vz;  // скорость, м/с
     f32 *speed;    // своя скорость хода, м/с
     u32 *phase;    // курс в долях оборота (Turn)
@@ -54,6 +56,7 @@ struct Props {
 };
 
 struct World {
+    Terrain terrain;  // из зерна при создании, дальше не меняется (docs/terrain.md)
     u64 step;      // время мира — целый номер шага, секунды выводятся из него
     Rng rng;
     // Притяжение точек к точке приказа (намерение игрока)
@@ -64,7 +67,8 @@ struct World {
     Props props;
 };
 
-void world_init(World &w, Arena &arena, u64 seed);
+// Земля строится первой (объекты и точки ставятся на неё); scratch — временная память генерации
+void world_init(World &w, Arena &arena, u64 seed, const TerrainDesc &terrain, Arena &scratch);
 // Мёртвых мест нет в выписке и в шаге; спавн и смерть только через эти две функции
 bool dots_spawn(World &w, const WPos &center, f32 radius);
 void dots_kill(World &w, u32 slot);
