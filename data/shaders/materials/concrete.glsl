@@ -28,5 +28,6 @@ Surface surf_concrete(SurfIn i) {
     s.normal = i.n;
     s.ao = 1.0;
     s.emissive = vec3(0.0);
+    s.height = 0.5;
     return s;
 }

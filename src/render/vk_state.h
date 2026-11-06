@@ -30,6 +30,7 @@ struct GpuImage {
 // Данные кадра для шейдеров (FrameData в data/shaders/common.glsl), пишутся раз за кадр
 struct FrameGpu {
     VkDeviceAddress vertices, instances, materials, lines, points;
+    VkDeviceAddress t_height, t_mask;
     u64 pad0;
     i32 cam_cx, cam_cz;
     f32 cam_x, cam_y, cam_z;
@@ -37,9 +38,34 @@ struct FrameGpu {
     f32 right[4], up[4], forward[4];   // .w не используется
     f32 proj_x, proj_y, near_m, pixel_angle;  // pixel_angle — 2·tan(fov/2)/высота: метров на пиксель на 1 м глубины
     f32 cell_min, cell_pixels;
-    u32 pixel, ground_material;
+    u32 pixel, pad1;
     f32 sun_dir[4], sun_color[4], sky_color[4];
     f32 viewport[2], ndc_per_pixel[2];
+    i32 t_chunk0, t_size, t_n, t_nm;
+    i32 t_oct_lp[5], t_oct_amp[5];
+    u32 t_oct_seed[5], t_on;
+    i32 clip_n, clip_levels, clip_morph, clip_pad;
+    i32 clip[12][4];   // начало кольца в полуметрах от угла карты (x, z), дыра кольца (x, z)
+    u32 ground_layers[4];
+    f32 fog[4];
+    i32 t_mip[8];      // начало уровня k сглаженной сетки высот (шаг 8·2^k м) в буфере высот, номера u16
+};
+
+// Земля clipmap'ом (vk_terrain.cpp): кольцо L — (2n+1)² вершин с шагом 0.5·2^L м. Кольцо 0 — сплошная сетка,
+// у остальных дыра n×n под кольцо мельче сдвинута на n/2 или n/2+1 по каждой оси: 4 буфера индексов
+constexpr i32 CLIP_N = 128;
+constexpr i32 TERRAIN_MIPS = 6;  // уровни сглаженной сетки высот 8..256 м для дальних колец
+constexpr i32 CLIP_LEVELS = 10;   // шаг до 256 м, сторона последнего кольца 65 км — вся карта от любой точки
+constexpr i32 CLIP_MORPH = 32;    // ширина перехода к следующему кольцу, квадратов
+struct TerrainGpu {
+    bool on = false;
+    GpuBuffer height, mask, index;
+    u32 first_full = 0, count_full = 0;
+    u32 first_ring[4] = {}, count_ring = 0;
+    RenderTerrain desc{};
+    i32 origin[CLIP_LEVELS][2] = {};
+    u32 ring[CLIP_LEVELS] = {};  // какой из 4 буферов дыры у кольца в этом кадре
+    i32 mip_off[TERRAIN_MIPS] = {};  // начало уровня сглаженной сетки в буфере высот, номера u16
 };
 
 struct FrameSlot {
@@ -117,6 +143,8 @@ struct VkState {
     VkPipeline pipe_ground = VK_NULL_HANDLE;
     VkPipeline pipe_points = VK_NULL_HANDLE;
     VkPipeline pipe_lines = VK_NULL_HANDLE;
+
+    TerrainGpu terrain;
 };
 
 extern VkState g_vk;
@@ -145,5 +173,8 @@ bool vk_geometry_init();
 void vk_geometry_shutdown();
 // Освободить место сеток, чьи кадры GPU уже дорисовал
 void vk_geometry_collect();
+// Земля (vk_terrain.cpp): начала колец по камере и поля кадра; освобождение
+void vk_terrain_fill(FrameGpu &g, const RenderFrame &f);
+void vk_terrain_shutdown();
 // Разовая команда копирования: записать, отправить и дождаться
 bool vk_one_shot(void (*record)(VkCommandBuffer, void *), void *user);

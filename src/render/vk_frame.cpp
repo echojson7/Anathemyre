@@ -132,6 +132,7 @@ bool vk_create_pipelines() {
     PipeDesc mesh{"mesh.vert", "mesh.frag"};
     mesh.cull = VK_CULL_MODE_BACK_BIT;
     PipeDesc ground{"ground.vert", "ground.frag"};
+    ground.cull = VK_CULL_MODE_BACK_BIT;
     PipeDesc points{"points.vert", "color.frag"};
     points.blend = true;
     points.depth_write = false;
@@ -219,11 +220,11 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, const FrameSlot &fs) {
     g.cell_min = f.style.cell_min;
     g.cell_pixels = f.style.cell_pixels;
     g.pixel = f.style.pixel ? 1u : 0u;
-    g.ground_material = f.ground_material;
     g.viewport[0] = w;
     g.viewport[1] = h;
     g.ndc_per_pixel[0] = 2.0f / (w > 0 ? w : 1.0f);
     g.ndc_per_pixel[1] = 2.0f / (h > 0 ? h : 1.0f);
+    vk_terrain_fill(g, f);
 }
 
 // Копия картинки кадра в буфер снимка (до перевода в PRESENT)
@@ -358,10 +359,18 @@ bool render_frame(const RenderFrame &f) {
             i = j;
         }
     }
-    if (f.ground_material != RENDER_NO_MATERIAL) {
+    // Земля clipmap'ом: кольцо — номер в push-константе, буфер индексов — по сдвигу дыры
+    const TerrainGpu &tg = g_vk.terrain;
+    if (tg.on && f.ground) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_ground);
-        vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
-        vkCmdDraw(cmd, 6, 1, 0, 0);
+        vkCmdBindIndexBuffer(cmd, tg.index.buffer, 0, VK_INDEX_TYPE_UINT32);
+        for (i32 L = 0; L < CLIP_LEVELS; ++L) {
+            PushConsts pl{fs.frame.address, (u32)L, 0};
+            vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pl, &pl);
+            u32 first = L == 0 ? tg.first_full : tg.first_ring[tg.ring[L]];
+            u32 count = L == 0 ? tg.count_full : tg.count_ring;
+            vkCmdDrawIndexed(cmd, count, 1, first, 0, 0);
+        }
     }
     if (nlines) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_lines);

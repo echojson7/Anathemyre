@@ -2,6 +2,7 @@
 #include "step.h"
 #include "../core/fpu.h"
 #include "../core/mathf.h"
+#include "ground.h"
 
 static constexpr f32 DOTS_ALIVE_RADIUS = 150.0f;   // дальше от начала карты точка гибнет
 static constexpr f32 DOTS_RESPAWN_RADIUS = 30.0f;
@@ -60,7 +61,7 @@ static void step_dots_steer(World &w, StepCtx &) {
     }
 }
 
-// Читает: vx, vz. Пишет: cx, cz, x, z
+// Читает: vx, vz, землю. Пишет: cx, cz, x, z, y
 static void step_dots_move(World &w, StepCtx &) {
     Dots &d = w.dots;
     for (u32 i = 0; i < DOTS_CAPACITY; ++i) {
@@ -69,6 +70,7 @@ static void step_dots_move(World &w, StepCtx &) {
         d.z[i] += d.vz[i] * SIM_DT;
         wpos_rebase(d.cx[i], d.x[i]);
         wpos_rebase(d.cz[i], d.z[i]);
+        d.y[i] = ground_at(w.terrain, d.cx[i], d.cz[i], d.x[i], d.z[i]).height;
     }
 }
 
@@ -93,7 +95,7 @@ static void step_debug_draw(const World &w, StepCtx &ctx) {
     const Dots &d = w.dots;
     for (u32 i = 0, shown = 0; i < DOTS_CAPACITY && shown < 64; ++i) {
         if (!d.alive[i]) continue;
-        WPos a{d.cx[i], d.cz[i], d.x[i], 0.05f, d.z[i]};  // чуть над землёй, чтобы отрезок не тонул в ней
+        WPos a{d.cx[i], d.cz[i], d.x[i], d.y[i] + 0.3f, d.z[i]};  // над землёй, чтобы отрезок не тонул в ней
         WPos b = a;
         b.x += d.vx[i] * 0.5f;
         b.z += d.vz[i] * 0.5f;
@@ -101,7 +103,31 @@ static void step_debug_draw(const World &w, StepCtx &ctx) {
         dbg_line(g, a, b, rgba8(230, 200, 120));
         shown++;
     }
-    if (w.attract_on) dbg_cross(g, w.attract_at, 3.0f, rgba8(220, 60, 50));
+    if (w.attract_on) {
+        // Крест и сетка 1 м по ground_at() вокруг цели: если картинка земли с ними совпадает, отрезки лежат
+        // на ней вплотную, не висят и не тонут (docs/terrain.md, проверка этапа 2)
+        WPos c = w.attract_at;
+        c.x = (f32)f_floor_i(c.x);  // на узлы решётки 1 м: вдоль её рёбер земля линейна
+        c.z = (f32)f_floor_i(c.z);
+        c.y = ground_at(w.terrain, c).height + 0.02f;
+        WPos top = c;
+        top.y += 1.5f;
+        dbg_line(g, c, top, rgba8(220, 60, 50));  // столбик над целью: прямой крест на склоне ушёл бы в землю
+        for (i32 k = -4; k <= 4; ++k)
+            for (i32 m = -4; m < 4; ++m) {
+                for (u32 axis = 0; axis < 2; ++axis) {
+                    WPos a = c, b = c;
+                    f32 u = (f32)k, v0 = (f32)m, v1 = (f32)(m + 1);
+                    if (axis == 0) { a.x += u; a.z += v0; b.x += u; b.z += v1; }
+                    else { a.x += v0; a.z += u; b.x += v1; b.z += u; }
+                    wpos_rebase(a);
+                    wpos_rebase(b);
+                    a.y = ground_at(w.terrain, a).height + 0.02f;
+                    b.y = ground_at(w.terrain, b).height + 0.02f;
+                    dbg_line(g, a, b, rgba8(240, 230, 120));
+                }
+            }
+    }
 }
 
 void sim_step(World &w, StepCtx &ctx) {

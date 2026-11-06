@@ -136,7 +136,73 @@ def plate():
     return m
 
 
-MESHES = {"cube": cube, "pillar": pillar, "plate": plate}
+def ihash(v):
+    """Целочисленный хеш (как hash_u в шейдерах): байты сетки не зависят от платформы."""
+    v &= 0xFFFFFFFF
+    s = (v * 747796405 + 2891336453) & 0xFFFFFFFF
+    w = (((s >> ((s >> 28) + 4)) ^ s) * 277803737) & 0xFFFFFFFF
+    return (w >> 22) ^ w
+
+
+def rock(seed, squash):
+    """Камень рассыпки (docs/terrain.md): икосаэдр, разбитый один раз, узлы сдвинуты по лучу хешем,
+    грани плоские (низкополигональный скол). Поперечник ~1 м, низ на y = 0; масштаб ставит рассыпка."""
+    t = (1.0 + 5.0 ** 0.5) / 2.0
+    base = [(-1, t, 0), (1, t, 0), (-1, -t, 0), (1, -t, 0), (0, -1, t), (0, 1, t), (0, -1, -t), (0, 1, -t),
+            (t, 0, -1), (t, 0, 1), (-t, 0, -1), (-t, 0, 1)]
+    faces = [(0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11), (1, 5, 9), (5, 11, 4), (11, 10, 2),
+             (10, 7, 6), (7, 1, 8), (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9), (4, 9, 5), (2, 4, 11),
+             (6, 2, 10), (8, 6, 7), (9, 8, 1)]
+
+    def norm(v):
+        l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) ** 0.5
+        return (v[0] / l, v[1] / l, v[2] / l)
+
+    verts = [norm(v) for v in base]
+    mid = {}
+
+    def midpoint(a, b):
+        k = (min(a, b), max(a, b))
+        if k not in mid:
+            va, vb = verts[a], verts[b]
+            verts.append(norm(((va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2, (va[2] + vb[2]) / 2)))
+            mid[k] = len(verts) - 1
+        return mid[k]
+
+    sub = []
+    for a, b, c in faces:
+        ab, bc, ca = midpoint(a, b), midpoint(b, c), midpoint(c, a)
+        sub += [(a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)]
+    # Сдвиг по лучу и сплющивание; низ — на y = 0
+    pts = []
+    for i, v in enumerate(verts):
+        r = 0.78 + 0.32 * (ihash(i * 7919 + seed * 104729) / 4294967295.0)
+        pts.append((v[0] * r * 0.5, v[1] * r * 0.5 * squash, v[2] * r * 0.5 * 0.85))
+    y0 = min(p[1] for p in pts)
+    pts = [(p[0], p[1] - y0, p[2]) for p in pts]
+    h = max(p[1] for p in pts)
+    m = Mesh(["stone"])
+    for a, b, c in sub:
+        pa, pb, pc = pts[a], pts[b], pts[c]
+        u = (pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2])
+        w = (pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2])
+        # Грани икосаэдра — против часовой снаружи: нормаль u × w наружу
+        n = norm((u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]))
+        base_i = len(m.verts)
+        for q in (pa, pb, pc):
+            m.verts.append((*q, *n, 0, 0, 0, ao_by_height(q[1], h, 120)))
+        m.indices += [base_i, base_i + 1, base_i + 2]
+    xs = [p[0] for p in pts]
+    zs = [p[2] for p in pts]
+    hx, hz = (max(xs) - min(xs)) / 2, (max(zs) - min(zs)) / 2
+    b = ((0.0, h / 2, 0.0), (hx, h / 2, hz), (0.0, 0.0, 0.0, 1.0))
+    m.collider.append(b)
+    m.coarse.append(b)
+    return m
+
+
+MESHES = {"cube": cube, "pillar": pillar, "plate": plate,
+          "rock_a": lambda: rock(1, 0.62), "rock_b": lambda: rock(2, 0.8), "rock_c": lambda: rock(3, 0.45)}
 
 
 def main():

@@ -2,8 +2,9 @@
 #include "ground.h"
 #include "../core/hash.h"
 
-void world_init(World &w, Arena &arena, u64 seed) {
+void world_init(World &w, Arena &arena, u64 seed, const TerrainDesc &terrain, Arena &scratch) {
     w = World{};
+    terrain_generate(w.terrain, terrain, arena, scratch);
     rng_seed(w.rng, seed, 0xA11CEull);
     Dots &d = w.dots;
     d.gen = arena_push<u16>(arena, DOTS_CAPACITY);
@@ -12,6 +13,7 @@ void world_init(World &w, Arena &arena, u64 seed) {
     d.cz = arena_push<i32>(arena, DOTS_CAPACITY);
     d.x = arena_push<f32>(arena, DOTS_CAPACITY);
     d.z = arena_push<f32>(arena, DOTS_CAPACITY);
+    d.y = arena_push<f32>(arena, DOTS_CAPACITY);
     d.vx = arena_push<f32>(arena, DOTS_CAPACITY);
     d.vz = arena_push<f32>(arena, DOTS_CAPACITY);
     d.speed = arena_push<f32>(arena, DOTS_CAPACITY);
@@ -54,7 +56,7 @@ bool props_add(World &w, u64 mesh, u64 material, const WPos &at, f32 lift, u32 y
     p.cz[s] = q.cz;
     p.x[s] = q.x;
     p.z[s] = q.z;
-    p.y[s] = ground_at(w, q).height + lift;
+    p.y[s] = ground_at(w.terrain, q).height + lift;
     p.yaw[s] = yaw;
     p.scale[s] = scale;
     p.seed[s] = seed;
@@ -80,6 +82,7 @@ bool dots_spawn(World &w, const WPos &center, f32 radius) {
     d.z[s] = center.z + oz * radius;
     wpos_rebase(d.cx[s], d.x[s]);
     wpos_rebase(d.cz[s], d.z[s]);
+    d.y[s] = ground_at(w.terrain, d.cx[s], d.cz[s], d.x[s], d.z[s]).height;
     d.vx[s] = d.vz[s] = 0.0f;
     d.speed[s] = rng_range(w.rng, 2.0f, 6.0f);
     d.phase[s] = rng_u32(w.rng);
@@ -114,6 +117,7 @@ u32 world_columns(const World &w, Column *out) {
     out[k++] = {"dots.cz", d.cz, n * sizeof *d.cz};
     out[k++] = {"dots.x", d.x, n * sizeof *d.x};
     out[k++] = {"dots.z", d.z, n * sizeof *d.z};
+    out[k++] = {"dots.y", d.y, n * sizeof *d.y};
     out[k++] = {"dots.vx", d.vx, n * sizeof *d.vx};
     out[k++] = {"dots.vz", d.vz, n * sizeof *d.vz};
     out[k++] = {"dots.speed", d.speed, n * sizeof *d.speed};

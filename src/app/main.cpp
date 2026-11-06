@@ -26,11 +26,12 @@ static void usage() {
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z]   снимок (градусы, метры)");
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
     log_info("           --replay файл.rec                                            проверка повтора");
+    log_info("           --terrain-map файл.bmp                                       карта земли сверху");
 }
 
 void app_memory_init(AppMemory &m, bool with_record) {
     const usize MB = 1u << 20;
-    arena_init(m.world, platform_alloc(16 * MB), 16 * MB, "мир");
+    arena_init(m.world, platform_alloc(64 * MB), 64 * MB, "мир");  // земля ~27 МБ
     arena_init(m.step, platform_alloc(1 * MB), 1 * MB, "шаг");
     arena_init(m.frame, platform_alloc(4 * MB), 4 * MB, "кадр");
     arena_init(m.load, platform_alloc(256 * MB), 256 * MB, "загрузка");
@@ -85,6 +86,7 @@ int main(int argc, char **argv) {
             i += 5;
         }
         else if (!strcmp(s, "--nopixel")) a.nopixel = true;
+        else if (!strcmp(s, "--terrain-map")) { a.terrain_map = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--novsync")) a.vsync = false;
         else if (!strcmp(s, "--validation")) a.validation = true;
         else if (!strcmp(s, "--help") || !strcmp(s, "-h")) { usage(); return 0; }
@@ -100,7 +102,7 @@ int main(int argc, char **argv) {
 #endif
     AppMemory m;
     app_memory_init(m, a.record || a.replay);
-    int rc = a.replay ? run_replay(a, m) : a.sim_steps ? run_sim(a, m) : run_window(a, m);
+    int rc = a.terrain_map ? run_terrain_map(a, m) : a.replay ? run_replay(a, m) : a.sim_steps ? run_sim(a, m) : run_window(a, m);
     app_memory_free(m);
     return rc;
 }

@@ -82,12 +82,16 @@ struct RenderLight {
     f32 sky_color[3];  // линейный
 };
 
+constexpr u32 RENDER_GROUND_LAYERS = 4;  // песок, сухая земля, щебень, камень (GroundKind в src/sim/ground.h)
+
 struct RenderFrame {
     f32 clear[3];      // sRGB
     RenderView view;
     RenderStyle style;
     RenderLight light;
-    u32 ground_material;  // RENDER_NO_MATERIAL — земли нет
+    f32 fog[4];        // временная дымка: линейный цвет и 1/расстояние (м⁻¹)
+    bool ground;       // рисовать землю (её данные — render_terrain_set)
+    u32 ground_layers[RENDER_GROUND_LAYERS];  // материалы слоёв
     Span<const RenderInstance> instances;
     Span<RenderDraw> draws;  // рендер сортирует по ключу на месте
     Span<const RenderPoint> points;
@@ -123,6 +127,20 @@ u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices)
 void render_mesh_destroy(u32 mesh);
 // Таблица материалов целиком (номер = место). Ждёт, пока GPU закончит кадры: только при загрузке
 bool render_set_materials(Span<const RenderMaterial> materials);
+
+// Земля (docs/terrain.md): сетка высот и маски копируются в видеопамять один раз, числа — как Terrain
+// в src/sim/terrain.h (рендер шаг мира не видит, их передаёт app). Рисуется clipmap'ом вокруг камеры
+constexpr u32 RENDER_TERRAIN_OCTAVES = 5;
+struct RenderTerrain {
+    const u16 *height;  // n·n
+    u32 n;
+    const u16 *mask;    // nm·nm
+    u32 nm;
+    i32 chunk0, size_m;
+    i32 oct_lp[RENDER_TERRAIN_OCTAVES], oct_amp[RENDER_TERRAIN_OCTAVES];
+    u32 oct_seed[RENDER_TERRAIN_OCTAVES];
+};
+bool render_terrain_set(const RenderTerrain &t);
 
 // Время прохода forward на GPU за прошлый кадр, мс (0 — таймеров нет)
 f64 render_gpu_ms();

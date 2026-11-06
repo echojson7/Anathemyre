@@ -7,6 +7,7 @@
 #include "../debug/debug.h"
 #include "../platform/platform.h"
 #include "../render/render.h"
+#include "../sim/ground.h"
 #include "../sim/record.h"
 #include "../sim/step.h"
 #include "../view/view.h"
@@ -41,7 +42,9 @@ int run_window(const Args &a, AppMemory &m) {
     u64 desc = 0;
     MaterialTable mats;
     ViewAssets *assets = arena_push<ViewAssets>(m.world, 1);
-    if (!app_world_create(w, m, a.seed, &desc) || !app_assets_load(m, mats, *assets)) {
+    ScatterCache *scatter = arena_push<ScatterCache>(m.world, 1);
+    scatter_init(*scatter, m.world);
+    if (!app_world_create(w, m, a.seed, &desc) || !app_assets_load(m, mats, *assets) || !app_terrain_upload(w)) {
         render_shutdown();
         platform_window_close();
         return 1;
@@ -69,6 +72,7 @@ int run_window(const Args &a, AppMemory &m) {
         cam.target.x = a.cam[3];
         cam.target.z = a.cam[4];
         wpos_rebase(cam.target);
+        cam.target.y = ground_at(w.terrain, cam.target).height;
     } else {
         cam.target.z = 10.0f;  // сцена этапа 1 — к северу от начала карты
     }
@@ -99,13 +103,13 @@ int run_window(const Args &a, AppMemory &m) {
         if (in.key_pressed[KEY_P]) pixel = !pixel;
         debug_keys(in, ds);
         dbg.enabled = ds.lines;
-        view_camera_control(cam, in, (f32)dt);
+        view_camera_control(cam, in, (f32)dt, w.terrain);
 
         i32 ww = 0, wh = 0;
         platform_window_size(&ww, &wh);
         // Мышь → намерения игрока: левая — притянуть точки, с Ctrl — вспышка; R — отпустить
         WPos at;
-        if (in.mouse_pressed[MOUSE_LEFT] && view_screen_to_ground(cam, ww, wh, in.mouse_x, in.mouse_y, at))
+        if (in.mouse_pressed[MOUSE_LEFT] && view_screen_to_ground(cam, ww, wh, in.mouse_x, in.mouse_y, w.terrain, at))
             pending.push_back({0, in.key_down[KEY_CTRL] ? (u32)INTENT_BURST : (u32)INTENT_ATTRACT, at});
         if (in.key_pressed[KEY_R]) pending.push_back({0, INTENT_RELEASE, WPos{}});
 
@@ -149,7 +153,7 @@ int run_window(const Args &a, AppMemory &m) {
         // Замер CPU кадра: вид + запись команд, без шага мира и без ожидания GPU и показа (vsync)
         u64 tcpu = platform_time_ns();
         arena_reset(m.frame);
-        ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel};
+        ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel, scatter};
         if (!ds.lines) vi.dbg = nullptr;
         RenderFrame rf;
         view_build(cam, *assets, vi, m.frame, rf);

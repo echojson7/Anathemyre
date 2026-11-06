@@ -6,6 +6,7 @@ void extract_init(Extract &e, Arena &arena) {
     e.cx = arena_push<i32>(arena, DOTS_CAPACITY);
     e.cz = arena_push<i32>(arena, DOTS_CAPACITY);
     e.x = arena_push<f32>(arena, DOTS_CAPACITY);
+    e.y = arena_push<f32>(arena, DOTS_CAPACITY);
     e.z = arena_push<f32>(arena, DOTS_CAPACITY);
     const u32 n = PROPS_CAPACITY;
     e.prop_gen = arena_push<u16>(arena, n);
@@ -23,11 +24,13 @@ void extract_init(Extract &e, Arena &arena) {
 
 void sim_extract(const World &w, Extract &e) {
     const Dots &d = w.dots;
+    e.terrain = &w.terrain;
     e.step = w.step;
     for (u32 i = 0; i < DOTS_CAPACITY; ++i) e.gen[i] = d.alive[i] ? d.gen[i] : 0;
     memcpy(e.cx, d.cx, DOTS_CAPACITY * sizeof *e.cx);
     memcpy(e.cz, d.cz, DOTS_CAPACITY * sizeof *e.cz);
     memcpy(e.x, d.x, DOTS_CAPACITY * sizeof *e.x);
+    memcpy(e.y, d.y, DOTS_CAPACITY * sizeof *e.y);
     memcpy(e.z, d.z, DOTS_CAPACITY * sizeof *e.z);
     e.attract_on = w.attract_on;
     e.attract_at = w.attract_at;

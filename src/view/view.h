@@ -7,6 +7,7 @@
 #include "../platform/platform.h"
 #include "../render/render.h"
 #include "../sim/extract.h"
+#include "scatter.h"
 
 // Камера: орбита вокруг точки на земле или свободный полёт (F). yaw, pitch — направление от цели к глазу
 struct Camera {
@@ -29,7 +30,8 @@ struct ViewAssets {
     ViewMesh meshes[VIEW_MAX_MESHES];
     u32 mesh_count = 0;
     const MaterialTable *materials = nullptr;
-    u32 ground_material = RENDER_NO_MATERIAL;  // материал вида земли GROUND_PLAIN
+    u32 ground_layers[RENDER_GROUND_LAYERS] = {};  // материалы слоёв земли по GroundKind
+    u32 rocks[SCATTER_MESHES] = {};                 // сетки камней рассыпки
 };
 
 struct ViewInput {
@@ -39,13 +41,15 @@ struct ViewInput {
     const DebugDraw *dbg;   // может быть nullptr
     i32 width, height;      // пиксели кадра
     bool pixel;             // правило ячейки (P)
+    ScatterCache *scatter;  // рассыпка камней (кеш между кадрами), может быть nullptr
 };
 
 // Память под экземпляры, точки и отрезки — из арены кадра
 void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in, Arena &frame, RenderFrame &out);
-// Мышь, колесо и клавиши → камера. dt — секунды кадра (камера движется по времени кадра, не мира)
-void view_camera_control(Camera &cam, const Input &in, f32 dt);
+// Мышь, колесо и клавиши → камера. dt — секунды кадра (камера движется по времени кадра, не мира).
+// Цель орбиты лежит на земле, глаз не уходит под землю
+void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &ground);
 // Глаз камеры (чанк + смещение)
 WPos view_eye(const Camera &cam);
-// Луч из пикселя окна до земли (плоскость высоты земли под целью). false — луч не попал в землю
-bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32 py, WPos &out);
+// Луч из пикселя окна до земли (по ground_at, шагами с уточнением). false — луч не попал в землю
+bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32 py, const Terrain &ground, WPos &out);
