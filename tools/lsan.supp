@@ -1,0 +1,3 @@
+# Утечки чужих библиотек, не нашего кода. Держать узким.
+# SDL3: раскладка клавиш X11 (libX11/xkb, подгружаются dlopen) — CI ubuntu-latest, PR #143.
+leak:X11_UpdateKeymap

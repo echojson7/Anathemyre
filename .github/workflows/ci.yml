@@ -61,6 +61,8 @@ jobs:
           build/linux-release/anathemyre --sim 10000 --seed 1 --record linux.rec
           build/linux-debug/anathemyre --replay linux.rec
       - name: Окно под lavapipe, слои проверки Vulkan, кадр сцены
+        env:
+          LSAN_OPTIONS: suppressions=${{ github.workspace }}/tools/lsan.supp
         run: |
           set -o pipefail  # иначе код выхода игры теряется за tail
           xvfb-run -a -s "-screen 0 1280x720x24" build/linux-debug/anathemyre --frames 300 --validation | tail -5
