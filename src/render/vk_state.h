@@ -31,7 +31,7 @@ struct GpuImage {
 struct FrameGpu {
     VkDeviceAddress vertices, instances, materials, lines, points;
     VkDeviceAddress t_height, t_mask;
-    VkDeviceAddress t_water, t_mask2, t_dune;
+    VkDeviceAddress t_water, t_mask2, t_dune, t_fine;
     i32 cam_cx, cam_cz;
     f32 cam_x, cam_y, cam_z;
     f32 tan_half_fov;
@@ -43,6 +43,7 @@ struct FrameGpu {
     f32 viewport[2], ndc_per_pixel[2];
     i32 t_chunk0, t_size_x, t_size_z, t_nx, t_nz, t_nmx, t_nmz;
     u32 t_dune_seed;
+    i32 t_fine_off[4], t_fine_n, t_loc_m;  // карты дюн 2 м (RenderTerrain::fine): начало локации, −1 — нет
     i32 t_oct_lp[5], t_oct_amp[5];
     u32 t_oct_seed[5], t_on;
     i32 clip_n, clip_levels, clip_morph, clip_pad;
@@ -70,7 +71,7 @@ constexpr i32 CLIP_LEVELS = 10;   // шаг до 256 м, сторона посл
 constexpr i32 CLIP_MORPH = 32;    // ширина перехода к следующему кольцу, квадратов
 struct TerrainGpu {
     bool on = false;
-    GpuBuffer height, mask, water, index, mask2, dune;
+    GpuBuffer height, mask, water, index, mask2, dune, fine;
     u32 first_full = 0, count_full = 0;
     u32 first_ring[4] = {}, count_ring = 0;
     RenderTerrain desc{};

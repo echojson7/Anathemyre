@@ -290,6 +290,57 @@ float t_dune_amp_f(vec2 g) {
     return mix(mix(a00, a10, fr.x), mix(a01, a11, fr.x), fr.y);
 }
 
+// --- Дюны из карт 2 м (лидар, симуляция ветра; src/sim/terrain.cpp, fine_at) ---
+int t_fin(int k) { return int((pc.frame.t_fine.v[k >> 1] >> uint((k & 1) * 16)) & 0xFFFFu); }
+
+// Начало карты локации, где x (метры от угла, в пределах карты); −1 — у локации карты нет
+int t_fine_loc(int gx, out int lx) {
+    FrameData f = pc.frame;
+    int nloc = f.t_size_x / f.t_loc_m;
+    int loc = min(gx / f.t_loc_m, nloc - 1);
+    lx = gx - loc * f.t_loc_m;
+    return loc < 4 ? f.t_fine_off[loc] : -1;
+}
+
+// Карта в узле решётки 1 м, единицы 1/1280 м (как fine_at)
+int t_fine_at(int off, int lx, int gz) {
+    int n = pc.frame.t_fine_n;
+    int i = lx >> 1, j = gz >> 1, fx = lx & 1, fz = gz & 1;
+    int k = off + j * n + i;
+    int h00 = t_fin(k), h10 = fx != 0 ? t_fin(k + 1) : 0, h01 = fz != 0 ? t_fin(k + n) : 0;
+    int h11 = (fx & fz) != 0 ? t_fin(k + n + 1) : 0;
+    return ((h00 * (2 - fx) + h10 * fx) * (2 - fz) + (h01 * (2 - fx) + h11 * fx) * fz) / 2;
+}
+
+// Карта во float кубически (Catmull-Rom по узлам 2 м), м: гладкий наклон для картинки и тени
+float t_fine_f(int off, vec2 l) {
+    FrameData f = pc.frame;
+    int n = f.t_fine_n;
+    vec2 b = clamp(l * 0.5, vec2(1.0), vec2(float(n) - 2.001));
+    ivec2 i = ivec2(floor(b));
+    vec2 t = b - vec2(i);
+    vec2 t2 = t * t, t3 = t2 * t;
+    vec2 w0 = -0.5 * t3 + t2 - 0.5 * t, w1 = 1.5 * t3 - 2.5 * t2 + 1.0;
+    vec2 w2 = -1.5 * t3 + 2.0 * t2 + 0.5 * t, w3 = 0.5 * t3 - 0.5 * t2;
+    float r = 0.0;
+    for (int y = 0; y < 4; ++y) {
+        int k = off + (i.y - 1 + y) * n + i.x - 1;
+        float row = w0.x * float(t_fin(k)) + w1.x * float(t_fin(k + 1)) + w2.x * float(t_fin(k + 2)) + w3.x * float(t_fin(k + 3));
+        r += row * (y == 0 ? w0.y : (y == 1 ? w1.y : (y == 2 ? w2.y : w3.y)));
+    }
+    return max(r, 0.0) * (1.0 / 640.0);
+}
+
+// Дюны во float в точке g (метры карты), м: карта локации или формула
+float t_dunes_f(vec2 g) {
+    FrameData f = pc.frame;
+    vec2 gc = clamp(g, vec2(0.0), vec2(f.t_size_x, f.t_size_z));
+    int lx;
+    int off = t_fine_loc(int(gc.x), lx);
+    if (off >= 0) return t_fine_f(off, vec2(gc.x - float(int(gc.x) - lx), gc.y));
+    return t_dune_f(g, t_dune_amp_f(g));
+}
+
 // Клетка сетки 8 м вокруг узла (уже зажатого в карту): номер узла и место в клетке (0..8)
 int t_base_cell(int gx, int gz, out int fx, out int fz) {
     FrameData f = pc.frame;
@@ -308,6 +359,9 @@ int t_dune_fix(int gx, int gz) {
     int nx = pc.frame.t_nx;
     int h00 = t_dun(k), h10 = t_dun(k + 1), h01 = t_dun(k + nx), h11 = t_dun(k + nx + 1);
     int db = (h00 | h10 | h01 | h11) == 0 ? 0 : ((h00 * (8 - fx) + h10 * fx) * (8 - fz) + (h01 * (8 - fx) + h11 * fx) * fz) / 32;
+    int lx;
+    int off = t_fine_loc(gx, lx);
+    if (off >= 0) return t_fine_at(off, lx, gz) - db;
     int amp = t_masks2(gx, gz).x;
     return (db | amp) == 0 ? 0 : t_dune(gx, gz, amp) - db;
 }
@@ -366,9 +420,8 @@ vec3 t_smooth_normal(vec2 p, bool detail, bool dunes) {
     vec2 gs = mix(mix(gr[0], gr[1], fr.x), mix(gr[2], gr[3], fr.x), fr.y);
     if (dn) {
         const float E = 0.25;
-        float amp = t_dune_amp_f(g);
-        float dx = t_dune_f(g + vec2(E, 0.0), amp) - t_dune_f(g - vec2(E, 0.0), amp);
-        float dz = t_dune_f(g + vec2(0.0, E), amp) - t_dune_f(g - vec2(0.0, E), amp);
+        float dx = t_dunes_f(g + vec2(E, 0.0)) - t_dunes_f(g - vec2(E, 0.0));
+        float dz = t_dunes_f(g + vec2(0.0, E)) - t_dunes_f(g - vec2(0.0, E));
         gs += vec2(dx, dz) / (2.0 * E);
     }
     if (detail) {
@@ -418,7 +471,7 @@ float t_shadow(vec3 rel, vec3 l) {
         float h = t_base_height(q.xz);
         float bias = 1.2 + t * 0.002;
         if (dunes && t < 50.0) {
-            h += t_dune_f(q.xz, t_dune_amp_f(q.xz)) - t_dune_base_f(q.xz);
+            h += t_dunes_f(q.xz) - t_dune_base_f(q.xz);
             bias = 0.3 + t * 0.002;
         }
         lit = min(lit, clamp((q.y - h + bias) / (t * 0.035 + 0.3), 0.0, 1.0));

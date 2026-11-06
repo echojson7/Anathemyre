@@ -24,7 +24,13 @@ struct TerrainDesc {
     f32 ring = 3600.0f;        // от центра локации до подножия гор по её краю, м
     u32 locations = 1;         // локации с запада на восток, между соседними — хребет с перевалом
     u32 biome[TERRAIN_MAX_LOCATIONS] = {};
+    // Карта дюн пустыни (файл .dun, src/sim/dune_map.h): путь из описания, данные кладёт app до генерации
+    char dune_path[TERRAIN_MAX_LOCATIONS][64] = {};
+    const u8 *dune_data[TERRAIN_MAX_LOCATIONS] = {};
+    usize dune_size[TERRAIN_MAX_LOCATIONS] = {};
 };
+// Карта дюн: узлы 2 м на всю локацию (сторона loc_m / 2 + 1), единицы 1/640 м
+constexpr i32 TERRAIN_FINE_SHIFT = 1;
 
 struct Terrain {
     i32 chunks_x = 0, chunks_z = 0;  // карта в чанках: локации с запада на восток
@@ -41,12 +47,19 @@ struct Terrain {
     u32 detail_seed = 0;    // зерно слоя деталей
     u32 oct_seed[TERRAIN_DETAIL_OCTAVES] = {};  // зёрна октав деталей (их же получает шейдер)
     u32 dune_seed = 0;      // зерно дюн (его же получает шейдер)
+    // Дюны из карты (лидар или симуляция ветра) вместо формулы: сетки 2 м локаций подряд, единицы 1/640 м,
+    // уже умножены на силу дюн. fine_off[loc] — начало сетки локации, −1 — у локации карты нет
+    u16 *fine = nullptr;
+    u32 fine_n = 0;         // узлов на сторону сетки локации
+    usize fine_count = 0;   // всего узлов
+    i32 fine_off[TERRAIN_MAX_LOCATIONS] = {-1, -1, -1, -1};
     u64 hash = 0;           // хеш сетки, масок, воды и дюн
 };
 
 // Разобрать data/terrain.txt. false — ошибка в err
 bool terrain_desc_parse(const u8 *text, usize size, TerrainDesc &out, char *err, usize err_cap);
-// Построить землю: память сетки — из world, временная — из scratch (откатывается)
+// Построить землю: память сетки — из world, временная — из scratch (откатывается). Испорченная карта дюн
+// (проверяет app, dune_map_check) — локация без дюн
 void terrain_generate(Terrain &t, const TerrainDesc &d, Arena &world, Arena &scratch);
 
 // Октава слоя деталей: период 2^lp м, размах amp единиц при шероховатости 255. Таблицу получает и шейдер

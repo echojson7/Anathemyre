@@ -34,6 +34,7 @@ layout(buffer_reference, scalar) buffer FrameData {
     Words t_water;      // уровень воды 32 м, u16 парами, 5 см; 0 — воды нет
     Words t_mask2;      // маски 32 м, u32: сила дюн, пустыня по байту
     Words t_dune;       // дюны в узлах сетки высот, u16 парами, 1/640 м
+    Words t_fine;       // карты дюн 2 м локаций пустынь, u16 парами, 1/640 м (лидар, симуляция ветра)
     ivec2 cam_chunk;
     vec3 cam_off;       // камера внутри своего чанка: x, z в [0, 256), y — высота
     float tan_half_fov;
@@ -46,6 +47,8 @@ layout(buffer_reference, scalar) buffer FrameData {
     // Земля: как Terrain в src/sim/terrain.h
     int t_chunk0, t_size_x, t_size_z, t_nx, t_nz, t_nmx, t_nmz;
     uint t_dune_seed;
+    int t_fine_off[4];    // карты дюн 2 м: начало локации в t_fine (номера u16), −1 — нет
+    int t_fine_n, t_loc_m;
     int t_oct_lp[5];
     int t_oct_amp[5];
     uint t_oct_seed[5];

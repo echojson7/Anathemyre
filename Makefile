@@ -112,13 +112,15 @@ SHADER_SPV := $(patsubst data/shaders/%,$(OUT)/shaders/%.spv,$(SHADER_SRC))
 $(shell ./tools/matgen.sh $(OUT))
 
 # Данные рядом с исполняемым файлом: описания и сетки (.mesh пишет tools/meshgen.py, лежат в data/meshes)
-DATA_SRC := data/materials.txt data/scene.txt data/sky.txt data/terrain.txt $(sort $(wildcard data/meshes/*.mesh))
+DATA_SRC := data/materials.txt data/scene.txt data/sky.txt data/terrain.txt $(sort $(wildcard data/meshes/*.mesh)) \
+            $(sort $(wildcard data/dunes/*.dun))
 DATA_OUT := $(patsubst data/%,$(OUT)/data/%,$(DATA_SRC))
 
 .PHONY: all clean check sim-check sim-ref compdb toolchain third_party meshes
 all: $(BIN) $(SHADER_SPV) $(DATA_OUT)
 
 $(OUT)/data/%: data/%
+	@mkdir -p $(dir $@)
 	cp $< $@
 
 # Пересобрать заглушки .mesh (результат лежит в git; CI проверяет, что генератор даёт те же байты)

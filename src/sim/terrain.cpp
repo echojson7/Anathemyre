@@ -6,6 +6,7 @@
 // целях. Слой деталей 1 м — terrain_node(), целый, общий с шейдером
 #include "terrain.h"
 #include "terrain_erode.h"
+#include "dune_map.h"
 #include "../core/hash.h"
 #include "../core/text.h"
 
@@ -132,116 +133,6 @@ i32 terrain_base_slope(const Terrain &t, i32 gx, i32 gz) {
     return (dx > dz ? dx : dz) / 8;
 }
 
-// --- дюны: общее с data/shaders/terrain.glsl (dune_*), только 32-битные операции ---
-// Поперечные дюны поперёк ветра с запада-северо-запада (склоны осыпания смотрят на восток-юго-восток): фаза — расстояние вдоль ветра, искривлённое шумом
-// (гребни извилистые), в пятнах сдвинутая на полволны (гребни рвутся и сливаются «игреками»). Профиль:
-// длинный пологий наветренный склон, острый гребень, склон осыпания ~32° (длина — по высоте дюны). Высота
-// гуляет вдоль гребня (сёдла между дюнами). На наветренных склонах — мелкие дюны под другим углом
-
-// Хеш узла решётки шума дюн: одно перемешивание (шумов в дюнах много, th2 втрое дороже)
-static inline u32 dune_hash(i32 x, i32 z, u32 seed) { return th(((u32)x * 0x8DA6B343u) ^ ((u32)z * 0xD8163841u) ^ seed); }
-
-// Шум значений с периодом 2^lp м (lp ≤ 12) в узле решётки 1 м, Q15 в [−32768, 32767]
-static inline i32 dune_noise(i32 gx, i32 gz, i32 lp, u32 seed) {
-    i32 m = (1 << lp) - 1;
-    i32 cx = gx >> lp, cz = gz >> lp;
-    i32 tx = ((gx & m) << 12) >> lp, tz = ((gz & m) << 12) >> lp;   // Q12: точно в узлах 1 м при lp ≤ 12
-    i32 wx = (((tx * tx) >> 12) * (12288 - 2 * tx)) >> 12, wz = (((tz * tz) >> 12) * (12288 - 2 * tz)) >> 12;
-    i32 v00 = (i32)(dune_hash(cx, cz, seed) >> 16) - 32768;
-    i32 v10 = (i32)(dune_hash(cx + 1, cz, seed) >> 16) - 32768;
-    i32 v01 = (i32)(dune_hash(cx, cz + 1, seed) >> 16) - 32768;
-    i32 v11 = (i32)(dune_hash(cx + 1, cz + 1, seed) >> 16) - 32768;
-    i32 a = v00 + (((v10 - v00) * wx) >> 12);
-    i32 b = v01 + (((v11 - v01) * wx) >> 12);
-    return a + (((b - a) * wz) >> 12);
-}
-
-// Профиль дюны Q12 по месту p ∈ [0, lam) на волне (единицы Q4 м), склон осыпания длиной lee.
-// Наветренный склон: 0.6·smoothstep + 0.4·t² — у подошвы плавно, у гребня ~0.8 среднего наклона (бровка
-// острая); подветренный: (1 − s)(1 − 0.35 s) — круче у бровки, вогнутый у подножия. Бровка скруглена
-// параболой на ±5 м, подножие — на ±6 м: излом пилил бы гребень зубцами по узлам решётки и вершинам колец
-constexpr i32 DUNE_R = 80;    // скругление бровки, Q4 м
-constexpr i32 DUNE_R2 = 96;   // скругление подножия
-static inline i32 dune_profile_q12(i32 p, i32 lam, i32 lee, i32 *windward) {
-    i32 c = lam - lee;
-    *windward = p < c ? (p << 12) / c : 0;
-    i32 dx = p - c;
-    if (dx > -DUNE_R && dx < DUNE_R) {
-        i32 e = (dx + DUNE_R) * (dx + DUNE_R);
-        return 4096 + (3277 * dx) / c - (5530 * e) / (lee * 4 * DUNE_R) - (3277 * e) / (c * 4 * DUNE_R);
-    }
-    i32 dt = p < DUNE_R2 ? p : (p > lam - DUNE_R2 ? p - lam : DUNE_R2);
-    if (dt < DUNE_R2) {
-        i32 e = (dt + DUNE_R2) * (dt + DUNE_R2);
-        return -(2662 * dt) / lee + (2662 * e) / (lee * 4 * DUNE_R2);
-    }
-    if (p < c) {
-        i32 t = (p << 12) / c;
-        i32 t2 = (t * t) >> 12, t3 = (t2 * t) >> 12;
-        return (6 * (3 * t2 - 2 * t3) + 4 * t2) / 10;
-    }
-    i32 s = ((p - c) << 12) / lee;
-    return ((4096 - s) * (4096 - (s * 35) / 100)) >> 12;
-}
-
-constexpr i32 DUNE_LAM = 320 * 16;        // волна больших дюн, Q4 м (320 м)
-constexpr i32 DUNE_H = 56 * 1280;         // наибольшая высота, единицы 1/1280 м
-constexpr i32 DUNE_ARC = 560 * 16;        // ширина серпа вдоль гребня, Q4 м
-constexpr i32 DUNE_ARC2 = 880 * 16;       // второй, шире: смесь двух рядов серпов не стоит строем
-constexpr i32 DUNE_ARC_A = 140 * 16;      // насколько середина серпа выдвинута против ветра, Q4 м
-constexpr i32 DUNE2_LAM = 90 * 16;        // мелкие дюны на наветренных склонах
-constexpr i32 DUNE2_H = 4 * 1280;         // 4 м
-
-i32 terrain_dune(i32 gx, i32 gz, u32 amp, u32 seed) {
-    if (amp == 0) return 0;
-    // Вдоль ветра (24, −7)/25 и поперёк, Q4 м. Искривление: 1 км — извилистость гребней, 256 и 64 м — рваность
-    i32 u = ((gx * 24 - gz * 7) * 16) / 25;
-    i32 v = ((gz * 24 + gx * 7) * 16) / 25;
-    i32 w = ((dune_noise(gx, gz, 10, seed) * 90 * 16) >> 15) + ((dune_noise(gx, gz, 8, seed + 1u) * 22 * 16) >> 15) +
-            ((dune_noise(gx, gz, 6, seed + 2u) * 4 * 16) >> 15);
-    // Серпы: вдоль гребня — дуги, середина выдвинута против ветра, рога (стыки дуг) — по ветру и ниже. Дуги
-    // соседних рядов сдвинуты шумом, чтобы не стояли строем
-    i32 vs = v + ((dune_noise(gx, gz, 9, seed + 6u) * (DUNE_ARC * 4 / 10)) >> 15) + DUNE_ARC2 * 1024;
-    i32 s = ((vs % DUNE_ARC) * 8192) / DUNE_ARC - 4096;   // −1…1, Q12
-    i32 arc = 4096 - ((s * s) >> 12);
-    arc = (arc * arc) >> 12;   // (1 − s²)²: 1 в середине серпа, 0 у рогов, без излома на стыке серпов
-    s = ((vs % DUNE_ARC2) * 8192) / DUNE_ARC2 - 4096;
-    i32 arc2 = 4096 - ((s * s) >> 12);
-    arc2 = (arc2 * arc2) >> 12;
-    i32 am = dune_noise(gx, gz, 10, seed + 7u);
-    am = am < -12000 ? 0 : (am > 12000 ? 4096 : ((am + 12000) * 4096) / 24000);
-    arc += ((arc2 - arc) * am) >> 12;
-    // Пятна, сдвинутые на полволны: на их краю гребень переходит к соседнему — «игрек», обрыв гребня
-    i32 sel = dune_noise(gx, gz, 10, seed + 3u);
-    i32 st = sel < -20000 ? 0 : (sel > 20000 ? 4096 : ((sel + 20000) * 4096) / 40000);
-    st = (((st * st) >> 12) * (12288 - 2 * st)) >> 12;
-    i32 p = (u + w + ((st * DUNE_LAM) >> 13) + ((DUNE_ARC_A * arc) >> 12) + DUNE_LAM * 64) % DUNE_LAM;  // > 0: % одинаков у C++ и GLSL
-    // Высота: по маске, к рогам ниже (0.45…1) и шумом вдоль гребня (0.4…1)
-    i32 hn = dune_noise(gx, gz, 8, seed + 4u) + 32768;   // 0..65535
-    i32 h = (DUNE_H * (i32)amp) / 255;
-    h = ((h >> 4) * (1843 + ((arc * 2253) >> 12))) >> 8;
-    h = ((h >> 4) * (26214 + ((hn * 9830) >> 14))) >> 12;
-    // Склон осыпания ~32° (тангенс 0.62): длина = высота / 0.62, Q4 м
-    i32 lee = (h * 16 * 100) / (1280 * 62);
-    lee = lee < DUNE_LAM / 12 ? DUNE_LAM / 12 : (lee > DUNE_LAM * 2 / 5 ? DUNE_LAM * 2 / 5 : lee);
-    i32 ww;
-    i32 d = (h * dune_profile_q12(p, DUNE_LAM, lee, &ww)) >> 12;
-    // Мелкие дюны: ветер с юго-запада, только на наветренном склоне (у подошвы и бровки гаснут)
-    if (ww > 0) {
-        i32 u2 = ((gx * 20 + gz * 15) * 16) / 25 + ((dune_noise(gx, gz, 7, seed + 5u) * 18 * 16) >> 15) +
-                 ((dune_noise(gx, gz, 5, seed + 8u) * 4 * 16) >> 15);
-        i32 p2 = (u2 + DUNE2_LAM * 512) % DUNE2_LAM;
-        i32 h2 = (DUNE2_H * (i32)amp) / 255;
-        h2 = (h2 * (6554 + ((dune_noise(gx, gz, 8, seed + 9u) + 32768) >> 2))) >> 14;  // пятнами 0.4…1.4
-        i32 lee2 = (h2 * 16 * 100) / (1280 * 62);
-        lee2 = lee2 < DUNE2_LAM * 3 / 10 ? DUNE2_LAM * 3 / 10 : lee2;  // пологие: гребень мягкий
-        i32 wf = (ww * (4096 - ww)) >> 10;   // 4t(1 − t), Q12
-        i32 w2;
-        d += (((h2 * dune_profile_q12(p2, DUNE2_LAM, lee2, &w2)) >> 12) * wf) >> 12;
-    }
-    return d;
-}
-
 // Дюны сетки 8 м билинейно в узле решётки 1 м, единицы 1/1280 м
 static i32 dune_base_at(const Terrain &t, i32 gx, i32 gz) {
     i32 fx, fz;
@@ -251,13 +142,35 @@ static i32 dune_base_at(const Terrain &t, i32 gx, i32 gz) {
     return ((h00 * (8 - fx) + h10 * fx) * (8 - fz) + (h01 * (8 - fx) + h11 * fx) * fz) / 32;  // веса 64, единица 2
 }
 
+// Дюны из карты 2 м в узле решётки 1 м (билинейно, веса 0 или ½ — точно), единицы 1/1280 м. has — у локации
+// есть карта. gx, gz — уже в пределах карты
+static i32 fine_at(const Terrain &t, i32 gx, i32 gz, bool *has) {
+    i32 nloc = t.size_x / t.loc_m;
+    i32 loc = gx / t.loc_m;
+    loc = loc >= nloc ? nloc - 1 : loc;
+    i32 off = t.fine_off[loc];
+    *has = off >= 0;
+    if (off < 0) return 0;
+    i32 lx = gx - loc * t.loc_m;
+    i32 i = lx >> TERRAIN_FINE_SHIFT, j = gz >> TERRAIN_FINE_SHIFT, fx = lx & 1, fz = gz & 1;
+    const u16 *f = t.fine + off + (usize)j * t.fine_n + i;
+    i32 h00 = f[0], h10 = fx ? f[1] : 0, h01 = fz ? f[t.fine_n] : 0, h11 = fx && fz ? f[t.fine_n + 1] : 0;
+    return ((h00 * (2 - fx) + h10 * fx) * (2 - fz) + (h01 * (2 - fx) + h11 * fx) * fz) / 2;  // веса 4, единица 2
+}
+
 i32 terrain_node(const Terrain &t, i32 gx, i32 gz) {
     clamp_node(t, gx, gz);
     i32 h = base_at(t, gx, gz);  // билинейно с весами k/8: 5 см × 64 = единица 1/1280 м
-    // Дюны в сетке 8 м размыты: между узлами — точная функция вместо билинейной смеси (в узлах они равны)
+    // Дюны в сетке 8 м размыты: между узлами — карта 2 м или точная функция вместо билинейной смеси (в узлах
+    // они равны)
     i32 db = dune_base_at(t, gx, gz);
-    u32 amp = terrain_masks2(t, gx, gz).dune;
-    if (db | (i32)amp) h += terrain_dune(gx, gz, amp, t.dune_seed) - db;
+    bool has;
+    i32 fd = fine_at(t, gx, gz, &has);
+    if (has) h += fd - db;
+    else {
+        u32 amp = terrain_masks2(t, gx, gz).dune;
+        if (db | (i32)amp) h += terrain_dune(gx, gz, amp, t.dune_seed) - db;
+    }
     u32 rough = terrain_masks(t, gx, gz).rough;
     if (rough == 0) return h;
     i32 d = 0;
@@ -523,7 +436,9 @@ void terrain_generate(Terrain &t, const TerrainDesc &d, Arena &world, Arena &scr
             f.mount = (f32)((mm * ((ridge * 330000) / ONE + 50000 + ((mm * 120000) >> 16))) >> 16) * 0.001f;
             f.desert = 1.0f;
             f32 dn = q16f(fbm(X + 7001, Z - 3301, 11, 2, sd(61)));
-            f.dunes = f_clamp(0.72f + dn * 0.6f, 0.25f, 1.0f) * (1.0f - smoothf(0.0f, 0.5f, f.mm));
+            // У карты дюн (лидар, ветер) своя смена размеров — сила ровная, гаснет только у гор
+            f32 share = d.dune_path[loc][0] ? 1.0f : f_clamp(0.72f + dn * 0.6f, 0.25f, 1.0f);
+            f.dunes = share * (1.0f - smoothf(0.0f, 0.5f, f.mm));
             return f;
         }
         i64 h = 300000 + ((fbm(X, Z, 13, 2, sd(6)) * 40000) >> 16);  // дно котловины, мм
@@ -708,6 +623,35 @@ void terrain_generate(Terrain &t, const TerrainDesc &d, Arena &world, Arena &scr
         }
     }
 
+    // Дюны из карт (лидар или симуляция ветра) × сила дюн из маски
+    t.fine_n = (u32)(L >> TERRAIN_FINE_SHIFT) + 1;
+    const usize fn2 = (usize)t.fine_n * t.fine_n;
+    u32 nmaps = 0;
+    for (u32 loc = 0; loc < nloc; ++loc)
+        if (dune_map_check(d.dune_data[loc], d.dune_size[loc], t.fine_n, t.fine_n)) ++nmaps;
+    if (nmaps) {
+        t.fine_count = fn2 * nmaps;
+        t.fine = arena_push<u16>(world, t.fine_count);
+        usize off = 0;
+        for (u32 loc = 0; loc < nloc; ++loc) {
+            if (!dune_map_check(d.dune_data[loc], d.dune_size[loc], t.fine_n, t.fine_n)) continue;
+            u16 *f = t.fine + off;
+            if (!dune_map_decode(d.dune_data[loc], d.dune_size[loc], f, t.fine_n, t.fine_n)) {
+                for (usize k = 0; k < fn2; ++k) f[k] = 0;
+            }
+            for (u32 j = 0; j < t.fine_n; ++j)
+                for (u32 i = 0; i < t.fine_n; ++i) {
+                    usize k = (usize)j * t.fine_n + i;
+                    i32 gx = (i32)loc * L + (i32)(i << TERRAIN_FINE_SHIFT), gz = (i32)(j << TERRAIN_FINE_SHIFT);
+                    i32 amp = (i32)terrain_masks2(t, gx, gz).dune;
+                    i32 v = ((i32)f[k] * 32 * amp) / 255;  // 5 см → 1/640 м
+                    f[k] = (u16)(v > 65535 ? 65535 : v);
+                }
+            t.fine_off[loc] = (i32)off;
+            off += fn2;
+        }
+    }
+
     // 6. Наносы песка в долине — низкие гряды поперёк ветра с запада-юго-запада, где песок. В пустыне —
     // большие пологие гряды (~2 км, до ~60 м) и поверх них дюны (terrain_dune) с точностью узла
     RowNoise dwarp;
@@ -734,14 +678,22 @@ void terrain_generate(Terrain &t, const TerrainDesc &d, Arena &world, Arena &scr
                 f32 p1 = q16f(dune_profile(phase_q16(u1, L1)));
                 e += (p1 - 0.45f) * 4.0f * sand * sand * (1.0f - V[k]) * (1.0f - desert);
             }
-            if (dunes > 0.0f) {
+            u32 nloc_x = (u32)(x / L) >= nloc ? nloc - 1 : (u32)(x / L);
+            bool mapped = t.fine_off[nloc_x] >= 0;
+            if (dunes > 0.0f && !mapped) {
                 i64 w2 = (perlin((i32)x, (i32)z, 12, sd(64)) * 500 + perlin((i32)x, (i32)z, 10, sd(65)) * 120) >> 16;
                 i64 u2 = ((x * 24 - z * 7) * 256) / 25 + w2 * 256;
                 f32 p2 = q16f(dune_profile(phase_q16(u2, L2)));
                 f32 a2 = 0.55f + 0.45f * q16f(perlin((i32)x, (i32)z, 10, sd(66)));
                 e += p2 * 60.0f * a2 * dunes;
             }
-            i32 dn = terrain_dune((i32)i * 8, (i32)j * 8, terrain_masks2(t, (i32)i * 8, (i32)j * 8).dune, t.dune_seed);
+            i32 dn;
+            if (mapped) {
+                bool has;
+                dn = fine_at(t, (i32)i * 8, (i32)j * 8, &has);
+            } else {
+                dn = terrain_dune((i32)i * 8, (i32)j * 8, terrain_masks2(t, (i32)i * 8, (i32)j * 8).dune, t.dune_seed);
+            }
             t.dune[k] = (u16)(dn >> 1);
             i32 u = (i32)(e * 20.0f + 0.5f) + dn / 64;
             t.height[k] = (u16)(u < 0 ? 0 : (u > 65535 ? 65535 : u));
@@ -752,6 +704,7 @@ void terrain_generate(Terrain &t, const TerrainDesc &d, Arena &world, Arena &scr
     t.hash = hash_combine(t.hash, hash_bytes(t.water, cells * sizeof(u16)));
     t.hash = hash_combine(t.hash, hash_bytes(t.mask2, cells * sizeof(u32)));
     t.hash = hash_combine(t.hash, hash_bytes(t.dune, nodes * sizeof(u16)));
+    if (t.fine) t.hash = hash_combine(t.hash, hash_bytes(t.fine, t.fine_count * sizeof(u16)));
     t.hash = hash_combine(t.hash, t.detail_seed ^ ((u64)t.dune_seed << 32));
 }
 
@@ -771,7 +724,8 @@ static void terrain_err(char *err, usize cap, u32 line, const char *what) {
     err[k] = 0;
 }
 
-// seed <n> · chunks <n, чётное> · ring <м> · locations <valley|desert>… (с запада на восток)
+// seed <n> · chunks <n, чётное> · ring <м> · locations <valley|desert>… (с запада на восток) ·
+// dunes <номер локации> <файл .dun в data/>
 bool terrain_desc_parse(const u8 *text, usize size, TerrainDesc &out, char *err, usize err_cap) {
     out = TerrainDesc{};
     TextReader r = text_reader(text, size);
@@ -785,6 +739,16 @@ bool terrain_desc_parse(const u8 *text, usize size, TerrainDesc &out, char *err,
                 else if (str_eq(l.w[k], "desert")) out.biome[k - 1] = BIOME_DESERT;
                 else { terrain_err(err, err_cap, l.line, "локация: valley или desert"); return false; }
             }
+            continue;
+        }
+        if (l.count == 3 && str_eq(l.w[0], "dunes")) {
+            u32 loc = 0;
+            if (!parse_u32(l.w[1], loc) || loc >= TERRAIN_MAX_LOCATIONS || l.w[2].n >= sizeof out.dune_path[0]) {
+                terrain_err(err, err_cap, l.line, "dunes <локация> <файл>");
+                return false;
+            }
+            memcpy(out.dune_path[loc], l.w[2].p, l.w[2].n);
+            out.dune_path[loc][l.w[2].n] = 0;
             continue;
         }
         if (l.count != 2) { terrain_err(err, err_cap, l.line, "ожидается <ключ> <значение>"); return false; }

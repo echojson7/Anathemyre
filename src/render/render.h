@@ -158,6 +158,11 @@ struct RenderTerrain {
     const u32 *mask;    // nmx·nmz: шероховатость, песок, трава, сырость
     const u32 *mask2;   // nmx·nmz: сила дюн, пустыня
     const u16 *water;   // nmx·nmz: уровень воды, 5 см; 0 — нет
+    const u16 *fine;    // карты дюн 2 м локаций подряд, 1/640 м (fine_n² на локацию); nullptr — нет
+    usize fine_count;
+    u32 fine_n;
+    i32 fine_off[4];    // начало карты локации, −1 — нет
+    i32 loc_m;          // сторона локации, м
     u32 nmx, nmz;
     i32 chunk0, size_x, size_z;
     u32 dune_seed;

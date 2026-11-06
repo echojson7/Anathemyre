@@ -8,6 +8,7 @@
 #include "../core/text.h"
 #include "../platform/platform.h"
 #include "../render/render.h"
+#include "../sim/dune_map.h"
 #include "../sim/scene.h"
 #include "../sim/world.h"
 #include "../view/view.h"
@@ -35,6 +36,20 @@ bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash) {
         return false;
     }
     u64 terrain_text = text_hash(text, size);
+    // Карты дюн пустынь (data/dunes/*.dun): в хеш земли входят через саму сетку
+    for (u32 loc = 0; loc < TERRAIN_MAX_LOCATIONS; ++loc) {
+        if (!td.dune_path[loc][0]) continue;
+        u8 *dd = nullptr;
+        usize ds = 0;
+        u32 n = (u32)(td.chunks * 256 >> TERRAIN_FINE_SHIFT) + 1;
+        if (!read_data(td.dune_path[loc], m.load, &dd, &ds) || !dune_map_check(dd, ds, n, n)) {
+            log_error("data/terrain.txt: карта дюн %s не читается или не %u×%u", td.dune_path[loc], n, n);
+            arena_restore(m.load, mark);
+            return false;
+        }
+        td.dune_data[loc] = dd;
+        td.dune_size[loc] = ds;
+    }
     u64 t0 = platform_time_ns();
     world_init(w, m.world, seed, td, m.load);
     char hex[17];
@@ -154,6 +169,11 @@ bool app_terrain_upload(const World &w) {
     rt.nz = t.nz;
     rt.mask = t.mask;
     rt.mask2 = t.mask2;
+    rt.fine = t.fine;
+    rt.fine_count = t.fine_count;
+    rt.fine_n = t.fine_n;
+    rt.loc_m = t.loc_m;
+    for (u32 k = 0; k < 4; ++k) rt.fine_off[k] = t.fine_off[k];
     rt.water = t.water;
     rt.nmx = t.nmx;
     rt.nmz = t.nmz;

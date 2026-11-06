@@ -36,6 +36,26 @@ static void record_terrain_upload(VkCommandBuffer cmd, void *user) {
     vkCmdPipelineBarrier2(cmd, &di);
 }
 
+struct FineUpload {
+    VkBuffer src, dst;
+    VkDeviceSize bytes;
+};
+
+static void record_fine_upload(VkCommandBuffer cmd, void *user) {
+    FineUpload &u = *(FineUpload *)user;
+    VkBufferCopy c{0, 0, u.bytes};
+    vkCmdCopyBuffer(cmd, u.src, u.dst, 1, &c);
+    auto mb = vk_info<VkMemoryBarrier2>(VK_STRUCTURE_TYPE_MEMORY_BARRIER_2);
+    mb.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    mb.dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    mb.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
+    auto di = vk_info<VkDependencyInfo>(VK_STRUCTURE_TYPE_DEPENDENCY_INFO);
+    di.memoryBarrierCount = 1;
+    di.pMemoryBarriers = &mb;
+    vkCmdPipelineBarrier2(cmd, &di);
+}
+
 // Уровень k сглаженной сетки из k−1: шаг вдвое, фильтр (1 2 1)/4 по каждой оси, край — повтор крайнего узла.
 // Дальние кольца берут высоты отсюда, а не точками сетки 8 м: иначе обрывы уступов пилятся зубцами
 static void mip_down(const u16 *src, u32 sx, u32 sz, u16 *dst, u32 dx, u32 dz) {
@@ -128,6 +148,31 @@ bool render_terrain_set(const RenderTerrain &d) {
     }
     ANA_CHECK((VkDeviceSize)(w - idx) * 4 == ibytes);
     vmaFlushAllocation(g_vk.vma, staging.alloc, 0, VK_WHOLE_SIZE);
+    // Карты дюн 2 м — своим буфером и своей загрузкой (≈52 МБ на пустыню)
+    {
+        VkDeviceSize fb = d.fine ? (((VkDeviceSize)d.fine_count + 1) / 2) * 4 : 4;
+        if (!vk_create_buffer(t.fine, fb, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true)) {
+            vk_destroy_buffer(staging);
+            return false;
+        }
+        if (d.fine) {
+            GpuBuffer fs;
+            if (!vk_create_buffer(fs, fb, VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) {
+                vk_destroy_buffer(staging);
+                return false;
+            }
+            memset(fs.mapped, 0, (usize)fb);
+            memcpy(fs.mapped, d.fine, d.fine_count * sizeof(u16));
+            vmaFlushAllocation(g_vk.vma, fs.alloc, 0, VK_WHOLE_SIZE);
+            FineUpload fu{fs.buffer, t.fine.buffer, fb};
+            bool fok = vk_one_shot(record_fine_upload, &fu);
+            vk_destroy_buffer(fs);
+            if (!fok) {
+                vk_destroy_buffer(staging);
+                return false;
+            }
+        }
+    }
     TerrainUpload u{staging.buffer, {0, 0, hbytes},  {o_m, 0, mbytes},  {o_w, 0, wbytes},
                     {o_i, 0, ibytes},       {o_m2, 0, mbytes}, {o_d, 0, dbytes}};
     bool ok = vk_one_shot(record_terrain_upload, &u);
@@ -148,6 +193,7 @@ void vk_terrain_shutdown() {
     vk_destroy_buffer(t.index);
     vk_destroy_buffer(t.mask2);
     vk_destroy_buffer(t.dune);
+    vk_destroy_buffer(t.fine);
     t = TerrainGpu{};
 }
 
@@ -168,6 +214,10 @@ void vk_terrain_fill(FrameGpu &g, const RenderFrame &f) {
     g.t_nmx = (i32)d.nmx;
     g.t_nmz = (i32)d.nmz;
     g.t_dune_seed = d.dune_seed;
+    g.t_fine = t.fine.address;
+    for (u32 k = 0; k < 4; ++k) g.t_fine_off[k] = d.fine ? d.fine_off[k] : -1;
+    g.t_fine_n = (i32)d.fine_n;
+    g.t_loc_m = d.loc_m > 0 ? d.loc_m : 1;
     for (i32 k = 0; k < 8; ++k) g.t_mip[k] = k < TERRAIN_MIPS ? t.mip_off[k] : 0;
     for (u32 k = 0; k < RENDER_TERRAIN_OCTAVES; ++k) {
         g.t_oct_lp[k] = d.oct_lp[k];
