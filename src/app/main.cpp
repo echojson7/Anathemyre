@@ -23,6 +23,7 @@ static bool parse_u64(const char *s, u64 &out) {
 
 static void usage() {
     log_info("anathemyre [--seed N] [--novsync] [--validation] [--frames N] [--record файл.rec] [--nopixel]");
+    log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z]   снимок (градусы, метры)");
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
     log_info("           --replay файл.rec                                            проверка повтора");
@@ -73,6 +74,11 @@ int main(int argc, char **argv) {
         if (!strcmp(s, "--sim")) { ok = parse_u64(next, a.sim_steps) && a.sim_steps > 0; i++; }
         else if (!strcmp(s, "--seed")) { ok = parse_u64(next, a.seed); i++; }
         else if (!strcmp(s, "--frames")) { ok = parse_u64(next, a.frames); i++; }
+        else if (!strcmp(s, "--window")) {
+            ok = parse_u64(next, a.win_w) && i + 2 < argc && parse_u64(argv[i + 2], a.win_h) &&
+                 a.win_w >= 64 && a.win_h >= 64 && a.win_w <= 8192 && a.win_h <= 8192;
+            i += 2;
+        }
         else if (!strcmp(s, "--record")) { a.record = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--replay")) { a.replay = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--hashes")) { a.hashes = next; ok = next != nullptr; i++; }
