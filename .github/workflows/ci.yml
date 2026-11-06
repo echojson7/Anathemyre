@@ -1,0 +1,90 @@
+# CI v2 (docs/build.md): сборки обеих целей без предупреждений, запреты и слои, эталонные хеши --sim,
+# повтор записи Linux на настоящем Windows, окно под lavapipe со слоями проверки Vulkan
+name: ci
+on:
+  push:
+    branches: [claude/project-v2]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Пакеты
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build glslang-tools spirv-tools \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev \
+            libxkbcommon-dev libasound2-dev libpulse-dev mesa-vulkan-drivers vulkan-validationlayers xvfb
+      - name: Кеш компиляторов и SDL3
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/anathemyre
+            build/third_party
+          key: tc-${{ runner.os }}-${{ hashFiles('tools/versions.sh', 'tools/toolchain.sh', 'tools/third_party.sh') }}
+      - name: Компиляторы и SDL3
+        run: |
+          make toolchain third_party TARGET=linux
+          make toolchain third_party TARGET=windows
+      - name: Одна версия clang на обеих целях
+        run: |
+          . tools/versions.sh
+          a=$(~/.cache/anathemyre/llvm-$LLVM_VER/bin/clang --version | head -1 | grep -oE 'clang version [0-9.]+')
+          b=$(~/.cache/anathemyre/llvm-mingw-$LLVM_MINGW_VER/bin/clang --version | head -1 | grep -oE 'clang version [0-9.]+')
+          echo "linux: $a, windows: $b"
+          [ "$a" = "$b" ]
+      - name: Слои и запреты
+        run: make check
+      - name: Сборки
+        run: |
+          J=$(nproc)
+          make -s -j$J WERROR=1
+          make -s -j$J WERROR=1 TARGET=windows
+          make -s -j$J WERROR=1 MODE=debug
+          make -s -j$J WERROR=1 COMPILER=gcc
+          make -s -j$J WERROR=1 NODEBUG=1
+      - name: Эталонные хеши --sim (clang -O2, clang -O0 с ASan, gcc)
+        run: |
+          make -s sim-check
+          make -s sim-check MODE=debug
+          make -s sim-check COMPILER=gcc
+      - name: Запись и повтор
+        run: |
+          build/linux-release/anathemyre --sim 10000 --seed 1 --record linux.rec
+          build/linux-debug/anathemyre --replay linux.rec
+      - name: Окно под lavapipe, слои проверки Vulkan
+        run: |
+          xvfb-run -a -s "-screen 0 1280x720x24" build/linux-debug/anathemyre --frames 300 --validation | tail -5
+          xvfb-run -a -s "-screen 0 1280x720x24" build/linux-release/anathemyre --frames 300 --validation | tail -5
+      - name: Для Windows-раннера
+        run: |
+          mkdir -p win
+          cp -r build/windows-release/anathemyre.exe build/windows-release/shaders linux.rec tests/sim_hashes.txt win/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: win/
+          retention-days: 7
+
+  # Повтор Windows — на настоящем Windows (Wine не проверяет настоящий CRT), GPU не нужен
+  windows:
+    needs: linux
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+      - name: Повтор записи Linux
+        run: ./anathemyre.exe --replay linux.rec
+      - name: Эталонные хеши --sim
+        run: |
+          ./anathemyre.exe --sim 10000 --seed 1 --hashes win_hashes.txt
+          diff -u sim_hashes.txt win_hashes.txt && echo "хеши Windows совпали с эталоном"

@@ -1,0 +1,14 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(location = 0) out vec4 v_color;
+
+// Точка — квадрат из двух треугольников вокруг центра, размер в пикселях
+void main() {
+    const vec2 corner[6] = vec2[](vec2(-1, -1), vec2(1, -1), vec2(1, 1), vec2(-1, -1), vec2(1, 1), vec2(-1, 1));
+    Vtx p = pc.data.v[gl_InstanceIndex];
+    float size = uintBitsToFloat(p.a);
+    vec2 ndc = to_ndc(p.pos) + corner[gl_VertexIndex] * 0.5 * size * pc.ndc_per_pixel;
+    gl_Position = vec4(ndc, 0.0, 1.0);
+    v_color = unpack_srgb(p.b);
+}
