@@ -1,4 +1,5 @@
 #include "world.h"
+#include "ground.h"
 #include "../core/hash.h"
 
 void world_init(World &w, Arena &arena, u64 seed) {
@@ -22,6 +23,42 @@ void world_init(World &w, Arena &arena, u64 seed) {
     for (u32 i = 0; i < DOTS_CAPACITY; ++i) d.free[i] = (u16)(DOTS_CAPACITY - 1 - i);
     d.live = 0;
     for (u32 i = 0; i < DOTS_TARGET; ++i) dots_spawn(w, WPos{}, 40.0f);
+
+    Props &p = w.props;
+    p.gen = arena_push<u16>(arena, PROPS_CAPACITY);
+    p.alive = arena_push<u8>(arena, PROPS_CAPACITY);
+    p.mesh = arena_push<u64>(arena, PROPS_CAPACITY);
+    p.material = arena_push<u64>(arena, PROPS_CAPACITY);
+    p.cx = arena_push<i32>(arena, PROPS_CAPACITY);
+    p.cz = arena_push<i32>(arena, PROPS_CAPACITY);
+    p.x = arena_push<f32>(arena, PROPS_CAPACITY);
+    p.y = arena_push<f32>(arena, PROPS_CAPACITY);
+    p.z = arena_push<f32>(arena, PROPS_CAPACITY);
+    p.yaw = arena_push<u32>(arena, PROPS_CAPACITY);
+    p.scale = arena_push<f32>(arena, PROPS_CAPACITY);
+    p.seed = arena_push<u32>(arena, PROPS_CAPACITY);
+    p.count = 0;
+}
+
+bool props_add(World &w, u64 mesh, u64 material, const WPos &at, f32 lift, u32 yaw, f32 scale, u32 seed) {
+    Props &p = w.props;
+    if (p.count >= PROPS_CAPACITY) return false;
+    u32 s = p.count++;
+    WPos q = at;
+    wpos_rebase(q);
+    p.gen[s] = (u16)(p.gen[s] + 1);
+    p.alive[s] = 1;
+    p.mesh[s] = mesh;
+    p.material[s] = material;
+    p.cx[s] = q.cx;
+    p.cz[s] = q.cz;
+    p.x[s] = q.x;
+    p.z[s] = q.z;
+    p.y[s] = ground_at(w, q).height + lift;
+    p.yaw[s] = yaw;
+    p.scale[s] = scale;
+    p.seed[s] = seed;
+    return true;
 }
 
 bool dots_spawn(World &w, const WPos &center, f32 radius) {
@@ -85,6 +122,21 @@ u32 world_columns(const World &w, Column *out) {
     out[k++] = {"dots.free", d.free, n * sizeof *d.free};
     out[k++] = {"dots.free_count", &d.free_count, sizeof d.free_count};
     out[k++] = {"dots.live", &d.live, sizeof d.live};
+    const Props &p = w.props;
+    const u32 np = PROPS_CAPACITY;
+    out[k++] = {"props.gen", p.gen, np * sizeof *p.gen};
+    out[k++] = {"props.alive", p.alive, np * sizeof *p.alive};
+    out[k++] = {"props.mesh", p.mesh, np * sizeof *p.mesh};
+    out[k++] = {"props.material", p.material, np * sizeof *p.material};
+    out[k++] = {"props.cx", p.cx, np * sizeof *p.cx};
+    out[k++] = {"props.cz", p.cz, np * sizeof *p.cz};
+    out[k++] = {"props.x", p.x, np * sizeof *p.x};
+    out[k++] = {"props.y", p.y, np * sizeof *p.y};
+    out[k++] = {"props.z", p.z, np * sizeof *p.z};
+    out[k++] = {"props.yaw", p.yaw, np * sizeof *p.yaw};
+    out[k++] = {"props.scale", p.scale, np * sizeof *p.scale};
+    out[k++] = {"props.seed", p.seed, np * sizeof *p.seed};
+    out[k++] = {"props.count", &p.count, sizeof p.count};
     ANA_CHECK(k <= MAX_COLUMNS);
     return k;
 }

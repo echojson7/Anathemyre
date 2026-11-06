@@ -93,7 +93,7 @@ static void step_debug_draw(const World &w, StepCtx &ctx) {
     const Dots &d = w.dots;
     for (u32 i = 0, shown = 0; i < DOTS_CAPACITY && shown < 64; ++i) {
         if (!d.alive[i]) continue;
-        WPos a{d.cx[i], d.cz[i], d.x[i], 0.0f, d.z[i]};
+        WPos a{d.cx[i], d.cz[i], d.x[i], 0.05f, d.z[i]};  // чуть над землёй, чтобы отрезок не тонул в ней
         WPos b = a;
         b.x += d.vx[i] * 0.5f;
         b.z += d.vz[i] * 0.5f;

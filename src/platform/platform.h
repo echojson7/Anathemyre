@@ -6,7 +6,8 @@
 enum Key : u8 {
     KEY_NONE = 0,
     KEY_ESCAPE, KEY_SPACE, KEY_PERIOD, KEY_MINUS, KEY_EQUALS, KEY_BACKSPACE, KEY_TAB,
-    KEY_W, KEY_A, KEY_S, KEY_D, KEY_L,
+    KEY_W, KEY_A, KEY_S, KEY_D, KEY_Q, KEY_E, KEY_F, KEY_L, KEY_P, KEY_R,
+    KEY_SHIFT, KEY_CTRL,
     KEY_F1, KEY_F2, KEY_F3, KEY_F11,
     KEY_COUNT
 };
@@ -19,6 +20,7 @@ struct Input {
     bool mouse_down[MOUSE_COUNT];
     bool mouse_pressed[MOUSE_COUNT];
     f32 mouse_x, mouse_y;          // пиксели окна, от левого верхнего угла
+    f32 mouse_dx, mouse_dy;        // сдвиг мыши за кадр, пиксели
     f32 wheel;                     // щелчки колеса за кадр
     bool quit;
     bool resized;
@@ -43,6 +45,8 @@ bool platform_log_open(const char *path);
 void platform_log_append(const char *line, usize len);
 // Папка исполняемого файла, с завершающим разделителем
 const char *platform_exe_dir();
+// Имена файлов в папке (без пути) с окончанием suffix, по одному в cb. false — папки нет
+bool platform_list_dir(const char *dir, const char *suffix, void (*cb)(const char *name, void *user), void *user);
 
 // Окно
 bool platform_window_open(const char *title, i32 width, i32 height);

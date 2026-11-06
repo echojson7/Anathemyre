@@ -16,8 +16,11 @@ void debug_keys(const Input &in, DebugState &d);
 // Подставной игрок для --sim: намерения из своего RNG (не RNG мира) по номеру шага
 void autoplay_intents(u64 step, Rng &rng, FixedArray<Intent> &out);
 void debug_print_help();
+// Снимок кадра (render_capture_next перед кадром) → файл .bmp
+bool debug_write_shot(const char *path, Arena &scratch);
 #else
 inline void debug_keys(const Input &, DebugState &) {}
 inline void autoplay_intents(u64, Rng &, FixedArray<Intent> &) {}
 inline void debug_print_help() {}
+inline bool debug_write_shot(const char *, Arena &) { return false; }
 #endif

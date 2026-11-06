@@ -39,6 +39,10 @@ jobs:
           [ "$a" = "$b" ]
       - name: Слои и запреты
         run: make check
+      - name: Сетки-заглушки в git совпадают с генератором
+        run: |
+          python3 tools/meshgen.py data/meshes
+          git diff --exit-code data/meshes
       - name: Сборки
         run: |
           J=$(nproc)
@@ -56,14 +60,25 @@ jobs:
         run: |
           build/linux-release/anathemyre --sim 10000 --seed 1 --record linux.rec
           build/linux-debug/anathemyre --replay linux.rec
-      - name: Окно под lavapipe, слои проверки Vulkan
+      - name: Окно под lavapipe, слои проверки Vulkan, кадр сцены
+        env:
+          LSAN_OPTIONS: suppressions=${{ github.workspace }}/tools/lsan.supp
         run: |
-          xvfb-run -a -s "-screen 0 1280x720x24" build/linux-debug/anathemyre --frames 300 --validation | tail -5
-          xvfb-run -a -s "-screen 0 1280x720x24" build/linux-release/anathemyre --frames 300 --validation | tail -5
+          set -o pipefail  # иначе код выхода игры теряется за tail
+          . tools/versions.sh
+          export ASAN_SYMBOLIZER_PATH=~/.cache/anathemyre/llvm-$LLVM_VER/bin/llvm-symbolizer  # иначе подавления не видят имён функций
+          xvfb-run -a -s "-screen 0 1280x720x24" build/linux-debug/anathemyre --frames 300 --validation 2>&1 | tail -40
+          xvfb-run -a -s "-screen 0 1280x720x24" build/linux-release/anathemyre --frames 300 --validation --shot frame.bmp | tail -5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frame
+          path: frame.bmp
+          retention-days: 7
       - name: Для Windows-раннера
         run: |
           mkdir -p win
-          cp -r build/windows-release/anathemyre.exe build/windows-release/shaders linux.rec tests/sim_hashes.txt win/
+          cp -r build/windows-release/anathemyre.exe build/windows-release/shaders build/windows-release/data linux.rec \
+            tests/sim_hashes.txt win/
       - uses: actions/upload-artifact@v4
         with:
           name: windows-exe

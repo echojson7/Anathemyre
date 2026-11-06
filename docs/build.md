@@ -37,14 +37,19 @@ Windows, ~2 ГБ архив LLVM для Linux, распаковывается т
 `view`, `render`, `app`, `debug`), `make -j` собирает модули параллельно, зависимости — `-MMD -MP`.
 Следствие: `static`-имена внутри модуля должны быть разными. Свои заголовки включаются только относительным
 путём (`"../core/mem.h"`): `-Isrc` нет, иначе `src/debug/` перекрывает `<debug/...>` из libstdc++.
-Шейдеры `data/shaders/*.vert|frag` → `build/<цель>/shaders/*.spv` (`glslangValidator --depfile`, `spirv-val`),
-игра ищет их рядом с исполняемым файлом.
+Шейдеры `data/shaders/*.vert|frag` → `build/<цель>/shaders/*.spv` (`glslangValidator --depfile`,
+`spirv-val --scalar-block-layout`), игра ищет их рядом с исполняемым файлом. Пути `#include`: `data/shaders/` и
+`build/<цель>/shaders/gen/` (там `materials.glsl` от `tools/matgen.sh`, `docs/materials.md`).
+Данные (`data/materials.txt`, `data/scene.txt`, `data/meshes/*.mesh`) копируются в `build/<цель>/data/`; туда же
+`matgen.sh` пишет `material_kinds.txt`. Без них игра не стартует, и `--sim` тоже (сцена — часть мира).
+`make meshes` пересобирает заглушки `.mesh` (`tools/meshgen.py`).
 
 ## CI (`.github/workflows/ci.yml`)
-- **linux** (ubuntu-24.04): слои и запреты; сборки релиз, Windows, отладка, gcc, без debug — все с `-Werror`;
+- **linux** (ubuntu-24.04): слои и запреты; сетки в git совпадают с генератором; сборки релиз, Windows, отладка, gcc, без debug — все с `-Werror`;
   эталонные хеши `--sim` у clang `-O2`, clang `-O0` с ASan и gcc; запись 10 000 шагов и её повтор отладочной
-  сборкой; окно под Xvfb + lavapipe 300 кадров со слоями проверки Vulkan (ошибка слоя — код выхода 1).
+  сборкой; окно под Xvfb + lavapipe 300 кадров со слоями проверки Vulkan (ошибка слоя — код выхода 1,
+  `pipefail`, чтобы `tail` его не съедал) и снимок кадра сцены в артефакт `frame`.
   Кешируются компиляторы и SDL3.
-- **windows** (windows-latest, после linux): `.exe` повторяет запись Linux (`--replay`) и сверяет свои хеши
+- **windows** (windows-latest, после linux): `.exe` (с `shaders/` и `data/`) повторяет запись Linux (`--replay`) и сверяет свои хеши
   `--sim` с эталоном. Wine — только для быстрой проверки у нейросети в контейнере.
 - Mesa для сравнения кадров закрепляется образом контейнера по дайджесту, когда появятся кадры в CI (этап 5).

@@ -1,0 +1,7 @@
+# Сцена этапа 1 (docs/text.md): что стоит в мире при создании. Ставит шаг мира, высота — из ground_at().
+# prop <сетка> <x> <z> [yaw градусы] [scale k] [lift м] [material имя] [seed n]
+prop cube    0   8
+prop cube    3.5 9.5  yaw 30
+prop pillar -3   10   yaw 12
+prop plate   1  14   yaw -8
+prop cube    1  14   lift 0.4 scale 0.5 yaw 45 material ochre_paint

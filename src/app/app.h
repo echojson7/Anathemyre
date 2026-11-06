@@ -2,6 +2,10 @@
 #pragma once
 #include "../core/mem.h"
 
+struct World;
+struct MaterialTable;
+struct ViewAssets;
+
 struct Args {
     u64 seed = 1;
     u64 sim_steps = 0;          // --sim N
@@ -11,6 +15,10 @@ struct Args {
     u64 frames = 0;             // --frames N: окно закрывается после N кадров (CI)
     bool vsync = true;
     bool validation = false;
+    const char *shot = nullptr;     // --shot файл.bmp: снимок последнего кадра (с --frames)
+    bool cam_set = false;           // --cam yaw pitch dist x z (градусы, метры): камера для снимков
+    f32 cam[5] = {};
+    bool nopixel = false;           // --nopixel: без правила ячейки
 };
 
 // Память режима: всё выделяется один раз при старте
@@ -23,6 +31,11 @@ struct AppMemory {
 };
 void app_memory_init(AppMemory &m, bool with_record);
 void app_memory_free(AppMemory &m);
+
+// Мир из зерна и описаний (data/scene.txt); desc_hash — хеш описаний для записи повтора
+bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash);
+// Материалы и сетки для кадра (после render_init)
+bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view);
 
 int run_window(const Args &a, AppMemory &m);
 int run_sim(const Args &a, AppMemory &m);

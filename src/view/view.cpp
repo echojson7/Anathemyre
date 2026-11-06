@@ -1,69 +1,237 @@
 #include "view.h"
+#include "../core/math3.h"
 
-static void rel(const Camera &cam, i32 cx, i32 cz, f32 x, f32 z, f32 &rx, f32 &ry) {
-    Vec2 d = wpos_delta_xz(cam.center.cx, cam.center.cz, cam.center.x, cam.center.z, cx, cz, x, z);
-    rx = d.x;
-    ry = d.y;
+static constexpr f32 NEAR_M = 0.1f;
+static constexpr f32 PITCH_MIN = -1.45f, PITCH_MAX = 1.45f;
+static constexpr f32 ORBIT_PITCH_MIN = 0.05f;
+static constexpr f32 DIST_MIN = 2.0f, DIST_MAX = 3000.0f;
+static constexpr f32 MOUSE_RAD_PER_PX = 0.005f;
+
+// Направление от цели к глазу по yaw и pitch
+static Vec3 back_dir(const Camera &c) {
+    f32 cp = cos_f(c.pitch), sp = sin_f(c.pitch);
+    return {sin_f(c.yaw) * cp, sp, -cos_f(c.yaw) * cp};
 }
 
-void view_build(const Camera &cam, const ViewInput &in, Arena &frame, RenderFrame &out) {
-    out = RenderFrame{};
-    out.clear[0] = 0.085f;
-    out.clear[1] = 0.078f;
-    out.clear[2] = 0.070f;
-    f32 aspect = in.height > 0 ? (f32)in.width / (f32)in.height : 1.0f;
-    out.meters_to_ndc[0] = 1.0f / (cam.half_height * aspect);
-    out.meters_to_ndc[1] = 1.0f / cam.half_height;
-    out.triangle = true;
+static WPos offset(const WPos &p, Vec3 d) {
+    WPos q = p;
+    q.x += d.x;
+    q.y += d.y;
+    q.z += d.z;
+    wpos_rebase(q);
+    return q;
+}
 
+// Метры от a до b
+static Vec3 delta(const WPos &a, i32 cx, i32 cz, f32 x, f32 y, f32 z) {
+    Vec2 d = wpos_delta_xz(a.cx, a.cz, a.x, a.z, cx, cz, x, z);
+    return {d.x, y - a.y, d.y};
+}
+
+WPos view_eye(const Camera &cam) {
+    if (cam.free) return cam.eye;
+    return offset(cam.target, back_dir(cam) * cam.dist);
+}
+
+struct Basis {
+    Vec3 right, up, forward;
+};
+static Basis basis(const Camera &cam) {
+    Basis b;
+    b.forward = -back_dir(cam);
+    b.right = normalize(cross(Vec3{0, 1, 0}, b.forward));
+    b.up = cross(b.forward, b.right);
+    return b;
+}
+
+void view_camera_control(Camera &cam, const Input &in, f32 dt) {
+    if (in.key_pressed[KEY_F]) {
+        if (!cam.free) {
+            cam.eye = view_eye(cam);
+            cam.free = true;
+        } else {
+            // Назад на орбиту: цель — точка на земле перед глазом (или на прежнем расстоянии)
+            Basis b = basis(cam);
+            f32 d = cam.dist;
+            if (b.forward.y < -0.05f) d = f_clamp(-cam.eye.y / b.forward.y, DIST_MIN, DIST_MAX);
+            cam.target = offset(cam.eye, b.forward * d);
+            cam.target.y = 0.0f;
+            cam.dist = d;
+            cam.free = false;
+            if (cam.pitch < ORBIT_PITCH_MIN) cam.pitch = ORBIT_PITCH_MIN;
+        }
+    }
+    // Вращение: правая кнопка (в полёте — взгляд, на орбите — вокруг цели)
+    if (in.mouse_down[MOUSE_RIGHT]) {
+        f32 s = cam.free ? -1.0f : 1.0f;  // в полёте мышь вверх — взгляд вверх
+        cam.yaw += in.mouse_dx * MOUSE_RAD_PER_PX;
+        cam.pitch += s * in.mouse_dy * MOUSE_RAD_PER_PX;
+    }
+    if (cam.yaw > PI_F) cam.yaw -= TAU_F;
+    if (cam.yaw < -PI_F) cam.yaw += TAU_F;
+    cam.pitch = f_clamp(cam.pitch, cam.free ? PITCH_MIN : ORBIT_PITCH_MIN, PITCH_MAX);
+
+    Basis b = basis(cam);
+    Vec3 flat_fwd = normalize(Vec3{b.forward.x, 0.0f, b.forward.z});
+    Vec3 flat_right = b.right;
+    f32 fast = in.key_down[KEY_SHIFT] ? 4.0f : 1.0f;
+    Vec3 move{};
+    if (in.key_down[KEY_W]) move += cam.free ? b.forward : flat_fwd;
+    if (in.key_down[KEY_S]) move += -(cam.free ? b.forward : flat_fwd);
+    if (in.key_down[KEY_D]) move += flat_right;
+    if (in.key_down[KEY_A]) move += -flat_right;
+    if (in.key_down[KEY_E]) move += Vec3{0, 1, 0};
+    if (in.key_down[KEY_Q]) move += Vec3{0, -1, 0};
+
+    if (cam.free) {
+        cam.eye = offset(cam.eye, move * (12.0f * fast * dt));
+        if (in.wheel != 0) cam.eye = offset(cam.eye, b.forward * (in.wheel * 2.0f * fast));
+        return;
+    }
+    // Орбита: WASD и средняя кнопка двигают цель по земле, колесо — расстояние
+    f32 pan = cam.dist * 0.9f * fast * dt;
+    move.y = 0.0f;
+    cam.target = offset(cam.target, move * pan);
+    if (in.mouse_down[MOUSE_MIDDLE]) {
+        f32 k = cam.dist * 0.0018f;
+        cam.target = offset(cam.target, flat_right * (-in.mouse_dx * k) + flat_fwd * (in.mouse_dy * k));
+    }
+    for (f32 w = in.wheel; w > 0.5f; w -= 1.0f) cam.dist *= 0.85f;
+    for (f32 w = in.wheel; w < -0.5f; w += 1.0f) cam.dist /= 0.85f;
+    cam.dist = f_clamp(cam.dist, DIST_MIN, DIST_MAX);
+}
+
+bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32 py, WPos &out) {
+    if (width <= 0 || height <= 0) return false;
+    Basis b = basis(cam);
+    f32 s, c;
+    sincos_turn(turn_from_rad(cam.fov_y * 0.5f), &s, &c);
+    f32 t = s / c, aspect = (f32)width / (f32)height;
+    f32 nx = (px / (f32)width) * 2.0f - 1.0f;
+    f32 ny = 1.0f - (py / (f32)height) * 2.0f;
+    Vec3 dir = b.forward + b.right * (nx * t * aspect) + b.up * (ny * t);
+    WPos eye = view_eye(cam);
+    f32 ground_y = cam.free ? 0.0f : cam.target.y;
+    if (dir.y > -1e-4f) return false;
+    f32 k = (ground_y - eye.y) / dir.y;
+    if (k <= 0.0f || k > 20000.0f) return false;
+    out = offset(eye, dir * k);
+    out.y = ground_y;
+    return true;
+}
+
+static u32 find_mesh(const ViewAssets &a, u64 name) {
+    for (u32 i = 0; i < a.mesh_count; ++i)
+        if (a.meshes[i].name == name) return a.meshes[i].id;
+    return 0;
+}
+
+// Кватернион → два u32 по два snorm16 (как unpackSnorm2x16 в шейдере)
+static u32 pack_snorm2(f32 a, f32 b) {
+    auto q = [](f32 v) -> u32 {
+        f32 x = f_clamp(v, -1.0f, 1.0f) * 32767.0f;
+        i32 i = (i32)(x + (x >= 0 ? 0.5f : -0.5f));
+        return (u32)(u16)(i16)i;
+    };
+    return q(a) | (q(b) << 16);
+}
+
+void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in, Arena &frame, RenderFrame &out) {
+    out = RenderFrame{};
+    // Небо одним цветом до этапа 3: пыльная охра
+    out.clear[0] = 0.60f;
+    out.clear[1] = 0.55f;
+    out.clear[2] = 0.45f;
+
+    WPos eye = view_eye(cam);
+    Basis b = basis(cam);
+    RenderView &v = out.view;
+    v.cx = eye.cx;
+    v.cz = eye.cz;
+    v.x = eye.x;
+    v.y = eye.y;
+    v.z = eye.z;
+    const Vec3 axes[3] = {b.right, b.up, b.forward};
+    f32 *dst[3] = {v.right, v.up, v.forward};
+    for (u32 i = 0; i < 3; ++i) {
+        dst[i][0] = axes[i].x;
+        dst[i][1] = axes[i].y;
+        dst[i][2] = axes[i].z;
+    }
+    f32 s, c;
+    sincos_turn(turn_from_rad(cam.fov_y * 0.5f), &s, &c);
+    v.tan_half_fov = s / c;
+    v.near_m = NEAR_M;
+    out.style.pixel = in.pixel;
+
+    // Временный свет (light.glsl): низкое солнце с юго-запада, тёплое; небо — холоднее и слабее
+    Vec3 sun = normalize(Vec3{-0.55f, 0.42f, -0.72f});
+    out.light = {{sun.x, sun.y, sun.z}, {1.30f, 1.05f, 0.72f}, {0.28f, 0.29f, 0.32f}};
+    out.ground_material = assets.ground_material;
+
+    // Статичные объекты — из последней выписки (не двигаются, интерполяция не нужна)
     const Extract &p = *in.prev;
-    const Extract &c = *in.cur;
+    const Extract &cur = *in.cur;
+    u32 n = cur.props_count;
+    RenderInstance *inst = arena_push<RenderInstance>(frame, n ? n : 1);
+    RenderDraw *draws = arena_push<RenderDraw>(frame, n ? n : 1);
+    u32 ni = 0;
+    for (u32 i = 0; i < n && ni < RENDER_MAX_INSTANCES; ++i) {
+        if (!cur.prop_gen[i]) continue;
+        u32 mesh = find_mesh(assets, cur.prop_mesh[i]);
+        if (!mesh) continue;
+        RenderInstance &r = inst[ni];
+        r.cx = cur.prop_cx[i];
+        r.cz = cur.prop_cz[i];
+        r.x = cur.prop_x[i];
+        r.y = cur.prop_y[i];
+        r.z = cur.prop_z[i];
+        Quat q = quat_yaw(cur.prop_yaw[i]);
+        r.rot_xy = pack_snorm2(q.x, q.y);
+        r.rot_zw = pack_snorm2(q.z, q.w);
+        r.scale = cur.prop_scale[i];
+        r.mesh = mesh;
+        r.material = cur.prop_material[i] && assets.materials ? material_find(*assets.materials, cur.prop_material[i])
+                                                             : RENDER_NO_MATERIAL;
+        r.seed = cur.prop_seed[i];
+        Vec3 rel = delta(eye, r.cx, r.cz, r.x, r.y, r.z);
+        draws[ni] = {render_key(LAYER_OPAQUE, PIPE_MESH, mesh, dot(rel, b.forward)), ni, 0};
+        ni++;
+    }
+    out.instances = {inst, ni};
+    out.draws = {draws, ni};
+
+    // Точки-заглушки этапа 0 — чуть над землёй, с интерполяцией
     RenderPoint *pts = arena_push<RenderPoint>(frame, RENDER_MAX_POINTS);
     u32 np = 0;
     f32 a = in.alpha;
     for (u32 i = 0; i < DOTS_CAPACITY && np < RENDER_MAX_POINTS; ++i) {
-        if (!c.gen[i]) continue;
-        f32 x1, y1;
-        rel(cam, c.cx[i], c.cz[i], c.x[i], c.z[i], x1, y1);
-        if (p.gen[i] == c.gen[i]) {
-            f32 x0, y0;
-            rel(cam, p.cx[i], p.cz[i], p.x[i], p.z[i], x0, y0);
-            x1 = x0 + (x1 - x0) * a;
-            y1 = y0 + (y1 - y0) * a;
+        if (!cur.gen[i]) continue;
+        Vec3 r1 = delta(eye, cur.cx[i], cur.cz[i], cur.x[i], 0.15f, cur.z[i]);
+        if (p.gen[i] == cur.gen[i]) {
+            Vec3 r0 = delta(eye, p.cx[i], p.cz[i], p.x[i], 0.15f, p.z[i]);
+            r1 = r0 + (r1 - r0) * a;
         }
-        pts[np++] = {x1, y1, 4.0f, rgba8(196, 178, 140)};
+        RenderPoint &q = pts[np++];
+        q.x = r1.x;
+        q.y = r1.y;
+        q.z = r1.z;
+        q.size = 4.0f;
+        q.rgba = rgba8(70, 58, 44);
     }
     out.points = {pts, np};
 
     if (in.dbg && in.dbg->count) {
         const DebugDraw &d = *in.dbg;
         u32 nv = d.count * 2 < RENDER_MAX_LINE_VERTICES ? d.count * 2 : RENDER_MAX_LINE_VERTICES;
-        RenderLineVertex *v = arena_push<RenderLineVertex>(frame, nv);
+        RenderLineVertex *lv = arena_push<RenderLineVertex>(frame, nv);
         for (u32 i = 0; i < nv / 2; ++i) {
             const DebugLine &l = d.lines[i];
-            RenderLineVertex &va = v[2 * i], &vb = v[2 * i + 1];
-            rel(cam, l.a.cx, l.a.cz, l.a.x, l.a.z, va.x, va.y);
-            rel(cam, l.b.cx, l.b.cz, l.b.x, l.b.z, vb.x, vb.y);
-            va.rgba = vb.rgba = l.rgba;
+            Vec3 ra = delta(eye, l.a.cx, l.a.cz, l.a.x, l.a.y, l.a.z);
+            Vec3 rb = delta(eye, l.b.cx, l.b.cz, l.b.x, l.b.y, l.b.z);
+            lv[2 * i] = {ra.x, ra.y, ra.z, l.rgba};
+            lv[2 * i + 1] = {rb.x, rb.y, rb.z, l.rgba};
         }
-        out.lines = {v, nv};
+        out.lines = {lv, nv};
     }
-}
-
-WPos view_screen_to_world(const Camera &cam, i32 width, i32 height, f32 px, f32 py) {
-    f32 aspect = height > 0 ? (f32)width / (f32)height : 1.0f;
-    f32 nx = (px / (f32)width) * 2.0f - 1.0f;
-    f32 ny = 1.0f - (py / (f32)height) * 2.0f;
-    WPos w = cam.center;
-    w.x += nx * cam.half_height * aspect;
-    w.z += ny * cam.half_height;
-    w.y = 0;
-    wpos_rebase(w);
-    return w;
-}
-
-void view_zoom(Camera &cam, f32 wheel) {
-    for (; wheel > 0.5f; wheel -= 1.0f) cam.half_height *= 0.85f;
-    for (; wheel < -0.5f; wheel += 1.0f) cam.half_height /= 0.85f;
-    cam.half_height = f_clamp(cam.half_height, 5.0f, 2000.0f);
 }

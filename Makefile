@@ -93,8 +93,8 @@ else
 endif
 
 # --- unity по модулю: build/<цель>/unity_<модуль>.cpp включает все .cpp модуля ---
-MODULES := core platform sim view render app $(if $(filter 1,$(NODEBUG)),,debug)
-$(shell mkdir -p $(OUT)/shaders)
+MODULES := core platform asset sim view render app $(if $(filter 1,$(NODEBUG)),,debug)
+$(shell mkdir -p $(OUT)/shaders/gen $(OUT)/data/meshes)
 define unity_file
 $(shell printf '%s\n' '// создано Makefile, не править' $(foreach f,$(sort $(wildcard src/$(1)/*.cpp)),'#include "$(CURDIR)/$(f)"') > $(OUT)/unity_$(1).tmp; \
   cmp -s $(OUT)/unity_$(1).tmp $(OUT)/unity_$(1).cpp || mv $(OUT)/unity_$(1).tmp $(OUT)/unity_$(1).cpp; rm -f $(OUT)/unity_$(1).tmp)
@@ -108,8 +108,22 @@ BIN       := $(OUT)/anathemyre$(EXE)
 SHADER_SRC := $(sort $(wildcard data/shaders/*.vert data/shaders/*.frag data/shaders/*.comp))
 SHADER_SPV := $(patsubst data/shaders/%,$(OUT)/shaders/%.spv,$(SHADER_SRC))
 
-.PHONY: all clean check sim-check sim-ref compdb toolchain third_party
-all: $(BIN) $(SHADER_SPV)
+# Виды материалов: switch в шейдере и номера видов для игры из одного списка файлов (tools/matgen.sh)
+$(shell ./tools/matgen.sh $(OUT))
+
+# Данные рядом с исполняемым файлом: описания и сетки (.mesh пишет tools/meshgen.py, лежат в data/meshes)
+DATA_SRC := data/materials.txt data/scene.txt $(sort $(wildcard data/meshes/*.mesh))
+DATA_OUT := $(patsubst data/%,$(OUT)/data/%,$(DATA_SRC))
+
+.PHONY: all clean check sim-check sim-ref compdb toolchain third_party meshes
+all: $(BIN) $(SHADER_SPV) $(DATA_OUT)
+
+$(OUT)/data/%: data/%
+	cp $< $@
+
+# Пересобрать заглушки .mesh (результат лежит в git; CI проверяет, что генератор даёт те же байты)
+meshes:
+	python3 tools/meshgen.py data/meshes
 
 # Компилятор и SDL3 — до любой компиляции
 $(TC_STAMP):
@@ -134,8 +148,8 @@ $(BIN): $(GAME_OBJS) $(TP_OBJS) $(SDL_STAMP)
 
 # Шейдеры: GLSL → SPIR-V для Vulkan 1.3, проверка spirv-val
 $(OUT)/shaders/%.spv: data/shaders/%
-	glslangValidator -s --target-env vulkan1.3 --depfile $@.d -o $@ $<
-	spirv-val --target-env vulkan1.3 $@
+	glslangValidator -s --target-env vulkan1.3 -I$(OUT)/shaders/gen -Idata/shaders --depfile $@.d -o $@ $<
+	spirv-val --target-env vulkan1.3 --scalar-block-layout $@
 
 -include $(GAME_OBJS:.o=.d) $(TP_OBJS:.o=.d) $(SHADER_SPV:=.d)
 
@@ -144,10 +158,10 @@ check:
 	./tools/forbid.sh
 
 # Эталонные хеши --sim (tests/sim_hashes.txt). Правка шага мира, меняющая их, обновляет файл через sim-ref
-sim-check: $(BIN)
+sim-check: $(BIN) $(DATA_OUT)
 	$(BIN) --sim 10000 --seed 1 --hashes $(OUT)/sim_hashes.txt
 	diff -u tests/sim_hashes.txt $(OUT)/sim_hashes.txt && echo "sim-check: хеши совпали с эталоном"
-sim-ref: $(BIN)
+sim-ref: $(BIN) $(DATA_OUT)
 	$(BIN) --sim 10000 --seed 1 --hashes tests/sim_hashes.txt
 
 compdb:
