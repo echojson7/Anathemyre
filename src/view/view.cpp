@@ -166,9 +166,6 @@ static u32 pack_snorm2(f32 a, f32 b) {
 void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in, Arena &frame, RenderFrame &out) {
     out = RenderFrame{};
     // Небо одним цветом до этапа 3: светлая дымка, холоднее земли — даль уходит вглубь
-    out.clear[0] = 0.62f;
-    out.clear[1] = 0.66f;
-    out.clear[2] = 0.70f;
 
     WPos eye = view_eye(cam);
     Basis b = basis(cam);
@@ -192,15 +189,31 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.style.pixel = in.pixel;
 
     // Временный свет (light.glsl): низкое солнце с юго-запада, тёплое; небо — холоднее и слабее.
-    // Дымка — к цвету неба (очистки), иначе горизонт режет картинку
-    Vec3 sun = normalize(Vec3{-0.55f, 0.30f, -0.72f});
-    out.light = {{sun.x, sun.y, sun.z}, {1.75f, 1.45f, 1.08f}, {0.21f, 0.25f, 0.33f}};
-    const f32 fog_srgb[3] = {out.clear[0], out.clear[1], out.clear[2]};
+    // Дымка — к цвету неба (очистки), иначе горизонт режет картинку. В пустыне (по маске под камерой, на
+    // перевале — плавно) воздух сухой и пыльный: дымка тёплая и реже, солнце жёлтее
+    f32 desert = 0.0f;
+    if (in.cur->terrain) {
+        const Terrain &t = *in.cur->terrain;
+        i32 gx = (eye.cx - t.chunk0) * (i32)CHUNK_M + f_floor_i(eye.x);
+        i32 gz = (eye.cz - t.chunk0) * (i32)CHUNK_M + f_floor_i(eye.z);
+        desert = (f32)terrain_masks2(t, gx, gz).desert / 255.0f;
+    }
+    const f32 clear_valley[3] = {0.62f, 0.66f, 0.70f}, clear_desert[3] = {0.72f, 0.75f, 0.78f};
+    const f32 sun_valley[3] = {1.75f, 1.45f, 1.08f}, sun_desert[3] = {1.95f, 1.52f, 1.02f};
+    const f32 sky_valley[3] = {0.21f, 0.25f, 0.33f}, sky_desert[3] = {0.33f, 0.31f, 0.31f};
+    // В пустыне солнце чуть выше: тени гребней не заливают всё межгорье (до неба и суток этапа 3)
+    Vec3 sun = normalize(Vec3{-0.55f, 0.30f + 0.12f * desert, -0.72f});
+    out.light.sun_dir[0] = sun.x;
+    out.light.sun_dir[1] = sun.y;
+    out.light.sun_dir[2] = sun.z;
     for (u32 k = 0; k < 3; ++k) {
-        f32 cc = fog_srgb[k];
+        out.clear[k] = clear_valley[k] + (clear_desert[k] - clear_valley[k]) * desert;
+        out.light.sun_color[k] = sun_valley[k] + (sun_desert[k] - sun_valley[k]) * desert;
+        out.light.sky_color[k] = sky_valley[k] + (sky_desert[k] - sky_valley[k]) * desert;
+        f32 cc = out.clear[k];
         out.fog[k] = cc * cc * f_sqrt(f_sqrt(cc)) * 0.98f;  // ≈ sRGB → линейный (степень 2.25)
     }
-    out.fog[3] = 1.0f / 3800.0f;
+    out.fog[3] = 1.0f / (3800.0f + 2700.0f * desert);
     out.ground = in.cur->terrain != nullptr;
     for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) out.ground_layers[k] = assets.ground_layers[k];
 

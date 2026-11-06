@@ -18,6 +18,7 @@ struct ErodeParams {
     f32 max_speed = 8.0f;
 };
 
-// h — n·n высот в клетках (метры / шаг сетки), меняется на месте. deposit и flow (могут быть nullptr, n·n,
-// обнулены вызывающим) копят отложенный грунт и воду, прошедшую через узел. Временная память — scratch
-void terrain_erode(f32 *h, u32 n, const ErodeParams &p, f32 *deposit, f32 *flow, Arena &scratch);
+// h — nx·nz высот в клетках (метры / шаг сетки), строками по nx, меняется на месте. deposit и flow (могут
+// быть nullptr, nx·nz, обнулены вызывающим) копят отложенный грунт и воду, прошедшую через узел. Временная
+// память — scratch
+void terrain_erode(f32 *h, u32 nx, u32 nz, const ErodeParams &p, f32 *deposit, f32 *flow, Arena &scratch);

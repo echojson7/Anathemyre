@@ -25,9 +25,10 @@ float level_height(ivec2 g, int L) {
     // обрывы уступов зубцами. Слой деталей мельче шага там не виден
     if (L >= 5) {
         FrameData f = pc.frame;
-        int m = L - 4, nm = ((f.t_n - 1) >> m) + 1;
-        ivec2 k = clamp((g >> 1) >> (m + 3), ivec2(0), ivec2(nm - 1));
-        return float(t_hgt(f.t_mip[m] + k.y * nm + k.x)) * (64.0 * T_M_PER_U);
+        int m = L - 4;
+        ivec2 nm = ivec2(((f.t_nx - 1) >> m) + 1, ((f.t_nz - 1) >> m) + 1);
+        ivec2 k = clamp((g >> 1) >> (m + 3), ivec2(0), nm - 1);
+        return float(t_hgt(f.t_mip[m] + k.y * nm.x + k.x)) * (64.0 * T_M_PER_U);
     }
     // Октава с периодом меньше двух шагов кольца мельтешила бы: отброшена
     return float(t_node(g.x >> 1, g.y >> 1, L)) * T_M_PER_U;

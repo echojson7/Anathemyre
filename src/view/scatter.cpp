@@ -49,7 +49,7 @@ void scatter_update(ScatterCache &c, const Terrain &t, const WPos &eye, const u3
         for (i32 ix = cx - r; ix <= cx + r && c.count < SCATTER_MAX; ++ix) {
             u32 h = sh((u32)ix ^ sh((u32)iz ^ sh(seed)));
             i32 gx = ix * CELL_M + 1, gz = iz * CELL_M + 1;
-            if (gx < 0 || gz < 0 || gx >= t.size_m || gz >= t.size_m) continue;
+            if (gx < 0 || gz < 0 || gx >= t.size_x || gz >= t.size_z) continue;
             u32 kind = ground_kind(terrain_masks(t, gx, gz), terrain_base_slope(t, gx, gz));
             // Камни кучками: плотность гуляет по клеткам 16 м
             u32 hc = sh((u32)(ix >> 3) ^ sh((u32)(iz >> 3) ^ sh(seed + 1)));

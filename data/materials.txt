@@ -71,6 +71,21 @@ material water water
     texel 0.0625
     extra 2 0.06 0.5 0
 
+# Пустыня (docs/terrain.md, «Пустыня»): тёплый песок дюн и красноватый камень гор, слои 6 и 7
+material dune_sand sand_dune
+    color 0.80 0.47 0.22
+    color2 0.66 0.36 0.16
+    rough 0.95
+    texel 0.0625
+    extra 0.125 0.5 32 0.45
+
+material desert_rock rock
+    color 0.52 0.36 0.25
+    color2 0.32 0.21 0.15
+    rough 0.8
+    texel 0.0625
+    extra 0.7 0.25 0.6 0.8
+
 material stone rock
     color 0.47 0.39 0.31
     color2 0.30 0.24 0.19

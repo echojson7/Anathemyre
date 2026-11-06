@@ -30,7 +30,7 @@ void main() {
     }
     bool water = v_wdepth > 0.0;
     // Плавная нормаль сетки 8 м (+ слой деталей у ближних колец), дальние кольца — из вершин
-    vec3 n = v_level <= 5u ? t_smooth_normal(p.xz, v_level <= 1u) : normalize(v_normal);
+    vec3 n = v_level <= 5u ? t_smooth_normal(p.xz, v_level <= 1u, true) : normalize(v_normal);
     if (water) n = vec3(0.0, 1.0, 0.0);
 
     ivec2 g;
@@ -38,14 +38,18 @@ void main() {
     t_split(p.xz, g, fr);
     vec4 mk = vec4(t_masks(g.x, g.y)) / 255.0;
     float rough = mk.x, sand = mk.y, grass = mk.z, wet = mk.w;
+    float desert = float(t_masks2(g.x, g.y).y) / 255.0;
     float slope = t_base_slope(vec2(g) + fr);
     // Плавные пятна (градиентный шум): сотни метров — против повторяемости, метры — рваный край слоёв
     float big = fbm_n(p, 128.0, 3, 71u) - 0.5;
     float mid = fbm_n(p, 16.0, 4, 72u) - 0.5;
     float fine = fbm_n(p, 2.0, 3, 74u) - 0.5;  // рваный край слоёв на метрах
-    float steep = smoothstep(0.55, 0.85, slope);
+    // В пустыне песок держится и на склоне осыпания (~32°, местами круче): камень — только где маска песка мала
+    float ds = desert * sand;
+    float steep = mix(smoothstep(0.55, 0.85, slope), smoothstep(1.3, 1.6, slope), ds);
+    float sand_lim = mix(1.0 - smoothstep(0.62, 0.78, slope), 1.0 - smoothstep(1.3, 1.6, slope), ds);
     float w[5];
-    w[0] = sand * 0.95 * (1.0 - smoothstep(0.62, 0.78, slope)) + big * 0.3 + mid * 0.9 + fine * 0.4;   // песок
+    w[0] = sand * 0.95 * sand_lim + (big * 0.3 + mid * 0.9 + fine * 0.4) * (1.0 - 0.7 * ds);              // песок
     w[1] = 0.42 + mid * 0.25 - grass * 0.15;                                                     // сухая земля
     w[2] = smoothstep(0.5, 0.8, rough) * (1.0 - steep) * (1.0 - grass) + mid * 0.3 + big * 0.2;  // щебень
     w[3] = steep * 1.6 + smoothstep(0.85, 1.0, rough) * 0.4 + big * 0.2;                         // камень
@@ -55,10 +59,14 @@ void main() {
     int b = a == 0 ? 1 : 0;
     for (int k = 0; k < 5; ++k) if (k != a && w[k] > w[b]) b = k;
     const uint SEED = 0x7E77u;
-    Surface s = surface(f.ground_layers[a], p, n, cell, foot, SEED);
+    // Пустыня: песок и камень — свои материалы (слои 6 и 7); граница рваная шумом, а не линией маски
+    bool dz = desert + mid * 0.5 + fine * 0.25 > 0.5;
+    int la = dz && (a == 0 || a == 3) ? (a == 0 ? 6 : 7) : a;
+    int lb = dz && (b == 0 || b == 3) ? (b == 0 ? 6 : 7) : b;
+    Surface s = surface(f.ground_layers[la], p, n, cell, foot, SEED);
     // Широкий стык: кочки травы и камни прорастают сквозь песок, песок затекает между ними
     if (w[a] - w[b] < 0.7) {
-        Surface sb = surface(f.ground_layers[b], p, n, cell, foot, SEED);
+        Surface sb = surface(f.ground_layers[lb], p, n, cell, foot, SEED);
         if (w[b] + sb.height * 0.9 > w[a] + s.height * 0.9) s = sb;
     }
     // Сырость у воды: земля темнее, трава гуще

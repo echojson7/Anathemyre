@@ -1,7 +1,7 @@
 # anathemyre --sim: хеш земли и хеш мира каждые 1000 шагов
-sim_version 4
+sim_version 5
 seed 1
-terrain 1412b48d5769d65a
+terrain 76c3dc9a4047e660
 step 1000 b88431ff6401c685
 step 2000 20fa4455f5b45dc0
 step 3000 084cc9c4c4ae5d21

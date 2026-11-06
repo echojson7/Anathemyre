@@ -38,8 +38,8 @@ bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash) {
     u64 t0 = platform_time_ns();
     world_init(w, m.world, seed, td, m.load);
     char hex[17];
-    log_info("земля: %d×%d чанков, сетка %u×%u, %.0f мс, хеш %s", w.terrain.chunks, w.terrain.chunks, w.terrain.n,
-             w.terrain.n, (f64)(platform_time_ns() - t0) / 1e6, hex_u64(w.terrain.hash, hex));
+    log_info("земля: %d×%d чанков, сетка %u×%u, %.0f мс, хеш %s", w.terrain.chunks_x, w.terrain.chunks_z, w.terrain.nx,
+             w.terrain.nz, (f64)(platform_time_ns() - t0) / 1e6, hex_u64(w.terrain.hash, hex));
     bool ok = read_data("scene.txt", m.load, &text, &size);
     if (ok) {
         ok = scene_load(w, text, size, err, sizeof err);
@@ -113,7 +113,8 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
     if (!ok) return false;
     view.materials = &mats;
     // Слои земли по GroundKind (src/sim/ground.h): песок, сухая земля, щебень, камень, трава, вода
-    const char *layers[RENDER_GROUND_LAYERS] = {"sand", "dry_earth", "gravel", "rock", "grass", "water"};
+    const char *layers[RENDER_GROUND_LAYERS] = {"sand", "dry_earth", "gravel", "rock", "grass", "water",
+                                                  "dune_sand", "desert_rock"};
     for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) {
         view.ground_layers[k] = material_find(mats, hash_str(layers[k]));
         if (!view.ground_layers[k]) log_warn("data/materials.txt: нет материала %s для слоя земли", layers[k]);
@@ -141,12 +142,18 @@ bool app_terrain_upload(const World &w) {
     const Terrain &t = w.terrain;
     RenderTerrain rt{};
     rt.height = t.height;
-    rt.n = t.n;
+    rt.dune = t.dune;
+    rt.nx = t.nx;
+    rt.nz = t.nz;
     rt.mask = t.mask;
+    rt.mask2 = t.mask2;
     rt.water = t.water;
-    rt.nm = t.nm;
+    rt.nmx = t.nmx;
+    rt.nmz = t.nmz;
     rt.chunk0 = t.chunk0;
-    rt.size_m = t.size_m;
+    rt.size_x = t.size_x;
+    rt.size_z = t.size_z;
+    rt.dune_seed = t.dune_seed;
     static_assert(RENDER_TERRAIN_OCTAVES == TERRAIN_DETAIL_OCTAVES, "октавы деталей у кадра и шага мира");
     for (u32 k = 0; k < RENDER_TERRAIN_OCTAVES; ++k) {
         terrain_detail_octave(k, &rt.oct_lp[k], &rt.oct_amp[k]);

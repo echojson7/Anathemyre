@@ -39,8 +39,8 @@ inline GroundSample ground_at(const Terrain &t, i32 cx, i32 cz, f32 x, f32 z) {
     f32 fx = x - (f32)ix, fz = z - (f32)iz;
     i32 gx = (cx - t.chunk0) * (i32)CHUNK_M + ix;
     i32 gz = (cz - t.chunk0) * (i32)CHUNK_M + iz;
-    if (gx < 0) { gx = 0; fx = 0.0f; } else if (gx >= t.size_m) { gx = t.size_m - 1; fx = 1.0f; }
-    if (gz < 0) { gz = 0; fz = 0.0f; } else if (gz >= t.size_m) { gz = t.size_m - 1; fz = 1.0f; }
+    if (gx < 0) { gx = 0; fx = 0.0f; } else if (gx >= t.size_x) { gx = t.size_x - 1; fx = 1.0f; }
+    if (gz < 0) { gz = 0; fz = 0.0f; } else if (gz >= t.size_z) { gz = t.size_z - 1; fz = 1.0f; }
     i32 h00 = terrain_node(t, gx, gz), h10 = terrain_node(t, gx + 1, gz);
     i32 h01 = terrain_node(t, gx, gz + 1), h11 = terrain_node(t, gx + 1, gz + 1);
     i32 dx0 = h10 - h00, dx1 = h11 - h01, dz0 = h01 - h00, dz1 = h11 - h10;

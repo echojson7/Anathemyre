@@ -16,6 +16,8 @@ vec3 light_surface(Surface s) {
     vec3 sky = f.sky_color.rgb;
     vec3 bounce = sky * vec3(1.0, 0.85, 0.65) * 0.35;
     vec3 amb = mix(bounce, sky, 0.5 + 0.5 * nrm.y) * s.ao;
+    // Отсвет освещённой земли на склоны в тени (подветренные склоны дюн): солнце, отражённое тёплой землёй
+    amb += f.sun_color.rgb * vec3(1.0, 0.72, 0.48) * (0.16 * max(l.y, 0.0) * (1.0 - 0.6 * nrm.y)) * s.ao;
     vec3 c = s.albedo * (f.sun_color.rgb * ndl * shadow + amb);
     // Блик и отражение неба: заметны только у гладкого
     float nv = max(dot(nrm, v), 1e-3);
