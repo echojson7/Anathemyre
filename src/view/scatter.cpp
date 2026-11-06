@@ -43,16 +43,14 @@ void scatter_update(ScatterCache &c, const Terrain &t, const WPos &eye, const u3
     if (eye.y - ground_at(t, eye).height > RADIUS_M) return;
     const i32 r = (i32)(RADIUS_M / (f32)CELL_M) + 1;
     const u32 seed = t.detail_seed ^ 0x5CA77E2u;
-    // Доля клеток с камнем по виду земли: песок, сухая земля, щебень, камень
-    static const f32 DENSITY[GROUND_KINDS] = {0.01f, 0.10f, 0.45f, 0.30f};
+    // Доля клеток с камнем по виду земли: песок, сухая земля, щебень, камень, трава, вода
+    static const f32 DENSITY[GROUND_KINDS] = {0.004f, 0.10f, 0.45f, 0.30f, 0.02f, 0.0f};
     for (i32 iz = cz - r; iz <= cz + r; ++iz)
         for (i32 ix = cx - r; ix <= cx + r && c.count < SCATTER_MAX; ++ix) {
             u32 h = sh((u32)ix ^ sh((u32)iz ^ sh(seed)));
             i32 gx = ix * CELL_M + 1, gz = iz * CELL_M + 1;
             if (gx < 0 || gz < 0 || gx >= t.size_m || gz >= t.size_m) continue;
-            u32 rough = 0, sand = 0;
-            terrain_masks(t, gx, gz, &rough, &sand);
-            u32 kind = ground_kind(rough, sand, terrain_base_slope(t, gx, gz));
+            u32 kind = ground_kind(terrain_masks(t, gx, gz), terrain_base_slope(t, gx, gz));
             // Камни кучками: плотность гуляет по клеткам 16 м
             u32 hc = sh((u32)(ix >> 3) ^ sh((u32)(iz >> 3) ^ sh(seed + 1)));
             f32 dens = DENSITY[kind] * (0.3f + 1.4f * u01(hc));
@@ -75,6 +73,7 @@ void scatter_update(ScatterCache &c, const Terrain &t, const WPos &eye, const u3
             p.z = z;
             wpos_rebase(p);
             GroundSample g = ground_at(t, p);
+            if (g.kind == GROUND_WATER) continue;
             RenderInstance &it = c.items[c.count];
             it.cx = p.cx;
             it.cz = p.cz;

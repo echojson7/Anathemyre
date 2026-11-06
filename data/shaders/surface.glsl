@@ -59,6 +59,32 @@ float value_noise(vec3 p, float size, uint seed) {
                mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
 }
 
+// Градиентный шум по плоскости xz на решётке size → [0, 1]. Пятна круглые, без квадратов шума значений
+float grad_noise(vec3 p, float size, uint seed) {
+    ivec3 c = world_cell(vec3(p.x, 0.0, p.z), size);
+    vec2 f = fract(p.xz / size);
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float r00 = hash3(c, seed) * 6.2831853, r10 = hash3(c + ivec3(1, 0, 0), seed) * 6.2831853;
+    float r01 = hash3(c + ivec3(0, 0, 1), seed) * 6.2831853, r11 = hash3(c + ivec3(1, 0, 1), seed) * 6.2831853;
+    float n00 = dot(vec2(cos(r00), sin(r00)), f);
+    float n10 = dot(vec2(cos(r10), sin(r10)), f - vec2(1.0, 0.0));
+    float n01 = dot(vec2(cos(r01), sin(r01)), f - vec2(0.0, 1.0));
+    float n11 = dot(vec2(cos(r11), sin(r11)), f - vec2(1.0, 1.0));
+    return clamp(0.5 + 0.75 * mix(mix(n00, n10, u.x), mix(n01, n11, u.x), u.y), 0.0, 1.0);
+}
+
+// Сумма октав градиентного шума: size, size/2… (size — степень двойки), вес вдвое меньше. [0, 1]
+float fbm_n(vec3 p, float size, int octaves, uint seed) {
+    float s = 0.0, a = 1.0, norm = 0.0;
+    for (int k = 0; k < octaves; ++k) {
+        s += grad_noise(p, size, seed + uint(k) * 101u) * a;
+        norm += a;
+        a *= 0.5;
+        size *= 0.5;
+    }
+    return s / norm;
+}
+
 // Точка в центр квадрата size: узор как текстура низкого разрешения
 vec3 snap(vec3 p, float size) { return (floor(p / size) + 0.5) * size; }
 

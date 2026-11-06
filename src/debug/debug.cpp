@@ -78,7 +78,7 @@ bool debug_write_shot(const char *path, Arena &scratch) {
 }
 
 // Карта земли сверху: пиксель — 2×2 узла сетки 8 м, отмывка рельефа с северо-запада, цвет — по маскам
-// (песок — охра, шероховатое — серее), высота — светлее. Север сверху
+// (песок — охра, трава — зелёная, шероховатое — серее, вода — синяя), высота — светлее. Север сверху
 bool debug_write_terrain_map(const Terrain &t, const char *path, Arena &scratch) {
     usize mark = arena_mark(scratch);
     u32 w = (t.n - 1) / 2, h = w;
@@ -91,14 +91,21 @@ bool debug_write_terrain_map(const Terrain &t, const char *path, Arena &scratch)
             f32 dx = (H(i + 2, j) - H(i, j)) / 16.0f, dz = (H(i, j + 2) - H(i, j)) / 16.0f;
             Vec3 nn = normalize(Vec3{-dx, 1.0f, -dz});
             f32 lit = f_clamp(dot(nn, normalize(Vec3{-0.6f, 0.55f, 0.6f})), 0.0f, 1.0f);
-            u32 m = t.mask[(usize)(j >> 2) * t.nm + (i >> 2)];
-            f32 rough = (f32)(m & 255) / 255.0f, sand = (f32)(m >> 8) / 255.0f;
+            usize mk = (usize)(j >> 2) * t.nm + (i >> 2);
+            u32 m = t.mask[mk];
+            f32 rough = (f32)(m & 255) / 255.0f, sand = (f32)((m >> 8) & 255) / 255.0f;
+            f32 grass = (f32)((m >> 16) & 255) / 255.0f;
+            i32 wl = terrain_water(t, (i32)i * 8, (i32)j * 8);
+            bool wet = wl && wl > terrain_node(t, (i32)i * 8, (i32)j * 8);
             f32 alt = f_clamp(H(i, j) / 1800.0f, 0.0f, 1.0f);
             f32 c[3] = {0.55f, 0.45f, 0.33f};
             const f32 sandc[3] = {0.86f, 0.70f, 0.45f}, rockc[3] = {0.50f, 0.48f, 0.46f};
+            const f32 grassc[3] = {0.33f, 0.40f, 0.20f}, waterc[3] = {0.25f, 0.38f, 0.50f};
             for (u32 k = 0; k < 3; ++k) {
                 c[k] += (sandc[k] - c[k]) * sand;
+                c[k] += (grassc[k] - c[k]) * grass;
                 c[k] += (rockc[k] - c[k]) * rough * 0.6f;
+                if (wet) c[k] = waterc[k];
                 c[k] = c[k] * (0.25f + 0.85f * lit) * (0.8f + 0.4f * alt);
             }
             u8 *o = rgba + ((usize)py * w + px) * 4;

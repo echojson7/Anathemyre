@@ -165,10 +165,10 @@ static u32 pack_snorm2(f32 a, f32 b) {
 
 void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in, Arena &frame, RenderFrame &out) {
     out = RenderFrame{};
-    // Небо одним цветом до этапа 3: пыльная охра
-    out.clear[0] = 0.60f;
-    out.clear[1] = 0.55f;
-    out.clear[2] = 0.45f;
+    // Небо одним цветом до этапа 3: светлая дымка, холоднее земли — даль уходит вглубь
+    out.clear[0] = 0.62f;
+    out.clear[1] = 0.66f;
+    out.clear[2] = 0.70f;
 
     WPos eye = view_eye(cam);
     Basis b = basis(cam);
@@ -194,13 +194,13 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     // Временный свет (light.glsl): низкое солнце с юго-запада, тёплое; небо — холоднее и слабее.
     // Дымка — к цвету неба (очистки), иначе горизонт режет картинку
     Vec3 sun = normalize(Vec3{-0.55f, 0.30f, -0.72f});
-    out.light = {{sun.x, sun.y, sun.z}, {1.30f, 1.05f, 0.72f}, {0.28f, 0.29f, 0.32f}};
+    out.light = {{sun.x, sun.y, sun.z}, {1.75f, 1.45f, 1.08f}, {0.21f, 0.25f, 0.33f}};
     const f32 fog_srgb[3] = {out.clear[0], out.clear[1], out.clear[2]};
     for (u32 k = 0; k < 3; ++k) {
         f32 cc = fog_srgb[k];
         out.fog[k] = cc * cc * f_sqrt(f_sqrt(cc)) * 0.98f;  // ≈ sRGB → линейный (степень 2.25)
     }
-    out.fog[3] = 1.0f / 9000.0f;
+    out.fog[3] = 1.0f / 3800.0f;
     out.ground = in.cur->terrain != nullptr;
     for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) out.ground_layers[k] = assets.ground_layers[k];
 

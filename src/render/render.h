@@ -82,7 +82,7 @@ struct RenderLight {
     f32 sky_color[3];  // линейный
 };
 
-constexpr u32 RENDER_GROUND_LAYERS = 4;  // песок, сухая земля, щебень, камень (GroundKind в src/sim/ground.h)
+constexpr u32 RENDER_GROUND_LAYERS = 6;  // песок, сухая земля, щебень, камень, трава, вода (GroundKind, src/sim/ground.h)
 
 struct RenderFrame {
     f32 clear[3];      // sRGB
@@ -134,7 +134,8 @@ constexpr u32 RENDER_TERRAIN_OCTAVES = 5;
 struct RenderTerrain {
     const u16 *height;  // n·n
     u32 n;
-    const u16 *mask;    // nm·nm
+    const u32 *mask;    // nm·nm: шероховатость, песок, трава, сырость
+    const u16 *water;   // nm·nm: уровень воды, 5 см; 0 — нет
     u32 nm;
     i32 chunk0, size_m;
     i32 oct_lp[RENDER_TERRAIN_OCTAVES], oct_amp[RENDER_TERRAIN_OCTAVES];

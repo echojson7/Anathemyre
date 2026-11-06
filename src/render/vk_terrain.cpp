@@ -12,7 +12,7 @@ static inline i32 floor_div(i32 a, i32 b) {
 
 struct TerrainUpload {
     VkBuffer staging;
-    VkBufferCopy h, m, idx;
+    VkBufferCopy h, m, w, idx;
 };
 
 static void record_terrain_upload(VkCommandBuffer cmd, void *user) {
@@ -20,6 +20,7 @@ static void record_terrain_upload(VkCommandBuffer cmd, void *user) {
     TerrainGpu &t = g_vk.terrain;
     vkCmdCopyBuffer(cmd, u.staging, t.height.buffer, 1, &u.h);
     vkCmdCopyBuffer(cmd, u.staging, t.mask.buffer, 1, &u.m);
+    vkCmdCopyBuffer(cmd, u.staging, t.water.buffer, 1, &u.w);
     vkCmdCopyBuffer(cmd, u.staging, t.index.buffer, 1, &u.idx);
     auto mb = vk_info<VkMemoryBarrier2>(VK_STRUCTURE_TYPE_MEMORY_BARRIER_2);
     mb.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
@@ -78,21 +79,23 @@ bool render_terrain_set(const RenderTerrain &d) {
         hcount += ((VkDeviceSize)mip_n[k] * mip_n[k] + 1) & ~(VkDeviceSize)1;
     }
     VkDeviceSize hbytes = hcount * 2;
-    VkDeviceSize mbytes = (((VkDeviceSize)d.nm * d.nm + 1) / 2) * 4;
+    VkDeviceSize mbytes = (VkDeviceSize)d.nm * d.nm * 4;
+    VkDeviceSize wbytes = (((VkDeviceSize)d.nm * d.nm + 1) / 2) * 4;
     t.count_full = (u32)(4 * CLIP_N * CLIP_N * 6);
     t.count_ring = (u32)(3 * CLIP_N * CLIP_N * 6);
     VkDeviceSize ibytes = ((VkDeviceSize)t.count_full + 4ull * t.count_ring) * 4;
     const VkBufferUsageFlags dst = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     if (!vk_create_buffer(t.height, hbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true) ||
         !vk_create_buffer(t.mask, mbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true) ||
+        !vk_create_buffer(t.water, wbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true) ||
         !vk_create_buffer(t.index, ibytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | dst, true))
         return false;
 
     // Загрузка: временный буфер (только при загрузке, не в игровом цикле)
     GpuBuffer staging;
-    if (!vk_create_buffer(staging, hbytes + mbytes + ibytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) return false;
+    if (!vk_create_buffer(staging, hbytes + mbytes + wbytes + ibytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) return false;
     u8 *p = (u8 *)staging.mapped;
-    memset(p, 0, hbytes + mbytes);
+    memset(p, 0, hbytes + mbytes + wbytes);
     memcpy(p, d.height, (usize)d.n * d.n * sizeof(u16));
     {
         // Уровни считаются в обычной памяти: читать из отображённой памяти загрузки медленно
@@ -104,8 +107,9 @@ bool render_terrain_set(const RenderTerrain &d) {
         memcpy(p + (usize)t.mip_off[1] * 2, tmp + t.mip_off[1], (usize)(hcount - (VkDeviceSize)t.mip_off[1]) * 2);
         platform_free(tmp);
     }
-    memcpy(p + hbytes, d.mask, (usize)d.nm * d.nm * sizeof(u16));
-    u32 *idx = (u32 *)(p + hbytes + mbytes);
+    memcpy(p + hbytes, d.mask, (usize)d.nm * d.nm * sizeof(u32));
+    memcpy(p + hbytes + mbytes, d.water, (usize)d.nm * d.nm * sizeof(u16));
+    u32 *idx = (u32 *)(p + hbytes + mbytes + wbytes);
     u32 *w = write_grid(idx, -1, 0);
     t.first_full = 0;
     for (u32 r = 0; r < 4; ++r) {
@@ -114,12 +118,13 @@ bool render_terrain_set(const RenderTerrain &d) {
     }
     ANA_CHECK((VkDeviceSize)(w - idx) * 4 == ibytes);
     vmaFlushAllocation(g_vk.vma, staging.alloc, 0, VK_WHOLE_SIZE);
-    TerrainUpload u{staging.buffer, {0, 0, hbytes}, {hbytes, 0, mbytes}, {hbytes + mbytes, 0, ibytes}};
+    TerrainUpload u{staging.buffer, {0, 0, hbytes}, {hbytes, 0, mbytes}, {hbytes + mbytes, 0, wbytes},
+                    {hbytes + mbytes + wbytes, 0, ibytes}};
     bool ok = vk_one_shot(record_terrain_upload, &u);
     vk_destroy_buffer(staging);
     t.on = ok;
     if (ok)
-        log_info("земля в видеопамяти: %.1f МБ сетка и маски, %.1f МБ индексы колец", (f64)(hbytes + mbytes) / 1048576.0,
+        log_info("земля в видеопамяти: %.1f МБ сетка, маски и вода, %.1f МБ индексы колец", (f64)(hbytes + mbytes + wbytes) / 1048576.0,
                  (f64)ibytes / 1048576.0);
     return ok;
 }
@@ -128,6 +133,7 @@ void vk_terrain_shutdown() {
     TerrainGpu &t = g_vk.terrain;
     vk_destroy_buffer(t.height);
     vk_destroy_buffer(t.mask);
+    vk_destroy_buffer(t.water);
     vk_destroy_buffer(t.index);
     t = TerrainGpu{};
 }
@@ -138,6 +144,7 @@ void vk_terrain_fill(FrameGpu &g, const RenderFrame &f) {
     g.t_on = t.on && f.ground ? 1u : 0u;
     g.t_height = t.height.address;
     g.t_mask = t.mask.address;
+    g.t_water = t.water.address;
     g.t_chunk0 = d.chunk0;
     g.t_size = d.size_m;
     g.t_n = (i32)d.n;
@@ -151,7 +158,7 @@ void vk_terrain_fill(FrameGpu &g, const RenderFrame &f) {
     g.clip_n = CLIP_N;
     g.clip_levels = CLIP_LEVELS;
     g.clip_morph = CLIP_MORPH;
-    for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) g.ground_layers[k] = f.ground_layers[k];
+    for (u32 k = 0; k < 8; ++k) g.ground_layers[k] = k < RENDER_GROUND_LAYERS ? f.ground_layers[k] : 0;
     for (u32 k = 0; k < 4; ++k) g.fog[k] = f.fog[k];
     if (!t.on) return;
     // Камера в полуметрах от угла карты. Начало кольца — на решётке следующего кольца (шаг 2·2^L),

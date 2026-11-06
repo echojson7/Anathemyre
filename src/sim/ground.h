@@ -6,26 +6,31 @@
 #include "../core/wpos.h"
 #include "terrain.h"
 
-// Вид земли в точке — главный слой. Номер = место материала слоя у кадра (песок, сухая земля, щебень, камень)
+// Вид земли в точке — главный слой. Номер = место материала слоя у кадра (песок, сухая земля, щебень, камень,
+// трава, вода)
 enum GroundKind : u32 {
     GROUND_SAND = 0,
     GROUND_DIRT = 1,
     GROUND_GRAVEL = 2,
     GROUND_ROCK = 3,
-    GROUND_KINDS = 4,
+    GROUND_GRASS = 4,
+    GROUND_WATER = 5,
+    GROUND_KINDS = 6,
 };
 
 struct GroundSample {
-    f32 height = 0;          // метры от нуля карты
+    f32 height = 0;          // метры от нуля карты (дно, если сверху вода)
     Vec3 normal{0, 1, 0};
     u32 kind = GROUND_DIRT;
 };
 
-// Вид слоя по маскам и наклону сетки 8 м (единицы 1/1280 м на метр). Те же пороги — у шейдера (ground.frag)
-inline u32 ground_kind(u32 rough, u32 sand, i32 slope_u) {
-    if (sand > 110 && slope_u < 900) return GROUND_SAND;  // дюна песчаная и на крутом склоне
-    if (slope_u > 830) return GROUND_ROCK;                // круче ~33°
-    if (rough > 165) return GROUND_GRAVEL;
+// Вид слоя по маскам и наклону сетки 8 м (единицы 1/1280 м на метр). Те же пороги грубо — у шейдера
+// (ground.frag). Вода — отдельно, по уровню воды над землёй (ground_at)
+inline u32 ground_kind(const TerrainMasks &m, i32 slope_u) {
+    if (m.sand > 110 && m.sand >= m.grass && slope_u < 900) return GROUND_SAND;  // дюна песчаная и на крутом склоне
+    if (slope_u > 830) return GROUND_ROCK;                                         // круче ~33°
+    if (m.grass > 120) return GROUND_GRASS;
+    if (m.rough > 165) return GROUND_GRAVEL;
     return GROUND_DIRT;
 }
 
@@ -46,9 +51,9 @@ inline GroundSample ground_at(const Terrain &t, i32 cx, i32 cz, f32 x, f32 z) {
     f32 gxu = (f32)dx0 + (f32)(dx1 - dx0) * fz;  // наклон, единицы на метр
     f32 gzu = (f32)dz0 + (f32)(dz1 - dz0) * fx;
     s.normal = normalize(Vec3{-gxu * TERRAIN_M_PER_U, 1.0f, -gzu * TERRAIN_M_PER_U});
-    u32 rough = 0, sand = 0;
-    terrain_masks(t, gx, gz, &rough, &sand);
-    s.kind = ground_kind(rough, sand, terrain_base_slope(t, gx, gz));
+    s.kind = ground_kind(terrain_masks(t, gx, gz), terrain_base_slope(t, gx, gz));
+    i32 wl = terrain_water(t, gx, gz);
+    if (wl && (f32)wl * TERRAIN_M_PER_U > s.height) s.kind = GROUND_WATER;
     return s;
 }
 inline GroundSample ground_at(const Terrain &t, const WPos &p) { return ground_at(t, p.cx, p.cz, p.x, p.z); }

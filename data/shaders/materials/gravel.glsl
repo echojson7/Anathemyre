@@ -4,7 +4,9 @@
 Surface surf_gravel(SurfIn i) {
     float t = i.m.p1.a;
     vec3 q = snap(i.p, t);
-    vec3 c = i.m.p1.rgb * (1.0 + (cell_noise(q, t, 61u) - 0.5) * 0.25 + (value_noise(i.p, 2.0, 62u) - 0.5) * 0.3);
+    vec3 c = i.m.p1.rgb * (1.0 + (cell_noise(q, t, 61u) - 0.5) * 0.25 + (fbm_n(i.p, 4.0, 3, 62u) - 0.5) * 0.4);
+    // Россыпь гуще и реже пятнами, а не ровным горошком
+    float dens = smoothstep(0.3, 0.7, fbm_n(i.p, 8.0, 2, 66u));
     vec3 n = i.n;
     float height = 0.15 + value_noise(i.p, 0.5, 63u) * 0.15;
     float ao = 1.0;
@@ -17,11 +19,15 @@ Surface surf_gravel(SurfIn i) {
         vec3 pc2 = vec3(i.p.x, 0.0, i.p.z);
         ivec3 cid = world_cell(pc2, sz);
         uint seed = 64u + uint(k);
-        if (hash3(cid, seed) > i.m.p2.y * (k == 0 ? 0.6 : 1.0)) continue;
+        if (hash3(cid, seed) > i.m.p2.y * (k == 0 ? 0.5 : 1.0) * (0.25 + dens)) continue;
         vec2 local = fract(pc2.xz / sz) - 0.5;
-        vec2 ctr = (vec2(hash3(cid, seed + 7u), hash3(cid, seed + 9u)) - 0.5) * 0.3;
-        float rad = 0.28 + hash3(cid, seed + 11u) * 0.17;
-        vec2 dv = (local - ctr) / rad;
+        vec2 ctr = (vec2(hash3(cid, seed + 7u), hash3(cid, seed + 9u)) - 0.5) * 0.4;
+        // Камешек — повёрнутый эллипс разного размера, а не одинаковый круг по сетке
+        float rad = 0.16 + hash3(cid, seed + 11u) * 0.26;
+        float ang = hash3(cid, seed + 19u) * 3.14159;
+        vec2 ax = vec2(cos(ang), sin(ang));
+        vec2 rl = local - ctr;
+        vec2 dv = vec2(dot(rl, ax), dot(rl, vec2(-ax.y, ax.x))) / (rad * vec2(1.0, 0.55 + 0.4 * hash3(cid, seed + 23u)));
         float d2 = dot(dv, dv);
         if (d2 >= 1.0) {
             ao = min(ao, 1.0 - 0.25 * kf * (1.0 - smoothstep(1.0, 1.6, d2)));  // тень у подножия камешка
