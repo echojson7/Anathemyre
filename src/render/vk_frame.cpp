@@ -8,15 +8,9 @@
 #include "../platform/platform.h"
 #include <stdio.h>
 
-// Раскладка — как layout(push_constant) в data/shaders/common.glsl
-struct PushConsts {
-    VkDeviceAddress frame;
-    u32 a, b;
-};
-
 static RenderDraw g_sort_tmp[RENDER_MAX_INSTANCES];
 
-static VkShaderModule load_shader(const char *name) {
+VkShaderModule vk_load_shader(const char *name) {
     char path[1024];
     snprintf(path, sizeof path, "%s%s.spv", g_vk.cfg.shader_dir, name);
     // Загрузка при старте: временная память, не игровой цикл
@@ -48,8 +42,8 @@ struct PipeDesc {
 };
 
 static VkPipeline make_pipeline(const PipeDesc &d) {
-    VkShaderModule vs = load_shader(d.vs);
-    VkShaderModule fs = load_shader(d.fs);
+    VkShaderModule vs = vk_load_shader(d.vs);
+    VkShaderModule fs = vk_load_shader(d.fs);
     VkPipeline p = VK_NULL_HANDLE;
     if (vs && fs) {
         VkPipelineShaderStageCreateInfo st[2] = {};
@@ -124,7 +118,7 @@ static VkPipeline make_pipeline(const PipeDesc &d) {
 }
 
 bool vk_create_pipelines() {
-    VkPushConstantRange pc{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConsts)};
+    VkPushConstantRange pc{PUSH_STAGES, 0, sizeof(PushConsts)};
     auto li = vk_info<VkPipelineLayoutCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
     li.pushConstantRangeCount = 1;
     li.pPushConstantRanges = &pc;
@@ -137,19 +131,23 @@ bool vk_create_pipelines() {
     points.blend = true;
     points.depth_write = false;
     PipeDesc lines{"lines.vert", "color.frag", VK_PRIMITIVE_TOPOLOGY_LINE_LIST, true, false};
+    PipeDesc sky{"sky.vert", "sky.frag"};
+    sky.depth_write = false;
+    g_vk.pipe_sky = make_pipeline(sky);
     g_vk.pipe_mesh = make_pipeline(mesh);
     g_vk.pipe_ground = make_pipeline(ground);
     g_vk.pipe_points = make_pipeline(points);
     g_vk.pipe_lines = make_pipeline(lines);
-    return g_vk.pipe_mesh && g_vk.pipe_ground && g_vk.pipe_points && g_vk.pipe_lines;
+    return g_vk.pipe_mesh && g_vk.pipe_ground && g_vk.pipe_points && g_vk.pipe_lines && g_vk.pipe_sky && vk_sky_init();
 }
 
 void vk_destroy_pipelines() {
-    VkPipeline ps[] = {g_vk.pipe_mesh, g_vk.pipe_ground, g_vk.pipe_points, g_vk.pipe_lines};
+    vk_sky_shutdown();
+    VkPipeline ps[] = {g_vk.pipe_mesh, g_vk.pipe_ground, g_vk.pipe_points, g_vk.pipe_lines, g_vk.pipe_sky};
     for (VkPipeline p : ps)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
     if (g_vk.layout) vkDestroyPipelineLayout(g_vk.device, g_vk.layout, nullptr);
-    g_vk.pipe_mesh = g_vk.pipe_ground = g_vk.pipe_points = g_vk.pipe_lines = VK_NULL_HANDLE;
+    g_vk.pipe_mesh = g_vk.pipe_ground = g_vk.pipe_points = g_vk.pipe_lines = g_vk.pipe_sky = VK_NULL_HANDLE;
     g_vk.layout = VK_NULL_HANDLE;
 }
 
@@ -170,13 +168,6 @@ static void image_barrier(VkCommandBuffer cmd, VkImage img, VkImageAspectFlags a
     di.imageMemoryBarrierCount = 1;
     di.pImageMemoryBarriers = &b;
     vkCmdPipelineBarrier2(cmd, &di);
-}
-
-static f32 srgb_to_linear(f32 c) {
-    // Цвет очистки задаётся в sRGB, а картинка swapchain — *_SRGB: в буфер идёт линейный.
-    // Не шаг мира, но и libm не нужна: степень 2.1875 = 2 + 1/8 + 1/16 вместо 2.2 через корни
-    f32 r8 = __builtin_sqrtf(__builtin_sqrtf(__builtin_sqrtf(c)));
-    return c * c * r8 * __builtin_sqrtf(r8);
 }
 
 // Метки времени прошлого использования слота: время прохода forward на GPU
@@ -209,7 +200,6 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, const FrameSlot &fs) {
         g.forward[i] = v.forward[i];
         g.sun_dir[i] = f.light.sun_dir[i];
         g.sun_color[i] = f.light.sun_color[i];
-        g.sky_color[i] = f.light.sky_color[i];
     }
     f32 w = (f32)g_vk.extent.width, h = (f32)g_vk.extent.height;
     f32 aspect = h > 0 ? w / h : 1.0f;
@@ -225,6 +215,7 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, const FrameSlot &fs) {
     g.ndc_per_pixel[0] = 2.0f / (w > 0 ? w : 1.0f);
     g.ndc_per_pixel[1] = 2.0f / (h > 0 ? h : 1.0f);
     vk_terrain_fill(g, f);
+    vk_sky_fill(g, f);
 }
 
 // Копия картинки кадра в буфер снимка (до перевода в PRESENT)
@@ -298,6 +289,8 @@ bool render_frame(const RenderFrame &f) {
         vkCmdResetQueryPool(cmd, g_vk.queries, slot * 2, 2);
         vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, g_vk.queries, slot * 2);
     }
+    // Таблицы неба — до прохода: их читают земля, сетки (дымка, свет неба) и небо
+    vk_sky_record(cmd, fs.frame.address);
 
     image_barrier(cmd, g_vk.images[img], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
@@ -315,7 +308,7 @@ bool render_frame(const RenderFrame &f) {
     ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     ca.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    ca.clearValue.color = {{srgb_to_linear(f.clear[0]), srgb_to_linear(f.clear[1]), srgb_to_linear(f.clear[2]), 1.0f}};
+    ca.clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};  // пустые пиксели закрашивает небо
     auto da = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
     da.imageView = g_vk.depth.view;
     da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
@@ -335,7 +328,7 @@ bool render_frame(const RenderFrame &f) {
     vkCmdSetViewport(cmd, 0, 1, &vp);
     vkCmdSetScissor(cmd, 0, 1, &sc);
     PushConsts pc{fs.frame.address, 0, 0};
-    const VkShaderStageFlags pcs = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    const VkShaderStageFlags pcs = PUSH_STAGES;
 
     // Сетки: подряд идущие вызовы одной сетки — один вызов с экземплярами
     if (ndraws) {
@@ -372,6 +365,10 @@ bool render_frame(const RenderFrame &f) {
             vkCmdDrawIndexed(cmd, count, 1, first, 0, 0);
         }
     }
+    // Небо — после непрозрачного: только пустые пиксели (глубина 0)
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_sky);
+    vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
     if (nlines) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_lines);
         vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);

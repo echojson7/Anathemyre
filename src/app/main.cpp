@@ -25,6 +25,8 @@ static void usage() {
     log_info("anathemyre [--seed N] [--novsync] [--validation] [--frames N] [--record файл.rec] [--nopixel]");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z]   снимок (градусы, метры)");
+    log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
+    log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
     log_info("           --replay файл.rec                                            проверка повтора");
     log_info("           --terrain-map файл.bmp                                       карта земли сверху");
@@ -92,6 +94,20 @@ int main(int argc, char **argv) {
             i += 5;
         }
         else if (!strcmp(s, "--nopixel")) a.nopixel = true;
+        else if (!strcmp(s, "--hour")) {
+            ok = next && parse_f32(Str{next, (u32)strlen(next)}, a.hour) && a.hour >= 0 && a.hour < 24;
+            a.hour_set = true;
+            i++;
+        }
+        else if (!strcmp(s, "--timelapse")) {
+            a.timelapse = next;
+            ok = next != nullptr;
+            for (int k = 0; k < 2 && ok; ++k) {
+                const char *v = i + 2 + k < argc ? argv[i + 2 + k] : nullptr;
+                ok = v && parse_f32(Str{v, (u32)strlen(v)}, a.timelapse_hours[k]);
+            }
+            i += 3;
+        }
         else if (!strcmp(s, "--terrain-map")) { a.terrain_map = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--novsync")) a.vsync = false;
         else if (!strcmp(s, "--validation")) a.validation = true;

@@ -9,7 +9,7 @@
 constexpr u32 SIM_HZ = 60;
 constexpr f32 SIM_DT = 1.0f / 60.0f;
 // Меняется при правке шага мира, после которой старые записи не повторяются
-constexpr u32 SIM_VERSION = 5;
+constexpr u32 SIM_VERSION = 6;
 
 // Номер сущности: место (младшие 16 бит) + поколение (старшие 16). Связи в мире — только номерами
 struct Id {
@@ -55,9 +55,23 @@ struct Props {
     u32 count;     // занятые места подряд с начала (удаления пока нет)
 };
 
+// Часы мира (docs/sky.md): целые тики. Тик — шаг при обычном ходе суток; солнце и луна выводятся в кадре
+constexpr u32 CLOCK_DAY_TICKS_DEFAULT = 48 * 60 * SIM_HZ;  // сутки — 48 минут реального времени
+struct Clock {
+    u64 tick;       // тиков от полуночи дня 0
+    u32 day_ticks;  // тиков в сутках
+    u32 rate;       // тиков за шаг: 1 — обычный ход, 0 — часы стоят, больше — ускорение (отладка)
+};
+// Час дня (доля суток в оборотах Turn: 2^32 — сутки) → тик того же дня
+inline u64 clock_tick_at(const Clock &c, u32 day_turn) {
+    u64 day = c.tick / c.day_ticks;
+    return day * c.day_ticks + (((u64)day_turn * c.day_ticks) >> 32);
+}
+
 struct World {
     Terrain terrain;  // из зерна при создании, дальше не меняется (docs/terrain.md)
     u64 step;      // время мира — целый номер шага, секунды выводятся из него
+    Clock clock;   // время суток
     Rng rng;
     // Притяжение точек к точке приказа (намерение игрока)
     u32 attract_on;

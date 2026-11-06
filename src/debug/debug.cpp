@@ -7,6 +7,8 @@ void debug_keys(const Input &in, DebugState &d) {
     if (in.key_pressed[KEY_PERIOD]) d.step_once = true;
     if (in.key_pressed[KEY_L]) d.lines = !d.lines;
     if (in.key_pressed[KEY_F1]) debug_print_help();
+    d.clock_hours = (in.key_pressed[KEY_RIGHTBRACKET] ? 1 : 0) - (in.key_pressed[KEY_LEFTBRACKET] ? 1 : 0);
+    d.clock_speed = in.key_pressed[KEY_T];
 }
 
 void autoplay_intents(u64 step, Rng &rng, FixedArray<Intent> &out) {
@@ -18,9 +20,12 @@ void autoplay_intents(u64 step, Rng &rng, FixedArray<Intent> &out) {
         wpos_rebase(p);
         return p;
     };
-    if (step % 97 == 13) out.push_back({step, INTENT_ATTRACT, at()});
-    if (step % 331 == 200) out.push_back({step, INTENT_BURST, at()});
-    if (step % 500 == 499) out.push_back({step, INTENT_RELEASE, WPos{}});
+    if (step % 97 == 13) out.push_back({step, INTENT_ATTRACT, at(), 0});
+    if (step % 331 == 200) out.push_back({step, INTENT_BURST, at(), 0});
+    if (step % 500 == 499) out.push_back({step, INTENT_RELEASE, WPos{}, 0});
+    // Часы: прыжок на случайный час и смена скорости суток — повтор проверяет и числа намерений
+    if (step % 1201 == 600) out.push_back({step, INTENT_CLOCK_SET, WPos{}, rng_u32(rng)});
+    if (step % 2003 == 1000) out.push_back({step, INTENT_CLOCK_RATE, WPos{}, rng_below(rng, 200)});
 }
 
 void debug_print_help() {
@@ -28,6 +33,7 @@ void debug_print_help() {
     log_info("камера: правая кнопка — вращать, средняя — двигать, колесо — ближе/дальше, WASD — двигать, Shift — быстрее");
     log_info("        F — свободный полёт (WASD, Q/E вниз/вверх, правая кнопка — взгляд) и обратно на орбиту");
     log_info("точки: левая кнопка — притянуть, Ctrl + левая — вспышка, R — отпустить");
+    log_info("сутки: [ ] — час назад/вперёд, T — скорость суток (обычная, ×20, ×120, стоп)");
 }
 
 static void put16(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); }

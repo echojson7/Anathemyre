@@ -75,23 +75,41 @@ struct RenderStyle {
     f32 cell_pixels = 1.0f;  // ячейка — не меньше стольких пикселей кадра
 };
 
-// Временный свет до света пользователя (light.glsl): солнце и небо одним цветом
+// Временный свет до света пользователя (light.glsl): главный источник — солнце, ночью луна
 struct RenderLight {
-    f32 sun_dir[3];    // к солнцу
-    f32 sun_color[3];  // линейный
-    f32 sky_color[3];  // линейный
+    f32 sun_dir[3];    // к источнику
+    f32 sun_color[3];  // линейный, у камеры (после атмосферы)
 };
+
+// Небо и атмосфера (docs/sky.md): светила из часов мира и слои воздуха из data/sky.txt. Раскладка — как хвост
+// FrameData в data/shaders/common.glsl (a_sun…a_post), копируется в буфер кадра целиком
+struct RenderSky {
+    f32 sun_dir[3], sun_e;        // к солнцу; освещённость от солнца над атмосферой
+    f32 moon_dir[3], moon_e;      // к луне; освещённость от луны над атмосферой
+    f32 sun_t[3], sun_radius;     // пропускание к солнцу от камеры; угловой радиус, рад
+    f32 moon_t[3], moon_radius;
+    f32 rayleigh[3], rayleigh_h;  // рассеяние на уровне моря, 1/м; высота слоя, м
+    f32 mie[3], mie_h;            // пыль высокого слоя
+    f32 mie_abs[3], mie_g;        // её поглощение; g фазовой функции
+    f32 haze[3], haze_h;          // нижняя дымка
+    f32 haze_abs[3], alt0;        // её поглощение; высота нуля карты над уровнем моря, м
+    f32 ozone[3], moon_albedo;
+    f32 ground[3], night_glow;    // альбедо планеты; ночное свечение неба (доля освещённости солнца)
+    f32 star[3][4];               // строки поворота «вид → небесная сфера», star[0][3] — яркость звёзд
+    f32 post[4];                  // экспозиция: множитель, степень привыкания, освещённость «нормы»; синева ночи
+    f32 sky_gain, pad[3];         // множитель рассеянного света неба (художественный, docs/sky.md)
+};
+static_assert(sizeof(RenderSky) == 16 * 16, "RenderSky — 16 vec4");
 
 // Слои земли: песок, сухая земля, щебень, камень, трава, вода (GroundKind, src/sim/ground.h), затем песок и камень
 // пустыни (тот же вид земли, другой материал — по маске пустыни)
 constexpr u32 RENDER_GROUND_LAYERS = 8;
 
 struct RenderFrame {
-    f32 clear[3];      // sRGB
     RenderView view;
     RenderStyle style;
     RenderLight light;
-    f32 fog[4];        // временная дымка: линейный цвет и 1/расстояние (м⁻¹)
+    RenderSky sky;
     bool ground;       // рисовать землю (её данные — render_terrain_set)
     u32 ground_layers[RENDER_GROUND_LAYERS];  // материалы слоёв
     Span<const RenderInstance> instances;
@@ -148,7 +166,7 @@ struct RenderTerrain {
 };
 bool render_terrain_set(const RenderTerrain &t);
 
-// Время прохода forward на GPU за прошлый кадр, мс (0 — таймеров нет)
+// Время кадра на GPU (небо и forward) за прошлый кадр, мс (0 — таймеров нет)
 f64 render_gpu_ms();
 // Сколько последний render_frame ждал GPU и показ (забор кадра, картинка swapchain, vsync), мс
 f64 render_wait_ms();

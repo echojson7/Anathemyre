@@ -39,7 +39,7 @@ struct FrameGpu {
     f32 proj_x, proj_y, near_m, pixel_angle;  // pixel_angle — 2·tan(fov/2)/высота: метров на пиксель на 1 м глубины
     f32 cell_min, cell_pixels;
     u32 pixel, pad1;
-    f32 sun_dir[4], sun_color[4], sky_color[4];
+    f32 sun_dir[4], sun_color[4];
     f32 viewport[2], ndc_per_pixel[2];
     i32 t_chunk0, t_size_x, t_size_z, t_nx, t_nz, t_nmx, t_nmz;
     u32 t_dune_seed;
@@ -48,8 +48,18 @@ struct FrameGpu {
     i32 clip_n, clip_levels, clip_morph, clip_pad;
     i32 clip[12][4];   // начало кольца в полуметрах от угла карты (x, z), дыра кольца (x, z)
     u32 ground_layers[8];  // материалы слоёв земли (RENDER_GROUND_LAYERS), остаток — 0
-    f32 fog[4];
     i32 t_mip[8];      // начало уровня k сглаженной сетки высот (шаг 8·2^k м) в буфере высот, номера u16
+    VkDeviceAddress sky_trans, sky_ms, sky_sun, sky_moon, sky_out;  // таблицы неба (vk_sky.cpp)
+    RenderSky sky;
+};
+
+// Небо (vk_sky.cpp, docs/sky.md): таблицы в буферах видеопамяти, считают их compute-шейдеры sky_*.comp
+struct SkyGpu {
+    GpuBuffer trans, ms, sun, moon, out;
+    VkPipeline pipe_trans = VK_NULL_HANDLE, pipe_ms = VK_NULL_HANDLE, pipe_view = VK_NULL_HANDLE,
+               pipe_sum = VK_NULL_HANDLE;
+    bool luts_ready = false;
+    RenderSky last{};  // параметры, по которым посчитаны таблицы пропускания и многократного рассеяния
 };
 
 // Земля clipmap'ом (vk_terrain.cpp): кольцо L — (2n+1)² вершин с шагом 0.5·2^L м. Кольцо 0 — сплошная сетка,
@@ -144,6 +154,8 @@ struct VkState {
     VkPipeline pipe_ground = VK_NULL_HANDLE;
     VkPipeline pipe_points = VK_NULL_HANDLE;
     VkPipeline pipe_lines = VK_NULL_HANDLE;
+    VkPipeline pipe_sky = VK_NULL_HANDLE;
+    SkyGpu sky;
 
     TerrainGpu terrain;
 };
@@ -168,6 +180,20 @@ void vk_destroy_swapchain();
 bool vk_create_buffer(GpuBuffer &b, VkDeviceSize size, VkBufferUsageFlags usage, bool device_local = false);
 void vk_destroy_buffer(GpuBuffer &b);
 bool vk_create_pipelines();
+// Шейдер из shader_dir (файл .spv); VK_NULL_HANDLE — нет файла или ошибка
+VkShaderModule vk_load_shader(const char *name);
+// Push-константы общей раскладки — как layout(push_constant) в data/shaders/common.glsl
+struct PushConsts {
+    VkDeviceAddress frame;
+    u32 a, b;
+};
+// Стадии push-констант общей раскладки: все вызовы vkCmdPushConstants передают их целиком
+constexpr VkShaderStageFlags PUSH_STAGES = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+// Небо (vk_sky.cpp): буферы и compute-конвейеры; таблицы в начале кадра (до прохода forward)
+bool vk_sky_init();
+void vk_sky_shutdown();
+void vk_sky_fill(FrameGpu &g, const RenderFrame &f);
+void vk_sky_record(VkCommandBuffer cmd, VkDeviceAddress frame);
 void vk_destroy_pipelines();
 // Геометрия и материалы (vk_geometry.cpp)
 bool vk_geometry_init();

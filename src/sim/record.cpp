@@ -50,7 +50,7 @@ void recorder_save(const Recorder &r, Writer &w) {
     }
     chunk_end(w, at);
 
-    at = chunk_begin(w, TAG_INTN, 1);
+    at = chunk_begin(w, TAG_INTN, 2);
     put_u32(w, (u32)r.intents.count);
     for (usize i = 0; i < r.intents.count; ++i) {
         const Intent &it = r.intents.data[i];
@@ -61,6 +61,7 @@ void recorder_save(const Recorder &r, Writer &w) {
         put_f32(w, it.target.x);
         put_f32(w, it.target.y);
         put_f32(w, it.target.z);
+        put_u64(w, it.arg);
     }
     chunk_end(w, at);
 
@@ -95,9 +96,10 @@ bool replay_parse(const u8 *data, usize size, Arena &arena, Replay &out, const c
                 out.names[i] = s;
             }
             cols = !b.bad;
-        } else if (chunk_is(c, TAG_INTN) && c.version == 1) {
+        } else if (chunk_is(c, TAG_INTN) && (c.version == 1 || c.version == 2)) {
+            // Версия 2 — с числом намерения arg (часы)
             u32 n = get_u32(b);
-            if ((u64)n * 32 > b.size) { *err = "кусок намерений испорчен"; return false; }
+            if ((u64)n * (c.version == 2 ? 40 : 32) > b.size) { *err = "кусок намерений испорчен"; return false; }
             out.intents = {arena_push<Intent>(arena, n), n};
             for (u32 i = 0; i < n; ++i) {
                 Intent &it = out.intents.data[i];
@@ -108,6 +110,7 @@ bool replay_parse(const u8 *data, usize size, Arena &arena, Replay &out, const c
                 it.target.x = get_f32(b);
                 it.target.y = get_f32(b);
                 it.target.z = get_f32(b);
+                it.arg = c.version == 2 ? get_u64(b) : 0;
             }
             if (b.bad) { *err = "кусок намерений испорчен"; return false; }
         } else if (chunk_is(c, TAG_HASH) && c.version == 1) {

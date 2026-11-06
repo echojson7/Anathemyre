@@ -20,6 +20,10 @@ struct Args {
     bool cam_set = false;           // --cam yaw pitch dist x z (градусы, метры): камера для снимков
     f32 cam[5] = {};
     bool nopixel = false;           // --nopixel: без правила ячейки
+    bool hour_set = false;          // --hour H: час дня в начале (намерением, запись повтора его помнит)
+    f32 hour = 0;
+    const char *timelapse = nullptr;  // --timelapse префикс H0 H1: каждый кадр — свой час, снимок в префикс_NNNN.bmp
+    f32 timelapse_hours[2] = {};
     const char *terrain_map = nullptr;  // --terrain-map файл.bmp: карта земли сверху и выход
 };
 

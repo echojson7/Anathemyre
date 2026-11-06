@@ -1,4 +1,6 @@
 # Сцена этапа 1 (docs/text.md): что стоит в мире при создании. Ставит шаг мира, высота — из ground_at().
+# clock <час начала> <минут на сутки>: часы мира (docs/sky.md)
+clock 7 48
 # prop <сетка> <x> <z> [yaw градусы] [scale k] [lift м] [material имя] [seed n]
 prop cube    0   8
 prop cube    3.5 9.5  yaw 30
