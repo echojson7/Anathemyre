@@ -10,6 +10,15 @@ struct Extract {
     f32 *x, *z;
     u32 attract_on;
     WPos attract_at;
+    // Статичные объекты: места 0..props_count, gen 0 — места нет
+    u32 props_count;
+    u16 *prop_gen;
+    u64 *prop_mesh, *prop_material;
+    i32 *prop_cx, *prop_cz;
+    f32 *prop_x, *prop_y, *prop_z;
+    u32 *prop_yaw;
+    f32 *prop_scale;
+    u32 *prop_seed;
 };
 
 void extract_init(Extract &e, Arena &arena);

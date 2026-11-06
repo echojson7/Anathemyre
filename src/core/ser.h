@@ -55,6 +55,7 @@ inline bool get_bytes(Reader &r, void *p, usize n) {
     return true;
 }
 inline u8 get_u8(Reader &r) { u8 v; get_bytes(r, &v, 1); return v; }
+inline u16 get_u16(Reader &r) { u16 v; get_bytes(r, &v, 2); return v; }
 inline u32 get_u32(Reader &r) { u32 v; get_bytes(r, &v, 4); return v; }
 inline u64 get_u64(Reader &r) { u64 v; get_bytes(r, &v, 8); return v; }
 inline i32 get_i32(Reader &r) { i32 v; get_bytes(r, &v, 4); return v; }

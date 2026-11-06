@@ -12,9 +12,13 @@ static constexpr u32 MAX_INTENTS_PER_STEP = 64;
 
 int run_sim(const Args &a, AppMemory &m) {
     World w;
-    world_init(w, m.world, a.seed);
+    u64 desc = 0;
+    if (!app_world_create(w, m, a.seed, &desc)) return 1;
     Recorder rec;
-    if (a.record) recorder_init(rec, m.record, w, a.seed, a.sim_steps, 1u << 20);
+    if (a.record) {
+        recorder_init(rec, m.record, w, a.seed, a.sim_steps, 1u << 20);
+        rec.desc_hash = desc;
+    }
     Rng player;
     rng_seed(player, a.seed, 0x9137ull);  // подставной игрок — свой RNG, не мира
     FixedArray<Intent> intents;
@@ -76,7 +80,14 @@ int run_replay(const Args &a, AppMemory &m) {
         return 1;
     }
     World w;
-    world_init(w, m.world, rp.seed);
+    u64 desc = 0;
+    if (!app_world_create(w, m, rp.seed, &desc)) return 1;
+    if (desc != rp.desc_hash) {
+        char h1[17], h2[17];
+        log_error("описания мира поменялись (в записи %s, сейчас %s): повтор невозможен", hex_u64(rp.desc_hash, h1),
+                  hex_u64(desc, h2));
+        return 1;
+    }
     Column cols[MAX_COLUMNS];
     u32 ncols = world_columns(w, cols);
     if (ncols != rp.ncols) {

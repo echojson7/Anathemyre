@@ -1,6 +1,7 @@
 // Окно: цикл кадра с фиксированным шагом мира 60 Гц и интерполяцией между двумя выписками.
 // Поток кадра (docs/architecture.md): ввод → намерения → 0..N шагов → выписка → вид → рендер
 #include "app.h"
+#include "../asset/material.h"
 #include "../core/log.h"
 #include "../core/prof.h"
 #include "../debug/debug.h"
@@ -37,7 +38,14 @@ int run_window(const Args &a, AppMemory &m) {
     }
 
     World w;
-    world_init(w, m.world, a.seed);
+    u64 desc = 0;
+    MaterialTable mats;
+    ViewAssets *assets = arena_push<ViewAssets>(m.world, 1);
+    if (!app_world_create(w, m, a.seed, &desc) || !app_assets_load(m, mats, *assets)) {
+        render_shutdown();
+        platform_window_close();
+        return 1;
+    }
     ExtractRing ring;
     ring_init(ring, m.world);
     sim_extract(w, ring_next(ring));
@@ -45,15 +53,30 @@ int run_window(const Args &a, AppMemory &m) {
     DebugDraw dbg;
     dbg_init(dbg, m.world, 4096);
     Recorder rec;
-    if (a.record) recorder_init(rec, m.record, w, a.seed, 600000, 1u << 16);
+    if (a.record) {
+        recorder_init(rec, m.record, w, a.seed, 600000, 1u << 16);
+        rec.desc_hash = desc;
+    }
 
     FixedArray<Intent> pending;  // намерения игрока до ближайшего шага
     pending.init(m.world, 64);
     Camera cam;
+    if (a.cam_set) {
+        const f32 deg = PI_F / 180.0f;
+        cam.yaw = a.cam[0] * deg;
+        cam.pitch = a.cam[1] * deg;
+        cam.dist = a.cam[2];
+        cam.target.x = a.cam[3];
+        cam.target.z = a.cam[4];
+        wpos_rebase(cam.target);
+    } else {
+        cam.target.z = 10.0f;  // сцена этапа 1 — к северу от начала карты
+    }
     TimeCtl tc;
     DebugState ds;
+    bool pixel = !a.nopixel;
     Input in{};
-    TimeStat st_frame, st_step;
+    TimeStat st_frame, st_step, st_cpu;
     u64 frames = 0, frames_window = 0;
     u64 last = platform_time_ns(), window_t0 = last;
     int rc_exit = 0;
@@ -73,19 +96,18 @@ int run_window(const Args &a, AppMemory &m) {
         if (in.key_pressed[KEY_SPACE]) tc.paused = !tc.paused;
         if (in.key_pressed[KEY_MINUS] && tc.speed > 0) tc.speed--;
         if (in.key_pressed[KEY_EQUALS] && tc.speed + 1 < ANA_COUNTOF(SPEEDS)) tc.speed++;
+        if (in.key_pressed[KEY_P]) pixel = !pixel;
         debug_keys(in, ds);
         dbg.enabled = ds.lines;
-        if (in.wheel != 0) view_zoom(cam, in.wheel);
+        view_camera_control(cam, in, (f32)dt);
 
         i32 ww = 0, wh = 0;
         platform_window_size(&ww, &wh);
-        // Мышь → намерения игрока
-        if (ww > 0 && wh > 0) {
-            WPos at = view_screen_to_world(cam, ww, wh, in.mouse_x, in.mouse_y);
-            if (in.mouse_pressed[MOUSE_LEFT]) pending.push_back({0, INTENT_ATTRACT, at});
-            if (in.mouse_pressed[MOUSE_RIGHT]) pending.push_back({0, INTENT_BURST, at});
-            if (in.mouse_pressed[MOUSE_MIDDLE]) pending.push_back({0, INTENT_RELEASE, at});
-        }
+        // Мышь → намерения игрока: левая — притянуть точки, с Ctrl — вспышка; R — отпустить
+        WPos at;
+        if (in.mouse_pressed[MOUSE_LEFT] && view_screen_to_ground(cam, ww, wh, in.mouse_x, in.mouse_y, at))
+            pending.push_back({0, in.key_down[KEY_CTRL] ? (u32)INTENT_BURST : (u32)INTENT_ATTRACT, at});
+        if (in.key_pressed[KEY_R]) pending.push_back({0, INTENT_RELEASE, WPos{}});
 
         u32 nsteps = 0;
         if (tc.paused) {
@@ -124,32 +146,41 @@ int run_window(const Args &a, AppMemory &m) {
             }
         }
 
+        // Замер CPU кадра: вид + запись команд, без шага мира и без ожидания GPU и показа (vsync)
+        u64 tcpu = platform_time_ns();
         arena_reset(m.frame);
-        ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh};
+        ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel};
         if (!ds.lines) vi.dbg = nullptr;
         RenderFrame rf;
-        view_build(cam, vi, m.frame, rf);
+        view_build(cam, *assets, vi, m.frame, rf);
+        bool last_frame = a.frames && frames + 1 >= a.frames;
+        if (last_frame && a.shot) render_capture_next();
         if (!render_frame(rf)) { rc_exit = 1; break; }
+        stat_add(st_cpu, (f64)(platform_time_ns() - tcpu) / 1e6 - render_wait_ms());
 
         frames++;
         frames_window++;
         if (now - window_t0 >= 1000000000ull) {
             stat_roll(st_frame);
             stat_roll(st_step);
+            stat_roll(st_cpu);
             f64 secs = (f64)(now - window_t0) / 1e9;
-            char title[256];
+            char title[320];
             snprintf(title, sizeof title,
-                     "Anathemyre — %.0f к/с · кадр %.2f мс (макс %.2f) · шаг %.3f мс · ×%g%s · шаг %" PRIu64,
-                     (f64)frames_window / secs, st_frame.avg_last, st_frame.max_last, st_step.avg_last,
-                     (f64)SPEEDS[tc.speed], tc.paused ? " · пауза" : "", w.step);
+                     "Anathemyre — %.0f к/с · кадр %.2f мс (макс %.2f) · CPU кадра %.2f мс · GPU %.2f мс · шаг %.3f мс · "
+                     "×%g%s%s · шаг %" PRIu64,
+                     (f64)frames_window / secs, st_frame.avg_last, st_frame.max_last, st_cpu.avg_last, render_gpu_ms(),
+                     st_step.avg_last, (f64)SPEEDS[tc.speed], tc.paused ? " · пауза" : "", pixel ? "" : " · без ячеек",
+                     w.step);
             platform_set_title(title);
             log_info("%s", title);
             frames_window = 0;
             window_t0 = now;
         }
-        if (a.frames && frames >= a.frames) break;
+        if (last_frame) break;
     }
 
+    if (a.shot && !debug_write_shot(a.shot, m.load)) rc_exit = 1;
     if (a.record && !save_record(rec, a.record, m.load)) rc_exit = 1;
     u32 verr = render_validation_errors();
     if (verr) {

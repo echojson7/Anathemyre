@@ -3,12 +3,12 @@
 #include "common.glsl"
 layout(location = 0) out vec4 v_color;
 
-// Точка — квадрат из двух треугольников вокруг центра, размер в пикселях
+// Точка — квадрат из двух треугольников вокруг центра, размер в пикселях кадра
 void main() {
     const vec2 corner[6] = vec2[](vec2(-1, -1), vec2(1, -1), vec2(1, 1), vec2(-1, -1), vec2(1, 1), vec2(-1, 1));
-    Vtx p = pc.data.v[gl_InstanceIndex];
-    float size = uintBitsToFloat(p.a);
-    vec2 ndc = to_ndc(p.pos) + corner[gl_VertexIndex] * 0.5 * size * pc.ndc_per_pixel;
-    gl_Position = vec4(ndc, 0.0, 1.0);
-    v_color = unpack_srgb(p.b);
+    PointVtx p = pc.frame.points.v[gl_InstanceIndex];
+    vec4 c = to_clip(vec3(p.x, p.y, p.z));
+    c.xy += corner[gl_VertexIndex] * 0.5 * p.size * pc.frame.ndc_per_pixel * c.w;
+    gl_Position = c;
+    v_color = unpack_srgb(p.rgba);
 }

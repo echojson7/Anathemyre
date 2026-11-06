@@ -65,6 +65,24 @@ const char *platform_exe_dir() {
     return p ? p : "./";
 }
 
+struct ListCtx {
+    const char *suffix;
+    void (*cb)(const char *, void *);
+    void *user;
+};
+
+static SDL_EnumerationResult SDLCALL on_dir_entry(void *u, const char *, const char *name) {
+    ListCtx &c = *(ListCtx *)u;
+    usize n = SDL_strlen(name), k = SDL_strlen(c.suffix);
+    if (n >= k && SDL_strcmp(name + n - k, c.suffix) == 0) c.cb(name, c.user);
+    return SDL_ENUM_CONTINUE;
+}
+
+bool platform_list_dir(const char *dir, const char *suffix, void (*cb)(const char *name, void *user), void *user) {
+    ListCtx c{suffix, cb, user};
+    return SDL_EnumerateDirectory(dir, on_dir_entry, &c);
+}
+
 bool platform_window_open(const char *title, i32 width, i32 height) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
         log_error("SDL_Init: %s", SDL_GetError());
@@ -105,7 +123,14 @@ static Key map_key(SDL_Keycode k) {
     case SDLK_A: return KEY_A;
     case SDLK_S: return KEY_S;
     case SDLK_D: return KEY_D;
+    case SDLK_Q: return KEY_Q;
+    case SDLK_E: return KEY_E;
+    case SDLK_F: return KEY_F;
     case SDLK_L: return KEY_L;
+    case SDLK_P: return KEY_P;
+    case SDLK_R: return KEY_R;
+    case SDLK_LSHIFT: case SDLK_RSHIFT: return KEY_SHIFT;
+    case SDLK_LCTRL: case SDLK_RCTRL: return KEY_CTRL;
     case SDLK_F1: return KEY_F1;
     case SDLK_F2: return KEY_F2;
     case SDLK_F3: return KEY_F3;
@@ -127,7 +152,9 @@ void platform_poll(Input &in) {
     for (bool &b : in.key_pressed) b = false;
     for (bool &b : in.mouse_pressed) b = false;
     in.wheel = 0;
+    in.mouse_dx = in.mouse_dy = 0;
     in.resized = false;
+    f32 density = g_window ? SDL_GetWindowPixelDensity(g_window) : 1.0f;
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
@@ -151,15 +178,23 @@ void platform_poll(Input &in) {
             if (b >= 0) in.mouse_down[b] = false;
         } break;
         case SDL_EVENT_MOUSE_WHEEL: in.wheel += e.wheel.y; break;
+        case SDL_EVENT_MOUSE_MOTION:
+            in.mouse_dx += e.motion.xrel * density;
+            in.mouse_dy += e.motion.yrel * density;
+            break;
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+            // Отпущенные вне окна клавиши иначе «залипают»
+            for (bool &b : in.key_down) b = false;
+            for (bool &b : in.mouse_down) b = false;
+            break;
         default: break;
         }
     }
     // Мышь — в пикселях кадра, как и размер окна
     f32 mx = 0, my = 0;
     SDL_GetMouseState(&mx, &my);
-    f32 scale = g_window ? SDL_GetWindowPixelDensity(g_window) : 1.0f;
-    in.mouse_x = mx * scale;
-    in.mouse_y = my * scale;
+    in.mouse_x = mx * density;
+    in.mouse_y = my * density;
 }
 
 void platform_window_size(i32 *w, i32 *h) {

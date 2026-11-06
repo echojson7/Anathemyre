@@ -4,7 +4,7 @@
 layout(location = 0) out vec4 v_color;
 
 void main() {
-    Vtx p = pc.data.v[gl_VertexIndex];
-    gl_Position = vec4(to_ndc(p.pos), 0.0, 1.0);
-    v_color = unpack_srgb(p.a);
+    LineVtx l = pc.frame.lines.v[gl_VertexIndex];
+    gl_Position = to_clip(vec3(l.x, l.y, l.z));
+    v_color = unpack_srgb(l.rgba);
 }

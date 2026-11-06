@@ -1,0 +1,30 @@
+# Таблица материалов (docs/materials.md). Вид — файл data/shaders/materials/<вид>.glsl.
+# material <имя> <вид>, дальше параметры до следующего material:
+#   color r g b (sRGB-подобные доли, линейно) · rough k · color2 r g b · texel м (квадрат узора, делит 256 м)
+#   extra a b c d (смысл — в шапке файла вида)
+# Номер 0 — «missing», его ставит игра сама.
+
+material ground ground
+    color 0.30 0.24 0.17
+    color2 0.46 0.39 0.28
+    rough 0.95
+    texel 0.1
+    extra 24 0.55 0.35 0
+
+material concrete concrete
+    color 0.36 0.35 0.33
+    color2 0.17 0.15 0.13
+    rough 0.9
+    texel 0.1
+    extra 1 0.8 0.35 0
+
+material rust_metal metal
+    color 0.20 0.21 0.21
+    color2 0.33 0.14 0.06
+    rough 0.6
+    texel 0.0625
+    extra 0.55 0.6 0.3 0
+
+material ochre_paint flat
+    color 0.45 0.32 0.10
+    rough 0.8

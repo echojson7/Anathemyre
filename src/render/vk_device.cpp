@@ -87,6 +87,7 @@ static bool create_device() {
     vkb::PhysicalDevice pd = pick.value();
     g_vk.gpu = pd.physical_device;
     snprintf(g_vk.gpu_name, sizeof g_vk.gpu_name, "%s", pd.properties.deviceName);
+    g_vk.timestamp_period = pd.properties.limits.timestampPeriod;
 
     auto dev = vkb::DeviceBuilder(pd).build();
     if (!dev) {
@@ -101,6 +102,13 @@ static bool create_device() {
     if (!q || !qi) { log_error("нет очереди графики"); return false; }
     g_vk.queue = q.value();
     g_vk.queue_family = qi.value();
+    // Метки времени GPU: у очереди должны быть значащие биты
+    u32 nfam = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(g_vk.gpu, &nfam, nullptr);
+    VkQueueFamilyProperties fam[16];
+    if (nfam > 16) nfam = 16;
+    vkGetPhysicalDeviceQueueFamilyProperties(g_vk.gpu, &nfam, fam);
+    if (g_vk.queue_family >= nfam || fam[g_vk.queue_family].timestampValidBits == 0) g_vk.timestamp_period = 0;
 
     VmaVulkanFunctions fns{};
     fns.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
@@ -113,6 +121,41 @@ static bool create_device() {
     ai.vulkanApiVersion = VK_API_VERSION_1_3;
     ai.pVulkanFunctions = &fns;
     return vk_check(vmaCreateAllocator(&ai, &g_vk.vma), "vmaCreateAllocator");
+}
+
+static void destroy_depth() {
+    if (g_vk.depth.view) vkDestroyImageView(g_vk.device, g_vk.depth.view, nullptr);
+    if (g_vk.depth.image) vmaDestroyImage(g_vk.vma, g_vk.depth.image, g_vk.depth.alloc);
+    g_vk.depth = GpuImage{};
+    g_vk.depth_extent = {};
+}
+
+// Глубина D32F под размер swapchain: обратная (ближе — больше), очистка нулём
+static bool create_depth() {
+    if (g_vk.depth.image && g_vk.depth_extent.width == g_vk.extent.width && g_vk.depth_extent.height == g_vk.extent.height)
+        return true;
+    destroy_depth();
+    auto ii = vk_info<VkImageCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO);
+    ii.imageType = VK_IMAGE_TYPE_2D;
+    ii.format = DEPTH_FORMAT;
+    ii.extent = {g_vk.extent.width, g_vk.extent.height, 1};
+    ii.mipLevels = 1;
+    ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    VmaAllocationCreateInfo ci{};
+    ci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+    if (!vk_check(vmaCreateImage(g_vk.vma, &ii, &ci, &g_vk.depth.image, &g_vk.depth.alloc, nullptr), "глубина"))
+        return false;
+    auto vi = vk_info<VkImageViewCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
+    vi.image = g_vk.depth.image;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format = DEPTH_FORMAT;
+    vi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    if (!vk_check(vkCreateImageView(g_vk.device, &vi, nullptr, &g_vk.depth.view), "вид глубины")) return false;
+    g_vk.depth_extent = g_vk.extent;
+    return true;
 }
 
 bool vk_create_swapchain() {
@@ -153,6 +196,7 @@ bool vk_create_swapchain() {
         g_vk.images[i] = imgs.value()[i];
         g_vk.views[i] = views.value()[i];
     }
+    if (!create_depth()) return false;
     auto si = vk_info<VkSemaphoreCreateInfo>(VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO);
     for (; g_vk.rendered_count < g_vk.image_count; g_vk.rendered_count++)
         if (!vk_check(vkCreateSemaphore(g_vk.device, &si, nullptr, &g_vk.rendered[g_vk.rendered_count]), "vkCreateSemaphore"))
@@ -162,6 +206,7 @@ bool vk_create_swapchain() {
 }
 
 void vk_destroy_swapchain() {
+    destroy_depth();
     for (u32 i = 0; i < g_vk.image_count; ++i) vkDestroyImageView(g_vk.device, g_vk.views[i], nullptr);
     for (u32 i = 0; i < g_vk.rendered_count; ++i) vkDestroySemaphore(g_vk.device, g_vk.rendered[i], nullptr);
     g_vk.image_count = 0;
@@ -170,13 +215,17 @@ void vk_destroy_swapchain() {
     g_vk.swapchain = VK_NULL_HANDLE;
 }
 
-bool vk_create_buffer(GpuBuffer &b, VkDeviceSize size, VkBufferUsageFlags usage) {
+bool vk_create_buffer(GpuBuffer &b, VkDeviceSize size, VkBufferUsageFlags usage, bool device_local) {
     auto bi = vk_info<VkBufferCreateInfo>(VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
     bi.size = size;
     bi.usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     VmaAllocationCreateInfo ci{};
-    ci.usage = VMA_MEMORY_USAGE_AUTO;
-    ci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    ci.usage = device_local ? VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE : VMA_MEMORY_USAGE_AUTO;
+    // Видимый процессору: запись подряд (кадр), а приёмник копии (снимок) читается — тогда кешируемая память
+    if (!device_local)
+        ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | ((usage & VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+                                                           ? VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT
+                                                           : VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
     VmaAllocationInfo info{};
     if (!vk_check(vmaCreateBuffer(g_vk.vma, &bi, &ci, &b.buffer, &b.alloc, &info), "vmaCreateBuffer")) return false;
     b.mapped = info.pMappedData;
@@ -184,7 +233,7 @@ bool vk_create_buffer(GpuBuffer &b, VkDeviceSize size, VkBufferUsageFlags usage)
     auto ai = vk_info<VkBufferDeviceAddressInfo>(VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO);
     ai.buffer = b.buffer;
     b.address = vkGetBufferDeviceAddress(g_vk.device, &ai);
-    return b.mapped != nullptr;
+    return device_local || b.mapped != nullptr;
 }
 
 void vk_destroy_buffer(GpuBuffer &b) {
@@ -208,9 +257,17 @@ static bool create_frames() {
         if (!vk_check(vkAllocateCommandBuffers(g_vk.device, &ai, &f.cmd), "vkAllocateCommandBuffers")) return false;
         if (!vk_check(vkCreateFence(g_vk.device, &fi, nullptr, &f.done), "vkCreateFence")) return false;
         if (!vk_check(vkCreateSemaphore(g_vk.device, &si, nullptr, &f.acquired), "vkCreateSemaphore")) return false;
-        if (!vk_create_buffer(f.points, RENDER_MAX_POINTS * sizeof(RenderPoint), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) return false;
-        if (!vk_create_buffer(f.lines, RENDER_MAX_LINE_VERTICES * sizeof(RenderLineVertex), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT))
-            return false;
+        const VkBufferUsageFlags ssbo = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        if (!vk_create_buffer(f.frame, sizeof(FrameGpu), ssbo)) return false;
+        if (!vk_create_buffer(f.instances, RENDER_MAX_INSTANCES * sizeof(RenderInstance), ssbo)) return false;
+        if (!vk_create_buffer(f.points, RENDER_MAX_POINTS * sizeof(RenderPoint), ssbo)) return false;
+        if (!vk_create_buffer(f.lines, RENDER_MAX_LINE_VERTICES * sizeof(RenderLineVertex), ssbo)) return false;
+    }
+    if (g_vk.timestamp_period > 0) {
+        auto qi = vk_info<VkQueryPoolCreateInfo>(VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO);
+        qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        qi.queryCount = 2 * FRAMES_IN_FLIGHT;
+        if (!vk_check(vkCreateQueryPool(g_vk.device, &qi, nullptr, &g_vk.queries), "vkCreateQueryPool")) return false;
     }
     return true;
 }
@@ -221,6 +278,7 @@ bool render_init(const RenderConfig &cfg) {
     if (!create_device()) return false;
     if (!vk_create_swapchain()) return false;
     if (!create_frames()) return false;
+    if (!vk_geometry_init()) return false;
     if (!vk_create_pipelines()) return false;
     log_info("Vulkan: %s, кадр %ux%u, %s", g_vk.gpu_name, g_vk.extent.width, g_vk.extent.height,
              cfg.vsync ? "vsync" : "без vsync");
@@ -232,7 +290,12 @@ void render_shutdown() {
     if (g_vk.device) {
         vkDeviceWaitIdle(g_vk.device);
         vk_destroy_pipelines();
+        vk_geometry_shutdown();
+        vk_destroy_buffer(g_vk.capture);
+        if (g_vk.queries) vkDestroyQueryPool(g_vk.device, g_vk.queries, nullptr);
         for (FrameSlot &f : g_vk.frames) {
+            vk_destroy_buffer(f.frame);
+            vk_destroy_buffer(f.instances);
             vk_destroy_buffer(f.points);
             vk_destroy_buffer(f.lines);
             if (f.acquired) vkDestroySemaphore(g_vk.device, f.acquired, nullptr);
@@ -250,4 +313,6 @@ void render_shutdown() {
 }
 
 u32 render_validation_errors() { return g_vk_validation_errors; }
+f64 render_gpu_ms() { return g_vk.gpu_ms; }
+f64 render_wait_ms() { return (f64)g_vk.wait_ns / 1e6; }
 const char *render_device_name() { return g_vk.gpu_name; }
