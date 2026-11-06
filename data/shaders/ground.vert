@@ -8,6 +8,7 @@
 layout(location = 0) out vec3 v_rel;
 layout(location = 1) out vec3 v_normal;
 layout(location = 2) flat out uint v_level;
+layout(location = 3) out float v_wdepth;  // глубина воды над землёй, м (< 0 — суша)
 
 // Высота кольца L в точке g (полуметры от угла карты), метры. Кольцо 0 — между узлами 1 м билинейно
 float level_height(ivec2 g, int L) {
@@ -60,6 +61,15 @@ void main() {
             h = mix(h, hc, m);
         }
     }
+    // Вода (docs/terrain.md, «Вода»): где уровень воды выше земли, вершина встаёт на уровень — сетка земли
+    // сама становится ровной гладью, фрагмент узнаёт воду по глубине. Под водой ничего не рисуется
+    int wl = t_water(g.x >> 1, g.y >> 1);
+    float wdepth = -100.0;
+    if (wl != 0) {
+        float w = float(wl) * T_M_PER_U;
+        wdepth = w - h;
+        if (wdepth > 0.0) h = w;
+    }
     vec3 nrm = vec3(0.0, 1.0, 0.0);
     if (L >= 2) {
         float hx0 = level_height(g - ivec2(sh, 0), L), hx1 = level_height(g + ivec2(sh, 0), L);
@@ -72,4 +82,5 @@ void main() {
     v_rel = rel;
     v_normal = nrm;
     v_level = uint(L);
+    v_wdepth = wdepth;
 }

@@ -1,10 +1,10 @@
 // Сухая земля: color — земля, color2 — пыль пятнами. texel — квадрат узора,
-// extra.x — размер крупных пятен (м), extra.y — доля пятен пыли, extra.z — сила мелкого разброса,
+// extra.x — размер крупных пятен (м, степень двойки), extra.y — доля пятен пыли, extra.z — сила мелкого разброса,
 // extra.w — сила трещин (такыр: сетка трещин ~0.4 м)
 Surface surf_ground(SurfIn i) {
     float t = i.m.p1.a;
     vec3 q = snap(i.p, t);
-    float big = value_noise(i.p, max(i.m.p2.x, 1.0), 11u) * 0.6 + value_noise(i.p, max(i.m.p2.x, 1.0) * 0.25, 12u) * 0.4;
+    float big = fbm_n(i.p, max(i.m.p2.x, 1.0), 4, 11u);
     float dust = smoothstep(i.m.p2.y - 0.12, i.m.p2.y + 0.12, big);
     float grain = cell_noise(q, t, 13u) - 0.5;
     float clump = value_noise(i.p, t * 4.0, 14u) - 0.5;
@@ -12,7 +12,7 @@ Surface surf_ground(SurfIn i) {
     c *= 1.0 + (grain * 0.6 + clump * 0.8) * i.m.p2.z;
     // Трещины такыра: края ячеек Вороного 0.5 м, только пятнами (где нет пыли)
     float crack = 0.0;
-    float takyr = smoothstep(0.5, 0.65, value_noise(i.p, 16.0, 16u)) * (1.0 - dust);
+    float takyr = smoothstep(0.55, 0.7, fbm_n(i.p, 16.0, 2, 16u)) * (1.0 - dust);
     float kf = 1.0 - smoothstep(0.008, 0.025, i.foot);  // трещины мельче пикселя гаснут
     if (i.m.p2.w > 0.0 && takyr > 0.0 && kf > 0.0) {
         const float S = 0.5;

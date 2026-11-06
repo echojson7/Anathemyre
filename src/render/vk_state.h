@@ -31,7 +31,7 @@ struct GpuImage {
 struct FrameGpu {
     VkDeviceAddress vertices, instances, materials, lines, points;
     VkDeviceAddress t_height, t_mask;
-    u64 pad0;
+    VkDeviceAddress t_water;
     i32 cam_cx, cam_cz;
     f32 cam_x, cam_y, cam_z;
     f32 tan_half_fov;
@@ -46,7 +46,7 @@ struct FrameGpu {
     u32 t_oct_seed[5], t_on;
     i32 clip_n, clip_levels, clip_morph, clip_pad;
     i32 clip[12][4];   // начало кольца в полуметрах от угла карты (x, z), дыра кольца (x, z)
-    u32 ground_layers[4];
+    u32 ground_layers[8];  // материалы слоёв земли (RENDER_GROUND_LAYERS), остаток — 0
     f32 fog[4];
     i32 t_mip[8];      // начало уровня k сглаженной сетки высот (шаг 8·2^k м) в буфере высот, номера u16
 };
@@ -59,7 +59,7 @@ constexpr i32 CLIP_LEVELS = 10;   // шаг до 256 м, сторона посл
 constexpr i32 CLIP_MORPH = 32;    // ширина перехода к следующему кольцу, квадратов
 struct TerrainGpu {
     bool on = false;
-    GpuBuffer height, mask, index;
+    GpuBuffer height, mask, water, index;
     u32 first_full = 0, count_full = 0;
     u32 first_ring[4] = {}, count_ring = 0;
     RenderTerrain desc{};

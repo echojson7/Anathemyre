@@ -112,8 +112,8 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
     arena_restore(m.load, mark);
     if (!ok) return false;
     view.materials = &mats;
-    // Слои земли по GroundKind (src/sim/ground.h): песок, сухая земля, щебень, камень
-    const char *layers[RENDER_GROUND_LAYERS] = {"sand", "dry_earth", "gravel", "rock"};
+    // Слои земли по GroundKind (src/sim/ground.h): песок, сухая земля, щебень, камень, трава, вода
+    const char *layers[RENDER_GROUND_LAYERS] = {"sand", "dry_earth", "gravel", "rock", "grass", "water"};
     for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) {
         view.ground_layers[k] = material_find(mats, hash_str(layers[k]));
         if (!view.ground_layers[k]) log_warn("data/materials.txt: нет материала %s для слоя земли", layers[k]);
@@ -143,6 +143,7 @@ bool app_terrain_upload(const World &w) {
     rt.height = t.height;
     rt.n = t.n;
     rt.mask = t.mask;
+    rt.water = t.water;
     rt.nm = t.nm;
     rt.chunk0 = t.chunk0;
     rt.size_m = t.size_m;

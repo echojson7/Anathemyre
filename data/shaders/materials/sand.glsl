@@ -1,6 +1,6 @@
 // Песок: color — светлый, color2 — тёмный (пятна, впадины ряби). texel — квадрат зерна.
 // extra.x — длина волны ряби (м), extra.y — наклон нормали на ряби, extra.z — размер пятен (м),
-// extra.w — сила пятен. Рябь поперёк ветра с запада-юго-запада (как дюны), гаснет, когда ячейка крупнее волны
+// extra.w — сила пятен (размер — степень двойки). Рябь поперёк ветра с запада-юго-запада (как дюны), гаснет, когда ячейка крупнее волны
 Surface surf_sand(SurfIn i) {
     FrameData f = pc.frame;
     float t = i.m.p1.a;
@@ -24,8 +24,23 @@ Surface surf_sand(SurfIn i) {
     vec3 tw = normalize(vec3(wind.x, 0.0, wind.y) - i.n * dot(i.n, vec3(wind.x, 0.0, wind.y)));
     vec3 n = normalize(i.n - tw * (dh * i.m.p2.y * 0.3 * k));
 
-    float blot = value_noise(i.p, max(i.m.p2.z, 1.0), 44u) * 0.7 + value_noise(i.p, max(i.m.p2.z, 1.0) * 0.25, 45u) * 0.3;
-    vec3 c = mix(i.m.p0.rgb, i.m.p1.rgb, smoothstep(0.35, 0.75, blot) * i.m.p2.w);
+    // Пятна плотного и рыхлого песка — плавным шумом в несколько октав (без квадратов шума значений)
+    float blot = fbm_n(i.p, max(i.m.p2.z, 1.0), 4, 44u);
+    vec3 c = mix(i.m.p0.rgb, i.m.p1.rgb, smoothstep(0.3, 0.7, blot) * i.m.p2.w);
+    // Наветренные склоны ряби светлее, во впадинах ряби оседает тёмная пыль
+    c *= 0.94 + 0.12 * fbm_n(i.p, 2.0, 2, 45u);
+    // Полосы ветра: шум, вытянутый вдоль ветра, — светлые языки рыхлого песка и тёмные полосы плотного.
+    // Мировые метры (не от чанка камеры): узор не прыгает со сменой чанка
+    {
+        vec2 wp = vec2(f.cam_chunk) * CHUNK_M + i.p.xz;
+        vec2 r = vec2(dot(wp, wind) * 0.12, dot(wp, vec2(-wind.y, wind.x)));
+        vec2 rf = fract(r / 8.0), ri = floor(r / 8.0);
+        vec2 u = rf * rf * (3.0 - 2.0 * rf);
+        float a00 = hash3(ivec3(int(ri.x), 0, int(ri.y)), 48u), a10 = hash3(ivec3(int(ri.x) + 1, 0, int(ri.y)), 48u);
+        float a01 = hash3(ivec3(int(ri.x), 0, int(ri.y) + 1), 48u), a11 = hash3(ivec3(int(ri.x) + 1, 0, int(ri.y) + 1), 48u);
+        float streak = mix(mix(a00, a10, u.x), mix(a01, a11, u.x), u.y);
+        c *= 0.88 + 0.24 * streak;
+    }
     float grain = cell_noise(q, t, 46u) - 0.5;
     c *= 1.0 + grain * 0.07;
     c *= 1.0 - 0.05 * (1.0 - hr) * k;

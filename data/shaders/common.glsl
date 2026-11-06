@@ -28,8 +28,8 @@ layout(buffer_reference, scalar) readonly buffer FrameData {
     Lines lines;
     Points points;
     Words t_height;     // сетка высот земли, u16 парами (docs/terrain.md)
-    Words t_mask;       // маски 32 м, u16 парами: шероховатость | песок << 8
-    uint pad0a, pad0b;
+    Words t_mask;       // маски 32 м, u32: шероховатость, песок, трава, сырость по байту
+    Words t_water;      // уровень воды 32 м, u16 парами, 5 см; 0 — воды нет
     ivec2 cam_chunk;
     vec3 cam_off;       // камера внутри своего чанка: x, z в [0, 256), y — высота
     float tan_half_fov;
@@ -48,7 +48,7 @@ layout(buffer_reference, scalar) readonly buffer FrameData {
     // Clipmap: кольцо L — сетка (2n+1)² вершин с шагом 0.5·2^L м, начало в полуметрах от угла карты
     int clip_n, clip_levels, clip_morph, clip_pad;
     ivec4 clip[12];
-    uvec4 ground_layers;  // материалы слоёв: песок, сухая земля, щебень, камень
+    uint ground_layers[8];  // материалы слоёв: песок, сухая земля, щебень, камень, трава, вода
     vec4 fog;             // временная дымка: цвет (линейный) и 1/расстояние
     int t_mip[8];         // начало уровня k сглаженной сетки высот (шаг 8·2^k м) в буфере высот, номера u16
 };
