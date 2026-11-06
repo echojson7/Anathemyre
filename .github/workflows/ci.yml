@@ -65,7 +65,9 @@ jobs:
           LSAN_OPTIONS: suppressions=${{ github.workspace }}/tools/lsan.supp
         run: |
           set -o pipefail  # иначе код выхода игры теряется за tail
-          xvfb-run -a -s "-screen 0 1280x720x24" build/linux-debug/anathemyre --frames 300 --validation | tail -5
+          . tools/versions.sh
+          export ASAN_SYMBOLIZER_PATH=~/.cache/anathemyre/llvm-$LLVM_VER/bin/llvm-symbolizer  # иначе подавления не видят имён функций
+          xvfb-run -a -s "-screen 0 1280x720x24" build/linux-debug/anathemyre --frames 300 --validation 2>&1 | tail -40
           xvfb-run -a -s "-screen 0 1280x720x24" build/linux-release/anathemyre --frames 300 --validation --shot frame.bmp | tail -5
       - uses: actions/upload-artifact@v4
         with:
