@@ -101,6 +101,7 @@ struct RenderStyle {
     bool pixel = true;     // выключается клавишей P
     bool forward = false;  // старый forward этапов 1–4 вместо кадра мира (для сравнения, F3 или --forward)
     bool froxel_heat = false;  // тепловая карта числа огней в клетке froxels поверх кадра (F3)
+    bool gcache = true;        // кеш поверхности земли (docs/gcache.md); выкл — земля на пиксель (F3, --nogcache)
     f32 cell_min = 1.0f / 80.0f;
     f32 cell_pixels = 1.0f;  // ячейка — не меньше стольких пикселей кадра
 };
@@ -241,12 +242,15 @@ struct RenderOverflow {
 u32 render_overflows(RenderOverflow *out, u32 cap);
 // Работа освещения прочитанного кадра мира (docs/tiles.md): счётчики шейдеров. Для ракурса и часа они те же от
 // запуска к запуску, по ним CI ловит «стало делать больше работы». false — кадр не мира (forward) или ещё не прочитан
-constexpr u32 RENDER_TILE_KINDS = 4;  // плитки: небо, земля, сетки, смесь
+constexpr u32 RENDER_TILE_KINDS = 5;  // плитки: небо, земля, сетки, смесь, земля на пиксель
 struct RenderWork {
     u32 tiles[RENDER_TILE_KINDS];
     u32 px_sky, px_ground, px_mesh;  // пиксели по видам
     u32 surf_ground, surf_mesh;      // поверхности: surface() и light_surface() раз на ячейку
     u32 shadow_steps;                // шаги луча тени рельефа
+    // Кеш поверхности земли (docs/gcache.md): страницы, прочитанные кадром; запечённые; без места; поверхности
+    // земли, посчитанные освещением мимо кеша (крутые склоны, нет места)
+    u32 gc_used, gc_baked, gc_over, gc_direct;
 };
 bool render_work(RenderWork &out);
 // Процессорное время последнего render_frame по частям, мс (docs/frame_time.md). Ожидание — fence, acquire и

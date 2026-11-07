@@ -15,6 +15,7 @@ struct DebugState {
     bool forward = false;     // старый forward вместо кадра мира (сравнение, не сохраняется)
     bool test_lights = false; // тестовые огни вокруг камеры (froxels)
     bool froxel_heat = false; // тепловая карта огней по клеткам froxels
+    bool gcache_off = false;  // без кеша поверхности земли (сравнение, не сохраняется)
     u32 tab = 0;              // вкладка панели: DEBUG_TAB_*
     // Просьбы этого кадра от клавиш и панели (debug_clear_frame после исполнения)
     bool step_once = false;   // «.» на паузе — один шаг
@@ -65,10 +66,11 @@ struct DebugInfo {
     u32 vis_clusters;         // видимых кластеров (кадр мира)
     // Работа освещения прошлой секунды (render_work, docs/tiles.md); work = false — нет (forward)
     bool work;
-    u32 work_tiles[4];        // плитки: небо, земля, сетки, смесь
+    u32 work_tiles[5];        // плитки: небо, земля, сетки, смесь, земля на пиксель
     u32 work_px[3];           // пиксели: небо, земля, сетки
     u32 work_surf[2];         // поверхности (surface() и свет раз на ячейку): земля, сетки
     u32 work_steps;           // шаги луча тени рельефа
+    u32 work_gc[4];           // кеш земли: страницы кадра, запечено, без места, поверхности мимо кеша
     // Что не влезло за секунду (render_overflows): сколько просили, сколько есть (0 — счёт клеток без предела)
     u32 overflows;
     const char *over_what[DEBUG_MAX_OVERFLOWS];

@@ -262,6 +262,7 @@ bool render_set_materials(Span<const RenderMaterial> materials) {
     if (materials.count > RENDER_MAX_MATERIALS) { log_error("материалов больше %u", RENDER_MAX_MATERIALS); return false; }
     vkDeviceWaitIdle(g_vk.device);
     memcpy(g_vk.materials.mapped, materials.data, materials.count * sizeof(RenderMaterial));
+    g_vk.gcache.materials_gen++;  // тексели кеша земли считаны из старых материалов
     vmaFlushAllocation(g_vk.vma, g_vk.materials.alloc, 0, VK_WHOLE_SIZE);
     return true;
 }

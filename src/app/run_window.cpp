@@ -270,13 +270,17 @@ int run_window(const Args &a, AppMemory &m) {
                 }
                 di.vis_clusters = render_vis_clusters();
                 di.work = work_have;
-                for (u32 i = 0; i < 4; ++i) di.work_tiles[i] = work.tiles[i];
+                for (u32 i = 0; i < RENDER_TILE_KINDS; ++i) di.work_tiles[i] = work.tiles[i];
                 di.work_px[0] = work.px_sky;
                 di.work_px[1] = work.px_ground;
                 di.work_px[2] = work.px_mesh;
                 di.work_surf[0] = work.surf_ground;
                 di.work_surf[1] = work.surf_mesh;
                 di.work_steps = work.shadow_steps;
+                di.work_gc[0] = work.gc_used;
+                di.work_gc[1] = work.gc_baked;
+                di.work_gc[2] = work.gc_over;
+                di.work_gc[3] = work.gc_direct;
                 di.overflows = nover_last;
                 for (u32 i = 0; i < nover_last; ++i) {
                     di.over_what[i] = over_last[i].what;
@@ -391,7 +395,8 @@ int run_window(const Args &a, AppMemory &m) {
 
         arena_reset(m.frame);
         ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused || a.timelapse ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel,
-                     a.forward || ds.forward, a.test_lights || ds.test_lights, a.froxel_heat || ds.froxel_heat, scatter};
+                     a.forward || ds.forward, a.test_lights || ds.test_lights, a.froxel_heat || ds.froxel_heat,
+                     a.nogcache || ds.gcache_off, scatter};
         if (!ds.lines) vi.dbg = nullptr;
         RenderFrame rf;
         u32 dbg_keep = dbg.count;  // метка осмотра — только на этот кадр, шаг мира её не видит
@@ -486,7 +491,7 @@ int run_window(const Args &a, AppMemory &m) {
             log_info("%s", title);
             // Проходы GPU за секунду — те же числа, что в F3, для журнала и сравнения на другой машине
             if (npass_avg) {
-                char line[320];
+                char line[640];
                 i32 len = snprintf(line, sizeof line, "проходы GPU, мс:");
                 for (u32 i = 0; i < npass_avg && len > 0 && len < (i32)sizeof line; ++i)
                     len += snprintf(line + len, sizeof line - (size_t)len, " %s %.3f", pass_names[i] ? pass_names[i] : "?",
@@ -495,10 +500,12 @@ int run_window(const Args &a, AppMemory &m) {
             }
             log_frame_parts(*prof);
             if (work_have)
-                log_info("работа освещения: плитки небо %u земля %u сетки %u смесь %u · пиксели небо %u земля %u "
-                         "сетки %u · поверхности земли %u сеток %u · шаги тени %u",
-                         work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.px_sky, work.px_ground,
-                         work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_steps);
+                log_info("работа освещения: плитки небо %u земля %u сетки %u смесь %u земля на пиксель %u · пиксели небо %u земля %u "
+                         "сетки %u · поверхности земли %u сеток %u · шаги тени %u · кеш земли: страниц %u запечено %u "
+                         "без места %u, мимо кеша %u",
+                         work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
+                         work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_steps, work.gc_used,
+                         work.gc_baked, work.gc_over, work.gc_direct);
             frames_window = 0;
             window_t0 = now;
             prof_part(*prof, FP_LOG, platform_time_ns());
@@ -512,10 +519,13 @@ int run_window(const Args &a, AppMemory &m) {
         // Счётчики работы для сверки CI (tools/work_check.sh): «имя значение» по строке
         char t[512];
         i32 n = snprintf(t, sizeof t,
-                         "tiles_sky %u\ntiles_ground %u\ntiles_mesh %u\ntiles_mix %u\npx_sky %u\npx_ground %u\n"
-                         "px_mesh %u\nsurf_ground %u\nsurf_mesh %u\nshadow_steps %u\n",
-                         work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.px_sky, work.px_ground,
-                         work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_steps);
+                         "tiles_sky %u\ntiles_ground %u\ntiles_mesh %u\ntiles_mix %u\ntiles_ground_px %u\npx_sky %u\n"
+                         "px_ground %u\n"
+                         "px_mesh %u\nsurf_ground %u\nsurf_mesh %u\nshadow_steps %u\ngc_used %u\ngc_baked %u\n"
+                         "gc_over %u\ngc_direct %u\n",
+                         work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
+                         work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_steps, work.gc_used,
+                         work.gc_baked, work.gc_over, work.gc_direct);
         if (!work_have) log_error("--work: кадр мира не прочитан (forward или мало кадров)");
         if (!work_have || n <= 0 || !platform_write_file(a.work, t, (usize)n)) rc_exit = 1;
     }

@@ -88,7 +88,7 @@ int t_water(int gx, int gz) {
 // Уровень воды в точке (метры от начала чанка камеры), метры; < −1000 — воды нет. Плавно между узлами 1 м
 float t_water_at(vec2 p) {
     FrameData f = pc.frame;
-    vec2 g = p + vec2((f.cam_chunk - ivec2(f.t_chunk0)) * 256);
+    vec2 g = p + vec2((ORIGIN_CHUNK - ivec2(f.t_chunk0)) * 256);
     ivec2 gi = ivec2(floor(g));
     int w = t_water(gi.x, gi.y);
     return w == 0 ? -1e4 : float(w) * (1.0 / 1280.0);
@@ -385,7 +385,7 @@ const float T_M_PER_U = 1.0 / 1280.0;
 void t_split(vec2 p, out ivec2 g, out vec2 fr) {
     FrameData f = pc.frame;
     vec2 fl = floor(p);
-    g = ivec2(fl) + (f.cam_chunk - ivec2(f.t_chunk0)) * 256;
+    g = ivec2(fl) + (ORIGIN_CHUNK - ivec2(f.t_chunk0)) * 256;
     fr = p - fl;
 }
 
@@ -395,7 +395,7 @@ void t_split(vec2 p, out ivec2 g, out vec2 fr) {
 // билинейной клетки 1 м: разница только в оттенке склона, высоты те же
 vec3 t_smooth_normal(vec2 p, bool detail, bool dunes) {
     FrameData f = pc.frame;
-    vec2 g = p + vec2((f.cam_chunk - ivec2(f.t_chunk0)) * 256);
+    vec2 g = p + vec2((ORIGIN_CHUNK - ivec2(f.t_chunk0)) * 256);
     vec2 b = clamp(g, vec2(8.0), vec2(f.t_size_x, f.t_size_z) - 8.001) / 8.0;
     ivec2 i = ivec2(floor(b));
     vec2 fr = b - vec2(i);
@@ -449,6 +449,42 @@ float t_base_slope(vec2 g) {
     float dx = t_base_height(g + vec2(4.0, 0.0)) - t_base_height(g - vec2(4.0, 0.0));
     float dz = t_base_height(g + vec2(0.0, 4.0)) - t_base_height(g - vec2(0.0, 4.0));
     return max(abs(dx), abs(dz)) / 8.0;
+}
+
+// Высота земли и глубина воды в точке карты, метры: билинейно между узлами 1 м (как кольцо 0), октавы деталей
+// мельче 2^min_lp м отброшены. Глубина воды в узле — как у вершины кольца (ground_vertex): уровень минус высота,
+// в узле без воды −100, между узлами билинейно — край воды тот же, что у сетки, только по узлам 1 м. n — узел
+// карты (метры от угла), fr — место в клетке 1 м. Кеш земли (gcache.glsl) берёт их у текселя: от высоты — фаза
+// узоров по высоте, от глубины — вода, а не от точки треугольника кольца
+float t_height_f(ivec2 n, vec2 fr, int min_lp, out float wdepth) {
+    vec4 h = vec4(t_node(n.x, n.y, min_lp), t_node(n.x + 1, n.y, min_lp), t_node(n.x, n.y + 1, min_lp),
+                  t_node(n.x + 1, n.y + 1, min_lp)) * T_M_PER_U;
+    ivec4 wl = ivec4(t_water(n.x, n.y), t_water(n.x + 1, n.y), t_water(n.x, n.y + 1), t_water(n.x + 1, n.y + 1));
+    vec4 wd = mix(vec4(-100.0), vec4(wl) * T_M_PER_U - h, notEqual(wl, ivec4(0)));
+    wdepth = mix(mix(wd.x, wd.y, fr.x), mix(wd.z, wd.w, fr.x), fr.y);
+    return mix(mix(h.x, h.y, fr.x), mix(h.z, h.w, fr.x), fr.y);
+}
+
+// Нормаль по сглаженной сетке уровня m (шаг 8·2^m м, как дальние кольца clipmap'а): наклон центральными
+// разностями в узлах, между узлами билинейно. g — метры карты от угла. Кеш земли берёт её у крупных ячеек
+vec3 t_mip_normal(vec2 g, int m) {
+    FrameData f = pc.frame;
+    ivec2 nm = ivec2(((f.t_nx - 1) >> m) + 1, ((f.t_nz - 1) >> m) + 1);
+    float s = 8.0 * float(1 << m);
+    vec2 b = clamp(g / s, vec2(1.0), vec2(nm - 2) - 0.001);
+    ivec2 i = ivec2(floor(b));
+    vec2 fr = b - vec2(i);
+    int base = f.t_mip[m];
+    vec2 gr[4];
+    for (int k = 0; k < 4; ++k) {
+        ivec2 c = i + ivec2(k & 1, k >> 1);
+        int kk = base + c.y * nm.x + c.x;
+        float hx = float(t_hgt(kk + 1) - t_hgt(kk - 1));
+        float hz = float(t_hgt(kk + nm.x) - t_hgt(kk - nm.x));
+        gr[k] = vec2(hx, hz) * (0.05 / (2.0 * s));
+    }
+    vec2 gs = mix(mix(gr[0], gr[1], fr.x), mix(gr[2], gr[3], fr.x), fr.y);
+    return normalize(vec3(-gs.x, 1.0, -gs.y));
 }
 
 // Тень рельефа: луч от точки к солнцу по сетке 8 м, шаги растут до ~12 км. 1 — свет, 0 — тень.

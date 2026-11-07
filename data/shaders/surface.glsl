@@ -40,7 +40,7 @@ float hash3(ivec3 c, uint seed) {
 // size должен делить 256 м нацело (1/10, 1/8, 1/2, 1, 2 м…), иначе узор сдвинется на границе чанка
 ivec3 world_cell(vec3 p, float size) {
     int per_chunk = int(CHUNK_M / size + 0.5);
-    ivec2 ch = pc.frame.cam_chunk * per_chunk;
+    ivec2 ch = ORIGIN_CHUNK * per_chunk;
     ivec3 c = ivec3(floor(p / size));
     return c + ivec3(ch.x, 0, ch.y);
 }

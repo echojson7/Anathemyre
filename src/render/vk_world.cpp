@@ -93,7 +93,7 @@ bool vk_world_init() {
         lights = lights && w.pipe_light[k];
     }
     return w.pipe_vis_mesh && w.pipe_vis_ground && w.pipe_style && w.pipe_cull_count && w.pipe_cull_scan &&
-           w.pipe_cull_write && lights && w.pipe_tiles && w.pipe_ground_bake;
+           w.pipe_cull_write && lights && w.pipe_tiles && w.pipe_ground_bake && vk_gcache_init();
 }
 
 static void destroy_image(GpuImage &im) {
@@ -104,11 +104,11 @@ static void destroy_image(GpuImage &im) {
 
 void vk_world_shutdown() {
     WorldGpu &w = g_vk.world;
-    VkPipeline ps[] = {w.pipe_vis_mesh,   w.pipe_vis_ground, w.pipe_style,    w.pipe_cull_count,
-                       w.pipe_cull_scan,  w.pipe_cull_write, w.pipe_tiles,    w.pipe_ground_bake,
-                       w.pipe_light[0],   w.pipe_light[1],   w.pipe_light[2], w.pipe_light[3]};
-    static_assert(TILE_KINDS == 4, "конвейеры освещения по видам плиток");
+    VkPipeline ps[] = {w.pipe_vis_mesh,  w.pipe_vis_ground, w.pipe_style, w.pipe_cull_count,
+                       w.pipe_cull_scan, w.pipe_cull_write, w.pipe_tiles, w.pipe_ground_bake};
     for (VkPipeline p : ps)
+        if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
+    for (VkPipeline p : w.pipe_light)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
     destroy_image(w.id);
     destroy_image(w.hdr);
@@ -119,6 +119,7 @@ void vk_world_shutdown() {
     vk_destroy_buffer(w.gverts);
     vk_destroy_buffer(w.tiles);
     for (FrameSlot &fs : g_vk.frames) vk_destroy_buffer(fs.inst_upload);
+    vk_gcache_shutdown();
     if (w.pool) vkDestroyDescriptorPool(g_vk.device, w.pool, nullptr);
     if (w.set_layout) vkDestroyDescriptorSetLayout(g_vk.device, w.set_layout, nullptr);
     w = WorldGpu{};
@@ -231,9 +232,11 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     w.inst_count = n;
     g.instance_count = n;
     if (g_ncopies) vmaFlushAllocation(g_vk.vma, fs.inst_upload.alloc, 0, VK_WHOLE_SIZE);
-    if (!ensure_images()) g.instance_count = 0;
+    bool images = ensure_images();
+    if (!images) g.instance_count = 0;
     g.tiles = w.tiles.address;
     g.tile_cap = w.tile_cap;
+    vk_gcache_fill(g, f, images);
 }
 
 static void dispatch(VkCommandBuffer cmd, VkPipeline p, VkDeviceAddress frame, u32 gx, u32 gy) {
@@ -424,18 +427,25 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     // 4. Плитки по видам и освещение: вид — свой конвейер и своя строка F3. Виды пишут разные пиксели HDR, но
     // барьер между ними граф ставит (запись после записи): без него слой проверки синхронизации видел бы гонку,
     // а цена — хвост одного dispatch, пока следующий не начался (docs/tiles.md)
+    // Разбор плиток заодно пишет пикселям земли их тексели кеша и заявляет недостающие страницы; страницы
+    // запекаются до освещения (docs/gcache.md)
+    vk_gcache_begin(g_wf.frame);
     rg_pass("плитки: обнулить", "плитки", record_tiles_clear, nullptr);
     rg_use(w.rg_tiles, RG_COPY_WRITE);
     rg_pass("плитки: разбор", "плитки", record_tiles, nullptr);
     rg_use(w.rg_id, RG_IMG_CS_READ);
     rg_use(w.rg_tiles, RG_CS_WRITE);
+    rg_use(w.rg_gverts, RG_CS_READ);
     rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
+    vk_gcache_tiles_uses();
+    vk_gcache_bake_passes();
     static const char *const light_names[TILE_KINDS] = {"освещение: небо", "освещение: земля", "освещение: сетки",
-                                                        "освещение: смесь"};
+                                                        "освещение: смесь", "освещение: земля на пиксель"};
     for (u32 k = 0; k < TILE_KINDS; ++k) {
         rg_pass(light_names[k], light_names[k], record_light, (void *)(uintptr_t)k);
         rg_use(w.rg_tiles, RG_INDIRECT);
-        rg_use(w.rg_tiles, RG_CS_READ);
+        // Земля отдаёт плитки, текселей которых нет в кеше, виду «земля на пиксель» (дописывает его список)
+        rg_use(w.rg_tiles, k == TILE_KIND_GROUND ? RG_CS_WRITE : RG_CS_READ);
         rg_use(w.rg_id, RG_IMG_CS_READ);
         rg_use(w.rg_hdr, RG_IMG_CS_WRITE, k == 0 ? RG_DISCARD : 0);
         rg_use(w.rg_vis, RG_CS_READ);
@@ -444,6 +454,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
         vk_sky_reads(RG_CS_READ);
         vk_froxel_reads(RG_CS_READ);
+        vk_gcache_reads();
     }
     // 5. Стиль, отрезки, точки
     rg_pass("стиль", "стиль", record_style, nullptr);

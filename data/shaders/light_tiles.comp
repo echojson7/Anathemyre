@@ -3,12 +3,48 @@
 // Разбор плиток кадра мира по видам (docs/tiles.md): группа — плитка 8×8 visibility buffer. Что в плитке есть
 // (небо, земля, сетки), решает вид; плитка ложится в список своего вида, а число плиток вида — в его косвенный
 // dispatch. Освещение (light_cells.comp) потом считает каждый вид своим конвейером. Порядок плиток в списке
-// зависит от потоков GPU, картинка — нет: плитка считается одинаково, где бы ни лежала в списке
-#include "common.glsl"
+// зависит от потоков GPU, картинка — нет: плитка считается одинаково, где бы ни лежала в списке.
+// Заодно — ячейки земли (docs/gcache.md): пиксель земли разбирается, его тексель кеша пишется в gc_cells,
+// страница текселя отмечается прочитанной или заявляется на запекание. Пиксель земли мимо кеша (крутой склон)
+// уводит плитку в «землю на пиксель», а если в ней есть и сетки — в «смесь»
+#define RESOLVE_GROUND true
+#define RESOLVE_MESH false
+#include "resolve.glsl"
+#include "gcache.glsl"
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0, r32ui) uniform readonly uimage2D u_vis;
 
-shared uint s_has;  // 1 — небо, 2 — земля, 4 — сетки
+shared uint s_has;  // 1 — небо, 2 — земля, 4 — сетки, 8 — земля мимо кеша
+
+// Страница текселя нужна кадру: прочитана — отметка кадра (по ней старые страницы отдаются первыми), нет —
+// заявка: запись окна → GC_REQ | кадр, ключ — в список заявок. Заявку ставит один пиксель (сравнение с обменом)
+void gc_touch(int k, ivec2 t) {
+    FrameData f = pc.frame;
+    ivec2 page = t >> 3;
+    uvec2 key = gc_page_key(k, page);
+    uint slot = gc_slot(k, page);
+    uint req = GC_REQ | (f.gc_frame & 0x7FFFFFFFu);
+    uint e = f.gc_table.v[slot];
+    if (e == req) return;
+    if (e != 0u && (e & GC_REQ) == 0u) {
+        uint phys = e - 1u;
+        GcPage pg = f.gc_pages.v[phys];
+        if (uvec2(pg.key0, pg.key1) == key) {
+            if (pg.used != f.gc_frame && atomicExchange(f.gc_pages.v[phys].used, f.gc_frame) != f.gc_frame)
+                atomicAdd(f.stats.v[STAT_GC_USED], 1u);
+            return;
+        }
+    }
+    // Пусто, заявка прошлого кадра или окно занято другой страницей того же места
+    if (atomicCompSwap(f.gc_table.v[slot], e, req) != e) return;  // заявил другой пиксель
+    uint i = atomicAdd(f.gc_req.req_n, 1u);
+    if (i < f.gc_req_cap) {
+        f.gc_req.v[2u * i] = key.x;
+        f.gc_req.v[2u * i + 1u] = key.y;
+    } else {
+        f.gc_table.v[slot] = 0u;  // список заявок полон: страница остаётся без места (освещение — на пиксель)
+    }
+}
 
 void main() {
     FrameData f = pc.frame;
@@ -17,12 +53,21 @@ void main() {
     ivec2 px = ivec2(gl_GlobalInvocationID.xy);
     if (px.x < int(f.viewport.x) && px.y < int(f.viewport.y)) {
         uint id = imageLoad(u_vis, px).r;
-        atomicOr(s_has, id == 0u ? 1u : (id & VIS_GROUND) != 0u ? 2u : 4u);
+        uint has = id == 0u ? 1u : (id & VIS_GROUND) != 0u ? 2u : 4u;
+        if (has == 2u) {
+            Hit h = resolve(px, id);
+            GcCell c = gc_cell_of(h.rel, h.ng);
+            if (f.gc_on != 0u) f.gc_cells.v[px.y * int(f.viewport.x) + px.x] = c;
+            if (c.kt == GC_NONE) has |= 8u;
+            else gc_touch(gc_cell_level(c), gc_cell_texel(c));
+        }
+        atomicOr(s_has, has);
     }
     barrier();
     if (gl_LocalInvocationIndex != 0u) return;
     uint has = s_has;
-    uint kind = (has & 6u) == 6u ? TILE_MIX : (has & 2u) != 0u ? TILE_GROUND : (has & 4u) != 0u ? TILE_MESH : TILE_SKY;
+    uint kind = (has & 6u) == 6u ? TILE_MIX : (has & 8u) != 0u ? TILE_GROUND_PX : (has & 2u) != 0u ? TILE_GROUND
+              : (has & 4u) != 0u ? TILE_MESH : TILE_SKY;
     uint slot = atomicAdd(f.tiles.cmd[kind].x, 1u);
     f.tiles.list[kind * f.tile_cap + slot] = gl_WorkGroupID.x | gl_WorkGroupID.y << 16;
     atomicAdd(f.stats.v[STAT_TILES + kind], 1u);

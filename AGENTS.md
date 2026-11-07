@@ -8,7 +8,8 @@
 `docs/mesh.md`, материалы `docs/materials.md`, текстовый формат и сцена `docs/text.md`, камера `docs/camera.md`,
 земля `docs/terrain.md`, небо и сутки `docs/sky.md`, интерфейс и настройки `docs/ui.md`, здание `docs/ruin.md`,
 граф кадра, сбой GPU и проверки `docs/graph.md`, время кадра по частям, журнал и кеш конвейеров
-`docs/frame_time.md`, плитки кадра по видам и счётчики работы `docs/tiles.md`.
+`docs/frame_time.md`, плитки кадра по видам и счётчики работы `docs/tiles.md`, кеш поверхности земли
+`docs/gcache.md`.
 
 ## Что это за ветка
 Чистый старт игры Anathemyre на более высоком уровне качества. Старый проект (ветка `stage0/test-room`) — **склад

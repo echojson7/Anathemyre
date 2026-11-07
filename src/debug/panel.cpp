@@ -66,10 +66,15 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     if (in.work) {
         pair_value(f, "плитки неба · земли", in.work_tiles[0], in.work_tiles[1]);
         pair_value(f, "плитки сеток · смеси", in.work_tiles[2], in.work_tiles[3]);
+        count_str(in.work_tiles[4], t, sizeof t);
+        ui_value(f, "плитки земли на пиксель", t);
         pair_value(f, "пиксели земли · сеток", in.work_px[1], in.work_px[2]);
         pair_value(f, "поверхности земли · сеток", in.work_surf[0], in.work_surf[1]);
         count_str(in.work_steps, t, sizeof t);
         ui_value(f, "шаги тени рельефа", t);
+        // Кеш земли (docs/gcache.md): страниц в кадре и запечено за кадр; поверхности земли мимо кеша
+        pair_value(f, "кеш земли: страниц · запечено", in.work_gc[0], in.work_gc[1]);
+        pair_value(f, "земля мимо кеша · без места", in.work_gc[3], in.work_gc[2]);
     }
     // Переполнения (docs/graph.md «Переполнения»): что-то не нарисовано или считается медленным путём
     for (u32 i = 0; i < in.overflows && i < DEBUG_MAX_OVERFLOWS; ++i) {
@@ -130,6 +135,7 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_toggle(f, "старый forward", d.forward);
     ui_toggle(f, "тестовые огни", d.test_lights);
     ui_toggle(f, "огни по клеткам", d.froxel_heat);
+    ui_toggle(f, "без кеша земли", d.gcache_off);
 }
 
 // --- Кадр по частям (docs/frame_time.md): график последних кадров и части за секунду ---

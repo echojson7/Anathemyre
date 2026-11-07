@@ -67,5 +67,11 @@ void vk_froxel_reads(RgUse u);
 // Кадр мира (vk_world.cpp): земля, отсечение, visibility buffer, освещение, стиль с отрезками и точками.
 // false — нет картинок кадра мира
 bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, u32 nlines);
+// Кеш земли (vk_gcache.cpp): сброс и заявки с нуля до разбора плиток; что пишет разбор плиток; свободные
+// страницы, счёт и запекание после него; что читает освещение
+void vk_gcache_begin(VkDeviceAddress frame);
+void vk_gcache_tiles_uses();
+void vk_gcache_bake_passes();
+void vk_gcache_reads();
 // Интерфейс поверх кадра (vk_ui.cpp)
 void vk_ui_pass(u32 img);
