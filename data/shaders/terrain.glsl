@@ -468,6 +468,9 @@ float t_shadow(vec3 rel, vec3 l) {
     for (int k = 0; k < 44; ++k) {
         vec3 q = vec3(g0.x, y0, g0.y) + l * t;
         if (q.y > 3300.0) break;
+#ifdef T_SHADOW_STEPS
+        T_SHADOW_STEPS++;  // счётчик работы освещения (docs/tiles.md)
+#endif
         float h = t_base_height(q.xz);
         float bias = 1.2 + t * 0.002;
         if (dunes && t < 50.0) {

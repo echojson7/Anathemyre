@@ -1,0 +1,10 @@
+tiles_sky 988
+tiles_ground 3971
+tiles_mesh 586
+tiles_mix 155
+px_sky 66705
+px_ground 251067
+px_mesh 42228
+surf_ground 216990
+surf_mesh 33412
+shadow_steps 10030781

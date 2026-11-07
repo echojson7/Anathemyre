@@ -1,0 +1,29 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Разбор плиток кадра мира по видам (docs/tiles.md): группа — плитка 8×8 visibility buffer. Что в плитке есть
+// (небо, земля, сетки), решает вид; плитка ложится в список своего вида, а число плиток вида — в его косвенный
+// dispatch. Освещение (light_cells.comp) потом считает каждый вид своим конвейером. Порядок плиток в списке
+// зависит от потоков GPU, картинка — нет: плитка считается одинаково, где бы ни лежала в списке
+#include "common.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, r32ui) uniform readonly uimage2D u_vis;
+
+shared uint s_has;  // 1 — небо, 2 — земля, 4 — сетки
+
+void main() {
+    FrameData f = pc.frame;
+    if (gl_LocalInvocationIndex == 0u) s_has = 0u;
+    barrier();
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x < int(f.viewport.x) && px.y < int(f.viewport.y)) {
+        uint id = imageLoad(u_vis, px).r;
+        atomicOr(s_has, id == 0u ? 1u : (id & VIS_GROUND) != 0u ? 2u : 4u);
+    }
+    barrier();
+    if (gl_LocalInvocationIndex != 0u) return;
+    uint has = s_has;
+    uint kind = (has & 6u) == 6u ? TILE_MIX : (has & 2u) != 0u ? TILE_GROUND : (has & 4u) != 0u ? TILE_MESH : TILE_SKY;
+    uint slot = atomicAdd(f.tiles.cmd[kind].x, 1u);
+    f.tiles.list[kind * f.tile_cap + slot] = gl_WorkGroupID.x | gl_WorkGroupID.y << 16;
+    atomicAdd(f.stats.v[STAT_TILES + kind], 1u);
+}

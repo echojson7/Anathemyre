@@ -92,6 +92,9 @@ int run_window(const Args &a, AppMemory &m) {
     // Переполнения за секунду: по каждому — наибольшее «сколько просили»; прошлая секунда — для панели
     RenderOverflow over_sec[DEBUG_MAX_OVERFLOWS], over_last[DEBUG_MAX_OVERFLOWS];
     u32 nover_sec = 0, nover_last = 0;
+    // Работа освещения последнего прочитанного кадра мира (docs/tiles.md)
+    RenderWork work{};
+    bool work_have = false;
     WorldInspect *inspect = arena_push<WorldInspect>(m.world, 1);
     *inspect = WorldInspect{};
     MouseOwner mouse_owner;
@@ -208,6 +211,14 @@ int run_window(const Args &a, AppMemory &m) {
                     di.pass_ms[i] = pass_avg[i];
                 }
                 di.vis_clusters = render_vis_clusters();
+                di.work = work_have;
+                for (u32 i = 0; i < 4; ++i) di.work_tiles[i] = work.tiles[i];
+                di.work_px[0] = work.px_sky;
+                di.work_px[1] = work.px_ground;
+                di.work_px[2] = work.px_mesh;
+                di.work_surf[0] = work.surf_ground;
+                di.work_surf[1] = work.surf_mesh;
+                di.work_steps = work.shadow_steps;
                 di.overflows = nover_last;
                 for (u32 i = 0; i < nover_last; ++i) {
                     di.over_what[i] = over_last[i].what;
@@ -352,6 +363,7 @@ int run_window(const Args &a, AppMemory &m) {
                 pass_sum[i] += ms[i];
             }
             pass_frames++;
+            work_have = render_work(work);
             RenderOverflow ov[DEBUG_MAX_OVERFLOWS];
             u32 nov = render_overflows(ov, DEBUG_MAX_OVERFLOWS);
             for (u32 i = 0; i < nov; ++i) {
@@ -403,6 +415,11 @@ int run_window(const Args &a, AppMemory &m) {
                                     pass_avg[i]);
                 log_info("%s", line);
             }
+            if (work_have)
+                log_info("работа освещения: плитки небо %u земля %u сетки %u смесь %u · пиксели небо %u земля %u "
+                         "сетки %u · поверхности земли %u сеток %u · шаги тени %u",
+                         work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.px_sky, work.px_ground,
+                         work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_steps);
             frames_window = 0;
             window_t0 = now;
         }
@@ -411,6 +428,17 @@ int run_window(const Args &a, AppMemory &m) {
 
     if (save_settings) settings_save(set, settings_path());
     if (a.shot && !debug_write_shot(a.shot, m.load)) rc_exit = 1;
+    if (a.work) {
+        // Счётчики работы для сверки CI (tools/work_check.sh): «имя значение» по строке
+        char t[512];
+        i32 n = snprintf(t, sizeof t,
+                         "tiles_sky %u\ntiles_ground %u\ntiles_mesh %u\ntiles_mix %u\npx_sky %u\npx_ground %u\n"
+                         "px_mesh %u\nsurf_ground %u\nsurf_mesh %u\nshadow_steps %u\n",
+                         work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.px_sky, work.px_ground,
+                         work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_steps);
+        if (!work_have) log_error("--work: кадр мира не прочитан (forward или мало кадров)");
+        if (!work_have || n <= 0 || !platform_write_file(a.work, t, (usize)n)) rc_exit = 1;
+    }
     if (a.record && !save_record(rec, a.record, m.load)) rc_exit = 1;
     u32 verr = render_validation_errors();
     if (verr) {

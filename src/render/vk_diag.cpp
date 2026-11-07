@@ -254,15 +254,32 @@ void vk_stats_read(FrameSlot &fs) {
     if (fs.world) {
         g_vk.world.vis_clusters = rb[0];
         if (st[STAT_VIS_WANT] > VIS_MAX_CLUSTERS) add_over(g_gpu_over, g_ngpu, "видимые кластеры", st[STAT_VIS_WANT], VIS_MAX_CLUSTERS);
+        memcpy(g_vk.world.work, st, sizeof g_vk.world.work);
     } else {
         g_vk.world.vis_clusters = 0;
     }
+    g_vk.world.work_valid = fs.world;
     if (st[STAT_FROXEL_LIGHTS]) add_over(g_gpu_over, g_ngpu, "froxels: клеток, где огни не влезли", st[STAT_FROXEL_LIGHTS], 0);
     if (st[STAT_FROXEL_DECALS]) add_over(g_gpu_over, g_ngpu, "froxels: клеток, где декали не влезли", st[STAT_FROXEL_DECALS], 0);
 }
 
 void vk_overflow(const char *what, u64 want, u64 cap) {
     if (want > cap) add_over(g_cpu_over, g_ncpu, what, want, cap);
+}
+
+bool render_work(RenderWork &out) {
+    const WorldGpu &w = g_vk.world;
+    out = RenderWork{};
+    if (!w.work_valid) return false;
+    static_assert(RENDER_TILE_KINDS == TILE_KINDS, "виды плиток");
+    for (u32 k = 0; k < TILE_KINDS; ++k) out.tiles[k] = w.work[STAT_TILES + k];
+    out.px_sky = w.work[STAT_PX_SKY];
+    out.px_ground = w.work[STAT_PX_GROUND];
+    out.px_mesh = w.work[STAT_PX_MESH];
+    out.surf_ground = w.work[STAT_SURF_GROUND];
+    out.surf_mesh = w.work[STAT_SURF_MESH];
+    out.shadow_steps = w.work[STAT_SHADOW_STEPS];
+    return true;
 }
 
 u32 render_overflows(RenderOverflow *out, u32 cap) {

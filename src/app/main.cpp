@@ -27,6 +27,7 @@ static void usage() {
     log_info("           [--lights] [--heat]                                          тестовые огни, огни по клеткам froxels");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z]   снимок (градусы, метры)");
+    log_info("           [--work файл.txt]                                            счётчики работы освещения в файл (с --frames)");
     log_info("           [--nohud] [--open menu|keys|debug|world]                     без интерфейса; открыть меню или панель");
     log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
@@ -88,6 +89,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--replay")) { a.replay = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--hashes")) { a.hashes = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--shot")) { a.shot = next; ok = next != nullptr; i++; }
+        else if (!strcmp(s, "--work")) { a.work = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--cam")) {
             a.cam_set = true;
             for (int k = 0; k < 5 && ok; ++k) {

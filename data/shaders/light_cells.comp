@@ -1,10 +1,18 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
-// Освещение кадра мира (docs/render.md, проход 5): плитка 8×8 пикселей. Каждый пиксель разбирает свой номер
-// visibility buffer (resolve.glsl) и находит центр своей ячейки правила пиксельности. Пиксели с одним
-// треугольником и одной ячейкой — одна поверхность: surface() → light_surface() считается раз, на первом из них,
-// и раздаётся остальным. Ведущие пиксели сжимаются в начало группы, поэтому считают их подряд идущие потоки.
-// Пустые пиксели — небо (sky.glsl). Пишет линейный цвет в HDR-картинку, стиль — отдельным проходом
+// Освещение кадра мира (docs/frame.md, проход 5; docs/tiles.md): плитка 8×8 пикселей из списка своего вида.
+// Вид — константа специализации: у каждого вида свой конвейер, ненужные ветки (разбор земли или сеток, их
+// поверхности) выкидывает драйвер, и регистры берутся по нужной. Небо — без разбора и общей памяти.
+// Каждый пиксель разбирает свой номер visibility buffer (resolve.glsl) и находит центр своей ячейки правила
+// пиксельности. Пиксели с одним треугольником и одной ячейкой — одна поверхность: surface() → light_surface()
+// считается раз, на первом из них, и раздаётся остальным. Ведущие пиксели сжимаются в начало группы, поэтому
+// считают их подряд идущие потоки. Пустые пиксели — небо (sky.glsl). Пишет линейный цвет в HDR-картинку,
+// стиль — отдельным проходом. Заодно считает свою работу (STAT_PX_*, STAT_SURF_*, STAT_SHADOW_STEPS)
+layout(constant_id = 0) const uint TILE_KIND = 3u;  // TILE_* из common.glsl; по умолчанию — смесь
+#define RESOLVE_GROUND (TILE_KIND == TILE_GROUND || TILE_KIND == TILE_MIX)
+#define RESOLVE_MESH (TILE_KIND == TILE_MESH || TILE_KIND == TILE_MIX)
+uint g_steps = 0u;  // шаги луча тени рельефа этого потока (terrain.glsl)
+#define T_SHADOW_STEPS g_steps
 #include "resolve.glsl"
 #include "ground_surface.glsl"
 #include "shade.glsl"
@@ -21,6 +29,7 @@ shared uint s_lead[64];    // поток ведущего пикселя той 
 shared uint s_rank[64];    // у ведущего — его место среди ведущих
 shared uint s_list[64];    // ведущие по порядку
 shared vec3 s_color[64];
+shared uint s_work[6];     // пиксели неба, земли, сеток; поверхности земли, сеток; шаги тени
 
 // Центр ячейки точки, как у surface(): на плоскости поперёк главной оси нормали
 vec3 cell_key(Hit h) {
@@ -46,23 +55,44 @@ vec3 froxel_heat(vec3 c, vec3 rel) {
 vec3 shade_hit(Hit h) {
     if (h.kind == HIT_SKY) return sky_radiance(normalize(h.rel));
     Surface s;
-    if (h.kind == HIT_GROUND) s = ground_surface(h.rel, normalize(h.n), h.level, h.blend, h.ng);
+    if (RESOLVE_GROUND && (!RESOLVE_MESH || h.kind == HIT_GROUND)) s = ground_surface(h.rel, normalize(h.n), h.level, h.blend, h.ng);
     else s = mesh_surface(h.rel, normalize(h.n), h.m0, h.m1, h.blend, h.ao, h.seed);
     vec3 c = light_surface(s);
     return pc.frame.froxel_heat != 0u ? froxel_heat(c, s.pos) : c;
 }
 
+// Работа группы — в счётчики кадра: одна атомарная операция на счётчик и плитку
+void work_flush() {
+    const uint at[6] = uint[6](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
+                               STAT_SHADOW_STEPS);
+    for (uint k = 0u; k < 6u; ++k)
+        if (s_work[k] != 0u) atomicAdd(pc.frame.stats.v[at[k]], s_work[k]);
+}
+
 void main() {
     FrameData f = pc.frame;
     uint t = gl_LocalInvocationIndex;
-    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    uint tile = f.tiles.list[TILE_KIND * f.tile_cap + gl_WorkGroupID.x];
+    ivec2 origin = ivec2(tile & 0xFFFFu, tile >> 16) * 8;
+    ivec2 px = origin + ivec2(gl_LocalInvocationID.xy);
     bool inside = px.x < int(f.viewport.x) && px.y < int(f.viewport.y);
+    if (TILE_KIND == TILE_SKY) {
+        // Только небо: то же, что shade_hit() пустого пикселя
+        if (inside) imageStore(u_hdr, px, vec4(sky_radiance(normalize(pixel_ray(px))), 1.0));
+        if (t == 0u) {
+            ivec2 n = min(ivec2(8), ivec2(f.viewport) - origin);
+            atomicAdd(f.stats.v[STAT_PX_SKY], uint(n.x * n.y));
+        }
+        return;
+    }
+    if (t < 6u) s_work[t] = 0u;
     uint id = inside ? imageLoad(u_vis, px).r : 0xFFFFFFFFu;
     Hit h = resolve(px, inside ? id : 0u);
     s_hit[t] = h;
     s_id[t] = id;
     s_cell[t] = cell_key(h);
     barrier();
+    if (inside) atomicAdd(s_work[h.kind == HIT_SKY ? 0u : h.kind == HIT_GROUND ? 1u : 2u], 1u);
     // Ведущий — первый пиксель плитки с тем же номером и той же ячейкой; небо и чужие края — сами себе
     uint lead = t;
     if (inside && id != 0u)
@@ -75,11 +105,16 @@ void main() {
         for (uint j = 0u; j < t; ++j) r += s_lead[j] == j && s_id[j] != 0xFFFFFFFFu ? 1u : 0u;
         s_rank[t] = r;
         s_list[r] = t;
+        if (h.kind != HIT_SKY) atomicAdd(s_work[h.kind == HIT_GROUND ? 3u : 4u], 1u);
     }
     barrier();
     uint nlead = 0u;
     for (uint j = 0u; j < 64u; ++j) nlead += s_lead[j] == j && s_id[j] != 0xFFFFFFFFu ? 1u : 0u;
-    if (t < nlead) s_color[t] = shade_hit(s_hit[s_list[t]]);
+    if (t < nlead) {
+        s_color[t] = shade_hit(s_hit[s_list[t]]);
+        if (g_steps != 0u) atomicAdd(s_work[5], g_steps);
+    }
     barrier();
     if (inside) imageStore(u_hdr, px, vec4(s_color[s_rank[s_lead[t]]], 1.0));
+    if (t == 0u) work_flush();
 }
