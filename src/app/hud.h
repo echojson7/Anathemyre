@@ -5,6 +5,7 @@
 // Числа кадра за прошлую секунду
 struct HudStats {
     f64 fps, frame_ms, cpu_ms, gpu_ms, step_ms;
+    const char *unfair;  // включённые отладочные режимы (docs/budget.md); пусто — замер честный
 };
 
 enum HudTab : u32 { HUD_TAB_SCREEN, HUD_TAB_UI, HUD_TAB_CONTROLS, HUD_TAB_DEBUG, HUD_TABS };

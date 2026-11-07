@@ -8,7 +8,7 @@ px_ground 251067
 px_mesh 42228
 surf_ground 191722
 surf_mesh 33412
-shadow_steps 9049709
+shadow_taps 224994
 gc_used 8718
 gc_baked 0
 gc_over 0

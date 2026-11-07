@@ -1,7 +1,7 @@
 // Земля на GPU (docs/terrain.md): та же целая функция узла решётки 1 м, что terrain_node() в
 // src/sim/terrain.cpp, — ноги, тени и картинка видят одну землю. Только 32-битные целые операции;
 // октавы деталей (период, размах, зерно) кадр получает из таблицы CPU, а не из чисел в шейдере.
-// Ниже — маски, наклон сетки 8 м и луч к солнцу по сетке высот (тень рельефа временного света)
+// Ниже — маски, наклон и нормали сетки 8 м. Тень рельефа — карта горизонта (horizon.glsl)
 #ifndef TERRAIN_GLSL
 #define TERRAIN_GLSL
 #include "common.glsl"
@@ -266,18 +266,6 @@ float t_dune_f(vec2 g, float amp) {
     return d;
 }
 
-// Дюны сетки 8 м билинейно во float, м (их же сетка высот уже содержит)
-float t_dune_base_f(vec2 g) {
-    FrameData f = pc.frame;
-    vec2 b = clamp(g, vec2(0.0), vec2(f.t_size_x, f.t_size_z) - 0.001) / 8.0;
-    ivec2 i = ivec2(floor(b));
-    vec2 fr = b - vec2(i);
-    int k = i.y * f.t_nx + i.x;
-    float h00 = float(t_dun(k)), h10 = float(t_dun(k + 1));
-    float h01 = float(t_dun(k + f.t_nx)), h11 = float(t_dun(k + f.t_nx + 1));
-    return mix(mix(h00, h10, fr.x), mix(h01, h11, fr.x), fr.y) * (1.0 / 640.0);
-}
-
 // Сила дюн во float (билинейно из масок 32 м), 0..255
 float t_dune_amp_f(vec2 g) {
     FrameData f = pc.frame;
@@ -487,36 +475,4 @@ vec3 t_mip_normal(vec2 g, int m) {
     return normalize(vec3(-gs.x, 1.0, -gs.y));
 }
 
-// Тень рельефа: луч от точки к солнцу по сетке 8 м, шаги растут до ~12 км. 1 — свет, 0 — тень.
-// Детали ±1 м сетка не видит: запас bias, иначе точка в ямке деталей затеняет сама себя. В дюнах первые ~50 м
-// луч видит дюны точно (t_dune_f вместо их размытой копии в сетке 8 м): гребень острый, свет протекал бы под
-// бровку пятнами
-float t_shadow(vec3 rel, vec3 l) {
-    FrameData f = pc.frame;
-    if (f.t_on == 0u || l.y <= 0.0) return 1.0;
-    vec3 p = f.cam_off + rel;
-    vec2 g0 = p.xz + vec2((f.cam_chunk - ivec2(f.t_chunk0)) * 256);
-    float y0 = p.y;
-    float lit = 1.0;
-    float t = 3.0;
-    ivec2 gc = clamp(ivec2(floor(g0)), ivec2(0), ivec2(f.t_size_x, f.t_size_z));
-    bool dunes = t_masks2(gc.x, gc.y).x > 0;
-    for (int k = 0; k < 44; ++k) {
-        vec3 q = vec3(g0.x, y0, g0.y) + l * t;
-        if (q.y > 3300.0) break;
-#ifdef T_SHADOW_STEPS
-        T_SHADOW_STEPS++;  // счётчик работы освещения (docs/tiles.md)
-#endif
-        float h = t_base_height(q.xz);
-        float bias = 1.2 + t * 0.002;
-        if (dunes && t < 50.0) {
-            h += t_dunes_f(q.xz) - t_dune_base_f(q.xz);
-            bias = 0.3 + t * 0.002;
-        }
-        lit = min(lit, clamp((q.y - h + bias) / (t * 0.035 + 0.3), 0.0, 1.0));
-        if (lit <= 0.0) break;
-        t *= 1.2;
-    }
-    return lit;
-}
 #endif

@@ -1,5 +1,5 @@
-// Точка сетки → центр ячейки → surface() → декали (mesh_surface), потом light_surface(). Зовут forward
-// (mesh.frag) и освещение в compute по visibility buffer (docs/render.md, «Проходы с этапа 5»)
+// Точка сетки → центр ячейки → surface() → декали (mesh_surface), потом light_surface(). Зовёт освещение в
+// compute по visibility buffer (light_cells.comp; docs/render.md, «Проходы с этапа 5»)
 #include "surface.glsl"
 #include "light.glsl"
 #include "decal.glsl"
@@ -25,6 +25,3 @@ Surface mesh_surface(vec3 rel, vec3 n, uint mat0, uint mat1, float blend, float 
     return s;
 }
 
-vec3 shade(vec3 rel, vec3 n, uint mat0, uint mat1, float blend, float ao, uint seed) {
-    return light_surface(mesh_surface(rel, n, mat0, mat1, blend, ao, seed));
-}

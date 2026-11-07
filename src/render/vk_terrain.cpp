@@ -178,7 +178,7 @@ bool render_terrain_set(const RenderTerrain &d) {
                     {o_i, 0, ibytes},       {o_m2, 0, mbytes}, {o_d, 0, dbytes}};
     bool ok = vk_one_shot(record_terrain_upload, &u);
     vk_destroy_buffer(staging);
-    t.on = ok;
+    t.on = ok && vk_horizon_terrain(d.height, d.nx, d.nz);
     if (ok)
         log_info("земля в видеопамяти: %.1f МБ сетка, маски, вода и дюны, %.1f МБ индексы колец",
                  (f64)(hbytes + 2 * mbytes + wbytes + dbytes) / 1048576.0,
@@ -195,6 +195,7 @@ void vk_terrain_shutdown() {
     vk_destroy_buffer(t.mask2);
     vk_destroy_buffer(t.dune);
     vk_destroy_buffer(t.fine);
+    vk_horizon_free();
     t = TerrainGpu{};
 }
 

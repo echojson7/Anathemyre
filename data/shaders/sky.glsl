@@ -1,5 +1,5 @@
-// Небо (docs/sky.md): рассеянный свет из таблиц, диск солнца, луна с фазой, звёзды. Зовут проход неба forward
-// (sky.frag) и освещение visibility buffer (light_cells.comp) для пустых пикселей
+// Небо (docs/sky.md): рассеянный свет из таблиц, диск солнца, луна с фазой, звёзды. Зовёт освещение
+// visibility buffer (light_cells.comp) для пустых пикселей
 #ifndef SKY_GLSL
 #define SKY_GLSL
 #include "atmosphere.glsl"

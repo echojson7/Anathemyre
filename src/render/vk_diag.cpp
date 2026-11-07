@@ -226,10 +226,8 @@ static void record_stats_copy(VkCommandBuffer cmd, void *user) {
     const FrameSlot &fs = *(const FrameSlot *)user;
     VkBufferCopy c{0, READBACK_STATS, STAT_COUNT * 4};
     vkCmdCopyBuffer(cmd, g_vk.diag.stats.buffer, fs.readback.buffer, 1, &c);
-    if (fs.world) {
-        VkBufferCopy d{0, 0, 4};  // число вызовов отсечения — видимых кластеров
-        vkCmdCopyBuffer(cmd, g_vk.world.cull.buffer, fs.readback.buffer, 1, &d);
-    }
+    VkBufferCopy d{0, 0, 4};  // число вызовов отсечения — видимых кластеров
+    vkCmdCopyBuffer(cmd, g_vk.world.cull.buffer, fs.readback.buffer, 1, &d);
 }
 
 void vk_stats_clear_pass() {
@@ -240,7 +238,7 @@ void vk_stats_clear_pass() {
 void vk_stats_copy_pass(FrameSlot &fs) {
     rg_pass("счётчики: в процессор", nullptr, record_stats_copy, &fs);
     rg_use(g_vk.diag.rg_stats, RG_COPY_READ);
-    if (fs.world) rg_use(g_vk.world.rg_cull, RG_COPY_READ);
+    rg_use(g_vk.world.rg_cull, RG_COPY_READ);
     rg_use(fs.rg_readback, RG_COPY_WRITE);
 }
 
@@ -251,15 +249,11 @@ void vk_stats_read(FrameSlot &fs) {
     const u32 *rb = (const u32 *)fs.readback.mapped;
     const u32 *st = rb + READBACK_STATS / 4;
     g_ngpu = 0;
-    if (fs.world) {
-        g_vk.world.vis_clusters = rb[0];
-        if (st[STAT_VIS_WANT] > VIS_MAX_CLUSTERS) add_over(g_gpu_over, g_ngpu, "видимые кластеры", st[STAT_VIS_WANT], VIS_MAX_CLUSTERS);
-        memcpy(g_vk.world.work, st, sizeof g_vk.world.work);
-        vk_gcache_read(st);
-    } else {
-        g_vk.world.vis_clusters = 0;
-    }
-    g_vk.world.work_valid = fs.world;
+    g_vk.world.vis_clusters = rb[0];
+    if (st[STAT_VIS_WANT] > VIS_MAX_CLUSTERS) add_over(g_gpu_over, g_ngpu, "видимые кластеры", st[STAT_VIS_WANT], VIS_MAX_CLUSTERS);
+    memcpy(g_vk.world.work, st, sizeof g_vk.world.work);
+    vk_gcache_read(st);
+    g_vk.world.work_valid = true;
     if (st[STAT_FROXEL_LIGHTS]) add_over(g_gpu_over, g_ngpu, "froxels: клеток, где огни не влезли", st[STAT_FROXEL_LIGHTS], 0);
     if (st[STAT_FROXEL_DECALS]) add_over(g_gpu_over, g_ngpu, "froxels: клеток, где декали не влезли", st[STAT_FROXEL_DECALS], 0);
 }
@@ -279,7 +273,7 @@ bool render_work(RenderWork &out) {
     out.px_mesh = w.work[STAT_PX_MESH];
     out.surf_ground = w.work[STAT_SURF_GROUND];
     out.surf_mesh = w.work[STAT_SURF_MESH];
-    out.shadow_steps = w.work[STAT_SHADOW_STEPS];
+    out.shadow_taps = w.work[STAT_SHADOW_TAPS];
     out.gc_used = w.work[STAT_GC_USED];
     out.gc_baked = w.work[STAT_GC_BAKED];
     out.gc_over = w.work[STAT_GC_OVER];

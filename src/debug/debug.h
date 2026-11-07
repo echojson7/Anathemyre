@@ -12,7 +12,6 @@ struct DebugState {
     // Что держится между кадрами (правда — в настройках, run_window копирует туда и обратно)
     bool lines = true;        // L — отладочные отрезки
     bool pixel = true;        // P — правило ячейки
-    bool forward = false;     // старый forward вместо кадра мира (сравнение, не сохраняется)
     bool test_lights = false; // тестовые огни вокруг камеры (froxels)
     bool froxel_heat = false; // тепловая карта огней по клеткам froxels
     bool gcache_off = false;  // без кеша поверхности земли (сравнение, не сохраняется)
@@ -50,6 +49,7 @@ struct DebugInfo {
     f64 gpu_max_ms;           // худший кадр GPU за секунду
     const FrameProf *prof;    // кадр по частям (вкладка «Кадр»), nullptr — нет
     const char *gpu_name;
+    const char *unfair;       // включённые отладочные режимы (docs/budget.md); пусто — замер честный
     u64 step, hash;
     f64 hour;
     u32 clock_speed;          // номер в CLOCK_SPEEDS
@@ -64,12 +64,12 @@ struct DebugInfo {
     const char *pass_names[DEBUG_MAX_PASSES];
     f64 pass_ms[DEBUG_MAX_PASSES];
     u32 vis_clusters;         // видимых кластеров (кадр мира)
-    // Работа освещения прошлой секунды (render_work, docs/tiles.md); work = false — нет (forward)
+    // Работа освещения прошлой секунды (render_work, docs/tiles.md); work = false — ещё не прочитана
     bool work;
     u32 work_tiles[5];        // плитки: небо, земля, сетки, смесь, земля на пиксель
     u32 work_px[3];           // пиксели: небо, земля, сетки
     u32 work_surf[2];         // поверхности (surface() и свет раз на ячейку): земля, сетки
-    u32 work_steps;           // шаги луча тени рельефа
+    u32 work_shadow;           // выборки карты горизонта (тень земли, docs/horizon.md)
     u32 work_gc[4];           // кеш земли: страницы кадра, запечено, без места, поверхности мимо кеша
     const char *gc_off;       // почему кеш земли выключен (nullptr — включён)
     // Что не влезло за секунду (render_overflows): сколько просили, сколько есть (0 — счёт клеток без предела)

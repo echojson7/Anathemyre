@@ -198,10 +198,6 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.vis_max = VIS_MAX_CLUSTERS;
     g.g_verts = w.gverts.address;
     g_ncopies = 0;
-    if (f.style.forward) {
-        g.instance_count = 0;
-        return;
-    }
     // Изменившиеся экземпляры — кусками подряд в буфер слота и копией на GPU; кусков больше MAX_COPIES — одним
     // куском от первого изменившегося до последнего
     u32 n = f.instances.count < RENDER_MAX_INSTANCES ? (u32)f.instances.count : RENDER_MAX_INSTANCES;
@@ -455,6 +451,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         vk_sky_reads(RG_CS_READ);
         vk_froxel_reads(RG_CS_READ);
         vk_gcache_reads();
+        vk_horizon_reads(RG_CS_READ);
     }
     // 5. Стиль, отрезки, точки
     rg_pass("стиль", "стиль", record_style, nullptr);
