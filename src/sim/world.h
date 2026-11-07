@@ -111,11 +111,29 @@ bool props_add_at(World &w, u64 mesh, u64 material, const WPos &at, u32 yaw, f32
 bool decals_add(World &w, u64 kind, u64 material, const WPos &at, u32 yaw, const f32 h[3], u32 seed);
 
 // Столбцы мира для хеша и проверки повтора: имя, данные, байты. Порядок — порядок в хеше
+// Тип и число значений — только для показа (панель отладки «Мир»), в хеш не входят
+enum ColType : u8 { COL_RAW, COL_U8, COL_U16, COL_U32, COL_I32, COL_U64, COL_F32 };
 struct Column {
     const char *name;
     const void *data;
     usize bytes;
+    ColType type = COL_RAW;
+    u32 count = 0;  // значений; у COL_RAW — 0
 };
+template <typename T> constexpr ColType col_type() {
+    if constexpr (sizeof(T) == 1) return COL_U8;
+    else if constexpr (sizeof(T) == 2) return COL_U16;
+    else if constexpr (__is_same(T, f32)) return COL_F32;
+    else if constexpr (__is_same(T, i32)) return COL_I32;
+    else if constexpr (__is_same(T, u32)) return COL_U32;
+    else if constexpr (__is_same(T, u64)) return COL_U64;
+    else return COL_RAW;
+}
+// Столбец из n значений типа T (у составных — COL_RAW, байты целиком)
+template <typename T> Column column(const char *name, const T *p, u32 n) {
+    ColType t = col_type<T>();
+    return {name, p, n * sizeof(T), t, t == COL_RAW ? 0u : n};
+}
 constexpr u32 MAX_COLUMNS = 64;
 u32 world_columns(const World &w, Column *out);
 void world_column_hashes(const World &w, u64 *out, u32 count);

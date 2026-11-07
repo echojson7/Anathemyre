@@ -201,6 +201,10 @@ void vk_sky_shutdown();
 void vk_sky_fill(FrameGpu &g, const RenderFrame &f);
 void vk_sky_record(VkCommandBuffer cmd, VkDeviceAddress frame);
 void vk_destroy_pipelines();
+// Интерфейс поверх кадра (vk_ui.cpp): свой конвейер без глубины, проход по картинке swapchain
+bool vk_ui_init();
+void vk_ui_shutdown();
+void vk_ui_record(VkCommandBuffer cmd, u32 img);
 // Геометрия и материалы (vk_geometry.cpp)
 bool vk_geometry_init();
 void vk_geometry_shutdown();

@@ -215,6 +215,12 @@ void vk_destroy_swapchain() {
     g_vk.swapchain = VK_NULL_HANDLE;
 }
 
+void render_set_vsync(bool on) {
+    if (g_vk.cfg.vsync == on) return;
+    g_vk.cfg.vsync = on;
+    g_vk.swapchain_dirty = true;
+}
+
 bool vk_create_buffer(GpuBuffer &b, VkDeviceSize size, VkBufferUsageFlags usage, bool device_local) {
     auto bi = vk_info<VkBufferCreateInfo>(VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
     bi.size = size;

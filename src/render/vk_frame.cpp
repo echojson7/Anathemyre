@@ -138,10 +138,12 @@ bool vk_create_pipelines() {
     g_vk.pipe_ground = make_pipeline(ground);
     g_vk.pipe_points = make_pipeline(points);
     g_vk.pipe_lines = make_pipeline(lines);
-    return g_vk.pipe_mesh && g_vk.pipe_ground && g_vk.pipe_points && g_vk.pipe_lines && g_vk.pipe_sky && vk_sky_init();
+    return g_vk.pipe_mesh && g_vk.pipe_ground && g_vk.pipe_points && g_vk.pipe_lines && g_vk.pipe_sky && vk_sky_init() &&
+           vk_ui_init();
 }
 
 void vk_destroy_pipelines() {
+    vk_ui_shutdown();
     vk_sky_shutdown();
     VkPipeline ps[] = {g_vk.pipe_mesh, g_vk.pipe_ground, g_vk.pipe_points, g_vk.pipe_lines, g_vk.pipe_sky};
     for (VkPipeline p : ps)
@@ -390,6 +392,8 @@ bool render_frame(const RenderFrame &f) {
         vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, g_vk.queries, slot * 2 + 1);
         fs.timed = true;
     }
+    // Интерфейс — после замера GPU (таймер меряет кадр мира) и до снимка: снимок с интерфейсом
+    vk_ui_record(cmd, img);
     if (g_vk.capture_next) {
         g_vk.capture_next = false;
         record_capture(cmd, g_vk.images[img]);

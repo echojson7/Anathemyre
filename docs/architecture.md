@@ -24,7 +24,8 @@
 ## Кто кого может включать
 `platform` и `core` ни от кого не зависят. `asset` → core. `anim` → core, asset. `sim` → core, anim (только
 данные клипов и выборка поз для попаданий). `ai` → core, sim (читает мир, пишет намерения). `render` → core,
-asset, platform. `view` → всё выше, кроме ai. `app` и `debug` → всё. Проверка скриптом в CI (как `tools/layers.sh`
+asset, platform. `ui` → core, platform, render (интерфейс, `docs/ui.md`). `view` → всё выше, кроме ai и ui.
+`app` и `debug` → всё. Проверка скриптом в CI (как `tools/layers.sh`
 в складе) появляется на этапе 0.
 
 ## Поток кадра

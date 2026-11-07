@@ -5,8 +5,8 @@
 стек `docs/stack.md`, устройство симуляции `docs/architecture.md`, отрисовка `docs/render.md`, решения
 `docs/decisions.md`, облик игры `docs/vision.md`, склад беты `docs/legacy.md`, новый компьютер `docs/setup-new-pc.md`,
 сборка и CI `docs/build.md`, хребет симуляции и повтор `docs/sim.md`, швы кадра `docs/frame.md`, формат сеток
-`docs/mesh.md`, материалы `docs/materials.md`, текстовый формат и сцена `docs/text.md`,
-земля `docs/terrain.md`, небо и сутки `docs/sky.md`, здание `docs/ruin.md`.
+`docs/mesh.md`, материалы `docs/materials.md`, текстовый формат и сцена `docs/text.md`, камера `docs/camera.md`,
+земля `docs/terrain.md`, небо и сутки `docs/sky.md`, интерфейс и настройки `docs/ui.md`, здание `docs/ruin.md`.
 
 ## Что это за ветка
 Чистый старт игры Anathemyre на более высоком уровне качества. Старый проект (ветка `stage0/test-room`) — **склад
