@@ -9,6 +9,7 @@
 #include <string.h>
 
 static void log_to_file(const char *line, usize len, void *) { platform_log_append(line, len); }
+static void log_file_flush(void *) { platform_log_flush(); }
 
 static bool parse_u64(const char *s, u64 &out) {
     if (!s || !*s) return false;
@@ -27,7 +28,7 @@ static void usage() {
     log_info("           [--lights] [--heat]                                          тестовые огни, огни по клеткам froxels");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z]   снимок (градусы, метры)");
-    log_info("           [--nohud] [--open menu|keys|debug|world]                     без интерфейса; открыть меню или панель");
+    log_info("           [--nohud] [--open menu|keys|debug|frame|world]               без интерфейса; открыть меню или панель");
     log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
@@ -69,7 +70,8 @@ int main(int argc, char **argv) {
     platform_preinit();
     char log_path[1024];
     snprintf(log_path, sizeof log_path, "%sanathemyre.log", platform_exe_dir());
-    if (platform_log_open(log_path)) log_set_sink(log_to_file, nullptr);
+    platform_log_open(log_path);  // без потока или файла строки всё равно идут в stderr сразу
+    log_set_sink(log_to_file, log_file_flush, nullptr);
 
     Args a;
     for (int i = 1; i < argc; ++i) {
@@ -103,7 +105,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--nohud")) a.nohud = true;
         else if (!strcmp(s, "--open")) {
             a.open = next;
-            ok = next && (!strcmp(next, "menu") || !strcmp(next, "keys") || !strcmp(next, "debug") || !strcmp(next, "world"));
+            ok = next && (!strcmp(next, "menu") || !strcmp(next, "keys") || !strcmp(next, "debug") || !strcmp(next, "world") ||
+                          !strcmp(next, "frame"));
             i++;
         }
         else if (!strcmp(s, "--hour")) {
@@ -125,11 +128,12 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--validation")) a.validation = true;
         else if (!strcmp(s, "--gpuav")) a.gpu_validation = true;
         else if (!strcmp(s, "--gpuav-skip")) { a.gpu_validation_skip = next; ok = next != nullptr; i++; }
-        else if (!strcmp(s, "--help") || !strcmp(s, "-h")) { usage(); return 0; }
+        else if (!strcmp(s, "--help") || !strcmp(s, "-h")) { usage(); platform_shutdown(); return 0; }
         else ok = false;
         if (!ok) {
             log_error("непонятный аргумент: %s", s);
             usage();
+            platform_shutdown();
             return 2;
         }
     }
@@ -140,6 +144,7 @@ int main(int argc, char **argv) {
     app_memory_init(m, a.record || a.replay);
     int rc = a.terrain_map ? run_terrain_map(a, m) : a.replay ? run_replay(a, m) : a.sim_steps ? run_sim(a, m) : run_window(a, m);
     app_memory_free(m);
+    platform_shutdown();  // дописать журнал и закрыть SDL до выхода
     return rc;
 }
 
@@ -148,7 +153,8 @@ int main(int argc, char **argv) {
 // Отладка с ASan: утечки системных библиотек (Xlib в SDL, в том числе перекодировка заголовка окна, драйвер
 // Vulkan) — не наши, их не показывать.
 // asan_thread_start — потоки драйвера: он выгружается с instance, и имени модуля в стеке уже нет.
-// Своих потоков у игры пока нет; с пулом потоков (docs/architecture.md) это правило пересмотреть
+// Свой поток у игры один — журнал (platform_log_open), он памяти не выделяет; с пулом потоков
+// (docs/architecture.md) это правило пересмотреть
 extern "C" const char *__lsan_default_suppressions() {
     return "leak:libX11.so\nleak:X11_InitIM\nleak:X11_GetGlobalContentScale\nleak:libvulkan\nleak:libLLVM\n"
            "leak:libdbus\nleak:libxcb\nleak:asan_thread_start\nleak:SDL_X11_SetWindowTitle\n";

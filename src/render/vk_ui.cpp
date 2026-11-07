@@ -81,7 +81,7 @@ static VkPipeline make_ui_pipeline() {
         pi.pColorBlendState = &cb;
         pi.pDynamicState = &ds;
         pi.layout = g_ui.layout;
-        vk_check(vkCreateGraphicsPipelines(g_vk.device, VK_NULL_HANDLE, 1, &pi, nullptr, &p), "ui.vert");
+        vk_check(vkCreateGraphicsPipelines(g_vk.device, g_vk.pipeline_cache, 1, &pi, nullptr, &p), "ui.vert");
     }
     if (vs) vkDestroyShaderModule(g_vk.device, vs, nullptr);
     if (fs) vkDestroyShaderModule(g_vk.device, fs, nullptr);

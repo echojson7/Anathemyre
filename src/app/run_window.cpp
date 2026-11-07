@@ -15,12 +15,56 @@
 #include "../ui/ui.h"
 #include "../view/view.h"
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 static constexpr u32 MAX_STEPS_PER_FRAME = 8;  // больше — мир отстаёт, а не кадр замирает
 static const f32 SPEEDS[] = {0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
 static constexpr u32 SPEED_NORMAL = 3;
+
+// Части кадра (docs/frame_time.md): процессорное время от начала кадра до начала следующего. Части рендера —
+// из render_cpu_times(); «прочее» — остаток (камера, намерения, сбор переполнений и т.п.)
+enum FramePartId : u32 {
+    FP_INPUT, FP_UI, FP_STEPS, FP_VIEW, FP_FENCE, FP_PREPARE, FP_ACQUIRE, FP_RECORD, FP_SUBMIT, FP_PRESENT, FP_LOG,
+    FP_REST, FP_COUNT
+};
+static const char *const FP_NAMES[FP_COUNT] = {"ввод", "интерфейс", "шаги мира", "вид", "ожидание GPU", "подготовка",
+                                               "картинка", "запись команд", "отправка", "показ", "журнал", "прочее"};
+static_assert(FP_COUNT <= PROF_MAX_PARTS, "частей кадра больше, чем мест в FrameProf");
+static_assert(FP_COUNT <= DEBUG_MAX_FRAME_PARTS, "частей кадра больше, чем строк в панели");
+
+// Дописать в строку с длиной len (обрезка — по месту)
+__attribute__((format(printf, 4, 5))) static void put_text(char *buf, usize cap, usize &len, const char *fmt, ...) {
+    if (len >= cap) return;
+    va_list ap;
+    va_start(ap, fmt);
+    i32 k = vsnprintf(buf + len, cap - len, fmt, ap);
+    va_end(ap);
+    if (k > 0) len += (usize)k;
+}
+
+// Строка журнала раз в секунду: части кадра (среднее/наибольшее) и из чего сложился худший кадр
+static void log_frame_parts(const FrameProf &p) {
+    char line[768];
+    usize len = 0;
+#define put(...) put_text(line, sizeof line, len, __VA_ARGS__)
+    put("кадр по частям, мс (среднее/наибольшее):");
+    for (u32 i = 0; i < p.nparts; ++i) put(" %s %.2f/%.2f", p.names[i], p.avg_last[i], p.max_last[i]);
+    // Худший кадр: три самые большие части
+    put(" · худший %.2f:", p.worst_total_last);
+    bool used[PROF_MAX_PARTS] = {};
+    for (u32 k = 0; k < 3; ++k) {
+        u32 best = PROF_MAX_PARTS;
+        for (u32 i = 0; i < p.nparts; ++i)
+            if (!used[i] && (best == PROF_MAX_PARTS || p.worst_last[i] > p.worst_last[best])) best = i;
+        if (best == PROF_MAX_PARTS || p.worst_last[best] < 0.05) break;
+        used[best] = true;
+        put("%s %s %.2f", k ? "," : "", p.names[best], p.worst_last[best]);
+    }
+#undef put
+    log_info("%s", line);
+}
 
 // Время: пауза и замедление меняют число шагов за кадр, а не длину шага
 struct TimeCtl {
@@ -62,6 +106,9 @@ int run_window(const Args &a, AppMemory &m) {
     char shader_dir[1024];
     snprintf(shader_dir, sizeof shader_dir, "%sshaders/", platform_exe_dir());
     rc.shader_dir = shader_dir;
+    char pipe_cache[1024];
+    snprintf(pipe_cache, sizeof pipe_cache, "%spipelines.cache", platform_exe_dir());
+    rc.pipeline_cache_path = pipe_cache;
     if (!render_init(rc)) {
         platform_window_close();
         return 1;
@@ -137,10 +184,15 @@ int run_window(const Args &a, AppMemory &m) {
         menu.tab = !strcmp(a.open, "keys") ? HUD_TAB_CONTROLS : HUD_TAB_SCREEN;
     } else if (a.open) {
         set.debug = set.debug_panel = true;
-        ds.tab = !strcmp(a.open, "world") ? DEBUG_TAB_WORLD : DEBUG_TAB_MAIN;
+        ds.tab = !strcmp(a.open, "world") ? DEBUG_TAB_WORLD : !strcmp(a.open, "frame") ? DEBUG_TAB_FRAME : DEBUG_TAB_MAIN;
     }
     Input in{};
-    TimeStat st_frame, st_step, st_cpu;
+    TimeStat st_frame, st_step, st_cpu, st_gpu;
+    FrameProf *prof = arena_push<FrameProf>(m.world, 1);
+    *prof = FrameProf{};
+    prof->nparts = FP_COUNT;
+    prof->rest = FP_REST;
+    for (u32 i = 0; i < FP_COUNT; ++i) prof->names[i] = FP_NAMES[i];
     u64 frames = 0, frames_window = 0;
     u64 last = platform_time_ns(), window_t0 = last;
     int rc_exit = 0;
@@ -148,6 +200,8 @@ int run_window(const Args &a, AppMemory &m) {
 
     for (;;) {
         u64 now = platform_time_ns();
+        if (frames) prof_end(*prof, (f64)(now - last) / 1e6);  // прошлый кадр — до этой отметки
+        prof_begin(*prof, now);
         f64 dt = (f64)(now - last) / 1e9;
         last = now;
         if (dt > 0.25) dt = 0.25;
@@ -158,6 +212,7 @@ int run_window(const Args &a, AppMemory &m) {
         if (in.resized) render_resized();
         i32 ww = 0, wh = 0;
         platform_window_size(&ww, &wh);
+        prof_part(*prof, FP_INPUT, platform_time_ns());
 
         // Общие клавиши: Esc — меню настроек, F11 — весь экран; отладочные — только при включённой отладке
         bool menu_was = menu.open;
@@ -175,6 +230,7 @@ int run_window(const Args &a, AppMemory &m) {
         }
 
         // Интерфейс до мира: он решает, чья мышь в этом кадре
+        prof_mark(*prof, platform_time_ns());
         if (hud_on) {
             UiConfig uc{set.ui_scale, set.text_scale};
             ui_begin(ww, wh, uc, in);
@@ -187,6 +243,8 @@ int run_window(const Args &a, AppMemory &m) {
                 di.frame_max_ms = st_frame.max_last;
                 di.cpu_ms = hs.cpu_ms;
                 di.gpu_ms = hs.gpu_ms;
+                di.gpu_max_ms = st_gpu.max_last;
+                di.prof = prof;
                 di.step_ms = hs.step_ms;
                 di.gpu_name = render_device_name();
                 di.step = w.step;
@@ -219,6 +277,7 @@ int run_window(const Args &a, AppMemory &m) {
             hud_menu(menu, set);
             ui_end();
         }
+        prof_part(*prof, FP_UI, platform_time_ns());
         if (set.debug) {
             set.lines = ds.lines;
             set.pixel = ds.pixel;
@@ -292,6 +351,7 @@ int run_window(const Args &a, AppMemory &m) {
         }
         debug_clear_frame(ds);
 
+        prof_mark(*prof, platform_time_ns());
         for (u32 k = 0; k < nsteps; ++k) {
             for (usize i = 0; i < pending.count; ++i) pending.data[i].step = w.step;
             Span<const Intent> its = k == 0 ? pending.span() : Span<const Intent>{};
@@ -316,8 +376,8 @@ int run_window(const Args &a, AppMemory &m) {
             }
         }
 
-        // Замер CPU кадра: вид + запись команд, без шага мира и без ожидания GPU и показа (vsync)
-        u64 tcpu = platform_time_ns();
+        prof_part(*prof, FP_STEPS, platform_time_ns());
+
         arena_reset(m.frame);
         ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused || a.timelapse ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel,
                      a.forward || ds.forward, a.test_lights || ds.test_lights, a.froxel_heat || ds.froxel_heat, scatter};
@@ -327,15 +387,29 @@ int run_window(const Args &a, AppMemory &m) {
         if (hud_on && set.debug && set.debug_panel && ds.tab == DEBUG_TAB_WORLD) debug_inspect_mark(w, *inspect, dbg);
         view_build(cam, *assets, vi, m.frame, rf);
         dbg.count = dbg_keep;
+        prof_part(*prof, FP_VIEW, platform_time_ns());
         bool last_frame = a.frames && frames + 1 >= a.frames;
         if ((last_frame && a.shot) || a.timelapse) render_capture_next();
         if (!render_frame(rf)) { rc_exit = 1; break; }
+        {
+            RenderCpuTimes rt = render_cpu_times();
+            prof_add(*prof, FP_FENCE, rt.fence);
+            prof_add(*prof, FP_PREPARE, rt.prepare);
+            prof_add(*prof, FP_ACQUIRE, rt.acquire);
+            prof_add(*prof, FP_RECORD, rt.record);
+            prof_add(*prof, FP_SUBMIT, rt.submit);
+            prof_add(*prof, FP_PRESENT, rt.present);
+            prof_mark(*prof, platform_time_ns());
+            // CPU кадра: вид и работа рендера без ожиданий (fence, картинка, показ) — как раньше
+            stat_add(st_cpu, prof->cur[FP_VIEW] + rt.prepare + rt.record + rt.submit);
+            f64 g = render_gpu_ms();
+            if (g > 0) stat_add(st_gpu, g);
+        }
         if (a.timelapse) {
             char path[1024];
             snprintf(path, sizeof path, "%s_%04u.bmp", a.timelapse, (u32)frames);
             if (!debug_write_shot(path, m.load)) { rc_exit = 1; break; }
         }
-        stat_add(st_cpu, (f64)(platform_time_ns() - tcpu) / 1e6 - render_wait_ms());
         {
             const char *nm[RENDER_MAX_PASSES];
             f64 ms[RENDER_MAX_PASSES];
@@ -365,16 +439,20 @@ int run_window(const Args &a, AppMemory &m) {
         frames++;
         frames_window++;
         if (now - window_t0 >= 1000000000ull) {
+            prof_mark(*prof, platform_time_ns());
             stat_roll(st_frame);
             stat_roll(st_step);
             stat_roll(st_cpu);
+            stat_roll(st_gpu);
+            prof_roll(*prof);
             f64 secs = (f64)(now - window_t0) / 1e9;
             i32 hour_hm = (i32)(sky_hour(w.clock, (f64)w.clock.tick) * 60.0f) % 1440;
             char title[320];
             snprintf(title, sizeof title,
-                     "Anathemyre — %.0f к/с · кадр %.2f мс (макс %.2f) · CPU кадра %.2f мс · GPU %.2f мс · шаг %.3f мс · "
-                     "×%g%s%s · шаг %" PRIu64 " · %02d:%02d",
-                     (f64)frames_window / secs, st_frame.avg_last, st_frame.max_last, st_cpu.avg_last, render_gpu_ms(),
+                     "Anathemyre — %.0f к/с · кадр %.2f мс (макс %.2f) · CPU кадра %.2f мс · GPU %.2f мс (макс %.2f) · "
+                     "шаг %.3f мс · ×%g%s%s · шаг %" PRIu64 " · %02d:%02d",
+                     (f64)frames_window / secs, st_frame.avg_last, st_frame.max_last, st_cpu.avg_last, st_gpu.avg_last,
+                     st_gpu.max_last,
                      st_step.avg_last, (f64)SPEEDS[tc.speed], tc.paused ? " · пауза" : "", pixel ? "" : " · без ячеек",
                      w.step, hour_hm / 60, hour_hm % 60);
             platform_set_title(title);
@@ -392,7 +470,7 @@ int run_window(const Args &a, AppMemory &m) {
             }
             nover_last = nover_sec;
             nover_sec = 0;
-            hs = HudStats{(f64)frames_window / secs, st_frame.avg_last, st_cpu.avg_last, render_gpu_ms(), st_step.avg_last};
+            hs = HudStats{(f64)frames_window / secs, st_frame.avg_last, st_cpu.avg_last, st_gpu.avg_last, st_step.avg_last};
             log_info("%s", title);
             // Проходы GPU за секунду — те же числа, что в F3, для журнала и сравнения на другой машине
             if (npass_avg) {
@@ -403,8 +481,10 @@ int run_window(const Args &a, AppMemory &m) {
                                     pass_avg[i]);
                 log_info("%s", line);
             }
+            log_frame_parts(*prof);
             frames_window = 0;
             window_t0 = now;
+            prof_part(*prof, FP_LOG, platform_time_ns());
         }
         if (last_frame) break;
     }

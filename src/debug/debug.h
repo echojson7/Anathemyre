@@ -2,6 +2,7 @@
 #pragma once
 #include "../core/dbgdraw.h"
 #include "../core/mem.h"
+#include "../core/prof.h"
 #include "../core/rng.h"
 #include "../platform/platform.h"
 #include "../sim/intent.h"
@@ -38,13 +39,15 @@ inline void debug_clear_frame(DebugState &d) {
 }
 // Скорости суток по T: тиков часов за шаг (1 — обычный ход: сутки за 48 минут; 60 — за 48 секунд)
 constexpr u32 CLOCK_SPEEDS[] = {1, 20, 120, 0};
-enum DebugTab : u32 { DEBUG_TAB_MAIN, DEBUG_TAB_WORLD, DEBUG_TABS };
+enum DebugTab : u32 { DEBUG_TAB_MAIN, DEBUG_TAB_FRAME, DEBUG_TAB_WORLD, DEBUG_TABS };
 
 // Строк проходов GPU и переполнений в панели
-constexpr u32 DEBUG_MAX_PASSES = 16, DEBUG_MAX_OVERFLOWS = 8;
+constexpr u32 DEBUG_MAX_PASSES = 16, DEBUG_MAX_OVERFLOWS = 8, DEBUG_MAX_FRAME_PARTS = PROF_MAX_PARTS;
 // Что панель показывает: числа кадра (раз в секунду) и состояние, которое знает run_window
 struct DebugInfo {
     f64 fps, frame_ms, frame_max_ms, cpu_ms, gpu_ms, step_ms;
+    f64 gpu_max_ms;           // худший кадр GPU за секунду
+    const FrameProf *prof;    // кадр по частям (вкладка «Кадр»), nullptr — нет
     const char *gpu_name;
     u64 step, hash;
     f64 hour;

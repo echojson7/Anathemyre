@@ -19,7 +19,7 @@ VkPipeline vk_make_compute(const char *name) {
     ci.stage.pName = "main";
     ci.layout = g_vk.layout;
     VkPipeline p = VK_NULL_HANDLE;
-    vk_check(vkCreateComputePipelines(g_vk.device, VK_NULL_HANDLE, 1, &ci, nullptr, &p), name);
+    vk_check(vkCreateComputePipelines(g_vk.device, g_vk.pipeline_cache, 1, &ci, nullptr, &p), name);
     vkDestroyShaderModule(g_vk.device, m, nullptr);
     return p;
 }
