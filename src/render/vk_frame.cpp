@@ -124,7 +124,7 @@ VkPipeline vk_make_pipeline(const PipeDesc &d) {
         pi.pColorBlendState = &cb;
         pi.pDynamicState = &ds;
         pi.layout = g_vk.layout;
-        vk_check(vkCreateGraphicsPipelines(g_vk.device, VK_NULL_HANDLE, 1, &pi, nullptr, &p), d.vs);
+        vk_check(vkCreateGraphicsPipelines(g_vk.device, g_vk.pipeline_cache, 1, &pi, nullptr, &p), d.vs);
     }
     if (vs) vkDestroyShaderModule(g_vk.device, vs, nullptr);
     if (fs) vkDestroyShaderModule(g_vk.device, fs, nullptr);
@@ -373,6 +373,14 @@ static void record_forward(VkCommandBuffer cmd, void *) {
 }
 
 bool render_frame(const RenderFrame &f) {
+    // Части кадра (docs/frame_time.md): отметка после каждой, время между отметками — в свою часть
+    g_vk.cpu = RenderCpuTimes{};
+    u64 t = platform_time_ns();
+    auto lap = [&t](f64 &part) {
+        u64 n = platform_time_ns();
+        part += (f64)(n - t) / 1e6;
+        t = n;
+    };
     if (g_vk.swapchain_dirty) {
         i32 w = 0, h = 0;
         platform_window_size(&w, &h);
@@ -382,17 +390,18 @@ bool render_frame(const RenderFrame &f) {
     }
     u32 slot = g_vk.frame_index;
     FrameSlot &fs = g_vk.frames[slot];
-    g_vk.wait_ns = 0;
-    u64 t0 = platform_time_ns();
+    lap(g_vk.cpu.prepare);
     if (!vk_check(vkWaitForFences(g_vk.device, 1, &fs.done, VK_TRUE, UINT64_MAX), "vkWaitForFences")) return false;
+    lap(g_vk.cpu.fence);
     read_gpu_time(fs, slot);
     vk_stats_read(fs);
     vk_diag_frame(g_vk.frames_drawn);
     vk_geometry_collect();
+    lap(g_vk.cpu.prepare);
 
     u32 img = 0;
     VkResult r = vkAcquireNextImageKHR(g_vk.device, g_vk.swapchain, UINT64_MAX, fs.acquired, VK_NULL_HANDLE, &img);
-    g_vk.wait_ns += platform_time_ns() - t0;
+    lap(g_vk.cpu.acquire);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) { g_vk.swapchain_dirty = true; return true; }
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) return vk_check(r, "vkAcquireNextImageKHR");
     vkResetFences(g_vk.device, 1, &fs.done);
@@ -426,6 +435,8 @@ bool render_frame(const RenderFrame &f) {
     if (ndecals) memcpy(fs.decals.mapped, f.decals.data, ndecals * sizeof(RenderDecal));
     g.decals = fs.decals.address;
     g.decal_count = ndecals;
+
+    lap(g_vk.cpu.prepare);
 
     // Кадр в графе (docs/graph.md): проходы по порядку, барьеры и метки ставит граф
     rg_begin();
@@ -467,6 +478,7 @@ bool render_frame(const RenderFrame &f) {
     fs.marks = 0;
     rg_execute(cmd);
     vkEndCommandBuffer(cmd);
+    lap(g_vk.cpu.record);
 
     auto wait = vk_info<VkSemaphoreSubmitInfo>(VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO);
     wait.semaphore = fs.acquired;
@@ -485,6 +497,7 @@ bool render_frame(const RenderFrame &f) {
     si.pSignalSemaphoreInfos = &signal;
     if (!vk_check(vkQueueSubmit2(g_vk.queue, 1, &si, fs.done), "vkQueueSubmit2")) return false;
     fs.stats_pending = true;
+    lap(g_vk.cpu.submit);
 
     auto pi = vk_info<VkPresentInfoKHR>(VK_STRUCTURE_TYPE_PRESENT_INFO_KHR);
     pi.waitSemaphoreCount = 1;
@@ -492,9 +505,8 @@ bool render_frame(const RenderFrame &f) {
     pi.swapchainCount = 1;
     pi.pSwapchains = &g_vk.swapchain;
     pi.pImageIndices = &img;
-    t0 = platform_time_ns();
     r = vkQueuePresentKHR(g_vk.queue, &pi);
-    g_vk.wait_ns += platform_time_ns() - t0;
+    lap(g_vk.cpu.present);
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) g_vk.swapchain_dirty = true;
     else if (r != VK_SUCCESS) return vk_check(r, "vkQueuePresentKHR");
     if (g_vk.extent.width == 0) g_vk.swapchain_dirty = true;

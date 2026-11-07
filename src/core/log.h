@@ -1,12 +1,16 @@
-// Журнал: строки с уровнем в stderr и в приёмник (файл ставит app через platform).
+// Журнал: строки с уровнем в stderr или в приёмник (поток журнала и файл ставит app через platform).
 // Не для шага мира: форматирование чисел зависит от CRT.
 #pragma once
 #include "types.h"
 
 enum LogLevel { LOG_INFO, LOG_WARN, LOG_ERROR };
 
+// Приёмник заменяет вывод в stderr: пишет строку сам (app ставит поток журнала platform). flush — дождаться
+// записи; журнал зовёт его после ошибки и перед аварийным выходом, чтобы последние строки не пропали
 typedef void (*LogSink)(const char *line, usize len, void *user);
-void log_set_sink(LogSink sink, void *user);
+typedef void (*LogFlush)(void *user);
+void log_set_sink(LogSink sink, LogFlush flush, void *user);
+void log_flush();
 void log_write(LogLevel level, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 
 #define log_info(...)  log_write(LOG_INFO, __VA_ARGS__)

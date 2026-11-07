@@ -5,6 +5,7 @@
 #include "../core/hash.h"
 #include "../sim/world.h"
 #include "../ui/ui.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -12,7 +13,7 @@ static constexpr f32 WIDTH = 360.0f;   // единицы ui_s
 static constexpr f32 EDGE = 20.0f;     // от края окна
 static constexpr f32 PAD = 18.0f;      // внутри панели
 
-static const char *const TABS[DEBUG_TABS] = {"ОБЩЕЕ", "МИР"};
+static const char *const TABS[DEBUG_TABS] = {"ОБЩЕЕ", "КАДР", "МИР"};
 static const char *const DAY_SPEEDS[] = {"обычный", "×20", "×120", "стоп"};
 static_assert(sizeof DAY_SPEEDS / sizeof *DAY_SPEEDS == sizeof CLOCK_SPEEDS / sizeof *CLOCK_SPEEDS, "скорости суток");
 
@@ -129,6 +130,71 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_toggle(f, "старый forward", d.forward);
     ui_toggle(f, "тестовые огни", d.test_lights);
     ui_toggle(f, "огни по клеткам", d.froxel_heat);
+}
+
+// --- Кадр по частям (docs/frame_time.md): график последних кадров и части за секунду ---
+static void frame_graph(UiForm &f, const FrameProf &p) {
+    f32 h = ui_px(64), hair = ui_hair();
+    f32 bw = floorf(f.w / (f32)PROF_HISTORY);
+    if (bw < 1) bw = 1;
+    u32 shown = (u32)(f.w / bw);
+    if (shown > p.hist_count) shown = p.hist_count;
+    f32 top_y = f.y + ui_line(UI_SMALL) + ui_px(4);
+    // Верх графика — ближайшая сверху ступень: так масштаб не прыгает от кадра к кадру
+    f32 peak = 0;
+    for (u32 k = 0; k < shown; ++k) {
+        f32 v = p.hist[(p.hist_pos + PROF_HISTORY - 1 - k) % PROF_HISTORY];
+        if (v > peak) peak = v;
+    }
+    static const f32 STEPS[] = {1, 2, 4, 8, 16, 33, 66, 133, 266};
+    f32 scale = STEPS[ANA_COUNTOF(STEPS) - 1];
+    for (f32 st : STEPS)
+        if (peak <= st) { scale = st; break; }
+    char t[32];
+    snprintf(t, sizeof t, "%g мс", (double)scale);
+    ui_text(f.x, f.y, UI_SMALL, ui_col::DIM, t);
+    snprintf(t, sizeof t, "%u кадров", shown);
+    ui_text_right(f.x + f.w, f.y, UI_SMALL, ui_col::FAINT, t);
+    ui_hline(f.x, top_y, f.w, ui_col::LINE);
+    ui_hline(f.x, top_y + h, f.w, ui_col::LINE);
+    // 60 к/с — отметка, если влезает
+    if (scale > 16.7f) ui_hline(f.x, top_y + h - h * 16.7f / scale, f.w, ui_col::LINE);
+    // Кадры справа налево, новый — справа; вдвое длиннее среднего — ярче
+    f32 avg = (f32)p.total_avg_last;
+    for (u32 k = 0; k < shown; ++k) {
+        f32 v = p.hist[(p.hist_pos + PROF_HISTORY - 1 - k) % PROF_HISTORY];
+        f32 bh = h * (v < scale ? v : scale) / scale;
+        if (bh < hair) bh = hair;
+        f32 x = f.x + f.w - (f32)(k + 1) * bw;
+        ui_rect(x, top_y + h - bh, bw, bh, avg > 0 && v > 2 * avg ? ui_col::TEXT : ui_col::DIM);
+    }
+    f.y = top_y + h + ui_px(8);
+}
+
+static void tab_frame(UiForm &f, const DebugInfo &in) {
+    char t[96];
+    ui_section(f, "КАДР ЗА СЕКУНДУ");
+    snprintf(t, sizeof t, "%.0f · %.2f мс", in.fps, in.frame_ms);
+    ui_value(f, "к/с · кадр", t);
+    snprintf(t, sizeof t, "%.2f мс", in.frame_max_ms);
+    ui_value(f, "худший кадр", t);
+    snprintf(t, sizeof t, "%.2f · %.2f мс", in.gpu_ms, in.gpu_max_ms);
+    ui_value(f, "GPU · худший", t);
+    if (!in.prof) return;
+    const FrameProf &p = *in.prof;
+    f.y += ui_px(6);
+    frame_graph(f, p);
+    // Части: среднее, наибольшее за секунду и сколько эта часть заняла в худшем кадре секунды
+    ui_section(f, "ПО ЧАСТЯМ, МС");
+    ui_value(f, "", "сред · макс · худш");
+    for (u32 i = 0; i < p.nparts && i < DEBUG_MAX_FRAME_PARTS; ++i) {
+        snprintf(t, sizeof t, "%.2f · %.2f · %.2f", p.avg_last[i], p.max_last[i], p.worst_last[i]);
+        ui_value(f, p.names[i] ? p.names[i] : "?", t);
+    }
+    snprintf(t, sizeof t, "%.2f", p.worst_total_last);
+    ui_value(f, "худший кадр целиком", t);
+    ui_text(f.x, f.y + ui_px(6), UI_SMALL, ui_col::FAINT, "ожидание, картинка, показ — CPU ждёт");
+    f.y += ui_px(6) + ui_line(UI_SMALL);
 }
 
 // --- Осмотр мира: таблицы — приставки имён столбцов до точки ---
@@ -297,6 +363,7 @@ void debug_panel(const DebugInfo &info, const World &w, DebugState &d, WorldInsp
     ui_hline(f.x, f.y, f.w, ui_col::LINE);
     f.y += ui_px(2);
     if (d.tab == DEBUG_TAB_WORLD) tab_world(f, w, wi);
+    else if (d.tab == DEBUG_TAB_FRAME) tab_frame(f, info);
     else tab_main(f, info, d);
     f32 ph = f.y + pad - y;
     ui_soft_at(bg, x, y, pw, ph, ui_col::PANEL, ui_px(10));

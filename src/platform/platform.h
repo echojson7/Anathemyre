@@ -41,9 +41,13 @@ void platform_free(void *p);
 struct Arena;
 bool platform_read_file(const char *path, Arena &arena, u8 **data, usize *size);
 bool platform_write_file(const char *path, const void *data, usize size);
-// Дописать в файл журнала (открывается один раз)
+// Журнал: строка уходит в stderr и файл своим потоком, вызывающий не ждёт диска и консоли (docs/frame_time.md).
+// open — один раз при запуске (false — потока нет, строки пишутся сразу); flush ждёт, пока всё записано
 bool platform_log_open(const char *path);
 void platform_log_append(const char *line, usize len);
+void platform_log_flush();
+// Перед выходом из программы: дописать журнал, закрыть файл и SDL
+void platform_shutdown();
 // Папка исполняемого файла, с завершающим разделителем
 const char *platform_exe_dir();
 // Имена файлов в папке (без пути) с окончанием suffix, по одному в cb. false — папки нет

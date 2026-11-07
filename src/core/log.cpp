@@ -4,11 +4,18 @@
 #include <stdlib.h>
 
 static LogSink g_sink = nullptr;
+static LogFlush g_flush = nullptr;
 static void *g_sink_user = nullptr;
 
-void log_set_sink(LogSink sink, void *user) {
+void log_set_sink(LogSink sink, LogFlush flush, void *user) {
     g_sink = sink;
+    g_flush = flush;
     g_sink_user = user;
+}
+
+void log_flush() {
+    if (g_flush) g_flush(g_sink_user);
+    fflush(stderr);
 }
 
 void log_write(LogLevel level, const char *fmt, ...) {
@@ -23,8 +30,9 @@ void log_write(LogLevel level, const char *fmt, ...) {
     if (len > sizeof line - 2) len = sizeof line - 2;
     line[len++] = '\n';
     line[len] = 0;
-    fwrite(line, 1, len, stderr);
     if (g_sink) g_sink(line, len, g_sink_user);
+    else fwrite(line, 1, len, stderr);
+    if (level == LOG_ERROR) log_flush();  // ошибка — в файле до следующего шага, даже если дальше падение
 }
 
 char *hex_u64(u64 v, char *buf) {
@@ -39,6 +47,6 @@ char *hex_u64(u64 v, char *buf) {
 
 void ana_fail(const char *file, int line, const char *what) {
     log_error("проверка не прошла: %s (%s:%d)", what, file, line);
-    fflush(stderr);
+    log_flush();
     abort();
 }

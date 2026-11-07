@@ -152,6 +152,9 @@ struct RenderFrame {
 
 struct RenderConfig {
     bool vsync = true;
+    // Кеш конвейеров на диске (docs/frame_time.md, «Кеш конвейеров»): читается при запуске, пишется при выходе.
+    // nullptr — без файла
+    const char *pipeline_cache_path = nullptr;
     bool validation = false;  // слои проверки Vulkan с проверкой синхронизации
     bool gpu_validation = false;  // слои проверки с проверкой на GPU (выход за границы буферов, GPU-AV) вместо синхронизации
     const char *gpu_validation_skip = nullptr;  // шейдеры без проверки на GPU, через запятую (lavapipe их не тянет)
@@ -246,8 +249,17 @@ struct RenderWork {
     u32 shadow_steps;                // шаги луча тени рельефа
 };
 bool render_work(RenderWork &out);
-// Сколько последний render_frame ждал GPU и показ (забор кадра, картинка swapchain, vsync), мс
-f64 render_wait_ms();
+// Процессорное время последнего render_frame по частям, мс (docs/frame_time.md). Ожидание — fence, acquire и
+// present: там процессор стоит, пока GPU доделывает кадр N−2, swapchain отдаёт картинку или ждёт vsync
+struct RenderCpuTimes {
+    f64 fence;    // ожидание слота: GPU доделывает кадр, который писал этот слот
+    f64 prepare;  // пересоздание swapchain, сбор прошлого кадра (метки времени, счётчики), данные кадра в буферы
+    f64 acquire;  // картинка swapchain (vkAcquireNextImageKHR)
+    f64 record;   // граф кадра и запись команд
+    f64 submit;   // vkQueueSubmit2
+    f64 present;  // vkQueuePresentKHR
+};
+RenderCpuTimes render_cpu_times();
 // Снимок: render_capture_next() перед render_frame, затем render_capture_take() — пиксели RGBA8 sRGB
 // сверху вниз, память из арены. false — снимок не вышел
 void render_capture_next();
