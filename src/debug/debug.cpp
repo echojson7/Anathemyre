@@ -4,11 +4,13 @@
 #include "../core/math3.h"
 
 void debug_keys(const Input &in, DebugState &d) {
+    // Просьбы копятся до debug_clear_frame: клавиши и панель за один кадр не затирают друг друга
     if (in.key_pressed[KEY_PERIOD]) d.step_once = true;
     if (in.key_pressed[KEY_L]) d.lines = !d.lines;
+    if (in.key_pressed[KEY_P]) d.pixel = !d.pixel;
     if (in.key_pressed[KEY_F1]) debug_print_help();
-    d.clock_hours = (in.key_pressed[KEY_RIGHTBRACKET] ? 1 : 0) - (in.key_pressed[KEY_LEFTBRACKET] ? 1 : 0);
-    d.clock_speed = in.key_pressed[KEY_T];
+    d.clock_hours += (in.key_pressed[KEY_RIGHTBRACKET] ? 1 : 0) - (in.key_pressed[KEY_LEFTBRACKET] ? 1 : 0);
+    if (in.key_pressed[KEY_T]) d.clock_speed = true;
 }
 
 void autoplay_intents(u64 step, Rng &rng, FixedArray<Intent> &out) {
@@ -29,7 +31,8 @@ void autoplay_intents(u64 step, Rng &rng, FixedArray<Intent> &out) {
 }
 
 void debug_print_help() {
-    log_info("клавиши: Space пауза, . шаг на паузе, - = медленнее/быстрее, L отрезки, P ячейки, F11 весь экран, Esc выход");
+    log_info("клавиши: Esc настройки, F3 панель отладки, F11 весь экран");
+    log_info("отладка: Space пауза, . шаг на паузе, - = медленнее/быстрее, L отрезки, P ячейки");
     log_info("камера: правая кнопка — вращать, средняя — двигать, колесо — ближе/дальше, WASD — двигать, Shift — быстрее");
     log_info("        F — свободный полёт (WASD, Q/E вниз/вверх, правая кнопка — взгляд) и обратно на орбиту");
     log_info("точки: левая кнопка — притянуть, Ctrl + левая — вспышка, R — отпустить");

@@ -56,6 +56,8 @@ void platform_poll(Input &in);
 void platform_window_size(i32 *w, i32 *h);   // в пикселях кадра
 void platform_set_title(const char *title);
 void platform_toggle_fullscreen();
+void platform_set_fullscreen(bool on);
+bool platform_is_fullscreen();
 
 // Vulkan: функция загрузки, нужные расширения instance, поверхность окна.
 // Типы спрятаны: VkInstance — указатель, VkSurfaceKHR — u64

@@ -179,3 +179,20 @@ f64 render_wait_ms();
 // сверху вниз, память из арены. false — снимок не вышел
 void render_capture_next();
 bool render_capture_take(Arena &arena, u8 **rgba, u32 *width, u32 *height);
+
+// Интерфейс поверх кадра (src/ui, docs/ui.md): последний проход по готовой картинке, в пикселях окна.
+// Не часть кадра мира: этап 5 перестраивает кадр, не трогая его
+struct RenderUiQuad {
+    f32 x0, y0, x1, y1;  // пиксели окна, от левого верхнего угла
+    f32 u0, v0, u1, v1;  // пиксели атласа букв; u0 < 0 — заливка без атласа
+    u32 rgba;            // sRGB
+    f32 feather;         // мягкий край внутрь, пикселей (0 — резкий)
+    u32 pad[2];
+};
+static_assert(sizeof(RenderUiQuad) == 48, "RenderUiQuad — 48 байт");
+// Атлас букв R8 (ширина кратна 4) — в видеопамять, при загрузке
+bool render_ui_font(const u8 *atlas, u32 width, u32 height);
+// Прямоугольники интерфейса следующего render_frame (рисуются по порядку); без вызова кадр без интерфейса
+void render_ui_set(Span<const RenderUiQuad> quads);
+// Вертикальная синхронизация: swapchain пересоздаётся перед следующим кадром
+void render_set_vsync(bool on);
