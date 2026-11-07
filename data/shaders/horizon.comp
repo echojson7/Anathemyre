@@ -1,0 +1,57 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Сборка карты горизонта (docs/horizon.md): поток — узел сетки 8 м и пара направлений, одно слово карты.
+// Луч от узла (на H_EYE над сеткой) идёт по сетке высот до H_FAR (за краем карты — край, как у колец земли): до 64 м шагом 8 м, дальше шаг 1/8
+// расстояния по сглаженному уровню сетки с узлами вдвое реже шага (уровни (1 2 1)/4 — без провалов между
+// выборками). Луч кончается, когда даже высшая точка карты на этом расстоянии не поднимет горизонт.
+// pc.a — первая строка узлов этого вызова (сборка кусками строк, чтобы один вызов не держал GPU долго)
+#include "terrain.glsl"
+#include "horizon.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Высота уровня m сглаженной сетки (шаг 8·2^m м) билинейно, метры; g — метры карты
+float h_level(vec2 g, int m) {
+    FrameData f = pc.frame;
+    ivec2 nm = ivec2(((f.t_nx - 1) >> m) + 1, ((f.t_nz - 1) >> m) + 1);
+    vec2 b = clamp(g / (8.0 * float(1 << m)), vec2(0.0), vec2(nm - 1) - 0.001);
+    ivec2 i = ivec2(floor(b));
+    vec2 fr = b - vec2(i);
+    int k = f.t_mip[m] + i.y * nm.x + i.x;
+    float h00 = float(t_hgt(k)), h10 = float(t_hgt(k + 1));
+    float h01 = float(t_hgt(k + nm.x)), h11 = float(t_hgt(k + nm.x + 1));
+    return mix(mix(h00, h10, fr.x), mix(h01, h11, fr.x), fr.y) * 0.05;
+}
+
+// Горизонт узла по направлению a: x — угол, рад, y — расстояние до заслонки, м
+vec2 h_trace(ivec2 n, int a) {
+    FrameData f = pc.frame;
+    vec2 o = vec2(n) * 8.0;
+    vec2 dir = h_dir(a);
+    float h0 = float(t_hgt(n.y * f.t_nx + n.x)) * 0.05 + H_EYE;
+    float best = 0.0, bd = H_D0;
+    float d = 8.0;
+    for (int s = 0; s < 128; ++s) {
+        if (d > H_FAR) break;
+        vec2 q = o + dir * d;  // за краем карты — край (h_level зажимает), как у колец земли
+        float step = max(8.0, d * 0.125);
+        int m = clamp(int(floor(log2(step / 16.0))), 0, 5);
+        float t = (h_level(q, m) - h0) / d - H_BIAS;
+        if (t > best) {
+            best = t;
+            bd = d;
+        }
+        if ((f.h_max - h0) / d - H_BIAS <= best) break;
+        d += step;
+    }
+    return vec2(atan(best), bd);
+}
+
+void main() {
+    FrameData f = pc.frame;
+    ivec2 n = ivec2(int(gl_WorkGroupID.x) * 8 + int(gl_LocalInvocationID.y), int(pc.a + gl_WorkGroupID.y));
+    if (n.x >= f.t_nx || n.y >= f.t_nz) return;
+    int a = int(gl_LocalInvocationID.x) * 2;
+    vec2 h0 = h_trace(n, a), h1 = h_trace(n, a + 1);
+    uint w = h_encode(h0.x, h0.y) | (h_encode(h1.x, h1.y) << 16);
+    f.h_map.v[(n.y * f.t_nx + n.x) * (H_DIRS / 2) + int(gl_LocalInvocationID.x)] = w;
+}

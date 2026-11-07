@@ -247,7 +247,7 @@ struct RenderWork {
     u32 tiles[RENDER_TILE_KINDS];
     u32 px_sky, px_ground, px_mesh;  // пиксели по видам
     u32 surf_ground, surf_mesh;      // поверхности: surface() и light_surface() раз на ячейку
-    u32 shadow_steps;                // шаги луча тени рельефа
+    u32 shadow_taps;                // выборки карты горизонта (тень земли, docs/horizon.md)
     // Кеш поверхности земли (docs/gcache.md): страницы, прочитанные кадром; запечённые; без места; поверхности
     // земли, посчитанные освещением мимо кеша (крутые склоны, нет места)
     u32 gc_used, gc_baked, gc_over, gc_direct;

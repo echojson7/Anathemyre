@@ -33,15 +33,16 @@ layout(buffer_reference, scalar) buffer GroundVerts { GroundVert v[]; };
 layout(buffer_reference, scalar) buffer Vec4s { vec4 v[]; };  // таблицы неба (пишут sky_*.comp)
 // Счётчики GPU кадра (docs/graph.md «Переполнения»): сколько не влезло; номера — как STAT_* в vk_state.h
 layout(buffer_reference, scalar) buffer Stats { uint v[]; };
+layout(buffer_reference, scalar) buffer HMap { uint v[]; };  // карта горизонта (horizon.glsl), пишет horizon.comp
 const uint STAT_VIS_WANT = 0u;       // видимых кластеров до обрезки по vis_max
 const uint STAT_FROXEL_LIGHTS = 1u;  // клеток, где огни не влезли (свет перебирает все огни кадра)
 const uint STAT_FROXEL_DECALS = 2u;  // клеток, где декали не влезли
 // Счётчики работы освещения (docs/tiles.md): плитки по видам, пиксели по видам, поверхности (surface() и
-// light_surface() раз на ячейку), шаги луча тени рельефа
+// light_surface() раз на ячейку), выборки карты горизонта (тень земли)
 const uint STAT_TILES = 3u;          // 5 подряд: TILE_SKY..TILE_GROUND_PX
 const uint STAT_PX_SKY = 8u, STAT_PX_GROUND = 9u, STAT_PX_MESH = 10u;
 const uint STAT_SURF_GROUND = 11u, STAT_SURF_MESH = 12u;
-const uint STAT_SHADOW_STEPS = 13u;
+const uint STAT_SHADOW_TAPS = 13u;
 // Кеш поверхности земли (docs/gcache.md): страницы, которые кадр читал; запечённые; не получившие места;
 // пиксели земли мимо кеша (крутые склоны, правило пиксельности выключено)
 const uint STAT_GC_USED = 14u, STAT_GC_BAKED = 15u, STAT_GC_OVER = 16u, STAT_GC_PX_DIRECT = 17u;
@@ -163,6 +164,10 @@ layout(buffer_reference, scalar) buffer FrameData {
     uint gc_w, gc_pages_n, gc_req_cap, gc_frame;  // кадр кеша: с 1, растёт на кадр мира
     int gc_tpc0;              // текселей уровня 0 на чанк (256 м / cell_min)
     uint gc_on, gc_pad0, gc_pad1;  // 0 — кеш выключен: вся земля на пиксель (F3, --nogcache)
+    // Карта горизонта земли (docs/horizon.md): H_DIRS/2 слов на узел сетки 8 м
+    HMap h_map;
+    uint h_on;                // 0 — карты нет (земли нет или ещё не собрана): тени земли нет
+    float h_max;              // высшая точка сетки 8 м, м (сборка: где луч может кончиться)
 };
 
 layout(push_constant, scalar) uniform Push {

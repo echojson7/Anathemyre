@@ -74,6 +74,10 @@ struct FrameGpu {
     u32 gc_w, gc_pages_n, gc_req_cap, gc_frame;
     i32 gc_tpc0;
     u32 gc_on, gc_pad0, gc_pad1;
+    // Карта горизонта земли (vk_horizon.cpp, docs/horizon.md)
+    VkDeviceAddress h_map;
+    u32 h_on;
+    f32 h_max;
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -84,7 +88,7 @@ constexpr u32 STAT_FROXEL_DECALS = 2;  // клеток froxels, где дека�
 constexpr u32 STAT_TILES = 3;          // плитки по видам, TILE_KINDS подряд
 constexpr u32 STAT_PX_SKY = 8, STAT_PX_GROUND = 9, STAT_PX_MESH = 10;  // пиксели по видам
 constexpr u32 STAT_SURF_GROUND = 11, STAT_SURF_MESH = 12;             // поверхности: surface() и свет раз на ячейку
-constexpr u32 STAT_SHADOW_STEPS = 13;  // шаги луча тени рельефа
+constexpr u32 STAT_SHADOW_TAPS = 13;  // выборки карты горизонта (тень земли, docs/horizon.md)
 // Кеш поверхности земли (docs/gcache.md): страницы, прочитанные кадром; запечённые; не получившие места;
 // поверхности земли, посчитанные освещением мимо кеша (крутые склоны, нет места)
 constexpr u32 STAT_GC_USED = 14, STAT_GC_BAKED = 15, STAT_GC_OVER = 16, STAT_GC_PX_DIRECT = 17;
@@ -187,6 +191,17 @@ struct GcacheGpu {
     u32 layers[8] = {};
     VkPipeline pipe_scan = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE, pipe_bake = VK_NULL_HANDLE;
     u8 rg_table = 0, rg_pages = 0, rg_texels = 0, rg_req = 0, rg_cells = 0;
+};
+
+// Карта горизонта земли (vk_horizon.cpp, docs/horizon.md): H_DIRS/2 слов u32 на узел сетки 8 м. Собирается
+// одним проходом в первом кадре после загрузки земли и дальше только читается
+struct HorizonGpu {
+    GpuBuffer map;
+    VkPipeline pipe = VK_NULL_HANDLE;
+    u8 rg_map = 0;
+    bool dirty = false;  // земля новая — собрать в этом кадре
+    u32 nx = 0, nz = 0;
+    f32 h_max = 0;
 };
 
 // Диагностика GPU (vk_diag.cpp): что умеет драйвер для разбора сбоя, буфер меток AMD, счётчики GPU
@@ -297,6 +312,7 @@ struct VkState {
     TerrainGpu terrain;
     WorldGpu world;
     GcacheGpu gcache;
+    HorizonGpu horizon;
     // Froxels (vk_froxel.cpp): клетки 64×64 пикселя × FROXEL_Z слоёв глубины
     GpuBuffer froxels;     // списки на клетку, FROXEL_STRIDE u32
     GpuBuffer media;       // среда на клетку (туман и пыль, vec4) — место для света пользователя, пока нули
@@ -385,6 +401,13 @@ void vk_world_shutdown();
 void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
 // Кеш поверхности земли (vk_gcache.cpp, docs/gcache.md): конвейеры; буферы под кадр и сброс при смене того, из
 // чего считаются тексели (images — картинки кадра мира есть); прочитанные счётчики кадра (рост пула)
+// Карта горизонта (vk_horizon.cpp, docs/horizon.md): конвейер сборки; буфер под землю (render_terrain_set);
+// адрес и готовность в кадр
+bool vk_horizon_init();
+void vk_horizon_shutdown();
+bool vk_horizon_terrain(const u16 *height, u32 nx, u32 nz);
+void vk_horizon_fill(FrameGpu &g, const RenderFrame &f);
+void vk_horizon_free();
 bool vk_gcache_init();
 void vk_gcache_shutdown();
 void vk_gcache_fill(FrameGpu &g, const RenderFrame &f, bool images);

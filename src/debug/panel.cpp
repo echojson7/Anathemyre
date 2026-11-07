@@ -70,8 +70,8 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
         ui_value(f, "плитки земли на пиксель", t);
         pair_value(f, "пиксели земли · сеток", in.work_px[1], in.work_px[2]);
         pair_value(f, "поверхности земли · сеток", in.work_surf[0], in.work_surf[1]);
-        count_str(in.work_steps, t, sizeof t);
-        ui_value(f, "шаги тени рельефа", t);
+        count_str(in.work_shadow, t, sizeof t);
+        ui_value(f, "выборки тени земли", t);
         // Кеш земли (docs/gcache.md): страниц в кадре и запечено за кадр; поверхности земли мимо кеша
         pair_value(f, "кеш земли: страниц · запечено", in.work_gc[0], in.work_gc[1]);
         pair_value(f, "земля мимо кеша · без места", in.work_gc[3], in.work_gc[2]);

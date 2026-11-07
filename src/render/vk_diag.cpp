@@ -279,7 +279,7 @@ bool render_work(RenderWork &out) {
     out.px_mesh = w.work[STAT_PX_MESH];
     out.surf_ground = w.work[STAT_SURF_GROUND];
     out.surf_mesh = w.work[STAT_SURF_MESH];
-    out.shadow_steps = w.work[STAT_SHADOW_STEPS];
+    out.shadow_taps = w.work[STAT_SHADOW_TAPS];
     out.gc_used = w.work[STAT_GC_USED];
     out.gc_baked = w.work[STAT_GC_BAKED];
     out.gc_over = w.work[STAT_GC_OVER];
