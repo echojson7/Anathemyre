@@ -251,6 +251,7 @@ struct RenderWork {
     // Кеш поверхности земли (docs/gcache.md): страницы, прочитанные кадром; запечённые; без места; поверхности
     // земли, посчитанные освещением мимо кеша (крутые склоны, нет места)
     u32 gc_used, gc_baked, gc_over, gc_direct;
+    const char *gc_off;  // почему кеш земли выключен (nullptr — включён); в --work не пишется
 };
 bool render_work(RenderWork &out);
 // Процессорное время последнего render_frame по частям, мс (docs/frame_time.md). Ожидание — fence, acquire и

@@ -281,6 +281,7 @@ int run_window(const Args &a, AppMemory &m) {
                 di.work_gc[1] = work.gc_baked;
                 di.work_gc[2] = work.gc_over;
                 di.work_gc[3] = work.gc_direct;
+                di.gc_off = work.gc_off;
                 di.overflows = nover_last;
                 for (u32 i = 0; i < nover_last; ++i) {
                     di.over_what[i] = over_last[i].what;
@@ -499,6 +500,7 @@ int run_window(const Args &a, AppMemory &m) {
                 log_info("%s", line);
             }
             log_frame_parts(*prof);
+            if (work_have && work.gc_off) log_info("кеш земли выключен: %s — вся земля считается на пиксель", work.gc_off);
             if (work_have)
                 log_info("работа освещения: плитки небо %u земля %u сетки %u смесь %u земля на пиксель %u · пиксели небо %u земля %u "
                          "сетки %u · поверхности земли %u сеток %u · шаги тени %u · кеш земли: страниц %u запечено %u "

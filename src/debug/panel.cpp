@@ -73,7 +73,12 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
         count_str(in.work_steps, t, sizeof t);
         ui_value(f, "шаги тени рельефа", t);
         // Кеш земли (docs/gcache.md): страниц в кадре и запечено за кадр; поверхности земли мимо кеша
-        pair_value(f, "кеш земли: страниц · запечено", in.work_gc[0], in.work_gc[1]);
+        if (in.gc_off) {
+            snprintf(t, sizeof t, "выкл: %s", in.gc_off);
+            ui_value(f, "! кеш земли", t);  // вся земля — на пиксель, кадр медленнее
+        } else {
+            pair_value(f, "кеш земли: страниц · запечено", in.work_gc[0], in.work_gc[1]);
+        }
         pair_value(f, "земля мимо кеша · без места", in.work_gc[3], in.work_gc[2]);
     }
     // Переполнения (docs/graph.md «Переполнения»): что-то не нарисовано или считается медленным путём

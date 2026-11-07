@@ -181,6 +181,7 @@ struct GcacheGpu {
     i32 tpc0 = 0;
     bool reset = true;       // очистить окна и страницы в начале следующего кадра мира
     bool on = false;         // кеш в этом кадре (иначе вся земля — на пиксель в «смеси»)
+    const char *off = nullptr;  // почему кеш выключен (F3, журнал); nullptr — включён или земли нет
     u32 grow = 0;            // заявок без места в прочитанном кадре: пул растёт перед следующим кадром
     u32 materials_gen = 0, terrain_gen = 0, seen_materials = ~0u, seen_terrain = ~0u;
     f32 cell_min = 0, cell_pixels = 0;
