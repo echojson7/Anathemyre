@@ -181,15 +181,6 @@ static const ViewMesh *find_mesh(const ViewAssets &a, u64 name) {
     return nullptr;
 }
 
-// LOD по ошибке на экране: самый грубый, у которого ошибка упрощения не больше LOD_PIXELS пикселя кадра
-constexpr f32 LOD_PIXELS = 0.75f;
-static u32 pick_lod(const ViewMesh &m, f32 scale, f32 dist, f32 pixel_angle) {
-    f32 limit = LOD_PIXELS * pixel_angle * f_max(dist, 0.1f);
-    u32 lod = 0;
-    while (lod + 1 < m.lod_count && m.lod_error[lod + 1] * scale <= limit) lod++;
-    return lod;
-}
-
 // Кватернион → два u32 по два snorm16 (как unpackSnorm2x16 в шейдере)
 static u32 pack_snorm2(f32 a, f32 b) {
     auto q = [](f32 v) -> u32 {
@@ -294,10 +285,8 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     f32 s, c;
     sincos_turn(turn_from_rad(fov_rad(cam) * 0.5f), &s, &c);
     v.tan_half_fov = s / c;
-    const f32 pixel_angle = 2.0f * v.tan_half_fov / (f32)(in.height > 0 ? in.height : 1080);  // радиан на пиксель
     v.near_m = NEAR_M;
     out.style.pixel = in.pixel;
-    out.style.forward = in.forward;
     out.style.froxel_heat = in.froxel_heat;
     out.style.gcache = !in.gcache_off;
 
@@ -322,7 +311,6 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     if (in.scatter && cur.terrain) scatter_update(*in.scatter, *cur.terrain, eye, assets.rocks);
     u32 nscat = in.scatter ? in.scatter->count : 0;
     RenderInstance *inst = arena_push<RenderInstance>(frame, n + nscat + 1);
-    RenderDraw *draws = arena_push<RenderDraw>(frame, n + nscat + 1);
     u32 ni = 0;
     for (u32 i = 0; i < n && ni < RENDER_MAX_INSTANCES; ++i) {
         if (!cur.prop_gen[i]) continue;
@@ -343,24 +331,12 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
         r.material = cur.prop_material[i] && assets.materials ? material_find(*assets.materials, cur.prop_material[i])
                                                              : RENDER_NO_MATERIAL;
         r.seed = cur.prop_seed[i];
-        Vec3 rel = delta(eye, r.cx, r.cz, r.x, r.y, r.z);
-        u32 lod = pick_lod(*vm, r.scale, length(rel), pixel_angle);
-        draws[ni] = {render_key(LAYER_OPAQUE, PIPE_MESH, mesh, lod, dot(rel, b.forward)), ni, 0};
         ni++;
     }
-    // Рассыпка камней: экземпляры — все (кадр мира отсекает сам, а постоянный список на GPU не должен сдвигаться
-    // от поворота камеры), вызовы forward — только перед камерой
-    u32 nd = ni;
-    for (u32 i = 0; i < nscat && ni < RENDER_MAX_INSTANCES; ++i) {
-        const RenderInstance &r = in.scatter->items[i];
-        Vec3 rel = delta(eye, r.cx, r.cz, r.x, r.y, r.z);
-        f32 depth = dot(rel, b.forward);
-        inst[ni] = r;
-        if (depth >= -2.0f) draws[nd++] = {render_key(LAYER_OPAQUE, PIPE_MESH, r.mesh, 0, depth), ni, 0};
-        ni++;
-    }
+    // Рассыпка камней: экземпляры — все (кадр мира отсекает и выбирает LOD сам, а постоянный список на GPU не
+    // должен сдвигаться от поворота камеры)
+    for (u32 i = 0; i < nscat && ni < RENDER_MAX_INSTANCES; ++i) inst[ni++] = in.scatter->items[i];
     out.instances = {inst, ni};
-    out.draws = {draws, nd};
     if (cur.decals) build_decals(*cur.decals, assets, eye, frame, out);
     if (in.test_lights && cur.terrain) build_test_lights(cam, *cur.terrain, eye, frame, out);
 

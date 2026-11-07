@@ -299,7 +299,6 @@ static bool create_frames() {
         if (!vk_check(vkCreateSemaphore(g_vk.device, &si, nullptr, &f.acquired), "vkCreateSemaphore")) return false;
         const VkBufferUsageFlags ssbo = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
         if (!vk_create_buffer(f.frame, sizeof(FrameGpu), ssbo)) return false;
-        if (!vk_create_buffer(f.instances, RENDER_MAX_INSTANCES * sizeof(RenderInstance), ssbo)) return false;
         if (!vk_create_buffer(f.points, RENDER_MAX_POINTS * sizeof(RenderPoint), ssbo)) return false;
         if (!vk_create_buffer(f.lines, RENDER_MAX_LINE_VERTICES * sizeof(RenderLineVertex), ssbo)) return false;
         if (!vk_create_buffer(f.decals, RENDER_MAX_DECALS * sizeof(RenderDecal), ssbo)) return false;
@@ -346,7 +345,6 @@ void render_shutdown() {
         if (g_vk.queries) vkDestroyQueryPool(g_vk.device, g_vk.queries, nullptr);
         for (FrameSlot &f : g_vk.frames) {
             vk_destroy_buffer(f.frame);
-            vk_destroy_buffer(f.instances);
             vk_destroy_buffer(f.points);
             vk_destroy_buffer(f.lines);
             vk_destroy_buffer(f.decals);

@@ -1,0 +1,8 @@
+# Потолки работы кадра CI (docs/budget.md, «Проверка в CI»): имя, предел на пиксель кадра, «плитку» — на плитку.
+# Поднимать только вместе со строкой в docs/decisions.md
+shadow_taps 1.0
+surf_ground 0.8
+surf_mesh 0.3
+gc_direct 0.05
+tiles_ground_px 0.05 плитку
+gc_baked 0

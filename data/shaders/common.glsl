@@ -82,7 +82,6 @@ layout(buffer_reference, scalar) buffer CullData { uint draw_count, pad0, pad1, 
 // Не readonly: через него compute-шейдеры неба пишут свои таблицы (sky_*), сам буфер кадра никто не пишет
 layout(buffer_reference, scalar) buffer FrameData {
     Vertices vertices;
-    Instances instances;
     Materials materials;
     Lines lines;
     Points points;

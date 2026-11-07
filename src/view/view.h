@@ -35,8 +35,6 @@ struct Camera {
 struct ViewMesh {
     u64 name;
     u32 id;
-    u32 lod_count;                         // LOD сетки (1 — без упрощения)
-    f32 lod_error[RENDER_MESH_MAX_LODS];   // ошибка упрощения LOD, м
 };
 constexpr u32 VIEW_MAX_MESHES = 1024;
 struct ViewAssets {
@@ -55,7 +53,6 @@ struct ViewInput {
     const DebugDraw *dbg;   // может быть nullptr
     i32 width, height;      // пиксели кадра
     bool pixel;             // правило ячейки (P)
-    bool forward;           // старый forward вместо кадра мира (F3, --forward)
     bool test_lights;       // тестовые огни вокруг опоры камеры (F3): проверка списков froxels
     bool froxel_heat;       // тепловая карта числа огней по клеткам (F3)
     bool gcache_off;        // без кеша поверхности земли: земля на пиксель (F3, --nogcache)

@@ -23,7 +23,7 @@ static bool parse_u64(const char *s, u64 &out) {
 }
 
 static void usage() {
-    log_info("anathemyre [--seed N] [--novsync] [--validation | --gpuav] [--frames N] [--record файл.rec] [--nopixel] [--forward] [--nohud]");
+    log_info("anathemyre [--seed N] [--novsync] [--validation | --gpuav] [--frames N] [--record файл.rec] [--nopixel] [--nohud]");
     log_info("           [--gpuav-skip a.comp,b.frag]                                 шейдеры без проверки на GPU");
     log_info("           [--lights] [--heat]                                          тестовые огни, огни по клеткам froxels");
     log_info("           [--nogcache]                                                 без кеша поверхности земли (сравнение)");
@@ -102,7 +102,6 @@ int main(int argc, char **argv) {
             i += 5;
         }
         else if (!strcmp(s, "--nopixel")) a.nopixel = true;
-        else if (!strcmp(s, "--forward")) a.forward = true;
         else if (!strcmp(s, "--lights")) a.test_lights = true;
         else if (!strcmp(s, "--heat")) a.froxel_heat = true;
         else if (!strcmp(s, "--nogcache")) a.nogcache = true;

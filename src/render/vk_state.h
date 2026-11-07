@@ -31,7 +31,7 @@ struct GpuImage {
 
 // Данные кадра для шейдеров (FrameData в data/shaders/common.glsl), пишутся раз за кадр
 struct FrameGpu {
-    VkDeviceAddress vertices, instances, materials, lines, points;
+    VkDeviceAddress vertices, materials, lines, points;
     VkDeviceAddress t_height, t_mask;
     VkDeviceAddress t_water, t_mask2, t_dune, t_fine;
     i32 cam_cx, cam_cz;
@@ -134,7 +134,6 @@ struct FrameSlot {
     VkFence done = VK_NULL_HANDLE;
     VkSemaphore acquired = VK_NULL_HANDLE;
     GpuBuffer frame;      // FrameGpu
-    GpuBuffer instances;  // экземпляры в порядке ключей
     GpuBuffer points;
     GpuBuffer lines;
     GpuBuffer decals;
@@ -142,7 +141,6 @@ struct FrameSlot {
     GpuBuffer inst_upload;  // изменившиеся экземпляры кадра мира → постоянный буфер на GPU (копией)
     GpuBuffer readback;     // число видимых кластеров и счётчики GPU кадра (READBACK_*)
     u8 rg_readback = 0;     // он же в графе кадра
-    bool world = false;     // кадр мира (visibility buffer), а не forward
     bool stats_pending = false;  // readback заполнит отправленный кадр
     u32 marks = 0;          // записано меток времени
     const char *mark_names[GPU_MAX_MARKS] = {};  // проход, который кончается меткой k (k ≥ 1)
@@ -302,11 +300,8 @@ struct VkState {
     VkExtent2D capture_extent = {};
 
     VkPipelineLayout layout = VK_NULL_HANDLE;
-    VkPipeline pipe_mesh = VK_NULL_HANDLE;
-    VkPipeline pipe_ground = VK_NULL_HANDLE;
     VkPipeline pipe_points = VK_NULL_HANDLE;
     VkPipeline pipe_lines = VK_NULL_HANDLE;
-    VkPipeline pipe_sky = VK_NULL_HANDLE;
     SkyGpu sky;
 
     TerrainGpu terrain;

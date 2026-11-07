@@ -19,6 +19,7 @@ constexpr u32 DIM = ui_rgba(150, 149, 144);
 constexpr u32 FAINT = ui_rgba(98, 98, 95);
 constexpr u32 ON = ui_rgba(226, 224, 216);
 constexpr u32 OFF = ui_rgba(64, 64, 63);
+constexpr u32 WARN = ui_rgba(255, 140, 90);  // предупреждение: замер не честный (docs/budget.md)
 }  // namespace ui_col
 
 // Кегли на 1080p при размере текста 1: мелкий (подписи разделов), основной, крупный (счётчик к/с, заголовки)
@@ -81,7 +82,7 @@ UiForm ui_form(f32 x, f32 y, f32 w);
 // Подпись раздела заглавными мелким кеглем и линия под ней
 void ui_section(UiForm &f, const char *title);
 // Строка «подпись — значение» (только чтение)
-void ui_value(UiForm &f, const char *label, const char *value);
+void ui_value(UiForm &f, const char *label, const char *value, u32 rgba = ui_col::TEXT);
 bool ui_toggle(UiForm &f, const char *label, bool &v);
 // Ползунок; fmt — printf-формат значения справа от подписи (например "%.2f×"), shown — готовый текст вместо него
 bool ui_slider(UiForm &f, const char *label, f32 &v, f32 lo, f32 hi, f32 step, const char *fmt,

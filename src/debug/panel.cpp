@@ -43,6 +43,9 @@ static void pair_value(UiForm &f, const char *label, u64 a, u64 b) {
 static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     char t[96];
     ui_section(f, "КАДР");
+    // Замер с отладочным режимом нельзя сравнивать с бюджетом (docs/budget.md) — первой строкой
+    if (in.unfair && in.unfair[0]) ui_value(f, "! не для замера", in.unfair, ui_col::WARN);
+    else ui_value(f, "замер", "честный");
     snprintf(t, sizeof t, "%.0f · %.2f мс", in.fps, in.frame_ms);
     ui_value(f, "к/с · кадр", t);
     snprintf(t, sizeof t, "%.2f мс", in.frame_max_ms);
@@ -58,10 +61,8 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
         snprintf(name, sizeof name, "  %s", in.pass_names[i] ? in.pass_names[i] : "?");
         ui_value(f, name, t);
     }
-    if (!d.forward) {
-        snprintf(t, sizeof t, "%u", in.vis_clusters);
-        ui_value(f, "видимых кластеров", t);
-    }
+    snprintf(t, sizeof t, "%u", in.vis_clusters);
+    ui_value(f, "видимых кластеров", t);
     // Работа освещения (docs/tiles.md): сколько чего посчитано, а не за сколько
     if (in.work) {
         pair_value(f, "плитки неба · земли", in.work_tiles[0], in.work_tiles[1]);
@@ -132,7 +133,6 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_section(f, "ВИД");
     ui_toggle(f, "отрезки и точки", d.lines);
     ui_toggle(f, "пиксельное правило", d.pixel);
-    ui_toggle(f, "старый forward", d.forward);
     ui_toggle(f, "тестовые огни", d.test_lights);
     ui_toggle(f, "огни по клеткам", d.froxel_heat);
     ui_toggle(f, "без кеша земли", d.gcache_off);

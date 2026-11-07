@@ -19,7 +19,12 @@ void hud_fps(const Settings &s, const HudStats &st) {
     f32 w = wn + gap + wu;
     if (wf > w) w = wf;
     f32 cx = ui_width() * 0.5f, y = ui_px(14);
-    f32 h = lt + (s.fps == FPS_FULL ? ls + ui_px(2) : 0);
+    // Отладочный режим — строкой под счётчиком: такие к/с с бюджетом не сравнивают (docs/budget.md)
+    char warn[192] = "";
+    if (st.unfair && st.unfair[0]) snprintf(warn, sizeof warn, "не для замера: %s", st.unfair);
+    f32 ww = warn[0] ? ui_text_width(UI_SMALL, warn) : 0;
+    if (ww > w) w = ww;
+    f32 h = lt + (s.fps == FPS_FULL ? ls + ui_px(2) : 0) + (warn[0] ? ls + ui_px(2) : 0);
     f32 px = ui_px(22), py = ui_px(8);
     // Подложка едва видна: цифры читаются и на ярком небе
     ui_soft(cx - w * 0.5f - px, y - py, w + 2 * px, h + 2 * py, ui_rgba(12, 13, 14, 120), ui_px(10));
@@ -28,7 +33,12 @@ void hud_fps(const Settings &s, const HudStats &st) {
     // Подпись — по линии букв числа
     f32 base = y + ui_cap(UI_TITLE) + (lt - ui_cap(UI_TITLE)) * 0.5f;
     ui_text(x + wn + gap, base - ui_cap(UI_SMALL) - (ls - ui_cap(UI_SMALL)) * 0.5f, UI_SMALL, ui_col::DIM, u);
-    if (s.fps == FPS_FULL) ui_text_center(cx, y + lt + ui_px(2), UI_SMALL, ui_col::DIM, full);
+    f32 yl = y + lt + ui_px(2);
+    if (s.fps == FPS_FULL) {
+        ui_text_center(cx, yl, UI_SMALL, ui_col::DIM, full);
+        yl += ls + ui_px(2);
+    }
+    if (warn[0]) ui_text_center(cx, yl, UI_SMALL, ui_col::WARN, warn);
 }
 
 static const char *const TABS[HUD_TABS] = {"ЭКРАН", "ИНТЕРФЕЙС", "УПРАВЛЕНИЕ", "ОТЛАДКА"};
