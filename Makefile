@@ -113,7 +113,7 @@ $(shell ./tools/matgen.sh $(OUT))
 
 # Данные рядом с исполняемым файлом: описания и сетки (.mesh пишет tools/meshgen.py, лежат в data/meshes)
 DATA_SRC := data/materials.txt data/scene.txt data/sky.txt data/terrain.txt data/ui/plex.font $(sort $(wildcard data/meshes/*.mesh)) \
-            $(sort $(wildcard data/dunes/*.dun))
+            $(sort $(wildcard data/dunes/*.dun)) $(sort $(wildcard data/prefabs/*.txt))
 DATA_OUT := $(patsubst data/%,$(OUT)/data/%,$(DATA_SRC))
 
 .PHONY: all clean check sim-check sim-ref compdb toolchain third_party meshes
@@ -123,9 +123,22 @@ $(OUT)/data/%: data/%
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-# Пересобрать заглушки .mesh (результат лежит в git; CI проверяет, что генератор даёт те же байты)
-meshes:
-	python3 tools/meshgen.py data/meshes
+# Пересобрать детали .mesh (результат лежит в git; CI проверяет, что генератор даёт те же байты).
+# meshgen.py пишет сетку одним LOD, meshpack (meshoptimizer) строит LOD и кластеры. Инструмент собирается
+# закреплённым clang под Linux при любой TARGET: байты не зависят от того, для какой цели собирается игра
+MESHPACK := build/tools/meshpack
+MO_SRC := $(sort $(wildcard third_party/meshoptimizer/*.cpp))
+HOST_TC := $(ANA_CACHE)/llvm-$(LLVM_VER)
+$(MESHPACK): tools/meshpack/meshpack.cpp $(MO_SRC) third_party/meshoptimizer/meshoptimizer.h | $(HOST_TC)/.ok
+	@mkdir -p $(dir $@)
+	$(HOST_TC)/bin/clang++ -std=c++20 -O2 -march=x86-64-v3 -ffp-contract=off -fno-math-errno -w -isystem third_party \
+	  -stdlib=libc++ -fuse-ld=lld -static-libstdc++ -l:libc++abi.a tools/meshpack/meshpack.cpp $(MO_SRC) -o $@
+ifneq ($(HOST_TC)/.ok,$(TC_STAMP))
+$(HOST_TC)/.ok:
+	./tools/toolchain.sh linux
+endif
+meshes: $(MESHPACK)
+	python3 tools/meshgen.py data/meshes $(MESHPACK)
 
 # Компилятор и SDL3 — до любой компиляции
 $(TC_STAMP):

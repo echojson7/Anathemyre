@@ -6,6 +6,7 @@
 | volk | vulkan-sdk-1.4.363.0 | 54fc0d7a72887cbfc5b030d26897b2b40ac53fb8 | MIT | `volk.c`, `volk.h` |
 | VulkanMemoryAllocator | v3.5.0 | 0f1a757da579831283413295cc7f3b47eb521c77 | MIT | `vk_mem_alloc.h` |
 | vk-bootstrap | v1.4.367 | 294dc2cf9928d7ffce7ded39125d964b4f0362a0 | MIT | `src/*` |
+| meshoptimizer | v1.3 | 9e1f07b159d3cb777f1c67ed31fc11fd117986f4 | MIT | `meshoptimizer.h` и 7 файлов `src/` (кластеры, упрощение, кеш и выборка вершин, индексы); только `tools/meshpack`, в игру не входит |
 
 `vma_impl.cpp` — наш файл: реализация VMA с функциями от volk.
 SDL3 (zlib) здесь не лежит: версия и sha256 в `tools/versions.sh`, собирает `tools/third_party.sh` (`docs/build.md`).

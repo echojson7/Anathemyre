@@ -20,6 +20,20 @@ struct RenderInstance {
 static_assert(sizeof(RenderInstance) == 48, "RenderInstance — 48 байт");
 constexpr u32 RENDER_NO_MATERIAL = 0xFFFFFFFFu;
 
+// Декаль (docs/ruin.md, «Декали»): коробка проекции относительно камеры, вид узора, материал, зерно. 48 байт,
+// как Decal в data/shaders/common.glsl
+enum RenderDecalKind : u32 { DECAL_STREAK = 0, DECAL_GRIME = 1, DECAL_DUST = 2, DECAL_STAIN = 3, DECAL_KINDS = 4 };
+struct RenderDecal {
+    f32 x, y, z;       // середина коробки, метры от камеры
+    f32 ux, uz;        // ось x коробки в мире (ux, 0, uz); ось z — (−uz, 0, ux)
+    f32 hx, hy, hz;    // половины сторон
+    u32 kind;          // RenderDecalKind
+    u32 material;      // номер в таблице материалов: цвет, шероховатость, сила
+    u32 seed;
+    u32 pad;
+};
+static_assert(sizeof(RenderDecal) == 48, "RenderDecal — 48 байт");
+
 struct RenderMaterial {
     u32 kind;
     u32 pad[3];
@@ -39,17 +53,21 @@ struct RenderPoint {
     u32 pad[3];
 };
 
-// Ключ порядка отрисовки (не адрес сетки): слой 4 бита | конвейер 8 | сетка 20 | глубина 32.
+// Ключ порядка отрисовки (не адрес сетки): слой 4 бита | конвейер 8 | сетка 17 | LOD 3 | глубина 32.
 // Глубина — биты положительного f32 расстояния: для непрозрачного ближние раньше
 enum RenderLayer : u32 { LAYER_OPAQUE = 0, LAYER_TRANSPARENT = 8 };
 enum RenderPipe : u32 { PIPE_MESH = 0 };
-inline u64 render_key(u32 layer, u32 pipe, u32 mesh, f32 depth) {
+inline u64 render_key(u32 layer, u32 pipe, u32 mesh, u32 lod, f32 depth) {
     u32 d;
     memcpy(&d, &depth, 4);
     if (depth < 0.0f) d = 0;
-    return ((u64)(layer & 0xF) << 60) | ((u64)(pipe & 0xFF) << 52) | ((u64)(mesh & 0xFFFFF) << 32) | d;
+    return ((u64)(layer & 0xF) << 60) | ((u64)(pipe & 0xFF) << 52) | ((u64)(mesh & 0x1FFFF) << 35) |
+           ((u64)(lod & 0x7) << 32) | d;
 }
-inline u32 render_key_mesh(u64 key) { return (u32)(key >> 32) & 0xFFFFF; }
+inline u32 render_key_mesh(u64 key) { return (u32)(key >> 35) & 0x1FFFF; }
+inline u32 render_key_lod(u64 key) { return (u32)(key >> 32) & 0x7; }
+// Сетка и LOD вместе: подряд идущие вызовы с одним значением сливаются в один вызов с экземплярами
+inline u32 render_key_mesh_lod(u64 key) { return (u32)(key >> 32) & 0xFFFFF; }
 inline u32 render_key_pipe(u64 key) { return (u32)(key >> 52) & 0xFF; }
 
 struct RenderDraw {
@@ -116,6 +134,7 @@ struct RenderFrame {
     Span<RenderDraw> draws;  // рендер сортирует по ключу на месте
     Span<const RenderPoint> points;
     Span<const RenderLineVertex> lines;  // пары вершин
+    Span<const RenderDecal> decals;      // все, что задевают видимое; шейдер перебирает их подряд (этап 5 — списки на клетку)
 };
 
 struct RenderConfig {
@@ -129,6 +148,7 @@ constexpr u32 RENDER_MAX_LINE_VERTICES = 32768;
 constexpr u32 RENDER_MAX_INSTANCES = 65536;
 constexpr u32 RENDER_MAX_MESHES = 4096;
 constexpr u32 RENDER_MAX_MATERIALS = 1024;
+constexpr u32 RENDER_MAX_DECALS = 512;
 
 bool render_init(const RenderConfig &cfg);
 void render_shutdown();
@@ -142,8 +162,13 @@ const char *render_device_name();
 
 // Сетки: номер в таблице (0 — нет сетки). Место в общих буферах вершин и индексов выдаёт виртуальный блок
 // VMA; освобождение — через несколько кадров, когда GPU их точно дорисовал. Загрузка ждёт копию на GPU
+// Индексы всех LOD лежат одним массивом, LOD — диапазон в нём (кусок LODS .mesh); без LOD — весь массив
 struct MeshVertex;
-u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices);
+constexpr u32 RENDER_MESH_MAX_LODS = 8;
+struct RenderLod {
+    u32 first_index, index_count;
+};
+u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices, Span<const RenderLod> lods);
 void render_mesh_destroy(u32 mesh);
 // Таблица материалов целиком (номер = место). Ждёт, пока GPU закончит кадры: только при загрузке
 bool render_set_materials(Span<const RenderMaterial> materials);

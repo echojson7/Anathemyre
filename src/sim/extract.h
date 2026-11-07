@@ -5,6 +5,7 @@
 
 struct Extract {
     const Terrain *terrain;  // земля не меняется после создания мира: кадр читает её напрямую
+    const Decals *decals;    // декали карты — тоже
     u64 step;
     Clock clock;
     u16 *gen;      // 0 — места нет или точка мертва

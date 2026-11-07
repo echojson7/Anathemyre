@@ -12,3 +12,7 @@ ring 3600
 locations valley desert
 # Дюны пустыни — карта 2 м из лидара дюн Algodones (USGS 3DEP, общественное достояние; tools/dunes)
 dunes 1 dunes/algodones.dun
+# pad x z w d [переход] — выровненная площадка под постройку (docs/terrain.md, «Штампы»): метры от начала
+#   координат, края — на сетке 8 м, высота — средняя по площадке
+# Руина этапа 4 (data/prefabs/ruin.txt) — на ровном межгрядье пустыни
+pad 11704 -2336 32 32 20

@@ -3,5 +3,11 @@
 #pragma once
 #include "world.h"
 
-// Разобрать и поставить объекты. false — ошибка, текст в err (с номером строки)
-bool scene_load(World &w, const u8 *text, usize size, char *err, usize err_cap);
+#include "../core/text.h"
+
+// Текст заготовки по имени (data/prefabs/<имя>.txt): читает app, он же кладёт её хеш в хеш описаний.
+// false — заготовки нет
+typedef bool (*ScenePrefabFn)(void *ctx, Str name, const u8 **text, usize *size);
+
+// Разобрать и поставить объекты и заготовки. false — ошибка, текст в err (с номером строки)
+bool scene_load(World &w, const u8 *text, usize size, ScenePrefabFn prefab, void *ctx, char *err, usize err_cap);

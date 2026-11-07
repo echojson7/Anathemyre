@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Генератор деталей-заглушек в формат .mesh (docs/mesh.md). Игра читает только .mesh (шов «ассеты офлайн»).
+"""Генератор деталей в формат .mesh (docs/mesh.md). Игра читает только .mesh (шов «ассеты офлайн»).
 
-    python3 tools/meshgen.py data/meshes      (или make meshes)
+    make meshes      (python3 tools/meshgen.py data/meshes build/tools/meshpack)
 
-Байты результата зависят только от этого файла: CI пересобирает и сравнивает с data/meshes в git.
-Детали — коробки с плоскими гранями, без UV (узор шейдер проецирует по миру). Начало координат сетки — середина
-низа: экземпляр с высотой земли стоит на земле.
+Здесь заглушки этапов 1–2 (кубы, столб, плита, камни), детали руины этапа 4 — в meshgen_ruin.py. Генератор
+пишет сетку одним LOD, а meshpack (tools/meshpack, meshoptimizer) склеивает вершины и строит LOD и кластеры.
+Байты результата зависят только от этих файлов и версии meshoptimizer: CI пересобирает и сравнивает с data/meshes.
+Детали без UV (узор шейдер проецирует по миру). Начало координат сетки — середина низа: экземпляр с высотой
+земли стоит на земле.
 """
 import os
 import struct
+import subprocess
 import sys
+import tempfile
 
 MAGIC = b"ANAMESH1"
 MAX_CLUSTER_TRIS = 124
@@ -206,14 +210,20 @@ MESHES = {"cube": cube, "pillar": pillar, "plate": plate,
 
 
 def main():
-    out_dir = sys.argv[1] if len(sys.argv) > 1 else "data/meshes"
+    if len(sys.argv) != 3:
+        sys.exit("использование: meshgen.py <папка> <meshpack>")
+    out_dir, meshpack = sys.argv[1], sys.argv[2]
     os.makedirs(out_dir, exist_ok=True)
-    for name, make in MESHES.items():
-        data = make().encode()
-        path = os.path.join(out_dir, name + ".mesh")
-        with open(path, "wb") as f:
-            f.write(data)
-        print("meshgen: %s (%d байт)" % (path, len(data)))
+    import meshgen_ruin  # детали руины берут Mesh отсюда
+    meshes = dict(MESHES)
+    meshes.update(meshgen_ruin.MESHES)
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, make in meshes.items():
+            raw = os.path.join(tmp, name + ".mesh")
+            with open(raw, "wb") as f:
+                f.write(make().encode())
+            path = os.path.join(out_dir, name + ".mesh")
+            subprocess.run([meshpack, raw, path], check=True)
 
 
 if __name__ == "__main__":

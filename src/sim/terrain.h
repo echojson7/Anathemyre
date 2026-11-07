@@ -1,7 +1,7 @@
 // Земля мира (docs/terrain.md): сетка высот 8 м на всю карту, маски и уровень воды 32 м из зерна (шумы целые,
 // эрозия — float по правилам шага мира), над ними слой деталей 1 м — одна целая функция terrain_node() у шага
 // мира и шейдера
-// (data/shaders/terrain.glsl). После создания земля не меняется (штампы локаций — этап 4, тоже при создании),
+// (data/shaders/terrain.glsl). После создания земля не меняется (штампы локаций — тоже при создании),
 // поэтому кадр читает её напрямую, а в хеш шага она не входит: её хеш — в хеше описаний записи повтора
 #pragma once
 #include "../core/mem.h"
@@ -17,6 +17,15 @@ constexpr u32 TERRAIN_DETAIL_OCTAVES = 5;
 enum TerrainBiome : u32 { BIOME_VALLEY = 0, BIOME_DESERT = 1 };
 constexpr u32 TERRAIN_MAX_LOCATIONS = 4;
 
+// Штамп «площадка» (docs/terrain.md, «Штампы»): выровнять прямоугольник под постройку. Метры от начала
+// координат, целые; край площадки — на сетке 8 м (расширяется наружу), за ним margin м плавного перехода
+constexpr u32 TERRAIN_MAX_PADS = 16;
+struct TerrainPad {
+    i32 x, z;      // середина
+    i32 w, d;      // стороны по x и z
+    i32 margin;    // ширина перехода к рельефу
+};
+
 // Описание земли (data/terrain.txt)
 struct TerrainDesc {
     u32 seed = 1;
@@ -28,6 +37,8 @@ struct TerrainDesc {
     char dune_path[TERRAIN_MAX_LOCATIONS][64] = {};
     const u8 *dune_data[TERRAIN_MAX_LOCATIONS] = {};
     usize dune_size[TERRAIN_MAX_LOCATIONS] = {};
+    TerrainPad pad[TERRAIN_MAX_PADS] = {};
+    u32 pad_count = 0;
 };
 // Карта дюн: узлы 2 м на всю локацию (сторона loc_m / 2 + 1), единицы 1/640 м
 constexpr i32 TERRAIN_FINE_SHIFT = 1;
@@ -61,6 +72,9 @@ bool terrain_desc_parse(const u8 *text, usize size, TerrainDesc &out, char *err,
 // Построить землю: память сетки — из world, временная — из scratch (откатывается). Испорченная карта дюн
 // (проверяет app, dune_map_check) — локация без дюн
 void terrain_generate(Terrain &t, const TerrainDesc &d, Arena &world, Arena &scratch);
+
+// Штампы описания по порядку (src/sim/terrain_stamp.cpp): правят готовые сетку, дюны и маски до хеша земли
+void terrain_stamps_apply(Terrain &t, const TerrainDesc &d);
 
 // Октава слоя деталей: период 2^lp м, размах amp единиц при шероховатости 255. Таблицу получает и шейдер
 void terrain_detail_octave(u32 k, i32 *lp, i32 *amp);

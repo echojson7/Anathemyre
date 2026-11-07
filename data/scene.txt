@@ -7,3 +7,6 @@ prop cube    3.5 9.5  yaw 30
 prop pillar -3   10   yaw 12
 prop plate   1  14   yaw -8
 prop cube    1  14   lift 0.4 scale 0.5 yaw 45 material ochre_paint
+# prefab <имя> <x> <z> [yaw 0|90|180|270]: заготовка data/prefabs/<имя>.txt, высота — земля под серединой
+# Руина этапа 4 — на площадке в пустыне (pad в data/terrain.txt)
+prefab ruin 11704 -2336

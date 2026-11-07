@@ -12,6 +12,8 @@ struct Instance { int cx, cz; float x, y, z; uint rot_xy, rot_zw; float scale; u
 // Материал — RenderMaterial, 64 байта: p0 = color.rgb + rough, p1 = color2.rgb + texel, p2 = extra
 struct Material { uint kind, pad0, pad1, pad2; vec4 p0, p1, p2; };
 struct LineVtx { float x, y, z; uint rgba; };
+// Декаль — RenderDecal (src/render/render.h), 48 байт
+struct Decal { vec3 c; float ux, uz; vec3 h; uint kind, material, seed, pad; };
 struct PointVtx { float x, y, z, size; uint rgba, pad0, pad1, pad2; };
 
 layout(buffer_reference, scalar) readonly buffer Vertices { Vertex v[]; };
@@ -20,6 +22,7 @@ layout(buffer_reference, scalar) readonly buffer Materials { Material v[]; };
 layout(buffer_reference, scalar) readonly buffer Lines { LineVtx v[]; };
 layout(buffer_reference, scalar) readonly buffer Points { PointVtx v[]; };
 layout(buffer_reference, scalar) readonly buffer Words { uint v[]; };
+layout(buffer_reference, scalar) readonly buffer Decals { Decal v[]; };
 layout(buffer_reference, scalar) buffer Vec4s { vec4 v[]; };  // таблицы неба (пишут sky_*.comp)
 
 // Не readonly: через него compute-шейдеры неба пишут свои таблицы (sky_*), сам буфер кадра никто не пишет
@@ -74,6 +77,8 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec4 a_star[3];    // строки поворота «вид → небесная сфера»; w у [0] — яркость звёзд
     vec4 a_post;       // x — множитель экспозиции, y — степень привыкания глаза, z — освещённость «нормы», w — синева ночи
     vec4 a_misc;       // x — множитель рассеянного света неба
+    Decals decals;     // декали (docs/ruin.md), decal_count подряд
+    uint decal_count, decal_pad;
 };
 
 layout(push_constant, scalar) uniform Push {

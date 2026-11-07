@@ -11,12 +11,70 @@ material ground ground
     texel 0.1
     extra 24 0.55 0.35 0
 
+# Бетон руины (docs/ruin.md, по концепту): светлый серо-бежевый монолит, щиты опалубки 1 × 0.5 м,
+# анкеры с шагом 0.5 м; extra — высота щита, ширина щита, шаг анкеров, сила пятен
 material concrete concrete
-    color 0.36 0.35 0.33
-    color2 0.17 0.15 0.13
+    color 0.37 0.355 0.325
+    color2 0.21 0.19 0.16
+    rough 0.88
+    texel 0.025
+    extra 0.5 1 0.5 0.55
+
+# Низ плит: чуть темнее стен, без опалубки, пятна сырости
+material concrete_soffit concrete
+    color 0.36 0.345 0.32
+    color2 0.21 0.19 0.165
+    rough 0.92
+    texel 0.025
+    extra 0 0 0 0.3
+
+# Пол (верх плит и цоколя): темнее и бурее стен, вытерт, без опалубки
+material concrete_floor concrete
+    color 0.26 0.235 0.205
+    color2 0.17 0.145 0.12
+    rough 0.93
+    texel 0.025
+    extra 0 0 0 0.7
+
+# Излом: свежий скол светлее, крупное зерно заполнителя
+material concrete_break concrete
+    color 0.47 0.44 0.39
+    color2 0.27 0.24 0.20
+    rough 0.95
+    texel 0.0625
+    extra 0 0 0 0.25
+
+# Декали руины (docs/ruin.md, «Декали»): вид узора задаёт заготовка, здесь — цвет, шероховатость и сила
+# (extra a). Вид flat: сам по себе эти материалы не рисуются
+material decal_water flat
+    color 0.17 0.16 0.145
+    rough 0.75
+    extra 0.75 0 0 0
+
+material decal_grime flat
+    color 0.16 0.13 0.10
+    rough 0.95
+    extra 0.8 0 0 0
+
+material decal_dust flat
+    color 0.40 0.33 0.245
+    rough 1
+    extra 0.55 0 0 0
+
+material decal_stain flat
+    color 0.13 0.12 0.105
     rough 0.9
-    texel 0.1
-    extra 1 0.8 0.35 0
+    extra 0.4 0 0 0
+
+material decal_damp flat
+    color 0.17 0.145 0.12
+    rough 0.85
+    extra 0.4 0 0 0
+
+material decal_salt flat
+    color 0.58 0.56 0.52
+    rough 0.95
+    extra 0.55 0 0 0
 
 material rust_metal metal
     color 0.20 0.21 0.21

@@ -43,9 +43,31 @@ void world_init(World &w, Arena &arena, u64 seed, const TerrainDesc &terrain, Ar
     p.scale = arena_push<f32>(arena, PROPS_CAPACITY);
     p.seed = arena_push<u32>(arena, PROPS_CAPACITY);
     p.count = 0;
+
+    Decals &dc = w.decals;
+    dc.kind = arena_push<u64>(arena, DECALS_CAPACITY);
+    dc.material = arena_push<u64>(arena, DECALS_CAPACITY);
+    dc.cx = arena_push<i32>(arena, DECALS_CAPACITY);
+    dc.cz = arena_push<i32>(arena, DECALS_CAPACITY);
+    dc.x = arena_push<f32>(arena, DECALS_CAPACITY);
+    dc.y = arena_push<f32>(arena, DECALS_CAPACITY);
+    dc.z = arena_push<f32>(arena, DECALS_CAPACITY);
+    dc.yaw = arena_push<u32>(arena, DECALS_CAPACITY);
+    dc.hx = arena_push<f32>(arena, DECALS_CAPACITY);
+    dc.hy = arena_push<f32>(arena, DECALS_CAPACITY);
+    dc.hz = arena_push<f32>(arena, DECALS_CAPACITY);
+    dc.seed = arena_push<u32>(arena, DECALS_CAPACITY);
+    dc.count = 0;
 }
 
 bool props_add(World &w, u64 mesh, u64 material, const WPos &at, f32 lift, u32 yaw, f32 scale, u32 seed) {
+    WPos q = at;
+    wpos_rebase(q);
+    q.y = ground_at(w.terrain, q).height + lift;
+    return props_add_at(w, mesh, material, q, yaw, scale, seed);
+}
+
+bool props_add_at(World &w, u64 mesh, u64 material, const WPos &at, u32 yaw, f32 scale, u32 seed) {
     Props &p = w.props;
     if (p.count >= PROPS_CAPACITY) return false;
     u32 s = p.count++;
@@ -59,10 +81,31 @@ bool props_add(World &w, u64 mesh, u64 material, const WPos &at, f32 lift, u32 y
     p.cz[s] = q.cz;
     p.x[s] = q.x;
     p.z[s] = q.z;
-    p.y[s] = ground_at(w.terrain, q).height + lift;
+    p.y[s] = q.y;
     p.yaw[s] = yaw;
     p.scale[s] = scale;
     p.seed[s] = seed;
+    return true;
+}
+
+bool decals_add(World &w, u64 kind, u64 material, const WPos &at, u32 yaw, const f32 h[3], u32 seed) {
+    Decals &d = w.decals;
+    if (d.count >= DECALS_CAPACITY) return false;
+    u32 s = d.count++;
+    WPos q = at;
+    wpos_rebase(q);
+    d.kind[s] = kind;
+    d.material[s] = material;
+    d.cx[s] = q.cx;
+    d.cz[s] = q.cz;
+    d.x[s] = q.x;
+    d.y[s] = q.y;
+    d.z[s] = q.z;
+    d.yaw[s] = yaw;
+    d.hx[s] = h[0];
+    d.hy[s] = h[1];
+    d.hz[s] = h[2];
+    d.seed[s] = seed;
     return true;
 }
 
@@ -147,6 +190,21 @@ u32 world_columns(const World &w, Column *out) {
     out[k++] = column("props.scale", p.scale, np);
     out[k++] = column("props.seed", p.seed, np);
     out[k++] = column("props.count", &p.count, 1);
+    const Decals &dc = w.decals;
+    const u32 nd = DECALS_CAPACITY;
+    out[k++] = column("decals.kind", dc.kind, nd);
+    out[k++] = column("decals.material", dc.material, nd);
+    out[k++] = column("decals.cx", dc.cx, nd);
+    out[k++] = column("decals.cz", dc.cz, nd);
+    out[k++] = column("decals.x", dc.x, nd);
+    out[k++] = column("decals.y", dc.y, nd);
+    out[k++] = column("decals.z", dc.z, nd);
+    out[k++] = column("decals.yaw", dc.yaw, nd);
+    out[k++] = column("decals.half", dc.hx, nd);
+    out[k++] = column("decals.half_y", dc.hy, nd);
+    out[k++] = column("decals.half_z", dc.hz, nd);
+    out[k++] = column("decals.seed", dc.seed, nd);
+    out[k++] = column("decals.count", &dc.count, 1);
     ANA_CHECK(k <= MAX_COLUMNS);
     return k;
 }
