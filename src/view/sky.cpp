@@ -23,7 +23,9 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"ozone", &d.ozone, 1},           {"alt0", &d.alt0, 1},           {"ground", d.ground, 3},
         {"stars", &d.stars, 1},           {"night_glow", &d.night_glow, 1}, {"exposure", &d.exposure, 1},
         {"adapt", &d.adapt, 1},           {"exposure_ref", &d.exposure_ref, 1}, {"night_blue", &d.night_blue, 1},
-        {"sky_gain", &d.sky_gain, 1},
+        {"sky_gain", &d.sky_gain, 1},     {"desert_mie", &d.desert_mie, 1}, {"desert_haze", &d.desert_haze, 1},
+        {"desert_haze_height", &d.desert_haze_height, 1}, {"desert_haze_tint", d.desert_haze_tint, 3},
+        {"desert_ground", d.desert_ground, 3},
     };
     TextReader r = text_reader(text, size);
     TextLine l;
@@ -45,8 +47,8 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
                 return false;
             }
     }
-    if (d.haze_height < 10.0f || d.mie_g <= -0.99f || d.mie_g >= 0.99f || d.sun <= 0.0f || d.exposure_ref <= 0.0f) {
-        snprintf(err, err_cap, "haze_height ≥ 10, |mie_g| < 0.99, sun > 0, exposure_ref > 0");
+    if (d.haze_height < 10.0f || d.desert_haze_height < 10.0f || d.mie_g <= -0.99f || d.mie_g >= 0.99f || d.sun <= 0.0f || d.exposure_ref <= 0.0f) {
+        snprintf(err, err_cap, "haze_height и desert_haze_height ≥ 10, |mie_g| < 0.99, sun > 0, exposure_ref > 0");
         return false;
     }
     return true;
@@ -117,8 +119,20 @@ static void transmittance(const Air &a, f32 alt, const f32 dir[3], f32 radius, f
 
 static f32 lum(const f32 c[3]) { return 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]; }
 
-void sky_build(const SkyDesc &d, const Clock &clock, f64 ticks, f32 cam_y, RenderSky &o, RenderLight &key) {
+void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f32 cam_y, RenderSky &o,
+               RenderLight &key) {
     o = RenderSky{};
+    // Воздух пустыни: пыль и дымка смешиваются с воздухом долины (таблицы неба пересчитаются сами)
+    SkyDesc d = desc;
+    f32 w = desert < 0 ? 0 : (desert > 1 ? 1 : desert);
+    auto mix = [w](f32 a, f32 b) { return a + (b - a) * w; };
+    d.mie = mix(desc.mie, desc.desert_mie);
+    d.haze = mix(desc.haze, desc.desert_haze);
+    d.haze_height = mix(desc.haze_height, desc.desert_haze_height);
+    for (u32 k = 0; k < 3; ++k) {
+        d.haze_tint[k] = mix(desc.haze_tint[k], desc.desert_haze_tint[k]);
+        d.ground[k] = mix(desc.ground[k], desc.desert_ground[k]);
+    }
     const f64 deg = PI_D / 180.0;
     f64 days = ticks / (f64)(clock.day_ticks ? clock.day_ticks : 1);
     f64 frac = days - floor(days);

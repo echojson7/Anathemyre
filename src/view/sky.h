@@ -29,6 +29,12 @@ struct SkyDesc {
     f32 night_blue = 0.55f;    // синева и серость ночью
     f32 sky_gain = 2.0f;       // множитель рассеянного света неба: одно рассеяние с таблицей многократного
                                // даёт небо темнее настоящего в 2–3 раза (нет полной оптики пыли)
+    // Воздух пустыни: те же величины, вид смешивает их с воздухом выше по маске пустыни под камерой
+    f32 desert_mie = 1.0f;
+    f32 desert_haze = 0.10f;
+    f32 desert_haze_height = 900.0f;
+    f32 desert_haze_tint[3] = {0.92f, 0.84f, 0.70f};
+    f32 desert_ground[3] = {0.30f, 0.26f, 0.21f};
 };
 
 // Разобрать data/sky.txt поверх значений по умолчанию. false — ошибка, текст в err (с номером строки)
@@ -39,5 +45,6 @@ f64 sky_clock_ticks(const Clock &prev, const Clock &cur, f32 alpha);
 // Час дня 0..24 для заголовка окна
 f32 sky_hour(const Clock &c, f64 ticks);
 
-// Небо кадра и временный главный свет (солнце или луна). cam_y — высота глаза от нуля карты, м
-void sky_build(const SkyDesc &d, const Clock &clock, f64 ticks, f32 cam_y, RenderSky &out, RenderLight &key);
+// Небо кадра и временный главный свет (солнце или луна). desert — доля воздуха пустыни 0..1 (маска под
+// камерой), cam_y — высота глаза от нуля карты, м
+void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f32 cam_y, RenderSky &out, RenderLight &key);

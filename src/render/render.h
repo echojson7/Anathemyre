@@ -101,7 +101,9 @@ struct RenderSky {
 };
 static_assert(sizeof(RenderSky) == 16 * 16, "RenderSky — 16 vec4");
 
-constexpr u32 RENDER_GROUND_LAYERS = 6;  // песок, сухая земля, щебень, камень, трава, вода (GroundKind, src/sim/ground.h)
+// Слои земли: песок, сухая земля, щебень, камень, трава, вода (GroundKind, src/sim/ground.h), затем песок и камень
+// пустыни (тот же вид земли, другой материал — по маске пустыни)
+constexpr u32 RENDER_GROUND_LAYERS = 8;
 
 struct RenderFrame {
     RenderView view;
@@ -150,12 +152,20 @@ bool render_set_materials(Span<const RenderMaterial> materials);
 // в src/sim/terrain.h (рендер шаг мира не видит, их передаёт app). Рисуется clipmap'ом вокруг камеры
 constexpr u32 RENDER_TERRAIN_OCTAVES = 5;
 struct RenderTerrain {
-    const u16 *height;  // n·n
-    u32 n;
-    const u32 *mask;    // nm·nm: шероховатость, песок, трава, сырость
-    const u16 *water;   // nm·nm: уровень воды, 5 см; 0 — нет
-    u32 nm;
-    i32 chunk0, size_m;
+    const u16 *height;  // nx·nz
+    const u16 *dune;    // nx·nz: дюны в узлах сетки, 1/640 м
+    u32 nx, nz;
+    const u32 *mask;    // nmx·nmz: шероховатость, песок, трава, сырость
+    const u32 *mask2;   // nmx·nmz: сила дюн, пустыня
+    const u16 *water;   // nmx·nmz: уровень воды, 5 см; 0 — нет
+    const u16 *fine;    // карты дюн 2 м локаций подряд, 1/640 м (fine_n² на локацию); nullptr — нет
+    usize fine_count;
+    u32 fine_n;
+    i32 fine_off[4];    // начало карты локации, −1 — нет
+    i32 loc_m;          // сторона локации, м
+    u32 nmx, nmz;
+    i32 chunk0, size_x, size_z;
+    u32 dune_seed;
     i32 oct_lp[RENDER_TERRAIN_OCTAVES], oct_amp[RENDER_TERRAIN_OCTAVES];
     u32 oct_seed[RENDER_TERRAIN_OCTAVES];
 };

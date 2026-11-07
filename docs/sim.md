@@ -76,3 +76,6 @@
 ## Проверено (этап 0)
 Хеши 10 000 шагов совпадают у Linux clang `-O2`, Linux clang `-O0` с ASan, Linux gcc `-O2`, Windows `.exe`
 (Wine в контейнере, настоящий Windows — в CI). Шаг на 1000 точек ~15–20 мкс.
+
+## Пустыня
+`SIM_VERSION` 6: земля из двух локаций и дюны (`docs/terrain.md`) меняют хеш земли; эталон обновлён (`make sim-ref`).

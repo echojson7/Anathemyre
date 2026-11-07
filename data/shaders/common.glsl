@@ -32,6 +32,9 @@ layout(buffer_reference, scalar) buffer FrameData {
     Words t_height;     // сетка высот земли, u16 парами (docs/terrain.md)
     Words t_mask;       // маски 32 м, u32: шероховатость, песок, трава, сырость по байту
     Words t_water;      // уровень воды 32 м, u16 парами, 5 см; 0 — воды нет
+    Words t_mask2;      // маски 32 м, u32: сила дюн, пустыня по байту
+    Words t_dune;       // дюны в узлах сетки высот, u16 парами, 1/640 м
+    Words t_fine;       // карты дюн 2 м локаций пустынь, u16 парами, 1/640 м (лидар, симуляция ветра)
     ivec2 cam_chunk;
     vec3 cam_off;       // камера внутри своего чанка: x, z в [0, 256), y — высота
     float tan_half_fov;
@@ -42,7 +45,10 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec4 sun_dir, sun_color;  // временный свет: главный источник (солнце или луна) и его цвет у камеры
     vec2 viewport, ndc_per_pixel;
     // Земля: как Terrain в src/sim/terrain.h
-    int t_chunk0, t_size, t_n, t_nm;
+    int t_chunk0, t_size_x, t_size_z, t_nx, t_nz, t_nmx, t_nmz;
+    uint t_dune_seed;
+    int t_fine_off[4];    // карты дюн 2 м: начало локации в t_fine (номера u16), −1 — нет
+    int t_fine_n, t_loc_m;
     int t_oct_lp[5];
     int t_oct_amp[5];
     uint t_oct_seed[5];
@@ -50,7 +56,7 @@ layout(buffer_reference, scalar) buffer FrameData {
     // Clipmap: кольцо L — сетка (2n+1)² вершин с шагом 0.5·2^L м, начало в полуметрах от угла карты
     int clip_n, clip_levels, clip_morph, clip_pad;
     ivec4 clip[12];
-    uint ground_layers[8];  // материалы слоёв: песок, сухая земля, щебень, камень, трава, вода
+    uint ground_layers[8];  // материалы слоёв: песок, сухая земля, щебень, камень, трава, вода, песок и камень пустыни
     int t_mip[8];         // начало уровня k сглаженной сетки высот (шаг 8·2^k м) в буфере высот, номера u16
     // Небо и дымка (docs/sky.md): таблицы неба и параметры атмосферы (SkyGpu в src/render/vk_state.h)
     Vec4s sky_trans, sky_ms, sky_sun, sky_moon, sky_out;

@@ -34,7 +34,7 @@ static void usage() {
 
 void app_memory_init(AppMemory &m, bool with_record) {
     const usize MB = 1u << 20;
-    arena_init(m.world, platform_alloc(64 * MB), 64 * MB, "мир");  // земля ~27 МБ
+    arena_init(m.world, platform_alloc(128 * MB), 128 * MB, "мир");  // земля ~80 МБ (карта дюн 2 м — 52 МБ)
     arena_init(m.step, platform_alloc(1 * MB), 1 * MB, "шаг");
     arena_init(m.frame, platform_alloc(4 * MB), 4 * MB, "кадр");
     arena_init(m.load, platform_alloc(256 * MB), 256 * MB, "загрузка");

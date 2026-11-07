@@ -187,9 +187,17 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     v.near_m = NEAR_M;
     out.style.pixel = in.pixel;
 
-    // Небо, светила и временный главный свет — из часов мира (docs/sky.md)
+    // Небо, светила и временный главный свет — из часов мира (docs/sky.md). Воздух пустыни (пыль, тёплая
+    // дымка) — по маске пустыни под камерой, на перевале — плавно
+    f32 desert = 0.0f;
+    if (in.cur->terrain) {
+        const Terrain &t = *in.cur->terrain;
+        i32 gx = (eye.cx - t.chunk0) * (i32)CHUNK_M + f_floor_i(eye.x);
+        i32 gz = (eye.cz - t.chunk0) * (i32)CHUNK_M + f_floor_i(eye.z);
+        desert = (f32)terrain_masks2(t, gx, gz).desert / 255.0f;
+    }
     f64 ticks = sky_clock_ticks(in.prev->clock, in.cur->clock, in.alpha);
-    sky_build(assets.sky, in.cur->clock, ticks, eye.y, out.sky, out.light);
+    sky_build(assets.sky, desert, in.cur->clock, ticks, eye.y, out.sky, out.light);
     out.ground = in.cur->terrain != nullptr;
     for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) out.ground_layers[k] = assets.ground_layers[k];
 
