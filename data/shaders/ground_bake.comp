@@ -1,0 +1,16 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Вершины земли кадра мира (docs/frame.md «Вершины земли»): раз за кадр на все кольца clipmap'а, в g_verts.
+// Их читают visibility buffer (vis_ground.vert) и разбор пикселя (resolve.glsl) — без этого прохода каждый
+// пиксель земли считал бы три вершины заново, каждую с высотами соседей, переходом колец и водой
+#include "ground_vertex.glsl"
+layout(local_size_x = 64) in;
+
+void main() {
+    FrameData f = pc.frame;
+    int row = 2 * f.clip_n + 1;
+    int vi = int(gl_GlobalInvocationID.x), L = int(gl_GlobalInvocationID.y);
+    if (vi >= row * row) return;
+    GroundVtx g = ground_vertex(L, vi);
+    f.g_verts.v[L * row * row + vi] = GroundVert(g.rel, g.wdepth, g.normal, 0u);
+}

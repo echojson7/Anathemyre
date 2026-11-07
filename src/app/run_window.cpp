@@ -364,6 +364,15 @@ int run_window(const Args &a, AppMemory &m) {
             pass_frames = 0;
             hs = HudStats{(f64)frames_window / secs, st_frame.avg_last, st_cpu.avg_last, render_gpu_ms(), st_step.avg_last};
             log_info("%s", title);
+            // Проходы GPU за секунду — те же числа, что в F3, для журнала и сравнения на другой машине
+            if (npass_avg) {
+                char line[320];
+                i32 len = snprintf(line, sizeof line, "проходы GPU, мс:");
+                for (u32 i = 0; i < npass_avg && len > 0 && len < (i32)sizeof line; ++i)
+                    len += snprintf(line + len, sizeof line - (size_t)len, " %s %.3f", pass_names[i] ? pass_names[i] : "?",
+                                    pass_avg[i]);
+                log_info("%s", line);
+            }
             frames_window = 0;
             window_t0 = now;
         }
