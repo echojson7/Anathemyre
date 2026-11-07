@@ -237,6 +237,42 @@ static void build_decals(const Decals &d, const ViewAssets &assets, const WPos &
     out.decals = {dst, n};
 }
 
+// Тестовые огни (F3): по одному в клетке 8 м мира в круге TEST_LIGHTS_R м вокруг опоры камеры, место, высота,
+// радиус и цвет — из хеша клетки. Огни мира появятся с контентом; эти только проверяют списки froxels и дают
+// свету пользователя (этап 6) что освещать
+constexpr f32 TEST_LIGHT_CELL = 8.0f, TEST_LIGHTS_R = 44.0f;
+static void build_test_lights(const Camera &cam, const Terrain &t, const WPos &eye, Arena &frame, RenderFrame &out) {
+    const i32 per_chunk = (i32)(CHUNK_M / TEST_LIGHT_CELL), rc = (i32)(TEST_LIGHTS_R / TEST_LIGHT_CELL) + 1;
+    const WPos &c = cam.pivot;
+    i32 gx0 = c.cx * per_chunk + f_floor_i(c.x / TEST_LIGHT_CELL), gz0 = c.cz * per_chunk + f_floor_i(c.z / TEST_LIGHT_CELL);
+    RenderPointLight *ls = arena_push<RenderPointLight>(frame, (u32)((2 * rc + 1) * (2 * rc + 1)));
+    u32 n = 0;
+    for (i32 dz = -rc; dz <= rc; ++dz)
+        for (i32 dx = -rc; dx <= rc && n < RENDER_MAX_LIGHTS; ++dx) {
+            i32 gx = gx0 + dx, gz = gz0 + dz;
+            u64 h = hash_combine(hash_mix((u64)(u32)gx), (u64)(u32)gz);
+            auto u01 = [&](u32 k) { return (f32)((h >> (k * 12)) & 0xFFF) / 4095.0f; };
+            WPos p;
+            p.cx = gx >= 0 ? gx / per_chunk : -((-gx - 1) / per_chunk) - 1;
+            p.cz = gz >= 0 ? gz / per_chunk : -((-gz - 1) / per_chunk) - 1;
+            p.x = ((f32)(gx - p.cx * per_chunk) + 0.2f + 0.6f * u01(0)) * TEST_LIGHT_CELL;
+            p.z = ((f32)(gz - p.cz * per_chunk) + 0.2f + 0.6f * u01(1)) * TEST_LIGHT_CELL;
+            Vec2 d = wpos_delta_xz(c, p);
+            if (d.x * d.x + d.y * d.y > TEST_LIGHTS_R * TEST_LIGHTS_R) continue;
+            p.y = ground_at(t, p).height + 0.8f + 2.5f * u01(2);
+            Vec3 rel = delta(eye, p.cx, p.cz, p.x, p.y, p.z);
+            RenderPointLight &l = ls[n++];
+            l = RenderPointLight{rel.x, rel.y, rel.z, 5.0f + 7.0f * u01(3), 0, 0, 0, 0};
+            // Тёплые огни костров, реже — холодные
+            bool cold = u01(4) < 0.25f;
+            f32 k = 20.0f + 40.0f * u01(4);
+            l.r = k * (cold ? 0.45f : 1.0f);
+            l.g = k * (cold ? 0.6f : 0.55f);
+            l.b = k * (cold ? 1.0f : 0.2f);
+        }
+    out.lights = {ls, n};
+}
+
 void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in, Arena &frame, RenderFrame &out) {
     out = RenderFrame{};
 
@@ -262,6 +298,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     v.near_m = NEAR_M;
     out.style.pixel = in.pixel;
     out.style.forward = in.forward;
+    out.style.froxel_heat = in.froxel_heat;
 
     // Небо, светила и временный главный свет — из часов мира (docs/sky.md). Воздух пустыни (пыль, тёплая
     // дымка) — по маске пустыни под камерой, на перевале — плавно
@@ -324,6 +361,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.instances = {inst, ni};
     out.draws = {draws, nd};
     if (cur.decals) build_decals(*cur.decals, assets, eye, frame, out);
+    if (in.test_lights && cur.terrain) build_test_lights(cam, *cur.terrain, eye, frame, out);
 
     // Точки-заглушки этапа 0 — чуть над землёй, с интерполяцией
     RenderPoint *pts = arena_push<RenderPoint>(frame, RENDER_MAX_POINTS);

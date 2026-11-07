@@ -14,6 +14,8 @@ struct Material { uint kind, pad0, pad1, pad2; vec4 p0, p1, p2; };
 struct LineVtx { float x, y, z; uint rgba; };
 // Декаль — RenderDecal (src/render/render.h), 48 байт
 struct Decal { vec3 c; float ux, uz; vec3 h; uint kind, material, seed, pad; };
+// Огонь — RenderPointLight (src/render/render.h), 32 байта: шар относительно камеры, линейный цвет × сила
+struct Light { vec3 c; float radius; vec3 color; uint pad; };
 struct PointVtx { float x, y, z, size; uint rgba, pad0, pad1, pad2; };
 
 layout(buffer_reference, scalar) readonly buffer Vertices { Vertex v[]; };
@@ -23,6 +25,8 @@ layout(buffer_reference, scalar) readonly buffer Lines { LineVtx v[]; };
 layout(buffer_reference, scalar) readonly buffer Points { PointVtx v[]; };
 layout(buffer_reference, scalar) readonly buffer Words { uint v[]; };
 layout(buffer_reference, scalar) readonly buffer Decals { Decal v[]; };
+layout(buffer_reference, scalar) readonly buffer Lights { Light v[]; };
+layout(buffer_reference, scalar) buffer Froxels { uint v[]; };  // списки клеток (froxel.glsl)
 layout(buffer_reference, scalar) buffer Vec4s { vec4 v[]; };  // таблицы неба (пишут sky_*.comp)
 
 // Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы сеток и кластеров (MeshGpu, ClusterGpu в
@@ -103,6 +107,13 @@ layout(buffer_reference, scalar) buffer FrameData {
     Words g_indices;          // индексы колец земли
     uint instance_count, vis_max;
     uint g_first[12];         // начало индексов кольца L в g_indices в этом кадре (по сдвигу дыры)
+    // Froxels (docs/frame.md «Froxels», froxel.glsl): огни кадра, списки огней и декалей по клеткам, среда клеток
+    Lights lights;
+    Froxels froxels;
+    Vec4s media;              // туман и пыль на клетку — место для света пользователя, пока нули
+    uint light_count, froxel_x, froxel_y, froxel_z;
+    float froxel_near, froxel_far;
+    uint froxel_on, froxel_heat;
 };
 
 layout(push_constant, scalar) uniform Push {

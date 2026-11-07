@@ -136,12 +136,13 @@ bool vk_create_pipelines() {
     g_vk.pipe_points = vk_make_pipeline(points);
     g_vk.pipe_lines = vk_make_pipeline(lines);
     return g_vk.pipe_mesh && g_vk.pipe_ground && g_vk.pipe_points && g_vk.pipe_lines && g_vk.pipe_sky && vk_sky_init() &&
-           vk_world_init() && vk_ui_init();
+           vk_world_init() && vk_froxel_init() && vk_ui_init();
 }
 
 void vk_destroy_pipelines() {
     vk_ui_shutdown();
     vk_world_shutdown();
+    vk_froxel_shutdown();
     vk_sky_shutdown();
     VkPipeline ps[] = {g_vk.pipe_mesh, g_vk.pipe_ground, g_vk.pipe_points, g_vk.pipe_lines, g_vk.pipe_sky};
     for (VkPipeline p : ps)
@@ -244,6 +245,7 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     vk_terrain_fill(g, f);
     vk_sky_fill(g, f);
     vk_world_fill(g, f, fs);
+    vk_froxel_fill(g, f, fs);
 }
 
 // Копия картинки кадра в буфер снимка (до перевода в PRESENT)
@@ -326,6 +328,8 @@ bool render_frame(const RenderFrame &f) {
     // Таблицы неба — до прохода: их читают земля, сетки (дымка, свет неба) и небо
     vk_sky_record(cmd, fs.frame.address);
     vk_mark(cmd, "небо");
+    vk_froxel_record(cmd, fs);
+    vk_mark(cmd, "froxels");
 
     vk_image_barrier(cmd, g_vk.images[img], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,

@@ -1,0 +1,51 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Froxels: поток на клетку. Коробка клетки в осях взгляда (по углам плитки на ближней и дальней глубине слоя),
+// огни и декали — шарами; задевшие пишутся в списки клетки по порядку номеров (кадр от запуска к запуску одинаков).
+// Не влезли — FROXEL_ALL, читатель переберёт весь список кадра
+#include "froxel.glsl"
+layout(local_size_x = 64) in;
+
+bool sphere_box(vec3 c, float r, vec3 lo, vec3 hi) {
+    vec3 d = max(max(lo - c, c - hi), vec3(0.0));
+    return dot(d, d) <= r * r;
+}
+vec3 to_view(vec3 rel) {
+    FrameData f = pc.frame;
+    return vec3(dot(rel, f.right.xyz), dot(rel, f.up.xyz), dot(rel, f.forward.xyz));
+}
+
+void main() {
+    FrameData f = pc.frame;
+    uint fi = gl_GlobalInvocationID.x;
+    uint nxy = f.froxel_x * f.froxel_y;
+    if (fi >= nxy * f.froxel_z) return;
+    uint slice = fi / nxy, t = fi % nxy;
+    uvec2 tile = uvec2(t % f.froxel_x, t / f.froxel_x);
+    // Наклоны краёв плитки: vx/vz и vy/vz (ось y взгляда — вверх, пиксели — вниз)
+    vec2 p0 = vec2(tile * FROXEL_TILE), p1 = min(p0 + float(FROXEL_TILE), f.viewport);
+    vec2 n0 = p0 * f.ndc_per_pixel - 1.0, n1 = p1 * f.ndc_per_pixel - 1.0;
+    float sx0 = n0.x / f.proj_x, sx1 = n1.x / f.proj_x;
+    float sy0 = -n1.y / f.proj_y, sy1 = -n0.y / f.proj_y;
+    vec2 z = froxel_depths(slice);
+    z.y = min(z.y, 1e5);
+    vec3 lo = vec3(min(sx0 * z.x, sx0 * z.y), min(sy0 * z.x, sy0 * z.y), z.x);
+    vec3 hi = vec3(max(sx1 * z.x, sx1 * z.y), max(sy1 * z.x, sy1 * z.y), z.y);
+    uint base = fi * FROXEL_STRIDE;
+    uint n = 0u;
+    for (uint i = 0u; i < f.light_count; ++i) {
+        Light l = f.lights.v[i];
+        if (!sphere_box(to_view(l.c), l.radius, lo, hi)) continue;
+        if (n < FROXEL_LIGHTS) f.froxels.v[base + 1u + n] = i;
+        n++;
+    }
+    f.froxels.v[base] = n > FROXEL_LIGHTS ? FROXEL_ALL : n;
+    n = 0u;
+    for (uint i = 0u; i < f.decal_count; ++i) {
+        Decal d = f.decals.v[i];
+        if (!sphere_box(to_view(d.c), length(d.h), lo, hi)) continue;
+        if (n < FROXEL_DECALS) f.froxels.v[base + 33u + n] = i;
+        n++;
+    }
+    f.froxels.v[base + 32u] = n > FROXEL_DECALS ? FROXEL_ALL : n;
+}

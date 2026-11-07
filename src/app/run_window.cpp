@@ -308,7 +308,7 @@ int run_window(const Args &a, AppMemory &m) {
         u64 tcpu = platform_time_ns();
         arena_reset(m.frame);
         ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused || a.timelapse ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel,
-                     a.forward || ds.forward, scatter};
+                     a.forward || ds.forward, a.test_lights || ds.test_lights, a.froxel_heat || ds.froxel_heat, scatter};
         if (!ds.lines) vi.dbg = nullptr;
         RenderFrame rf;
         u32 dbg_keep = dbg.count;  // метка осмотра — только на этот кадр, шаг мира её не видит

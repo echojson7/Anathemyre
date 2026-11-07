@@ -12,6 +12,8 @@ struct DebugState {
     bool lines = true;        // L — отладочные отрезки
     bool pixel = true;        // P — правило ячейки
     bool forward = false;     // старый forward вместо кадра мира (сравнение, не сохраняется)
+    bool test_lights = false; // тестовые огни вокруг камеры (froxels)
+    bool froxel_heat = false; // тепловая карта огней по клеткам froxels
     u32 tab = 0;              // вкладка панели: DEBUG_TAB_*
     // Просьбы этого кадра от клавиш и панели (debug_clear_frame после исполнения)
     bool step_once = false;   // «.» на паузе — один шаг

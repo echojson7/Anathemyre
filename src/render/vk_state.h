@@ -60,6 +60,11 @@ struct FrameGpu {
     VkDeviceAddress meshes, clusters, vis_instances, vis, cull, draws, indices, g_indices;
     u32 instance_count, vis_max;
     u32 g_first[12];  // начало индексов кольца земли L в этом кадре
+    // Froxels (vk_froxel.cpp): огни кадра и списки огней и декалей по клеткам
+    VkDeviceAddress lights, froxels, media;
+    u32 light_count, froxel_x, froxel_y, froxel_z;
+    f32 froxel_near, froxel_far;
+    u32 froxel_on, froxel_heat;
 };
 
 // Небо (vk_sky.cpp, docs/sky.md): таблицы в буферах видеопамяти, считают их compute-шейдеры sky_*.comp
@@ -98,6 +103,7 @@ struct FrameSlot {
     GpuBuffer points;
     GpuBuffer lines;
     GpuBuffer decals;
+    GpuBuffer lights;       // огни кадра (RenderPointLight)
     GpuBuffer inst_upload;  // изменившиеся экземпляры кадра мира → постоянный буфер на GPU (копией)
     GpuBuffer readback;     // число видимых кластеров кадра (копия из счёта отсечения)
     bool world = false;     // кадр мира (visibility buffer), а не forward: readback заполнен
@@ -220,6 +226,11 @@ struct VkState {
 
     TerrainGpu terrain;
     WorldGpu world;
+    // Froxels (vk_froxel.cpp): клетки 64×64 пикселя × FROXEL_Z слоёв глубины
+    GpuBuffer froxels;     // списки на клетку, FROXEL_STRIDE u32
+    GpuBuffer media;       // среда на клетку (туман и пыль, vec4) — место для света пользователя, пока нули
+    u32 froxel_cap = 0;    // на сколько клеток выделены буферы
+    VkPipeline pipe_froxel = VK_NULL_HANDLE;
     // Время проходов на GPU за прошлый кадр слота (render_gpu_passes)
     u32 pass_count = 0;
     const char *pass_names[GPU_MAX_MARKS] = {};
@@ -291,6 +302,13 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
 bool vk_world_record(VkCommandBuffer cmd, FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, u32 nlines);
 // Число видимых кластеров прошлого кадра этого слота
 void vk_world_read(FrameSlot &fs);
+// Froxels (vk_froxel.cpp, docs/frame.md «Froxels»): сетка клеток, огни и декали по клеткам
+constexpr u32 FROXEL_TILE = 64, FROXEL_Z = 32, FROXEL_STRIDE = 96;
+constexpr f32 FROXEL_NEAR = 1.0f, FROXEL_FAR = 512.0f;
+bool vk_froxel_init();
+void vk_froxel_shutdown();
+void vk_froxel_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
+void vk_froxel_record(VkCommandBuffer cmd, const FrameSlot &fs);
 // Интерфейс поверх кадра (vk_ui.cpp): свой конвейер без глубины, проход по картинке swapchain
 bool vk_ui_init();
 void vk_ui_shutdown();

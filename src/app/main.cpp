@@ -23,6 +23,7 @@ static bool parse_u64(const char *s, u64 &out) {
 
 static void usage() {
     log_info("anathemyre [--seed N] [--novsync] [--validation] [--frames N] [--record файл.rec] [--nopixel] [--forward] [--nohud]");
+    log_info("           [--lights] [--heat]                                          тестовые огни, огни по клеткам froxels");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z]   снимок (градусы, метры)");
     log_info("           [--nohud] [--open menu|keys|debug|world]                     без интерфейса; открыть меню или панель");
@@ -96,6 +97,8 @@ int main(int argc, char **argv) {
         }
         else if (!strcmp(s, "--nopixel")) a.nopixel = true;
         else if (!strcmp(s, "--forward")) a.forward = true;
+        else if (!strcmp(s, "--lights")) a.test_lights = true;
+        else if (!strcmp(s, "--heat")) a.froxel_heat = true;
         else if (!strcmp(s, "--nohud")) a.nohud = true;
         else if (!strcmp(s, "--open")) {
             a.open = next;

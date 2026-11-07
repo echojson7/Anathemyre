@@ -21,6 +21,8 @@ struct Args {
     f32 cam[5] = {};
     bool nopixel = false;           // --nopixel: без правила ячейки
     bool forward = false;           // --forward: старый forward вместо кадра мира (сравнение)
+    bool test_lights = false;       // --lights: тестовые огни вокруг камеры
+    bool froxel_heat = false;       // --heat: тепловая карта огней по клеткам froxels
     bool nohud = false;             // --nohud: без интерфейса (видео и снимки мира)
     const char *open = nullptr;     // --open menu|keys|debug|world: открыть меню или вкладку панели (снимки интерфейса)
     bool hour_set = false;          // --hour H: час дня в начале (намерением, запись повтора его помнит)

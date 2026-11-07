@@ -92,6 +92,8 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_toggle(f, "отрезки и точки", d.lines);
     ui_toggle(f, "пиксельное правило", d.pixel);
     ui_toggle(f, "старый forward", d.forward);
+    ui_toggle(f, "тестовые огни", d.test_lights);
+    ui_toggle(f, "огни по клеткам", d.froxel_heat);
 }
 
 // --- Осмотр мира: таблицы — приставки имён столбцов до точки ---
