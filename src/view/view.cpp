@@ -4,12 +4,14 @@
 
 static constexpr f32 NEAR_M = 0.1f;
 static constexpr f32 PITCH_MIN = -1.45f, PITCH_MAX = 1.45f;
-static constexpr f32 ORBIT_PITCH_MIN = 0.05f;
-static constexpr f32 DIST_MIN = 2.0f, DIST_MAX = 12000.0f;
+static constexpr f32 DIST_MIN = 0.0f, DIST_MAX = 12000.0f;
+static constexpr f32 DIST_SNAP = 0.5f;          // ближе — сразу вид от глаз
 static constexpr f32 EYE_ABOVE_GROUND = 0.6f;  // глаз не ниже стольких метров над землёй
+static constexpr f32 PIVOT_ABOVE_GROUND = 1.7f;  // опора орбиты — на высоте глаз человека
+static constexpr f32 ARM_GROW = 6.0f;         // скорость, с которой штанга возвращается к длине, 1/с
 static constexpr f32 MOUSE_RAD_PER_PX = 0.005f;
 
-// Направление от цели к глазу по yaw и pitch
+// Направление от опоры к глазу по yaw и pitch
 static Vec3 back_dir(const Camera &c) {
     f32 cp = cos_f(c.pitch), sp = sin_f(c.pitch);
     return {sin_f(c.yaw) * cp, sp, -cos_f(c.yaw) * cp};
@@ -30,9 +32,16 @@ static Vec3 delta(const WPos &a, i32 cx, i32 cz, f32 x, f32 y, f32 z) {
     return {d.x, y - a.y, d.y};
 }
 
+static f32 fov_rad(const Camera &c) { return f_clamp(c.settings.fov_deg, 20.0f, 120.0f) * (PI_F / 180.0f); }
+
+WPos view_pivot_at(const Terrain &ground, WPos p) {
+    p.y = ground_at(ground, p).height + PIVOT_ABOVE_GROUND;
+    return p;
+}
+
 WPos view_eye(const Camera &cam) {
-    if (cam.free) return cam.eye;
-    return offset(cam.target, back_dir(cam) * cam.dist);
+    if (cam.free) return cam.pivot;
+    return offset(cam.pivot, back_dir(cam) * (cam.arm < 0.0f ? cam.dist : cam.arm));
 }
 
 struct Basis {
@@ -46,33 +55,52 @@ static Basis basis(const Camera &cam) {
     return b;
 }
 
+static bool eye_clear(const Terrain &ground, const WPos &p) {
+    return p.y >= ground_at(ground, p).height + EYE_ABOVE_GROUND;
+}
+
+// Сколько штанги помещается до земли: шагами от опоры наружу, последний свободный шаг
+static f32 arm_room(const Camera &cam, const Terrain &ground) {
+    if (cam.dist <= 0.0f) return 0.0f;
+    Vec3 d = back_dir(cam);
+    f32 step = f_max(0.25f, cam.dist / 64.0f), ok = 0.0f;
+    for (f32 t = step;; t += step) {
+        f32 tt = f_min(t, cam.dist);
+        if (!eye_clear(ground, offset(cam.pivot, d * tt))) return ok;
+        ok = tt;
+        if (tt >= cam.dist) return ok;
+    }
+}
+
 void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &ground) {
     if (in.key_pressed[KEY_F]) {
         if (!cam.free) {
-            cam.eye = view_eye(cam);
+            cam.pivot = view_eye(cam);
             cam.free = true;
         } else {
-            // Назад на орбиту: цель — точка на земле перед глазом (или на прежнем расстоянии)
+            // Назад на орбиту: опора над точкой земли перед глазом, штанга — до глаза. Смотрим выше
+            // горизонта — опора впереди на прежнем расстоянии
+            WPos eye = cam.pivot, hit;
             Basis b = basis(cam);
-            f32 d = cam.dist;
-            WPos hit;
-            if (view_screen_to_ground(cam, 2, 2, 1.0f, 1.0f, ground, hit))
-                d = f_clamp(length(delta(cam.eye, hit.cx, hit.cz, hit.x, hit.y, hit.z)), DIST_MIN, DIST_MAX);
-            cam.target = offset(cam.eye, b.forward * d);
-            cam.dist = d;
+            if (view_screen_to_ground(cam, 2, 2, 1.0f, 1.0f, ground, hit)) {
+                cam.dist = f_clamp(length(delta(eye, hit.cx, hit.cz, hit.x, hit.y, hit.z)), DIST_MIN, DIST_MAX);
+                cam.pivot = view_pivot_at(ground, hit);
+            } else {
+                cam.pivot = view_pivot_at(ground, offset(eye, normalize(Vec3{b.forward.x, 0.0f, b.forward.z}) * cam.dist));
+            }
+            cam.arm = -1.0f;
             cam.free = false;
-            if (cam.pitch < ORBIT_PITCH_MIN) cam.pitch = ORBIT_PITCH_MIN;
         }
     }
-    // Вращение: правая кнопка (в полёте — взгляд, на орбите — вокруг цели)
+    // Вращение взгляда: правая кнопка, одинаково на орбите и в полёте (мышь вверх — взгляд вверх)
     if (in.mouse_down[MOUSE_RIGHT]) {
-        f32 s = cam.free ? -1.0f : 1.0f;  // в полёте мышь вверх — взгляд вверх
-        cam.yaw += in.mouse_dx * MOUSE_RAD_PER_PX;
-        cam.pitch += s * in.mouse_dy * MOUSE_RAD_PER_PX;
+        f32 k = MOUSE_RAD_PER_PX * f_clamp(cam.settings.mouse_sens, 0.05f, 20.0f);
+        cam.yaw += in.mouse_dx * k;
+        cam.pitch += (cam.settings.invert_y ? -1.0f : 1.0f) * in.mouse_dy * k;
     }
     if (cam.yaw > PI_F) cam.yaw -= TAU_F;
     if (cam.yaw < -PI_F) cam.yaw += TAU_F;
-    cam.pitch = f_clamp(cam.pitch, cam.free ? PITCH_MIN : ORBIT_PITCH_MIN, PITCH_MAX);
+    cam.pitch = f_clamp(cam.pitch, PITCH_MIN, PITCH_MAX);
 
     Basis b = basis(cam);
     Vec3 flat_fwd = normalize(Vec3{b.forward.x, 0.0f, b.forward.z});
@@ -88,39 +116,38 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &gr
 
     if (cam.free) {
         // Высоко над землёй летать медленно скучно: скорость растёт с высотой
-        f32 above = cam.eye.y - ground_at(ground, cam.eye).height;
+        f32 above = cam.pivot.y - ground_at(ground, cam.pivot).height;
         f32 speed = 12.0f * f_max(1.0f, above / 20.0f);
-        cam.eye = offset(cam.eye, move * (speed * fast * dt));
-        if (in.wheel != 0) cam.eye = offset(cam.eye, b.forward * (in.wheel * 2.0f * fast * f_max(1.0f, above / 20.0f)));
-        f32 floor_y = ground_at(ground, cam.eye).height + EYE_ABOVE_GROUND;
-        if (cam.eye.y < floor_y) cam.eye.y = floor_y;
+        cam.pivot = offset(cam.pivot, move * (speed * fast * dt));
+        if (in.wheel != 0) cam.pivot = offset(cam.pivot, b.forward * (in.wheel * 2.0f * fast * f_max(1.0f, above / 20.0f)));
+        f32 floor_y = ground_at(ground, cam.pivot).height + EYE_ABOVE_GROUND;
+        if (cam.pivot.y < floor_y) cam.pivot.y = floor_y;
         return;
     }
-    // Орбита: WASD и средняя кнопка двигают цель по земле, колесо — расстояние
-    f32 pan = cam.dist * 0.9f * fast * dt;
+    // Орбита: WASD и средняя кнопка двигают опору над землёй, колесо — длина штанги (до вида от глаз)
+    f32 reach = f_max(cam.dist, 5.0f);
     move.y = 0.0f;
-    cam.target = offset(cam.target, move * pan);
+    cam.pivot = offset(cam.pivot, move * (reach * 0.9f * fast * dt));
     if (in.mouse_down[MOUSE_MIDDLE]) {
-        f32 k = cam.dist * 0.0018f;
-        cam.target = offset(cam.target, flat_right * (-in.mouse_dx * k) + flat_fwd * (in.mouse_dy * k));
+        f32 k = reach * 0.0018f;
+        cam.pivot = offset(cam.pivot, flat_right * (-in.mouse_dx * k) + flat_fwd * (in.mouse_dy * k));
     }
-    for (f32 w = in.wheel; w > 0.5f; w -= 1.0f) cam.dist *= 0.85f;
-    for (f32 w = in.wheel; w < -0.5f; w += 1.0f) cam.dist /= 0.85f;
+    for (f32 w = in.wheel; w > 0.5f; w -= 1.0f) cam.dist = cam.dist * 0.85f < DIST_SNAP ? 0.0f : cam.dist * 0.85f;
+    for (f32 w = in.wheel; w < -0.5f; w += 1.0f) cam.dist = cam.dist < DIST_SNAP ? DIST_SNAP : cam.dist / 0.85f;
     cam.dist = f_clamp(cam.dist, DIST_MIN, DIST_MAX);
-    cam.target.y = ground_at(ground, cam.target).height;
-    // Глаз над землёй: если склон закрыл его, камера поднимается по высоте взгляда
-    for (u32 k = 0; k < 32; ++k) {
-        WPos e = view_eye(cam);
-        if (e.y >= ground_at(ground, e).height + EYE_ABOVE_GROUND || cam.pitch >= PITCH_MAX) break;
-        cam.pitch = f_min(cam.pitch + 0.02f, PITCH_MAX);
-    }
+    cam.pivot = view_pivot_at(ground, cam.pivot);
+    // Штанга: земля укорачивает её сразу (глаз не уходит под склон), назад — плавно, чтобы на кочках
+    // не дёргалась. Взгляд при этом не меняется
+    f32 room = arm_room(cam, ground);
+    if (cam.arm < 0.0f || room < cam.arm) cam.arm = room;
+    else cam.arm += (room - cam.arm) * f_min(1.0f, dt * ARM_GROW);
 }
 
 bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32 py, const Terrain &ground, WPos &out) {
     if (width <= 0 || height <= 0) return false;
     Basis b = basis(cam);
     f32 s, c;
-    sincos_turn(turn_from_rad(cam.fov_y * 0.5f), &s, &c);
+    sincos_turn(turn_from_rad(fov_rad(cam) * 0.5f), &s, &c);
     f32 t = s / c, aspect = (f32)width / (f32)height;
     f32 nx = (px / (f32)width) * 2.0f - 1.0f;
     f32 ny = 1.0f - (py / (f32)height) * 2.0f;
@@ -182,7 +209,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
         dst[i][2] = axes[i].z;
     }
     f32 s, c;
-    sincos_turn(turn_from_rad(cam.fov_y * 0.5f), &s, &c);
+    sincos_turn(turn_from_rad(fov_rad(cam) * 0.5f), &s, &c);
     v.tan_half_fov = s / c;
     v.near_m = NEAR_M;
     out.style.pixel = in.pixel;
