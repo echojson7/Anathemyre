@@ -11,7 +11,7 @@
 // снимает то, что world_cell прибавит, — узор не прыгает при смене чанка
 vec3 concrete_plane(SurfIn i, bool vert, vec3 an) {
     if (!vert) return i.p;
-    vec2 ch = vec2(pc.frame.cam_chunk) * CHUNK_M;
+    vec2 ch = vec2(ORIGIN_CHUNK) * CHUNK_M;
     float u = an.x > an.z ? i.p.z + ch.y - ch.x : i.p.x;
     return vec3(u, 0.0, i.p.y - ch.y);
 }
@@ -22,7 +22,7 @@ Surface surf_concrete(SurfIn i) {
     vec3 an = abs(i.n);
     bool vert = an.y < 0.7;
     // Мировые метры для рядов щитов: x, z — от начала карты чанков; y — высота
-    vec2 wc = vec2(pc.frame.cam_chunk) * CHUNK_M;
+    vec2 wc = vec2(ORIGIN_CHUNK) * CHUNK_M;
     float wh = (an.x > an.z ? i.p.z + wc.y : i.p.x + wc.x);  // вдоль грани
     float wv = i.p.y;                                       // по высоте
 

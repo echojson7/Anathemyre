@@ -58,6 +58,7 @@ struct ViewInput {
     bool forward;           // старый forward вместо кадра мира (F3, --forward)
     bool test_lights;       // тестовые огни вокруг опоры камеры (F3): проверка списков froxels
     bool froxel_heat;       // тепловая карта числа огней по клеткам (F3)
+    bool gcache_off;        // без кеша поверхности земли: земля на пиксель (F3, --nogcache)
     ScatterCache *scatter;  // рассыпка камней (кеш между кадрами), может быть nullptr
 };
 

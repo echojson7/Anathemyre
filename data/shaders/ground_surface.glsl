@@ -6,26 +6,12 @@
 // Слой выбирают правила по уклону сетки 8 м и маскам (те же пороги, что ground_kind() у шага мира) с плавным
 // шумом, а на стыке двух лучших слоёв побеждает выступающий узор: песок затекает между камнями и травой
 // (docs/terrain.md). Вода — гладь на уровне воды (ground.vert), под ней на мелком видно дно
-// Поверхность земли в точке rel (относительно камеры): vnormal — нормаль вершин, level — кольцо, wdepth — глубина
-// воды, ng — нормаль треугольника вверх (выбирает плоскость привязки ячейки). Свет не считает
-Surface ground_surface(vec3 v_rel, vec3 v_normal, uint v_level, float v_wdepth, vec3 ng) {
+// Слои земли в точке p (мир: метры от начала чанка ORIGIN_CHUNK, центр ячейки) с нормалью n: слой по правилам,
+// стык двух лучших по узору, сырость, вода (wdepth > 0 — глубина воды над дном). Зовут ground_surface() на
+// пиксель и запекание кеша земли (gcache.glsl) — правила слоёв одни. Свет не считает
+Surface ground_layers(vec3 p, vec3 n, float cell, float foot, float wdepth) {
     FrameData f = pc.frame;
-    float depth = dot(v_rel, f.forward.xyz);
-    float cell = cell_size(depth);
-    float foot = max(depth, 0.0) * f.pixel_angle;
-    vec3 p = f.cam_off + v_rel;
-    // Нормаль треугольника выбирает плоскость привязки (на обрыве ячейки встают вертикально)
-    if (f.pixel != 0u) {
-        p = cell_snap(p, ng, cell);
-    } else {
-        cell = f.cell_min;
-        p -= ng * 0.002;
-    }
-    bool water = v_wdepth > 0.0;
-    // Плавная нормаль сетки 8 м (+ слой деталей у ближних колец), дальние кольца — из вершин
-    vec3 n = v_level <= 5u ? t_smooth_normal(p.xz, v_level <= 1u, true) : normalize(v_normal);
-    if (water) n = vec3(0.0, 1.0, 0.0);
-
+    bool water = wdepth > 0.0;
     ivec2 g;
     vec2 fr;
     t_split(p.xz, g, fr);
@@ -67,10 +53,33 @@ Surface ground_surface(vec3 v_rel, vec3 v_normal, uint v_level, float v_wdepth, 
     if (water) {
         // Гладь: свой узор и блик; на мелком сквозь неё видно дно
         Surface sw = surface(f.ground_layers[5], p, n, cell, foot, SEED);
-        float k = 1.0 - exp(-v_wdepth * 2.5);
+        float k = 1.0 - exp(-wdepth * 2.5);
         sw.albedo = mix(s.albedo * 0.6, sw.albedo, k);
         s = sw;
     }
+    return s;
+}
+
+// Поверхность земли в точке rel (относительно камеры) на пиксель: vnormal — нормаль вершин, level — кольцо,
+// wdepth — глубина воды, ng — нормаль треугольника вверх (выбирает плоскость привязки ячейки). Кадр мира берёт
+// землю из кеша (gcache.glsl), этот путь — у крутых склонов, без правила пиксельности и у forward
+Surface ground_surface(vec3 v_rel, vec3 v_normal, uint v_level, float v_wdepth, vec3 ng) {
+    FrameData f = pc.frame;
+    float depth = dot(v_rel, f.forward.xyz);
+    float cell = cell_size(depth);
+    float foot = max(depth, 0.0) * f.pixel_angle;
+    vec3 p = f.cam_off + v_rel;
+    // Нормаль треугольника выбирает плоскость привязки (на обрыве ячейки встают вертикально)
+    if (f.pixel != 0u) {
+        p = cell_snap(p, ng, cell);
+    } else {
+        cell = f.cell_min;
+        p -= ng * 0.002;
+    }
+    // Плавная нормаль сетки 8 м (+ слой деталей у ближних колец), дальние кольца — из вершин
+    vec3 n = v_level <= 5u ? t_smooth_normal(p.xz, v_level <= 1u, true) : normalize(v_normal);
+    if (v_wdepth > 0.0) n = vec3(0.0, 1.0, 0.0);
+    Surface s = ground_layers(p, n, cell, foot, v_wdepth);
     s.pos = p - f.cam_off;
     return s;
 }

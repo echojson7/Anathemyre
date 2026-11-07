@@ -1,0 +1,23 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Кеш земли (docs/gcache.md): свободные страницы кадра. Поток на физическую страницу: прочитанная этим кадром —
+// занята; без чтения дольше GC_AGE кадров (или пустая) — в список «старых», иначе — в «недавние». Запекание
+// берёт сначала старые: страницы, на которые камера может вернуться взглядом, живут дольше
+#include "gcache.glsl"
+layout(local_size_x = 64) in;
+
+void main() {
+    FrameData f = pc.frame;
+    uint p = gl_GlobalInvocationID.x;
+    if (p >= f.gc_pages_n) return;
+    uint used = f.gc_pages.v[p].used;
+    if (used == f.gc_frame) return;
+    uint base = 2u * f.gc_req_cap;
+    if (used == 0u || f.gc_frame - used >= GC_AGE) {
+        uint i = atomicAdd(f.gc_req.old_n, 1u);
+        f.gc_req.v[base + i] = p;
+    } else {
+        uint i = atomicAdd(f.gc_req.recent_n, 1u);
+        f.gc_req.v[base + f.gc_pages_n + i] = p;
+    }
+}

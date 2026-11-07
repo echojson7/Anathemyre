@@ -67,7 +67,7 @@ Surface surf_grass(SurfIn i) {
     if (bf > 0.0) {
         float ang = fbm_n(i.p, 2.0, 2, 89u) * 6.2831853;
         vec2 ax = vec2(cos(ang), sin(ang));
-        vec2 wp = vec2(pc.frame.cam_chunk) * CHUNK_M + i.p.xz;  // мировые метры: узор не прыгает со сменой чанка
+        vec2 wp = vec2(ORIGIN_CHUNK) * CHUNK_M + i.p.xz;  // мировые метры: узор не прыгает со сменой чанка
         vec2 r = vec2(dot(wp, ax), dot(wp, vec2(-ax.y, ax.x)));
         vec2 cl = floor(r / vec2(t * 3.0, t * 0.5));
         float blade = hash3(ivec3(int(cl.x), 0, int(cl.y)), 88u) - 0.5;
