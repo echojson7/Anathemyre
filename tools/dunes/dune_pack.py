@@ -4,7 +4,6 @@
 # поток Райса: остаток предсказания плоскостью (слева + снизу − по диагонали), зигзаг, k младших бит.
 # Разбор — src/sim/dune_map.cpp.
 #   dune_pack.py lidar <плитка_1м.npy>... <выход.dun>   — лидар USGS 3DEP (см. docs/terrain.md)
-#   dune_pack.py wind <сетка.bin> <N> <клетка_м> <плита_м> <выход.dun>   — итог tools/dunes/dune_wind.c
 import sys, struct
 import numpy as np
 from scipy import ndimage
@@ -68,16 +67,5 @@ def lidar(tiles, path):
     bg = ndimage.gaussian_filter(a, 600, mode='nearest')
     finish(a - bg, path)
 
-def wind(src, n, cell, slab, path):
-    g = np.fromfile(src, dtype=np.int16).reshape(n, n).astype(np.float64) * slab
-    g = ndimage.gaussian_filter(g, 0.8, mode='wrap')   # ступени плит
-    # Периодичная сетка cell м → узлы 2 м (кубически)
-    ys = np.arange(SIDE) * STEP / cell
-    yy, xx = np.meshgrid(ys, ys, indexing='ij')
-    big = np.pad(g, 4, mode='wrap')
-    h = ndimage.map_coordinates(big, [yy + 4, xx + 4], order=3, mode='wrap')
-    finish(h, path)
-
 if __name__ == '__main__':
     if sys.argv[1] == 'lidar': lidar(sys.argv[2:-1], sys.argv[-1])
-    elif sys.argv[1] == 'wind': wind(sys.argv[2], int(sys.argv[3]), float(sys.argv[4]), float(sys.argv[5]), sys.argv[6])

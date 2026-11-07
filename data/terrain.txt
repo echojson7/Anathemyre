@@ -9,8 +9,6 @@
 seed 7
 chunks 40
 ring 3600
-locations valley desert desert
-# Дюны пустынь из карт 2 м (tools/dunes): 1 — лидар дюн Algodones (USGS 3DEP, общественное достояние),
-# 2 — симуляция ветра (модель Вернера). Без карты — дюны формулой
+locations valley desert
+# Дюны пустыни — карта 2 м из лидара дюн Algodones (USGS 3DEP, общественное достояние; tools/dunes)
 dunes 1 dunes/algodones.dun
-dunes 2 dunes/wind.dun
