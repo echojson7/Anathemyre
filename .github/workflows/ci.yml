@@ -127,6 +127,9 @@ jobs:
           tools/work_check.sh tests/work_ref.txt work_1.txt
           # потолки работы на пиксель кадра (docs/budget.md): эталон можно обновить, бюджет — только решением
           tools/budget_check.sh tests/work_budget.txt work_1.txt
+          # кеш земли в обычной сцене включён и не пуст (docs/gcache.md, «Когда кеш выключен»): выключенный кеш
+          # молча уводит всю землю на пиксель, а кадр при этом верный — ловим по счётчику, отдельно от допуска эталона
+          awk '$1 == "gc_used" { ok = $2 > 0 } END { if (!ok) { print "кеш земли пуст: gc_used = 0"; exit 1 } }' work_1.txt
       - uses: actions/upload-artifact@v4
         with:
           name: frame

@@ -99,8 +99,20 @@ void vk_gcache_fill(FrameGpu &g, const RenderFrame &f, bool images) {
     // Тексели — от размера ячейки, правила, материалов слоёв земли и самой земли: изменилось — с нуля
     i32 tpc0 = (i32)(256.0f / f.style.cell_min + 0.5f);
     bool grid = f.style.cell_min > 0 && (f32)tpc0 * f.style.cell_min == 256.0f && tpc0 % (1 << (GC_LEVELS - 1)) == 0;
-    c.on = images && grid && f.style.gcache && f.style.pixel && g_vk.terrain.on && f.ground &&
-           ensure(f, g_vk.extent.width, g_vk.extent.height);
+    // Почему кеша нет — вслух (F3, журнал): выключенный кеш молча уводит всю землю на пиксель, и кадр просто
+    // медленнее. Без правила ячеек (P) кешу нечего хранить: тексель — ячейка правила (docs/gcache.md)
+    const char *off = !f.style.gcache  ? "без кеша земли (F3, --nogcache)"
+                      : !f.style.pixel ? "без ячеек (P, --nopixel)"
+                      : !grid          ? "ячейка не делит чанк"
+                                       : nullptr;
+    bool ground = images && g_vk.terrain.on && f.ground;
+    c.on = ground && !off && ensure(f, g_vk.extent.width, g_vk.extent.height);
+    if (ground && !off && !c.on) off = "нет видеопамяти";
+    if (off != c.off) {
+        if (off) log_info("кеш земли выключен: %s — вся земля считается на пиксель", off);
+        else if (c.on) log_info("кеш земли включён");
+    }
+    c.off = off;
     if (!c.on) return;
     u32 layers[8];
     for (u32 i = 0; i < 8; ++i) layers[i] = g.ground_layers[i];

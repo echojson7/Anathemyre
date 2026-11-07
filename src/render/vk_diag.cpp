@@ -278,6 +278,7 @@ bool render_work(RenderWork &out) {
     out.gc_baked = w.work[STAT_GC_BAKED];
     out.gc_over = w.work[STAT_GC_OVER];
     out.gc_direct = w.work[STAT_GC_PX_DIRECT];
+    out.gc_off = g_vk.gcache.off;
     return true;
 }
 

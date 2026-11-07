@@ -71,6 +71,7 @@ struct DebugInfo {
     u32 work_surf[2];         // поверхности (surface() и свет раз на ячейку): земля, сетки
     u32 work_shadow;           // выборки карты горизонта (тень земли, docs/horizon.md)
     u32 work_gc[4];           // кеш земли: страницы кадра, запечено, без места, поверхности мимо кеша
+    const char *gc_off;       // почему кеш земли выключен (nullptr — включён)
     // Что не влезло за секунду (render_overflows): сколько просили, сколько есть (0 — счёт клеток без предела)
     u32 overflows;
     const char *over_what[DEBUG_MAX_OVERFLOWS];
