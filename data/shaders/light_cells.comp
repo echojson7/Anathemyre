@@ -11,7 +11,7 @@
 // Земля (docs/gcache.md): поверхность — из кеша земли по текселю, который разбор плиток записал в gc_cells;
 // у земли поверхность — тексель, свет — раз на тексель. Плитка земли без разбора треугольников: если хоть
 // одного текселя нет в кеше (не хватило места), она уходит в «землю на пиксель». Та и смесь считают
-// недостающие тексели сами (той же ground_texel), а крутые склоны — на пиксель (ground_surface)
+// недостающие тексели сами (той же функцией, что запекание), а крутые склоны — на пиксель
 layout(constant_id = 0) const uint TILE_KIND = 3u;  // TILE_* из common.glsl; по умолчанию — смесь
 #define RESOLVE_GROUND (TILE_KIND == TILE_MIX || TILE_KIND == TILE_GROUND_PX)
 #define GC_KIND (TILE_KIND == TILE_GROUND || TILE_KIND == TILE_MIX || TILE_KIND == TILE_GROUND_PX)
@@ -63,22 +63,27 @@ vec3 froxel_heat(vec3 c, vec3 rel) {
     return heat * l * 0.9 + c * 0.1;
 }
 
-// Тексель кеша (найденный phys) или, у смеси и земли на пиксель, посчитанный здесь же той же функцией —
-// картинка та же
-uvec4 gc_texel_value(int k, ivec2 t, int phys) {
-    if (phys >= 0) return gc_read(phys, t);
-    if (TILE_KIND == TILE_MIX || TILE_KIND == TILE_GROUND_PX) return ground_texel(k, t);
-    return uvec4(0u);
-}
-
+// Поверхность для света. Земля: тексель из кеша; у смеси и земли на пиксель — тексель без страницы (той же
+// функцией, что запекание, и через ту же упаковку — картинка та же) или крутой склон на пиксель. Оба пути
+// считают слои одним ground_eval(): код слоёв и материалов в конвейере — одна копия
 vec3 shade_hit(Hit h, int phys) {
     if (h.kind == HIT_SKY) return sky_radiance(normalize(h.rel));
     Surface s;
-    if (GC_KIND && h.kind == HIT_GCACHE) {
-        ivec2 t = ivec2(int(h.m0), int(h.m1));
-        s = gc_surface(gc_texel_value(int(h.level), t, phys), int(h.level), t, h.rel);
-    } else if (RESOLVE_GROUND && (!RESOLVE_MESH || h.kind == HIT_GROUND)) {
-        s = ground_surface(h.rel, normalize(h.n), h.level, h.blend, h.ng);
+    bool gc = GC_KIND && h.kind == HIT_GCACHE;
+    int k = int(h.level);
+    ivec2 t = ivec2(int(h.m0), int(h.m1));
+    if (gc && phys >= 0) {
+        s = gc_surface(gc_read(phys, t), k, t, h.rel);
+    } else if (RESOLVE_GROUND && (gc || !RESOLVE_MESH || h.kind == HIT_GROUND)) {
+        GroundIn g = gc ? ground_texel_in(k, t) : ground_pixel_in(h.rel, normalize(h.n), h.level, h.blend, h.ng);
+        Surface a, b;
+        ground_eval(g, a, b);
+        if (gc) {
+            s = gc_surface(uvec4(gc_pack(a), gc_pack(b)), k, t, h.rel);
+        } else {
+            s = a;
+            s.pos = g.p - pc.frame.cam_off;
+        }
     } else if (RESOLVE_MESH) {
         s = mesh_surface(h.rel, normalize(h.n), h.m0, h.m1, h.blend, h.ao, h.seed);
     } else {

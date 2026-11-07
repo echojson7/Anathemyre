@@ -92,8 +92,8 @@ Surface gc_unpack(uvec2 v) {
 // Тексель t уровня k: поверхность земли в центре ячейки, два варианта следа пикселя — у ближнего края полосы
 // уровня (foot = ячейка/2) и у дальнего (foot = ячейка); освещение смешивает их по своему следу, и узор мельче
 // пикселя гаснет плавно, как на пиксель (docs/gcache.md, «След пикселя»). Всё — от текселя: точка — от начала его
-// чанка (ORIGIN_CHUNK), высота — t_height_f, нормаль — по размеру ячейки
-uvec4 ground_texel(int k, ivec2 t) {
+// чанка (ORIGIN_CHUNK), высота — t_height_f, нормаль — по размеру ячейки. Слои — ground_eval(), один вызов на шейдер
+GroundIn ground_texel_in(int k, ivec2 t) {
     FrameData f = pc.frame;
     float c = gc_cell(k);
     int tpc = f.gc_tpc0 >> k;
@@ -118,10 +118,22 @@ uvec4 ground_texel(int k, ivec2 t) {
              : k <= 7 ? t_smooth_normal(p.xz, false, true)
                       : t_mip_normal(vec2(n) + fr, min(k - 6, 5));
     if (wdepth > 0.0) nrm = vec3(0.0, 1.0, 0.0);
-    float cp = f.cell_pixels;
-    Surface lo = ground_layers(p, nrm, c, c * 0.5 / cp, wdepth);
-    Surface hi = ground_layers(p, nrm, c, c / cp, wdepth);
+    GroundIn g;
+    g.p = p;
+    g.n = nrm;
+    g.cell = c;
+    g.wdepth = wdepth;
+    g.foot[0] = c * 0.5 / f.cell_pixels;
+    g.foot[1] = c / f.cell_pixels;
+    g.nv = 2;
+    g.origin = ORIGIN_CHUNK;
     ORIGIN_CHUNK = saved;
+    return g;
+}
+
+uvec4 ground_texel(int k, ivec2 t) {
+    Surface lo, hi;
+    ground_eval(ground_texel_in(k, t), lo, hi);
     return uvec4(gc_pack(lo), gc_pack(hi));
 }
 #endif

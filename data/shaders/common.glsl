@@ -4,6 +4,7 @@
 #define COMMON_GLSL
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_control_flow_attributes : require
 
 // Вершина детали — MeshVertex (src/asset/mesh.h), 24 байта
 struct Vertex { float px, py, pz; uint normal; uint mats; uint misc; };

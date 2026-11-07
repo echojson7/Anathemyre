@@ -60,10 +60,32 @@ Surface ground_layers(vec3 p, vec3 n, float cell, float foot, float wdepth) {
     return s;
 }
 
-// Поверхность земли в точке rel (относительно камеры) на пиксель: vnormal — нормаль вершин, level — кольцо,
-// wdepth — глубина воды, ng — нормаль треугольника вверх (выбирает плоскость привязки ячейки). Кадр мира берёт
-// землю из кеша (gcache.glsl), этот путь — у крутых склонов, без правила пиксельности и у forward
-Surface ground_surface(vec3 v_rel, vec3 v_normal, uint v_level, float v_wdepth, vec3 ng) {
+// Входы слоёв земли: точка (от начала чанка origin), нормаль, ячейка, глубина воды и след пикселя — nv вариантов
+// (на пиксель — один, у текселя кеша — два, gcache.glsl)
+struct GroundIn { vec3 p; vec3 n; float cell; float wdepth; float foot[2]; int nv; ivec2 origin; };
+
+// Слои по входам. Один вызов ground_layers() на шейдер, варианты — циклом без развёртки: слои и материалы —
+// самый большой код шейдеров, и каждая лишняя копия — это секунды сборки конвейера (на lavapipe под GPU-AV —
+// минуты). Поэтому и путь на пиксель, и тексель без страницы, и запекание считают землю здесь (docs/gcache.md)
+void ground_eval(GroundIn g, out Surface s0, out Surface s1) {
+#ifdef GC_ORIGIN_VAR
+    ivec2 saved = ORIGIN_CHUNK;
+    ORIGIN_CHUNK = g.origin;
+#endif
+    [[dont_unroll]] for (int i = 0; i < g.nv; ++i) {
+        Surface s = ground_layers(g.p, g.n, g.cell, g.foot[i], g.wdepth);
+        if (i == 0) s0 = s;
+        else s1 = s;
+    }
+#ifdef GC_ORIGIN_VAR
+    ORIGIN_CHUNK = saved;
+#endif
+}
+
+// Входы земли в точке rel (относительно камеры) на пиксель: vnormal — нормаль вершин, level — кольцо, wdepth —
+// глубина воды, ng — нормаль треугольника вверх (выбирает плоскость привязки ячейки). Кадр мира берёт землю из
+// кеша (gcache.glsl), этот путь — у крутых склонов, без правила пиксельности и у forward
+GroundIn ground_pixel_in(vec3 v_rel, vec3 v_normal, uint v_level, float v_wdepth, vec3 ng) {
     FrameData f = pc.frame;
     float depth = dot(v_rel, f.forward.xyz);
     float cell = cell_size(depth);
@@ -79,8 +101,24 @@ Surface ground_surface(vec3 v_rel, vec3 v_normal, uint v_level, float v_wdepth, 
     // Плавная нормаль сетки 8 м (+ слой деталей у ближних колец), дальние кольца — из вершин
     vec3 n = v_level <= 5u ? t_smooth_normal(p.xz, v_level <= 1u, true) : normalize(v_normal);
     if (v_wdepth > 0.0) n = vec3(0.0, 1.0, 0.0);
-    Surface s = ground_layers(p, n, cell, foot, v_wdepth);
-    s.pos = p - f.cam_off;
+    GroundIn g;
+    g.p = p;
+    g.n = n;
+    g.cell = cell;
+    g.wdepth = v_wdepth;
+    g.foot[0] = foot;
+    g.foot[1] = foot;
+    g.nv = 1;
+    g.origin = f.cam_chunk;
+    return g;
+}
+
+// Поверхность земли на пиксель (входы — ground_pixel_in)
+Surface ground_surface(vec3 v_rel, vec3 v_normal, uint v_level, float v_wdepth, vec3 ng) {
+    GroundIn g = ground_pixel_in(v_rel, v_normal, v_level, v_wdepth, ng);
+    Surface s, s1;
+    ground_eval(g, s, s1);
+    s.pos = g.p - pc.frame.cam_off;
     return s;
 }
 #endif
