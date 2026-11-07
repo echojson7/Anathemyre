@@ -255,6 +255,7 @@ void vk_stats_read(FrameSlot &fs) {
         g_vk.world.vis_clusters = rb[0];
         if (st[STAT_VIS_WANT] > VIS_MAX_CLUSTERS) add_over(g_gpu_over, g_ngpu, "видимые кластеры", st[STAT_VIS_WANT], VIS_MAX_CLUSTERS);
         memcpy(g_vk.world.work, st, sizeof g_vk.world.work);
+        vk_gcache_read(st);
     } else {
         g_vk.world.vis_clusters = 0;
     }
@@ -279,6 +280,10 @@ bool render_work(RenderWork &out) {
     out.surf_ground = w.work[STAT_SURF_GROUND];
     out.surf_mesh = w.work[STAT_SURF_MESH];
     out.shadow_steps = w.work[STAT_SHADOW_STEPS];
+    out.gc_used = w.work[STAT_GC_USED];
+    out.gc_baked = w.work[STAT_GC_BAKED];
+    out.gc_over = w.work[STAT_GC_OVER];
+    out.gc_direct = w.work[STAT_GC_PX_DIRECT];
     return true;
 }
 

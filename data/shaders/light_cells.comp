@@ -7,14 +7,22 @@
 // пиксельности. Пиксели с одним треугольником и одной ячейкой — одна поверхность: surface() → light_surface()
 // считается раз, на первом из них, и раздаётся остальным. Ведущие пиксели сжимаются в начало группы, поэтому
 // считают их подряд идущие потоки. Пустые пиксели — небо (sky.glsl). Пишет линейный цвет в HDR-картинку,
-// стиль — отдельным проходом. Заодно считает свою работу (STAT_PX_*, STAT_SURF_*, STAT_SHADOW_STEPS)
+// стиль — отдельным проходом. Заодно считает свою работу (STAT_PX_*, STAT_SURF_*, STAT_SHADOW_STEPS).
+// Земля (docs/gcache.md): поверхность — из кеша земли по текселю, который разбор плиток записал в gc_cells;
+// у земли поверхность — тексель, свет — раз на тексель. Плитка земли без разбора треугольников: если хоть
+// одного текселя нет в кеше (не хватило места), она уходит в «землю на пиксель». Та и смесь считают
+// недостающие тексели сами (той же функцией, что запекание), а крутые склоны — на пиксель
 layout(constant_id = 0) const uint TILE_KIND = 3u;  // TILE_* из common.glsl; по умолчанию — смесь
-#define RESOLVE_GROUND (TILE_KIND == TILE_GROUND || TILE_KIND == TILE_MIX)
+#define RESOLVE_GROUND (TILE_KIND == TILE_MIX || TILE_KIND == TILE_GROUND_PX)
+#define GC_KIND (TILE_KIND == TILE_GROUND || TILE_KIND == TILE_MIX || TILE_KIND == TILE_GROUND_PX)
 #define RESOLVE_MESH (TILE_KIND == TILE_MESH || TILE_KIND == TILE_MIX)
 uint g_steps = 0u;  // шаги луча тени рельефа этого потока (terrain.glsl)
 #define T_SHADOW_STEPS g_steps
+ivec2 g_origin;  // начало отсчёта узоров: чанк камеры, у текселя кеша — его чанк (gcache.glsl)
+#define ORIGIN_CHUNK g_origin
+#define GC_ORIGIN_VAR
 #include "resolve.glsl"
-#include "ground_surface.glsl"
+#include "gcache.glsl"
 #include "shade.glsl"
 #include "sky.glsl"
 #include "froxel.glsl"
@@ -29,11 +37,14 @@ shared uint s_lead[64];    // поток ведущего пикселя той 
 shared uint s_rank[64];    // у ведущего — его место среди ведущих
 shared uint s_list[64];    // ведущие по порядку
 shared vec3 s_color[64];
-shared uint s_work[6];     // пиксели неба, земли, сеток; поверхности земли, сеток; шаги тени
+shared uint s_work[7];     // пиксели неба, земли, сеток; поверхности земли, сеток; шаги тени; земля на пиксель
+shared uint s_bail;        // плитка земли уходит в «землю на пиксель»: текселя нет в кеше
+const uint HIT_GCACHE = 3u;  // земля из кеша: rel — точка пикселя, level — уровень, m0, m1 — номер текселя
 
 // Центр ячейки точки, как у surface(): на плоскости поперёк главной оси нормали
 vec3 cell_key(Hit h) {
     FrameData f = pc.frame;
+    if (h.kind == HIT_GCACHE) return vec3(uintBitsToFloat(h.level), uintBitsToFloat(h.m0), uintBitsToFloat(h.m1));
     if (h.kind == HIT_SKY || f.pixel == 0u) return h.rel;
     float cell = cell_size(dot(h.rel, f.forward.xyz));
     vec3 n = h.kind == HIT_GROUND ? h.ng : normalize(h.n);
@@ -52,25 +63,48 @@ vec3 froxel_heat(vec3 c, vec3 rel) {
     return heat * l * 0.9 + c * 0.1;
 }
 
-vec3 shade_hit(Hit h) {
+// Поверхность для света. Земля: тексель из кеша; у смеси и земли на пиксель — тексель без страницы (той же
+// функцией, что запекание, и через ту же упаковку — картинка та же) или крутой склон на пиксель. Оба пути
+// считают слои одним ground_eval(): код слоёв и материалов в конвейере — одна копия
+vec3 shade_hit(Hit h, int phys) {
     if (h.kind == HIT_SKY) return sky_radiance(normalize(h.rel));
     Surface s;
-    if (RESOLVE_GROUND && (!RESOLVE_MESH || h.kind == HIT_GROUND)) s = ground_surface(h.rel, normalize(h.n), h.level, h.blend, h.ng);
-    else s = mesh_surface(h.rel, normalize(h.n), h.m0, h.m1, h.blend, h.ao, h.seed);
+    bool gc = GC_KIND && h.kind == HIT_GCACHE;
+    int k = int(h.level);
+    ivec2 t = ivec2(int(h.m0), int(h.m1));
+    if (gc && phys >= 0) {
+        s = gc_surface(gc_read(phys, t), k, t, h.rel);
+    } else if (RESOLVE_GROUND && (gc || !RESOLVE_MESH || h.kind == HIT_GROUND)) {
+        GroundIn g = gc ? ground_texel_in(k, t) : ground_pixel_in(h.rel, normalize(h.n), h.level, h.blend, h.ng);
+        Surface a, b;
+        ground_eval(g, a, b);
+        if (gc) {
+            s = gc_surface(uvec4(gc_pack(a), gc_pack(b)), k, t, h.rel);
+        } else {
+            s = a;
+            s.pos = g.p - pc.frame.cam_off;
+        }
+    } else if (RESOLVE_MESH) {
+        s = mesh_surface(h.rel, normalize(h.n), h.m0, h.m1, h.blend, h.ao, h.seed);
+    } else {
+        s = gc_unpack(uvec2(0u));  // вид «земля»: других попаданий нет
+        s.pos = h.rel;
+    }
     vec3 c = light_surface(s);
     return pc.frame.froxel_heat != 0u ? froxel_heat(c, s.pos) : c;
 }
 
 // Работа группы — в счётчики кадра: одна атомарная операция на счётчик и плитку
 void work_flush() {
-    const uint at[6] = uint[6](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
-                               STAT_SHADOW_STEPS);
-    for (uint k = 0u; k < 6u; ++k)
+    const uint at[7] = uint[7](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
+                               STAT_SHADOW_STEPS, STAT_GC_PX_DIRECT);
+    for (uint k = 0u; k < 7u; ++k)
         if (s_work[k] != 0u) atomicAdd(pc.frame.stats.v[at[k]], s_work[k]);
 }
 
 void main() {
     FrameData f = pc.frame;
+    g_origin = f.cam_chunk;
     uint t = gl_LocalInvocationIndex;
     uint tile = f.tiles.list[TILE_KIND * f.tile_cap + gl_WorkGroupID.x];
     ivec2 origin = ivec2(tile & 0xFFFFu, tile >> 16) * 8;
@@ -85,14 +119,38 @@ void main() {
         }
         return;
     }
-    if (t < 6u) s_work[t] = 0u;
+    if (t < 7u) s_work[t] = 0u;
+    if (t == 0u) s_bail = 0u;
     uint id = inside ? imageLoad(u_vis, px).r : 0xFFFFFFFFu;
-    Hit h = resolve(px, inside ? id : 0u);
+    bool ground = inside && id != 0u && (id & VIS_GROUND) != 0u;
+    GcCell c;
+    c.kt = GC_NONE;
+    if (ground && f.gc_on != 0u && GC_KIND) c = f.gc_cells.v[px.y * int(f.viewport.x) + px.x];
+    Hit h;
+    if (c.kt != GC_NONE) {
+        // Земля из кеша: тексель записал разбор плиток, точка — на луче пикселя на его глубине
+        ivec2 tx = gc_cell_texel(c);
+        h.kind = HIT_GCACHE;
+        h.rel = pixel_ray(px) * c.depth;
+        h.n = h.ng = vec3(0.0, 1.0, 0.0);
+        h.blend = h.ao = 0.0;
+        h.level = uint(gc_cell_level(c));
+        h.m0 = uint(tx.x);
+        h.m1 = uint(tx.y);
+        h.seed = 0u;
+        id = 0xFFFFFFFEu;  // все пиксели текселя — одна поверхность, какой бы треугольник ни был
+    } else {
+        h = resolve(px, inside ? id : 0u);
+    }
+    // Земля мимо кеша — не вид «земля» (разбор плиток отдаёт такие плитки земле на пиксель; страховка)
+    bool bail_px = TILE_KIND == TILE_GROUND && ground && c.kt == GC_NONE;
     s_hit[t] = h;
     s_id[t] = id;
     s_cell[t] = cell_key(h);
     barrier();
-    if (inside) atomicAdd(s_work[h.kind == HIT_SKY ? 0u : h.kind == HIT_GROUND ? 1u : 2u], 1u);
+    if (bail_px) s_bail = 1u;
+    bool gk = h.kind == HIT_GROUND || h.kind == HIT_GCACHE;
+    if (inside) atomicAdd(s_work[h.kind == HIT_SKY ? 0u : gk ? 1u : 2u], 1u);
     // Ведущий — первый пиксель плитки с тем же номером и той же ячейкой; небо и чужие края — сами себе
     uint lead = t;
     if (inside && id != 0u)
@@ -105,13 +163,36 @@ void main() {
         for (uint j = 0u; j < t; ++j) r += s_lead[j] == j && s_id[j] != 0xFFFFFFFFu ? 1u : 0u;
         s_rank[t] = r;
         s_list[r] = t;
-        if (h.kind != HIT_SKY) atomicAdd(s_work[h.kind == HIT_GROUND ? 3u : 4u], 1u);
+        if (h.kind != HIT_SKY) atomicAdd(s_work[gk ? 3u : 4u], 1u);
     }
     barrier();
     uint nlead = 0u;
     for (uint j = 0u; j < 64u; ++j) nlead += s_lead[j] == j && s_id[j] != 0xFFFFFFFFu ? 1u : 0u;
+    // Ведущие земли из кеша ищут свою страницу; у плитки земли нет страницы — плитка уходит в землю на пиксель
+    Hit hl;
+    int phys = -1;
     if (t < nlead) {
-        s_color[t] = shade_hit(s_hit[s_list[t]]);
+        hl = s_hit[s_list[t]];
+        if (GC_KIND && hl.kind == HIT_GCACHE) {
+            phys = gc_find(int(hl.level), ivec2(int(hl.m0), int(hl.m1)));
+            if (phys < 0) {
+                if (TILE_KIND == TILE_GROUND) s_bail = 1u;
+                else atomicAdd(s_work[6], 1u);
+            }
+        } else if (hl.kind == HIT_GROUND) {
+            atomicAdd(s_work[6], 1u);
+        }
+    }
+    barrier();
+    if (TILE_KIND == TILE_GROUND && s_bail != 0u) {
+        if (t == 0u) {
+            uint slot = atomicAdd(f.tiles.cmd[TILE_GROUND_PX].x, 1u);
+            f.tiles.list[TILE_GROUND_PX * f.tile_cap + slot] = tile;
+        }
+        return;
+    }
+    if (t < nlead) {
+        s_color[t] = shade_hit(hl, phys);
         if (g_steps != 0u) atomicAdd(s_work[5], g_steps);
     }
     barrier();

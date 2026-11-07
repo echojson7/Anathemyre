@@ -299,6 +299,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.style.pixel = in.pixel;
     out.style.forward = in.forward;
     out.style.froxel_heat = in.froxel_heat;
+    out.style.gcache = !in.gcache_off;
 
     // Небо, светила и временный главный свет — из часов мира (docs/sky.md). Воздух пустыни (пыль, тёплая
     // дымка) — по маске пустыни под камерой, на перевале — плавно

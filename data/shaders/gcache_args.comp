@@ -1,0 +1,16 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Кеш земли (docs/gcache.md): сколько заявок кадра получат страницу — dispatch запекания (группа на страницу);
+// остальные — в счётчик переполнения, их пиксели освещение считает на пиксель
+#include "gcache.glsl"
+layout(local_size_x = 1) in;
+
+void main() {
+    FrameData f = pc.frame;
+    uint want = f.gc_req.req_n;
+    uint r = min(want, f.gc_req_cap);
+    uint n = min(r, f.gc_req.old_n + f.gc_req.recent_n);
+    f.gc_req.bake = uvec4(n, 1u, 1u, 0u);
+    f.stats.v[STAT_GC_BAKED] = n;
+    f.stats.v[STAT_GC_OVER] = want - n;
+}

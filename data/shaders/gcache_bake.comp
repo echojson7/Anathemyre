@@ -1,0 +1,38 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Кеш земли (docs/gcache.md): запекание заявленных страниц. Группа — страница 8×8 текселей: первый поток берёт
+// физическую страницу (сначала старые, потом недавние), снимает её с прежнего места в окне и ставит на новое,
+// потом каждый поток считает свой тексель ground_texel() — поверхность без света в двух вариантах следа
+ivec2 g_origin;
+#define ORIGIN_CHUNK g_origin
+#define GC_ORIGIN_VAR
+#include "gcache.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+
+shared uint s_phys;
+
+void main() {
+    FrameData f = pc.frame;
+    g_origin = f.cam_chunk;
+    uint i = gl_WorkGroupID.x;
+    uvec2 key = uvec2(f.gc_req.v[2u * i], f.gc_req.v[2u * i + 1u]);
+    int k = gc_key_level(key);
+    ivec2 page = gc_key_page(key);
+    if (gl_LocalInvocationIndex == 0u) {
+        uint base = 2u * f.gc_req_cap;
+        uint old_n = f.gc_req.old_n;
+        uint p = i < old_n ? f.gc_req.v[base + i] : f.gc_req.v[base + f.gc_pages_n + (i - old_n)];
+        GcPage pg = f.gc_pages.v[p];
+        // Прежняя страница теряет место в окне, если оно ещё её (его могла занять заявка этого кадра)
+        if (pg.used != 0u) {
+            uvec2 pk = uvec2(pg.key0, pg.key1);
+            atomicCompSwap(f.gc_table.v[gc_slot(gc_key_level(pk), gc_key_page(pk))], p + 1u, 0u);
+        }
+        f.gc_pages.v[p] = GcPage(key.x, key.y, f.gc_frame, 0u);
+        f.gc_table.v[gc_slot(k, page)] = p + 1u;
+        s_phys = p;
+    }
+    barrier();
+    ivec2 l = ivec2(gl_LocalInvocationID.xy);
+    f.gc_texels.v[s_phys * 64u + uint(l.y * 8 + l.x)] = ground_texel(k, page * GC_PAGE + l);
+}

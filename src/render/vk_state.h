@@ -69,6 +69,11 @@ struct FrameGpu {
     VkDeviceAddress stats;    // счётчики GPU кадра (STAT_*), vk_diag.cpp
     VkDeviceAddress tiles;    // плитки по видам (Tiles в common.glsl, docs/tiles.md)
     u32 tile_cap, tile_pad;   // мест в списке одного вида
+    // Кеш поверхности земли (vk_gcache.cpp, docs/gcache.md)
+    VkDeviceAddress gc_table, gc_pages, gc_texels, gc_req, gc_cells;
+    u32 gc_w, gc_pages_n, gc_req_cap, gc_frame;
+    i32 gc_tpc0;
+    u32 gc_on, gc_pad0, gc_pad1;
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -77,12 +82,17 @@ constexpr u32 STAT_FROXEL_LIGHTS = 1;  // клеток froxels, где огни 
 constexpr u32 STAT_FROXEL_DECALS = 2;  // клеток froxels, где декали не влезли
 // Счётчики работы освещения (docs/tiles.md)
 constexpr u32 STAT_TILES = 3;          // плитки по видам, TILE_KINDS подряд
-constexpr u32 STAT_PX_SKY = 7, STAT_PX_GROUND = 8, STAT_PX_MESH = 9;  // пиксели по видам
-constexpr u32 STAT_SURF_GROUND = 10, STAT_SURF_MESH = 11;            // поверхности: surface() и свет раз на ячейку
-constexpr u32 STAT_SHADOW_STEPS = 12;  // шаги луча тени рельефа
-constexpr u32 STAT_COUNT = 16;
-// Виды плиток кадра мира (TILE_* в common.glsl): небо, земля (и небо), сетки (и небо), смесь земли и сеток
-constexpr u32 TILE_KINDS = 4;
+constexpr u32 STAT_PX_SKY = 8, STAT_PX_GROUND = 9, STAT_PX_MESH = 10;  // пиксели по видам
+constexpr u32 STAT_SURF_GROUND = 11, STAT_SURF_MESH = 12;             // поверхности: surface() и свет раз на ячейку
+constexpr u32 STAT_SHADOW_STEPS = 13;  // шаги луча тени рельефа
+// Кеш поверхности земли (docs/gcache.md): страницы, прочитанные кадром; запечённые; не получившие места;
+// поверхности земли, посчитанные освещением мимо кеша (крутые склоны, нет места)
+constexpr u32 STAT_GC_USED = 14, STAT_GC_BAKED = 15, STAT_GC_OVER = 16, STAT_GC_PX_DIRECT = 17;
+constexpr u32 STAT_COUNT = 20;
+// Виды плиток кадра мира (TILE_* в common.glsl): небо, земля из кеша (и небо), сетки (и небо), смесь земли и
+// сеток, земля на пиксель (и небо)
+constexpr u32 TILE_KINDS = 5;
+constexpr u32 TILE_KIND_GROUND = 1, TILE_KIND_MIX = 3, TILE_KIND_GROUND_PX = 4;
 constexpr u32 TILE_HEADER = TILE_KINDS * 16;  // косвенные dispatch видов перед списками
 // Буфер чтения кадра: число видимых кластеров, с READBACK_STATS — счётчики
 constexpr VkDeviceSize READBACK_STATS = 16, READBACK_BYTES = READBACK_STATS + STAT_COUNT * 4;
@@ -158,6 +168,25 @@ struct WorldGpu {
     bool work_valid = false;
     // Ресурсы графа кадра (vk_graph.h)
     u8 rg_inst = 0, rg_cull = 0, rg_draws = 0, rg_vis = 0, rg_gverts = 0, rg_id = 0, rg_hdr = 0, rg_tiles = 0;
+};
+
+// Кеш поверхности земли (vk_gcache.cpp, docs/gcache.md): виртуальная текстура страницами 8×8 текселей по
+// уровням ячейки. Окно страниц уровня вокруг камеры — gc_w × gc_w записей, пул физических страниц — pages_n
+constexpr u32 GC_LEVELS = 13;   // как GC_LEVELS в gcache.glsl
+constexpr u32 GC_PAGE_TEXELS = 64;
+constexpr u32 GC_TEXEL_BYTES = 16;  // два варианта следа пикселя по 8 байт
+struct GcacheGpu {
+    GpuBuffer table, pages, texels, req, cells;
+    u32 w = 0, pages_n = 0, req_cap = 0, frame = 0;
+    i32 tpc0 = 0;
+    bool reset = true;       // очистить окна и страницы в начале следующего кадра мира
+    bool on = false;         // кеш в этом кадре (иначе вся земля — на пиксель в «смеси»)
+    u32 grow = 0;            // заявок без места в прочитанном кадре: пул растёт перед следующим кадром
+    u32 materials_gen = 0, terrain_gen = 0, seen_materials = ~0u, seen_terrain = ~0u;
+    f32 cell_min = 0, cell_pixels = 0;
+    u32 layers[8] = {};
+    VkPipeline pipe_scan = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE, pipe_bake = VK_NULL_HANDLE;
+    u8 rg_table = 0, rg_pages = 0, rg_texels = 0, rg_req = 0, rg_cells = 0;
 };
 
 // Диагностика GPU (vk_diag.cpp): что умеет драйвер для разбора сбоя, буфер меток AMD, счётчики GPU
@@ -267,6 +296,7 @@ struct VkState {
 
     TerrainGpu terrain;
     WorldGpu world;
+    GcacheGpu gcache;
     // Froxels (vk_froxel.cpp): клетки 64×64 пикселя × FROXEL_Z слоёв глубины
     GpuBuffer froxels;     // списки на клетку, FROXEL_STRIDE u32
     GpuBuffer media;       // среда на клетку (туман и пыль, vec4) — место для света пользователя, пока нули
@@ -353,6 +383,12 @@ bool vk_world_layout();
 bool vk_world_init();
 void vk_world_shutdown();
 void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
+// Кеш поверхности земли (vk_gcache.cpp, docs/gcache.md): конвейеры; буферы под кадр и сброс при смене того, из
+// чего считаются тексели (images — картинки кадра мира есть); прочитанные счётчики кадра (рост пула)
+bool vk_gcache_init();
+void vk_gcache_shutdown();
+void vk_gcache_fill(FrameGpu &g, const RenderFrame &f, bool images);
+void vk_gcache_read(const u32 *stats);
 // Froxels (vk_froxel.cpp, docs/frame.md «Froxels»): сетка клеток, огни и декали по клеткам
 constexpr u32 FROXEL_TILE = 64, FROXEL_Z = 32, FROXEL_STRIDE = 96;
 constexpr f32 FROXEL_NEAR = 1.0f, FROXEL_FAR = 512.0f;

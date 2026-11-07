@@ -10,7 +10,7 @@
 float sand_ripple(vec3 p, float lam, float nsz, vec2 wind, uint seed, out float dh) {
     FrameData f = pc.frame;
     // Фаза: доля от чанка камеры отдельно (целые чанки × 256 м), иначе рябь сдвинется при смене чанка
-    vec2 cc = vec2(f.cam_chunk) * (256.0 / lam);
+    vec2 cc = vec2(ORIGIN_CHUNK) * (256.0 / lam);
     float ph0 = fract(cc.x * wind.x) + fract(cc.y * wind.y);
     float bend = value_noise(p, nsz * 16.0, seed) * 2.0 + value_noise(p, nsz * 4.0, seed + 1u) * 0.35;
     float ph = ph0 + dot(p.xz, wind) / lam + bend;
@@ -62,7 +62,7 @@ Surface sand_surf(SurfIn i, vec2 wind) {
     float t = i.m.p1.a;
     vec3 q = snap(i.p, t);
     float lam = i.m.p2.x;
-    vec2 wp = vec2(f.cam_chunk) * CHUNK_M + i.p.xz;  // мировые метры: узор не прыгает со сменой чанка
+    vec2 wp = vec2(ORIGIN_CHUNK) * CHUNK_M + i.p.xz;  // мировые метры: узор не прыгает со сменой чанка
     // Подветренный склон: земля уходит вниз по ветру, или склон крут, как склон осыпания (~30°). Там ряби нет
     float lee = max(smoothstep(0.1, 0.28, dot(i.n.xz, wind)), 1.0 - smoothstep(0.84, 0.88, i.n.y));
     float flat_ = smoothstep(0.82, 0.95, i.n.y);

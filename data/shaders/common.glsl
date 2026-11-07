@@ -4,6 +4,7 @@
 #define COMMON_GLSL
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_control_flow_attributes : require
 
 // Вершина детали — MeshVertex (src/asset/mesh.h), 24 байта
 struct Vertex { float px, py, pz; uint normal; uint mats; uint misc; };
@@ -37,17 +38,32 @@ const uint STAT_FROXEL_LIGHTS = 1u;  // клеток, где огни не вл�
 const uint STAT_FROXEL_DECALS = 2u;  // клеток, где декали не влезли
 // Счётчики работы освещения (docs/tiles.md): плитки по видам, пиксели по видам, поверхности (surface() и
 // light_surface() раз на ячейку), шаги луча тени рельефа
-const uint STAT_TILES = 3u;          // 4 подряд: TILE_SKY..TILE_MIX
-const uint STAT_PX_SKY = 7u, STAT_PX_GROUND = 8u, STAT_PX_MESH = 9u;
-const uint STAT_SURF_GROUND = 10u, STAT_SURF_MESH = 11u;
-const uint STAT_SHADOW_STEPS = 12u;
+const uint STAT_TILES = 3u;          // 5 подряд: TILE_SKY..TILE_GROUND_PX
+const uint STAT_PX_SKY = 8u, STAT_PX_GROUND = 9u, STAT_PX_MESH = 10u;
+const uint STAT_SURF_GROUND = 11u, STAT_SURF_MESH = 12u;
+const uint STAT_SHADOW_STEPS = 13u;
+// Кеш поверхности земли (docs/gcache.md): страницы, которые кадр читал; запечённые; не получившие места;
+// пиксели земли мимо кеша (крутые склоны, правило пиксельности выключено)
+const uint STAT_GC_USED = 14u, STAT_GC_BAKED = 15u, STAT_GC_OVER = 16u, STAT_GC_PX_DIRECT = 17u;
 
-// Плитки 8×8 кадра мира по видам (docs/tiles.md, light_tiles.comp): небо — пусто; земля — земля и, может быть,
-// небо; сетки — сетки и, может быть, небо; смесь — земля и сетки. На вид — косвенный dispatch и список плиток
-const uint TILE_SKY = 0u, TILE_GROUND = 1u, TILE_MESH = 2u, TILE_MIX = 3u, TILE_KINDS = 4u;
+// Плитки 8×8 кадра мира по видам (docs/tiles.md, light_tiles.comp): небо — пусто; земля — земля из кеша
+// (docs/gcache.md) и, может быть, небо; сетки — сетки и, может быть, небо; смесь — земля и сетки; земля на
+// пиксель — земля, которой нет в кеше (крутые склоны), и, может быть, небо. На вид — косвенный dispatch и список
+const uint TILE_SKY = 0u, TILE_GROUND = 1u, TILE_MESH = 2u, TILE_MIX = 3u, TILE_GROUND_PX = 4u, TILE_KINDS = 5u;
 struct TileCmd { uint x, y, z, pad; };  // VkDispatchIndirectCommand, шаг 16 байт
 // Плитка в списке — x | y << 16 (номер плитки, не пикселя); список вида k — с k · tile_cap
 layout(buffer_reference, scalar) buffer Tiles { TileCmd cmd[TILE_KINDS]; uint list[]; };
+
+// Кеш поверхности земли (docs/gcache.md, gcache.glsl): страница — 8×8 текселей одного уровня ячейки
+struct GcPage { uint key0, key1, used, pad; };  // ключ страницы (уровень << 24 | x, z), кадр последнего чтения
+layout(buffer_reference, scalar) buffer GcTable { uint v[]; };  // окна страниц уровней
+layout(buffer_reference, scalar) buffer GcPages { GcPage v[]; };
+layout(buffer_reference, scalar) buffer GcTexels { uvec4 v[]; };  // тексель: два варианта по 8 байт
+// Заявки кадра и свободные страницы: счёт заявок, «старых» и «недавних» свободных, dispatch запекания; дальше
+// заявки (ключи), старые и недавние — по req_cap и pages_n мест
+layout(buffer_reference, scalar) buffer GcReq { uint req_n, old_n, recent_n, pad; uvec4 bake; uint v[]; };
+struct GcCell { uint kt; int tz; float depth; };  // ячейка земли пикселя: уровень << 24 | x, z; глубина
+layout(buffer_reference, scalar) buffer GcCells { GcCell v[]; };
 
 // Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы сеток и кластеров (MeshGpu, ClusterGpu в
 // src/render/vk_state.h), видимые кластеры кадра и косвенные вызовы, которые пишет отсечение (cull_*.comp)
@@ -138,6 +154,15 @@ layout(buffer_reference, scalar) buffer FrameData {
     Stats stats;              // счётчики GPU кадра (STAT_*)
     Tiles tiles;              // плитки по видам (light_tiles.comp → light_cells.comp)
     uint tile_cap, tile_pad;  // мест в списке одного вида (плиток кадра)
+    // Кеш поверхности земли (docs/gcache.md): окно страниц уровня в gc_table — gc_w × gc_w, уровни подряд
+    GcTable gc_table;         // физическая страница + 1; 0 — нет; GC_REQ | кадр — заявка этого кадра
+    GcPages gc_pages;
+    GcTexels gc_texels;
+    GcReq gc_req;
+    GcCells gc_cells;         // на пиксель кадра, строками
+    uint gc_w, gc_pages_n, gc_req_cap, gc_frame;  // кадр кеша: с 1, растёт на кадр мира
+    int gc_tpc0;              // текселей уровня 0 на чанк (256 м / cell_min)
+    uint gc_on, gc_pad0, gc_pad1;  // 0 — кеш выключен: вся земля на пиксель (F3, --nogcache)
 };
 
 layout(push_constant, scalar) uniform Push {
@@ -146,6 +171,11 @@ layout(push_constant, scalar) uniform Push {
 } pc;
 
 const float CHUNK_M = 256.0;
+// Начало отсчёта узоров земли и материалов (world_cell, t_split…): по умолчанию чанк камеры. Запекание кеша
+// земли считает тексель от его собственного чанка (gcache.glsl), чтобы тексель зависел только от себя
+#ifndef ORIGIN_CHUNK
+#define ORIGIN_CHUNK pc.frame.cam_chunk
+#endif
 
 // Точка относительно камеры → клип. Обратная глубина до бесконечности: z = near, w = глубина вдоль взгляда
 vec4 to_clip(vec3 rel) {
