@@ -104,22 +104,27 @@ static void record_upload(VkCommandBuffer cmd, void *user) {
     vkCmdPipelineBarrier2(cmd, &di);
 }
 
-u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices) {
+u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices, Span<const RenderLod> lods) {
     if (!vertices.count || !indices.count) return 0;
+    for (const RenderLod &l : lods)
+        if ((u64)l.first_index + l.index_count > indices.count) { log_error("LOD за индексами сетки"); return 0; }
     u32 id = 0;
     for (u32 i = 1; i < RENDER_MAX_MESHES && !id; ++i)
         if (!g_vk.meshes[i].used) id = i;
     if (!id) { log_error("сеток больше %u", RENDER_MAX_MESHES); return 0; }
     MeshSlot &s = g_vk.meshes[id];
     VkDeviceSize vbytes = vertices.count * sizeof(MeshVertex), ibytes = indices.count * sizeof(u32);
+    // Начало вершин должно делиться на 24 байта (vertexOffset — номер вершины), а VMA понимает только
+    // выравнивание степенью двойки: место берётся на вершину больше и начало округляется вверх до 24
     VmaVirtualAllocationCreateInfo vi{};
-    vi.size = vbytes;
-    vi.alignment = sizeof(MeshVertex);
+    vi.size = vbytes + sizeof(MeshVertex);
+    vi.alignment = 8;
     VkDeviceSize voff = 0, ioff = 0;
     if (vmaVirtualAllocate(g_vk.vtx_block, &vi, &s.vtx, &voff) != VK_SUCCESS) {
         log_error("общий буфер вершин полон (%llu МБ)", (unsigned long long)(GEOMETRY_VERTEX_BYTES >> 20));
         return 0;
     }
+    voff = (voff + sizeof(MeshVertex) - 1) / sizeof(MeshVertex) * sizeof(MeshVertex);
     vi.size = ibytes;
     vi.alignment = sizeof(u32);
     if (vmaVirtualAllocate(g_vk.idx_block, &vi, &s.idx, &ioff) != VK_SUCCESS) {
@@ -132,6 +137,12 @@ u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices)
     s.vertex_count = (u32)vertices.count;
     s.first_index = (u32)(ioff / sizeof(u32));
     s.index_count = (u32)indices.count;
+    s.lod_count = lods.count < RENDER_MESH_MAX_LODS ? (u32)lods.count : RENDER_MESH_MAX_LODS;
+    for (u32 i = 0; i < s.lod_count; ++i) s.lods[i] = lods.data[i];
+    if (!s.lod_count) {
+        s.lod_count = 1;
+        s.lods[0] = {0, s.index_count};
+    }
 
     // Загрузка: временный буфер, копия на GPU, ожидание. Только при загрузке, не в игровом цикле
     GpuBuffer staging;

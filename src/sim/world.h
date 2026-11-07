@@ -9,7 +9,7 @@
 constexpr u32 SIM_HZ = 60;
 constexpr f32 SIM_DT = 1.0f / 60.0f;
 // Меняется при правке шага мира, после которой старые записи не повторяются
-constexpr u32 SIM_VERSION = 6;
+constexpr u32 SIM_VERSION = 7;
 
 // Номер сущности: место (младшие 16 бит) + поколение (старшие 16). Связи в мире — только номерами
 struct Id {
@@ -55,6 +55,22 @@ struct Props {
     u32 count;     // занятые места подряд с начала (удаления пока нет)
 };
 
+constexpr u32 DECALS_CAPACITY = 512;
+
+// Декали карты (docs/ruin.md): потёки, грязь, пыль, пятна — коробка проекции с видом узора и материалом по
+// имени. Шаг мира их не читает и не меняет; ставит описание сцены (заготовки). Кадр читает таблицу напрямую,
+// как землю: после создания мира она не меняется
+struct Decals {
+    u64 *kind;       // хеш имени вида узора (streak, grime, dust, stain — data/shaders/decal.glsl)
+    u64 *material;   // хеш имени материала: цвет, шероховатость, сила (data/materials.txt)
+    i32 *cx, *cz;
+    f32 *x, *y, *z;  // середина коробки: смещение в чанке и высота от нуля карты
+    u32 *yaw;        // поворот коробки вокруг вертикали (Turn)
+    f32 *hx, *hy, *hz;  // половины сторон коробки в её осях
+    u32 *seed;
+    u32 count;
+};
+
 // Часы мира (docs/sky.md): целые тики. Тик — шаг при обычном ходе суток; солнце и луна выводятся в кадре
 constexpr u32 CLOCK_DAY_TICKS_DEFAULT = 48 * 60 * SIM_HZ;  // сутки — 48 минут реального времени
 struct Clock {
@@ -79,6 +95,7 @@ struct World {
     u64 attract_until;
     Dots dots;
     Props props;
+    Decals decals;
 };
 
 // Земля строится первой (объекты и точки ставятся на неё); scratch — временная память генерации
@@ -88,6 +105,10 @@ bool dots_spawn(World &w, const WPos &center, f32 radius);
 void dots_kill(World &w, u32 slot);
 // Поставить объект на землю: высота из ground_at() плюс lift. false — таблица полна
 bool props_add(World &w, u64 mesh, u64 material, const WPos &at, f32 lift, u32 yaw, f32 scale, u32 seed);
+// То же с высотой at.y от нуля карты (детали заготовки ставятся от высоты её середины, а не от земли под собой)
+bool props_add_at(World &w, u64 mesh, u64 material, const WPos &at, u32 yaw, f32 scale, u32 seed);
+// Декаль: at — середина коробки (с высотой), h — половины сторон. false — таблица полна
+bool decals_add(World &w, u64 kind, u64 material, const WPos &at, u32 yaw, const f32 h[3], u32 seed);
 
 // Столбцы мира для хеша и проверки повтора: имя, данные, байты. Порядок — порядок в хеше
 struct Column {

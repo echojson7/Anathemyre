@@ -39,9 +39,9 @@ jobs:
           [ "$a" = "$b" ]
       - name: Слои и запреты
         run: make check
-      - name: Сетки-заглушки в git совпадают с генератором
+      - name: Сетки в git совпадают с генератором
         run: |
-          python3 tools/meshgen.py data/meshes
+          make -s meshes
           git diff --exit-code data/meshes
       - name: Сборки
         run: |

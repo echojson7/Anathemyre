@@ -22,6 +22,25 @@ static bool read_data(const char *rel, Arena &a, u8 **data, usize *size) {
     return false;
 }
 
+// Заготовки сцены (data/prefabs/<имя>.txt): текст в арене загрузки, хеш — в хеш описаний
+struct PrefabLoad {
+    AppMemory *m;
+    u64 hash;
+};
+static bool prefab_read(void *ctx, Str name, const u8 **text, usize *size) {
+    PrefabLoad &L = *(PrefabLoad *)ctx;
+    char rel[128];
+    if (name.n == 0 || name.n > 64) return false;
+    for (usize i = 0; i < name.n; ++i)
+        if (name.p[i] == '/' || name.p[i] == '\\' || name.p[i] == '.') return false;  // только имя, без путей
+    snprintf(rel, sizeof rel, "prefabs/%.*s.txt", (int)name.n, name.p);
+    u8 *data = nullptr;
+    if (!read_data(rel, L.m->load, &data, size)) return false;
+    *text = data;
+    L.hash = hash_combine(L.hash, text_hash(data, *size));
+    return true;
+}
+
 bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash) {
     usize mark = arena_mark(m.load);
     u8 *text = nullptr;
@@ -57,11 +76,14 @@ bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash) {
              w.terrain.nz, (f64)(platform_time_ns() - t0) / 1e6, hex_u64(w.terrain.hash, hex));
     bool ok = read_data("scene.txt", m.load, &text, &size);
     if (ok) {
-        ok = scene_load(w, text, size, err, sizeof err);
+        PrefabLoad pl{&m, 0x9EFAB0ull};
+        ok = scene_load(w, text, size, prefab_read, &pl, err, sizeof err);
         if (!ok) log_error("data/scene.txt: %s", err);
-        // Хеш описаний, которые читает шаг мира: сцена, описание земли и сама сетка (её строит код генератора)
+        // Хеш описаний, которые читает шаг мира: сцена с заготовками, описание земли и сама сетка (её строит
+        // код генератора)
         if (desc_hash)
-            *desc_hash = hash_combine(hash_combine(hash_combine(0x5CE7Eull, text_hash(text, size)), terrain_text),
+            *desc_hash = hash_combine(hash_combine(hash_combine(hash_combine(0x5CE7Eull, text_hash(text, size)), pl.hash),
+                                                   terrain_text),
                                       w.terrain.hash);
     }
     arena_restore(m.load, mark);
@@ -98,13 +120,20 @@ static void load_mesh(const char *name, void *user) {
         global[i] = (u16)k;
     }
     mesh_remap_materials(md, global);
-    u32 id = render_mesh_create(md.vertices, md.indices);
+    RenderLod lods[RENDER_MESH_MAX_LODS];
+    ViewMesh vm{};
+    vm.lod_count = md.lods.count < RENDER_MESH_MAX_LODS ? (u32)md.lods.count : RENDER_MESH_MAX_LODS;
+    for (u32 i = 0; i < vm.lod_count; ++i) {
+        lods[i] = {md.lods.data[i].first_index, md.lods.data[i].index_count};
+        vm.lod_error[i] = md.lods.data[i].error;
+    }
+    vm.id = render_mesh_create(md.vertices, md.indices, {lods, vm.lod_count});
     arena_restore(L.m->load, mark);
-    if (!id) { L.failed++; return; }
+    if (!vm.id) { L.failed++; return; }
     if (L.view->mesh_count >= VIEW_MAX_MESHES) { log_error("сеток больше %u", VIEW_MAX_MESHES); L.failed++; return; }
     // Имя сетки — имя файла без .mesh
-    usize n = strlen(name) - 5;
-    L.view->meshes[L.view->mesh_count++] = {hash_bytes(name, n), id};
+    vm.name = hash_bytes(name, strlen(name) - 5);
+    L.view->meshes[L.view->mesh_count++] = vm;
 }
 
 bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {

@@ -262,6 +262,7 @@ static bool create_frames() {
         if (!vk_create_buffer(f.instances, RENDER_MAX_INSTANCES * sizeof(RenderInstance), ssbo)) return false;
         if (!vk_create_buffer(f.points, RENDER_MAX_POINTS * sizeof(RenderPoint), ssbo)) return false;
         if (!vk_create_buffer(f.lines, RENDER_MAX_LINE_VERTICES * sizeof(RenderLineVertex), ssbo)) return false;
+        if (!vk_create_buffer(f.decals, RENDER_MAX_DECALS * sizeof(RenderDecal), ssbo)) return false;
     }
     if (g_vk.timestamp_period > 0) {
         auto qi = vk_info<VkQueryPoolCreateInfo>(VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO);
@@ -299,6 +300,7 @@ void render_shutdown() {
             vk_destroy_buffer(f.instances);
             vk_destroy_buffer(f.points);
             vk_destroy_buffer(f.lines);
+            vk_destroy_buffer(f.decals);
             if (f.acquired) vkDestroySemaphore(g_vk.device, f.acquired, nullptr);
             if (f.done) vkDestroyFence(g_vk.device, f.done, nullptr);
             if (f.pool) vkDestroyCommandPool(g_vk.device, f.pool, nullptr);

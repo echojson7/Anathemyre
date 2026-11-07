@@ -25,6 +25,7 @@ void extract_init(Extract &e, Arena &arena) {
 void sim_extract(const World &w, Extract &e) {
     const Dots &d = w.dots;
     e.terrain = &w.terrain;
+    e.decals = &w.decals;
     e.step = w.step;
     e.clock = w.clock;
     for (u32 i = 0; i < DOTS_CAPACITY; ++i) e.gen[i] = d.alive[i] ? d.gen[i] : 0;

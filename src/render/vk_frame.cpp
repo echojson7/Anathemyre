@@ -279,6 +279,10 @@ bool render_frame(const RenderFrame &f) {
     u32 nlines = f.lines.count < RENDER_MAX_LINE_VERTICES ? (u32)f.lines.count & ~1u : RENDER_MAX_LINE_VERTICES;
     if (npoints) memcpy(fs.points.mapped, f.points.data, npoints * sizeof(RenderPoint));
     if (nlines) memcpy(fs.lines.mapped, f.lines.data, nlines * sizeof(RenderLineVertex));
+    u32 ndecals = f.decals.count < RENDER_MAX_DECALS ? (u32)f.decals.count : RENDER_MAX_DECALS;
+    if (ndecals) memcpy(fs.decals.mapped, f.decals.data, ndecals * sizeof(RenderDecal));
+    g.decals = fs.decals.address;
+    g.decal_count = ndecals;
 
     vkResetCommandPool(g_vk.device, fs.pool, 0);
     VkCommandBuffer cmd = fs.cmd;
@@ -339,14 +343,16 @@ bool render_frame(const RenderFrame &f) {
         for (usize i = 0; i < ndraws;) {
             u64 key = f.draws.data[i].key;
             usize j = i + 1;
-            while (j < ndraws && render_key_mesh(f.draws.data[j].key) == render_key_mesh(key) &&
+            while (j < ndraws && render_key_mesh_lod(f.draws.data[j].key) == render_key_mesh_lod(key) &&
                    render_key_pipe(f.draws.data[j].key) == render_key_pipe(key))
                 j++;
             u32 n = (u32)(j - i);
             u32 mesh = render_key_mesh(key);
             if (key != ~0ull && mesh && mesh < RENDER_MAX_MESHES && g_vk.meshes[mesh].used) {
                 const MeshSlot &m = g_vk.meshes[mesh];
-                vkCmdDrawIndexed(cmd, m.index_count, n, m.first_index, (i32)m.first_vertex, first);
+                u32 lod = render_key_lod(key);
+                const RenderLod &l = m.lods[lod < m.lod_count ? lod : m.lod_count - 1];
+                vkCmdDrawIndexed(cmd, l.index_count, n, m.first_index + l.first_index, (i32)m.first_vertex, first);
             }
             if (key != ~0ull) first += n;
             i = j;

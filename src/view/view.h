@@ -25,6 +25,8 @@ struct Camera {
 struct ViewMesh {
     u64 name;
     u32 id;
+    u32 lod_count;                         // LOD сетки (1 — без упрощения)
+    f32 lod_error[RENDER_MESH_MAX_LODS];   // ошибка упрощения LOD, м
 };
 constexpr u32 VIEW_MAX_MESHES = 1024;
 struct ViewAssets {

@@ -2,6 +2,7 @@
 // делает освещение в compute по visibility buffer (docs/render.md, «Проходы с этапа 5»)
 #include "surface.glsl"
 #include "light.glsl"
+#include "decal.glsl"
 
 // rel — точка относительно камеры, mat1/blend — второй материал вершины и доля смеси (по ячейкам, вразброс)
 vec3 shade(vec3 rel, vec3 n, uint mat0, uint mat1, float blend, float ao, uint seed) {
@@ -18,6 +19,7 @@ vec3 shade(vec3 rel, vec3 n, uint mat0, uint mat1, float blend, float ao, uint s
     uint mat = mat0;
     if (mat1 != mat0 && blend > 0.0 && cell_noise(p, max(cell, 1.0 / 16.0), seed ^ 0x5EEDu) < blend) mat = mat1;
     Surface s = surface(mat, p, n, cell, max(depth, 0.0) * f.pixel_angle, seed);
+    s = apply_decals(s, p - f.cam_off, n);
     s.ao *= ao;
     s.pos = p - f.cam_off;
     return light_surface(s);

@@ -700,6 +700,7 @@ void terrain_generate(Terrain &t, const TerrainDesc &d, Arena &world, Arena &scr
         }
     }
     arena_restore(scratch, mark);
+    terrain_stamps_apply(t, d);
     t.hash = hash_combine(hash_bytes(t.height, nodes * sizeof(u16)), hash_bytes(t.mask, cells * sizeof(u32)));
     t.hash = hash_combine(t.hash, hash_bytes(t.water, cells * sizeof(u16)));
     t.hash = hash_combine(t.hash, hash_bytes(t.mask2, cells * sizeof(u32)));
@@ -725,7 +726,7 @@ static void terrain_err(char *err, usize cap, u32 line, const char *what) {
 }
 
 // seed <n> · chunks <n, чётное> · ring <м> · locations <valley|desert>… (с запада на восток) ·
-// dunes <номер локации> <файл .dun в data/>
+// dunes <номер локации> <файл .dun в data/> · pad <x> <z> <w> <d> [<переход м>]
 bool terrain_desc_parse(const u8 *text, usize size, TerrainDesc &out, char *err, usize err_cap) {
     out = TerrainDesc{};
     TextReader r = text_reader(text, size);
@@ -749,6 +750,18 @@ bool terrain_desc_parse(const u8 *text, usize size, TerrainDesc &out, char *err,
             }
             memcpy(out.dune_path[loc], l.w[2].p, l.w[2].n);
             out.dune_path[loc][l.w[2].n] = 0;
+            continue;
+        }
+        if ((l.count == 5 || l.count == 6) && str_eq(l.w[0], "pad")) {
+            if (out.pad_count >= TERRAIN_MAX_PADS) { terrain_err(err, err_cap, l.line, "слишком много площадок"); return false; }
+            TerrainPad &p = out.pad[out.pad_count++];
+            p.margin = 16;
+            if (!parse_i32(l.w[1], p.x) || !parse_i32(l.w[2], p.z) || !parse_i32(l.w[3], p.w) || !parse_i32(l.w[4], p.d) ||
+                (l.count == 6 && !parse_i32(l.w[5], p.margin)) || p.w < 1 || p.d < 1 || p.w > 512 || p.d > 512 ||
+                p.margin < 1 || p.margin > 256) {
+                terrain_err(err, err_cap, l.line, "pad <x> <z> <ширина 1..512> <глубина 1..512> [<переход 1..256 м>]");
+                return false;
+            }
             continue;
         }
         if (l.count != 2) { terrain_err(err, err_cap, l.line, "ожидается <ключ> <значение>"); return false; }

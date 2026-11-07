@@ -1,4 +1,5 @@
 #include "view.h"
+#include "../core/hash.h"
 #include "../core/math3.h"
 #include "../sim/ground.h"
 
@@ -147,10 +148,19 @@ bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32
     return false;
 }
 
-static u32 find_mesh(const ViewAssets &a, u64 name) {
+static const ViewMesh *find_mesh(const ViewAssets &a, u64 name) {
     for (u32 i = 0; i < a.mesh_count; ++i)
-        if (a.meshes[i].name == name) return a.meshes[i].id;
-    return 0;
+        if (a.meshes[i].name == name) return &a.meshes[i];
+    return nullptr;
+}
+
+// LOD по ошибке на экране: самый грубый, у которого ошибка упрощения не больше LOD_PIXELS пикселя кадра
+constexpr f32 LOD_PIXELS = 0.75f;
+static u32 pick_lod(const ViewMesh &m, f32 scale, f32 dist, f32 pixel_angle) {
+    f32 limit = LOD_PIXELS * pixel_angle * f_max(dist, 0.1f);
+    u32 lod = 0;
+    while (lod + 1 < m.lod_count && m.lod_error[lod + 1] * scale <= limit) lod++;
+    return lod;
 }
 
 // Кватернион → два u32 по два snorm16 (как unpackSnorm2x16 в шейдере)
@@ -161,6 +171,43 @@ static u32 pack_snorm2(f32 a, f32 b) {
         return (u32)(u16)(i16)i;
     };
     return q(a) | (q(b) << 16);
+}
+
+// Декали карты (docs/ruin.md): вид по имени, материал по имени, коробка относительно камеры. Дальше
+// DECAL_FAR м не нужны: узор декали мельче пикселя
+constexpr f32 DECAL_FAR = 250.0f;
+static void build_decals(const Decals &d, const ViewAssets &assets, const WPos &eye, Arena &frame, RenderFrame &out) {
+    static const char *const names[DECAL_KINDS] = {"streak", "grime", "dust", "stain"};
+    u64 kinds[DECAL_KINDS];
+    for (u32 k = 0; k < DECAL_KINDS; ++k) kinds[k] = hash_bytes(names[k], strlen(names[k]));
+    RenderDecal *dst = arena_push<RenderDecal>(frame, d.count);
+    u32 n = 0;
+    for (u32 i = 0; i < d.count && n < RENDER_MAX_DECALS; ++i) {
+        u32 kind = DECAL_KINDS;
+        for (u32 k = 0; k < DECAL_KINDS; ++k)
+            if (d.kind[i] == kinds[k]) kind = k;
+        if (kind == DECAL_KINDS) continue;
+        Vec3 rel = delta(eye, d.cx[i], d.cz[i], d.x[i], d.y[i], d.z[i]);
+        f32 r = f_max(d.hx[i], f_max(d.hy[i], d.hz[i]));
+        if (length(rel) - r * 1.8f > DECAL_FAR) continue;
+        RenderDecal &g = dst[n++];
+        g.x = rel.x;
+        g.y = rel.y;
+        g.z = rel.z;
+        // Ось x коробки после поворота quat_yaw: (cos, 0, −sin)
+        f32 s, c;
+        sincos_turn(d.yaw[i], &s, &c);
+        g.ux = c;
+        g.uz = -s;
+        g.hx = d.hx[i];
+        g.hy = d.hy[i];
+        g.hz = d.hz[i];
+        g.kind = kind;
+        g.material = assets.materials ? material_find(*assets.materials, d.material[i]) : 0;
+        g.seed = d.seed[i];
+        g.pad = 0;
+    }
+    out.decals = {dst, n};
 }
 
 void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in, Arena &frame, RenderFrame &out) {
@@ -184,6 +231,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     f32 s, c;
     sincos_turn(turn_from_rad(cam.fov_y * 0.5f), &s, &c);
     v.tan_half_fov = s / c;
+    const f32 pixel_angle = 2.0f * v.tan_half_fov / (f32)(in.height > 0 ? in.height : 1080);  // радиан на пиксель
     v.near_m = NEAR_M;
     out.style.pixel = in.pixel;
 
@@ -212,8 +260,9 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     u32 ni = 0;
     for (u32 i = 0; i < n && ni < RENDER_MAX_INSTANCES; ++i) {
         if (!cur.prop_gen[i]) continue;
-        u32 mesh = find_mesh(assets, cur.prop_mesh[i]);
-        if (!mesh) continue;
+        const ViewMesh *vm = find_mesh(assets, cur.prop_mesh[i]);
+        if (!vm) continue;
+        u32 mesh = vm->id;
         RenderInstance &r = inst[ni];
         r.cx = cur.prop_cx[i];
         r.cz = cur.prop_cz[i];
@@ -229,7 +278,8 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
                                                              : RENDER_NO_MATERIAL;
         r.seed = cur.prop_seed[i];
         Vec3 rel = delta(eye, r.cx, r.cz, r.x, r.y, r.z);
-        draws[ni] = {render_key(LAYER_OPAQUE, PIPE_MESH, mesh, dot(rel, b.forward)), ni, 0};
+        u32 lod = pick_lod(*vm, r.scale, length(rel), pixel_angle);
+        draws[ni] = {render_key(LAYER_OPAQUE, PIPE_MESH, mesh, lod, dot(rel, b.forward)), ni, 0};
         ni++;
     }
     // Рассыпка камней: позади камеры не рисуется
@@ -239,11 +289,12 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
         f32 depth = dot(rel, b.forward);
         if (depth < -2.0f) continue;
         inst[ni] = r;
-        draws[ni] = {render_key(LAYER_OPAQUE, PIPE_MESH, r.mesh, depth), ni, 0};
+        draws[ni] = {render_key(LAYER_OPAQUE, PIPE_MESH, r.mesh, 0, depth), ni, 0};
         ni++;
     }
     out.instances = {inst, ni};
     out.draws = {draws, ni};
+    if (cur.decals) build_decals(*cur.decals, assets, eye, frame, out);
 
     // Точки-заглушки этапа 0 — чуть над землёй, с интерполяцией
     RenderPoint *pts = arena_push<RenderPoint>(frame, RENDER_MAX_POINTS);

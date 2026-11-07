@@ -52,6 +52,8 @@ struct FrameGpu {
     i32 t_mip[8];      // начало уровня k сглаженной сетки высот (шаг 8·2^k м) в буфере высот, номера u16
     VkDeviceAddress sky_trans, sky_ms, sky_sun, sky_moon, sky_out;  // таблицы неба (vk_sky.cpp)
     RenderSky sky;
+    VkDeviceAddress decals;  // RenderDecal подряд
+    u32 decal_count, decal_pad;
 };
 
 // Небо (vk_sky.cpp, docs/sky.md): таблицы в буферах видеопамяти, считают их compute-шейдеры sky_*.comp
@@ -89,6 +91,7 @@ struct FrameSlot {
     GpuBuffer instances;  // экземпляры в порядке ключей
     GpuBuffer points;
     GpuBuffer lines;
+    GpuBuffer decals;
     bool timed = false;   // в этом слоте записаны метки времени
 };
 
@@ -96,6 +99,8 @@ struct MeshSlot {
     VmaVirtualAllocation vtx = VK_NULL_HANDLE, idx = VK_NULL_HANDLE;
     u32 first_vertex = 0, vertex_count = 0;
     u32 first_index = 0, index_count = 0;
+    u32 lod_count = 0;
+    RenderLod lods[RENDER_MESH_MAX_LODS];  // от начала индексов сетки
     bool used = false;
     bool dying = false;  // ждёт освобождения в очереди
 };
