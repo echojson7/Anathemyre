@@ -2,13 +2,15 @@
 // FROXEL_NEAR, дальше степенями до FROXEL_FAR, последний — до бесконечности). На клетку — списки огней и декалей,
 // чьи шары её задевают (froxel.comp). Огни — вход света пользователя (light.glsl), декали читает decal.glsl.
 // Буфер среды (туман и пыль на клетку) — место для света пользователя, каркас кладёт туда нули
-#include "vk_state.h"
+#include "vk_graph.h"
 #include "../core/log.h"
 
 bool vk_froxel_init() {
     for (FrameSlot &fs : g_vk.frames)
         if (!vk_create_buffer(fs.lights, RENDER_MAX_LIGHTS * sizeof(RenderPointLight), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT))
             return false;
+    g_vk.rg_froxels = rg_buffer("froxels: списки");
+    g_vk.rg_media = rg_buffer("froxels: среда");
     g_vk.pipe_froxel = vk_make_compute("froxel.comp");
     return g_vk.pipe_froxel != VK_NULL_HANDLE;
 }
@@ -34,6 +36,10 @@ static bool ensure_cells(u32 cells) {
         g_vk.froxel_cap = 0;
         return false;
     }
+    vk_buffer_name(g_vk.froxels, "froxels: списки");
+    vk_buffer_name(g_vk.media, "froxels: среда");
+    rg_reset(g_vk.rg_froxels);
+    rg_reset(g_vk.rg_media);
     g_vk.froxel_cap = cells;
     return true;
 }
@@ -60,22 +66,27 @@ void vk_froxel_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.froxel_heat = f.style.froxel_heat ? 1u : 0u;
 }
 
-void vk_froxel_record(VkCommandBuffer cmd, const FrameSlot &fs) {
-    if (!g_vk.froxel_cap) return;
+// Среда пока нули; списки — froxel.comp. Барьеры с прошлым кадром (освещение, forward читали) ставит граф
+static void record_froxels(VkCommandBuffer cmd, void *user) {
+    const FrameSlot &fs = *(const FrameSlot *)user;
     const FrameGpu &g = *(const FrameGpu *)fs.frame.mapped;
-    if (!g.froxel_on) return;
     u32 cells = g.froxel_x * g.froxel_y * g.froxel_z;
-    // Прошлый кадр мог ещё читать списки (освещение, forward) и писать их и среду
-    vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
-                      VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    vkCmdFillBuffer(cmd, g_vk.media.buffer, 0, (VkDeviceSize)cells * 16, 0);  // среды пока нет
+    vkCmdFillBuffer(cmd, g_vk.media.buffer, 0, (VkDeviceSize)cells * 16, 0);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.pipe_froxel);
     PushConsts pc{fs.frame.address, 0, 0};
     vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
     vkCmdDispatch(cmd, (cells + 63) / 64, 1, 1);
-    vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
-                      VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                      VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+}
+
+void vk_froxel_passes(const FrameSlot &fs) {
+    if (!g_vk.froxel_cap || !((const FrameGpu *)fs.frame.mapped)->froxel_on) return;
+    rg_pass("froxels", "froxels", record_froxels, (void *)&fs);
+    rg_use(g_vk.rg_media, RG_COPY_WRITE);
+    rg_use(g_vk.rg_froxels, RG_CS_WRITE);
+    rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
+}
+
+void vk_froxel_reads(RgUse u) {
+    rg_use(g_vk.rg_froxels, u);
+    rg_use(g_vk.rg_media, u);
 }

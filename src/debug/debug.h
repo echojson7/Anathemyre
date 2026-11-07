@@ -40,6 +40,8 @@ inline void debug_clear_frame(DebugState &d) {
 constexpr u32 CLOCK_SPEEDS[] = {1, 20, 120, 0};
 enum DebugTab : u32 { DEBUG_TAB_MAIN, DEBUG_TAB_WORLD, DEBUG_TABS };
 
+// Строк проходов GPU и переполнений в панели
+constexpr u32 DEBUG_MAX_PASSES = 16, DEBUG_MAX_OVERFLOWS = 8;
 // Что панель показывает: числа кадра (раз в секунду) и состояние, которое знает run_window
 struct DebugInfo {
     f64 fps, frame_ms, frame_max_ms, cpu_ms, gpu_ms, step_ms;
@@ -55,9 +57,13 @@ struct DebugInfo {
     f64 cam[3];               // глаз камеры, метры от начала карты
     f64 cam_above;            // над землёй, м
     u32 passes;               // проходы GPU прошлого кадра (render_gpu_passes)
-    const char *pass_names[8];
-    f64 pass_ms[8];
+    const char *pass_names[DEBUG_MAX_PASSES];
+    f64 pass_ms[DEBUG_MAX_PASSES];
     u32 vis_clusters;         // видимых кластеров (кадр мира)
+    // Что не влезло за секунду (render_overflows): сколько просили, сколько есть (0 — счёт клеток без предела)
+    u32 overflows;
+    const char *over_what[DEBUG_MAX_OVERFLOWS];
+    u64 over_want[DEBUG_MAX_OVERFLOWS], over_cap[DEBUG_MAX_OVERFLOWS];
 };
 
 struct World;

@@ -1,7 +1,7 @@
 // Небо (docs/sky.md): таблицы атмосферы в буферах видеопамяти и compute-конвейеры, которые их считают.
 // Пропускание и многократное рассеяние зависят только от параметров воздуха — пересчёт при их смене;
 // вид неба от камеры (солнце и луна) и свет неба на плоскость (гармоники, экспозиция) — каждый кадр
-#include "vk_state.h"
+#include "vk_graph.h"
 #include "../core/log.h"
 
 // Размеры — как в data/shaders/atmosphere.glsl
@@ -32,6 +32,13 @@ bool vk_sky_init() {
         !vk_create_buffer(s.ms, MS_N * MS_N * v4, ssbo, true) || !vk_create_buffer(s.sun, SKY_W * SKY_H * v4, ssbo, true) ||
         !vk_create_buffer(s.moon, MOON_W * MOON_H * v4, ssbo, true) || !vk_create_buffer(s.out, SKY_OUT * v4, ssbo, true))
         return false;
+    const char *names[] = {"небо: пропускание", "небо: рассеяние", "небо: вид от солнца", "небо: вид от луны", "небо: свет"};
+    GpuBuffer *bs[] = {&s.trans, &s.ms, &s.sun, &s.moon, &s.out};
+    u8 *rs[] = {&s.rg_trans, &s.rg_ms, &s.rg_sun, &s.rg_moon, &s.rg_out};
+    for (u32 i = 0; i < 5; ++i) {
+        vk_buffer_name(*bs[i], names[i]);
+        *rs[i] = rg_buffer(names[i]);
+    }
     s.pipe_trans = vk_make_compute("sky_trans.comp");
     s.pipe_ms = vk_make_compute("sky_ms.comp");
     s.pipe_view = vk_make_compute("sky_view.comp");
@@ -69,20 +76,6 @@ void vk_sky_fill(FrameGpu &g, const RenderFrame &f) {
     g_pending_sky = f.sky;
 }
 
-// Запись шейдером → чтение следующими compute и фрагментами
-void vk_memory_barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 src, VkAccessFlags2 src_access,
-                            VkPipelineStageFlags2 dst, VkAccessFlags2 dst_access) {
-    auto b = vk_info<VkMemoryBarrier2>(VK_STRUCTURE_TYPE_MEMORY_BARRIER_2);
-    b.srcStageMask = src;
-    b.srcAccessMask = src_access;
-    b.dstStageMask = dst;
-    b.dstAccessMask = dst_access;
-    auto di = vk_info<VkDependencyInfo>(VK_STRUCTURE_TYPE_DEPENDENCY_INFO);
-    di.memoryBarrierCount = 1;
-    di.pMemoryBarriers = &b;
-    vkCmdPipelineBarrier2(cmd, &di);
-}
-
 static void dispatch(VkCommandBuffer cmd, VkPipeline p, VkDeviceAddress frame, u32 a, u32 gx, u32 gy) {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p);
     PushConsts pc{frame, a, 0};
@@ -90,24 +83,41 @@ static void dispatch(VkCommandBuffer cmd, VkPipeline p, VkDeviceAddress frame, u
     vkCmdDispatch(cmd, gx, gy, 1);
 }
 
-void vk_sky_record(VkCommandBuffer cmd, VkDeviceAddress frame) {
+// Проходы неба (docs/graph.md): барьеры между ними и с прошлым кадром (те же буферы на все кадры) ставит граф
+static VkDeviceAddress g_frame_addr;
+
+static void record_trans(VkCommandBuffer cmd, void *) { dispatch(cmd, g_vk.sky.pipe_trans, g_frame_addr, 0, TRANS_W / 8, TRANS_H / 8); }
+static void record_ms(VkCommandBuffer cmd, void *) { dispatch(cmd, g_vk.sky.pipe_ms, g_frame_addr, 0, MS_N / 8, MS_N / 8); }
+static void record_view(VkCommandBuffer cmd, void *) {
+    dispatch(cmd, g_vk.sky.pipe_view, g_frame_addr, 0, SKY_W / 8, SKY_H / 8);
+    dispatch(cmd, g_vk.sky.pipe_view, g_frame_addr, 1, MOON_W / 8, MOON_H / 8);
+}
+static void record_sum(VkCommandBuffer cmd, void *) { dispatch(cmd, g_vk.sky.pipe_sum, g_frame_addr, 0, 1, 1); }
+
+void vk_sky_passes(VkDeviceAddress frame) {
     SkyGpu &s = g_vk.sky;
-    const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-    const VkPipelineStageFlags2 FS = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-    const VkAccessFlags2 W = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, R = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
-    // Прошлый кадр мог ещё читать таблицы во фрагментах: запись — после него (те же буферы на все кадры)
-    vk_memory_barrier(cmd, FS | CS, R | W, CS, R | W);
+    g_frame_addr = frame;
     if (!s.luts_ready || !same_air(s.last, g_pending_sky)) {
-        dispatch(cmd, s.pipe_trans, frame, 0, TRANS_W / 8, TRANS_H / 8);
-        vk_memory_barrier(cmd, CS, W, CS, R);
-        dispatch(cmd, s.pipe_ms, frame, 0, MS_N / 8, MS_N / 8);
-        vk_memory_barrier(cmd, CS, W, CS, R);
+        rg_pass("небо: пропускание", "небо", record_trans, nullptr);
+        rg_use(s.rg_trans, RG_CS_WRITE);
+        rg_pass("небо: рассеяние", "небо", record_ms, nullptr);
+        rg_use(s.rg_trans, RG_CS_READ);
+        rg_use(s.rg_ms, RG_CS_WRITE);
         s.last = g_pending_sky;
         s.luts_ready = true;
     }
-    dispatch(cmd, s.pipe_view, frame, 0, SKY_W / 8, SKY_H / 8);
-    dispatch(cmd, s.pipe_view, frame, 1, MOON_W / 8, MOON_H / 8);
-    vk_memory_barrier(cmd, CS, W, CS, R);
-    dispatch(cmd, s.pipe_sum, frame, 0, 1, 1);
-    vk_memory_barrier(cmd, CS, W, CS | FS, R);
+    rg_pass("небо: вид", "небо", record_view, nullptr);
+    rg_use(s.rg_trans, RG_CS_READ);
+    rg_use(s.rg_ms, RG_CS_READ);
+    rg_use(s.rg_sun, RG_CS_WRITE);
+    rg_use(s.rg_moon, RG_CS_WRITE);
+    rg_pass("небо: свет", "небо", record_sum, nullptr);
+    vk_sky_reads(RG_CS_READ);
+    rg_use(s.rg_out, RG_CS_WRITE);
+}
+
+void vk_sky_reads(RgUse u) {
+    const SkyGpu &s = g_vk.sky;
+    RgRes rs[] = {s.rg_trans, s.rg_ms, s.rg_sun, s.rg_moon, s.rg_out};
+    for (RgRes r : rs) rg_use(r, u);
 }

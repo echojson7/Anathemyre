@@ -1,7 +1,7 @@
 // Интерфейс поверх кадра (docs/ui.md): последний проход по готовой картинке swapchain, без глубины.
 // Прямоугольники и буквы — экземпляры по 6 вершин, данные шейдер читает сам по адресам (как всё в кадре).
 // Проход не зависит от прохода мира: этап 5 меняет кадр под ним, этот файл не трогая
-#include "vk_state.h"
+#include "vk_graph.h"
 #include "../core/log.h"
 
 constexpr u32 UI_MAX_QUADS = 16384;
@@ -151,16 +151,19 @@ bool render_ui_font(const u8 *atlas, u32 w, u32 h) {
     return ok;
 }
 
+static u32 g_ui_img = 0, g_ui_n = 0;
+static usize g_ui_want = 0;  // сколько прямоугольников просили (render_ui_set)
+
 void render_ui_set(Span<const RenderUiQuad> quads) {
     u32 n = quads.count < UI_MAX_QUADS ? (u32)quads.count : UI_MAX_QUADS;
+    g_ui_want = quads.count;
     if (n) memcpy(g_ui.quads[g_vk.frame_index].mapped, quads.data, n * sizeof(RenderUiQuad));
     g_ui.count = n;
 }
 
-void vk_ui_record(VkCommandBuffer cmd, u32 img) {
-    u32 n = g_ui.count;
-    g_ui.count = 0;  // кадр без render_ui_set — без интерфейса
-    if (!n || !g_ui.pipe || !g_ui.atlas_w) return;
+
+static void record_ui(VkCommandBuffer cmd, void *) {
+    u32 img = g_ui_img, n = g_ui_n;
     auto ca = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
     ca.imageView = g_vk.views[img];
     ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -182,4 +185,16 @@ void vk_ui_record(VkCommandBuffer cmd, u32 img) {
     vkCmdPushConstants(cmd, g_ui.layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
     vkCmdDraw(cmd, 6, n, 0, 0);
     vkCmdEndRendering(cmd);
+}
+
+void vk_ui_pass(u32 img) {
+    u32 n = g_ui.count;
+    g_ui.count = 0;  // кадр без render_ui_set — без интерфейса
+    vk_overflow("прямоугольники интерфейса", g_ui_want, UI_MAX_QUADS);
+    g_ui_want = 0;
+    if (!n || !g_ui.pipe || !g_ui.atlas_w) return;
+    g_ui_img = img;
+    g_ui_n = n;
+    rg_pass("интерфейс", nullptr, record_ui, nullptr);
+    rg_use(g_vk.rg_swap, RG_COLOR);
 }

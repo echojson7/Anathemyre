@@ -109,6 +109,10 @@ jobs:
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation --window 640 360 2>&1 | tail -40
           # старый forward (переключатель сравнения) — тоже под слоями проверки
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 10 --validation --window 640 360 --forward 2>&1 | tail -5
+          # проверка на GPU (GPU-AV, docs/graph.md «Проверки»): чтение и запись мимо буферов по адресам, кадр мира.
+          # Шесть шейдеров lavapipe под GPU-AV не тянет (падает или съедает ~14 ГБ) — без проверки
+          xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 4 --window 640 360 --gpuav \
+            --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,ground.vert,ground.frag,mesh.frag 2>&1 | tail -5
           # снимок в полный размер для глаза
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 10 --validation --shot frame.bmp | tail -5
           # кадр мира одинаков от запуска к запуску (docs/frame.md, «Сверка кадров»): два запуска с тестовыми огнями

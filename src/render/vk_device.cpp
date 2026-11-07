@@ -1,9 +1,10 @@
 // Vulkan: instance, устройство, VMA, swapchain. Через vk-bootstrap, функции — volk
-#include "vk_state.h"
+#include "vk_graph.h"
 #include "../core/log.h"
 #include "../platform/platform.h"
 #include "vk-bootstrap/VkBootstrap.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 VkState g_vk;
 u32 g_vk_validation_errors = 0;
@@ -11,6 +12,7 @@ u32 g_vk_validation_errors = 0;
 bool vk_check(VkResult r, const char *what) {
     if (r == VK_SUCCESS) return true;
     log_error("Vulkan: %s → %d", what, (int)r);
+    if (r == VK_ERROR_DEVICE_LOST) vk_device_lost();
     return false;
 }
 
@@ -36,12 +38,23 @@ static bool create_device() {
     u32 ext_count = 0;
     const char *const *ext = platform_vk_instance_extensions(&ext_count);
     for (u32 i = 0; i < ext_count; ++i) ib.enable_extension(ext[i]);
-    if (g_vk.cfg.validation) {
+    if (g_vk.cfg.validation || g_vk.cfg.gpu_validation) {
         ib.request_validation_layers(true)
             .set_debug_callback(on_debug)
             .set_debug_messenger_severity(VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                                          VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
-            .add_validation_feature_enable(VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT);
+                                          VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT);
+        // Проверка на GPU (чтение и запись мимо буферов по адресу) медленная и с синхронизацией не сочетается:
+        // это отдельный запуск (docs/graph.md, «Проверки»)
+        if (g_vk.cfg.gpu_validation) {
+            // Шейдеры выбирает vk_load_shader (структурой проверок у модуля): кроме тех, что lavapipe не тянет
+#ifdef _WIN32
+            _putenv_s("VK_KHRONOS_VALIDATION_SELECT_INSTRUMENTED_SHADERS", "1");
+#else
+            setenv("VK_KHRONOS_VALIDATION_SELECT_INSTRUMENTED_SHADERS", "1", 1);
+#endif
+            ib.add_validation_feature_enable(VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT);
+        }
+        else ib.add_validation_feature_enable(VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT);
     }
     auto inst = ib.build();
     if (!inst) {
@@ -52,7 +65,7 @@ static bool create_device() {
     g_vk.instance = vi.instance;
     g_vk.messenger = vi.debug_messenger;
     volkLoadInstanceOnly(g_vk.instance);
-    if (g_vk.cfg.validation && !g_vk.messenger) log_warn("слои проверки Vulkan не найдены, иду без них");
+    if ((g_vk.cfg.validation || g_vk.cfg.gpu_validation) && !g_vk.messenger) log_warn("слои проверки Vulkan не найдены, иду без них");
 
     g_vk.surface = (VkSurfaceKHR)platform_vk_create_surface(g_vk.instance);
     if (!g_vk.surface) return false;
@@ -93,6 +106,15 @@ static bool create_device() {
     g_vk.gpu = pd.physical_device;
     snprintf(g_vk.gpu_name, sizeof g_vk.gpu_name, "%s", pd.properties.deviceName);
     g_vk.timestamp_period = pd.properties.limits.timestampPeriod;
+
+    // Разбор сбоя GPU (vk_diag.cpp): что есть у драйвера. Метки NV или AMD — одно из двух
+    g_vk.diag.nv_checkpoints = pd.enable_extension_if_present(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+    if (!g_vk.diag.nv_checkpoints) g_vk.diag.amd_marker = pd.enable_extension_if_present(VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
+    VkPhysicalDeviceFaultFeaturesEXT fault{};
+    fault.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
+    fault.deviceFault = VK_TRUE;
+    g_vk.diag.device_fault = pd.enable_extension_if_present(VK_EXT_DEVICE_FAULT_EXTENSION_NAME) &&
+                             pd.enable_extension_features_if_present(fault);
 
     auto dev = vkb::DeviceBuilder(pd).build();
     if (!dev) {
@@ -160,6 +182,9 @@ static bool create_depth() {
     vi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
     if (!vk_check(vkCreateImageView(g_vk.device, &vi, nullptr, &g_vk.depth.view), "вид глубины")) return false;
     g_vk.depth_extent = g_vk.extent;
+    if (!g_vk.rg_depth) g_vk.rg_depth = rg_image("глубина", VK_IMAGE_ASPECT_DEPTH_BIT);
+    rg_bind_image(g_vk.rg_depth, g_vk.depth.image);
+    vk_image_name(g_vk.depth.image, "глубина");
     return true;
 }
 
@@ -244,11 +269,15 @@ bool vk_create_buffer(GpuBuffer &b, VkDeviceSize size, VkBufferUsageFlags usage,
     auto ai = vk_info<VkBufferDeviceAddressInfo>(VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO);
     ai.buffer = b.buffer;
     b.address = vkGetBufferDeviceAddress(g_vk.device, &ai);
+    vk_buffer_track(b);
     return device_local || b.mapped != nullptr;
 }
 
 void vk_destroy_buffer(GpuBuffer &b) {
-    if (b.buffer) vmaDestroyBuffer(g_vk.vma, b.buffer, b.alloc);
+    if (b.buffer) {
+        vk_buffer_untrack(b);
+        vmaDestroyBuffer(g_vk.vma, b.buffer, b.alloc);
+    }
     b = GpuBuffer{};
 }
 
@@ -290,6 +319,9 @@ bool render_init(const RenderConfig &cfg) {
     if (!create_device()) return false;
     if (!vk_create_swapchain()) return false;
     if (!create_frames()) return false;
+    g_vk.rg_swap = rg_image("картинка кадра", VK_IMAGE_ASPECT_COLOR_BIT);
+    g_vk.rg_capture = rg_buffer("снимок кадра");
+    if (!vk_diag_init()) return false;
     if (!vk_geometry_init()) return false;
     if (!vk_create_pipelines()) return false;
     log_info("Vulkan: %s, кадр %ux%u, %s", g_vk.gpu_name, g_vk.extent.width, g_vk.extent.height,
@@ -305,6 +337,7 @@ void render_shutdown() {
         vk_terrain_shutdown();
         vk_geometry_shutdown();
         vk_destroy_buffer(g_vk.capture);
+        vk_diag_shutdown();
         if (g_vk.queries) vkDestroyQueryPool(g_vk.device, g_vk.queries, nullptr);
         for (FrameSlot &f : g_vk.frames) {
             vk_destroy_buffer(f.frame);
@@ -324,6 +357,7 @@ void render_shutdown() {
     if (g_vk.messenger) vkDestroyDebugUtilsMessengerEXT(g_vk.instance, g_vk.messenger, nullptr);
     vkDestroyInstance(g_vk.instance, nullptr);
     g_vk = VkState{};
+    rg_clear();
 }
 
 u32 render_validation_errors() { return g_vk_validation_errors; }

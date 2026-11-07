@@ -16,6 +16,8 @@ struct Args {
     u64 win_w = 1600, win_h = 900;  // --window W H: размер окна (CI берёт меньше: lavapipe считает пиксели)
     bool vsync = true;
     bool validation = false;
+    bool gpu_validation = false;  // --gpuav: слои проверки с проверкой на GPU
+    const char *gpu_validation_skip = nullptr;  // --gpuav-skip: шейдеры без неё, через запятую
     const char *shot = nullptr;     // --shot файл.bmp: снимок последнего кадра (с --frames)
     bool cam_set = false;           // --cam yaw pitch dist x z (градусы, метры): камера для снимков
     f32 cam[5] = {};
