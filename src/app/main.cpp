@@ -22,7 +22,8 @@ static bool parse_u64(const char *s, u64 &out) {
 }
 
 static void usage() {
-    log_info("anathemyre [--seed N] [--novsync] [--validation] [--frames N] [--record файл.rec] [--nopixel] [--forward] [--nohud]");
+    log_info("anathemyre [--seed N] [--novsync] [--validation | --gpuav] [--frames N] [--record файл.rec] [--nopixel] [--forward] [--nohud]");
+    log_info("           [--gpuav-skip a.comp,b.frag]                                 шейдеры без проверки на GPU");
     log_info("           [--lights] [--heat]                                          тестовые огни, огни по клеткам froxels");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z]   снимок (градусы, метры)");
@@ -122,6 +123,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--terrain-map")) { a.terrain_map = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--novsync")) a.vsync = false;
         else if (!strcmp(s, "--validation")) a.validation = true;
+        else if (!strcmp(s, "--gpuav")) a.gpu_validation = true;
+        else if (!strcmp(s, "--gpuav-skip")) { a.gpu_validation_skip = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--help") || !strcmp(s, "-h")) { usage(); return 0; }
         else ok = false;
         if (!ok) {

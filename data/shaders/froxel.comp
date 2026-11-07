@@ -40,6 +40,7 @@ void main() {
         n++;
     }
     f.froxels.v[base] = n > FROXEL_LIGHTS ? FROXEL_ALL : n;
+    if (n > FROXEL_LIGHTS) atomicAdd(f.stats.v[STAT_FROXEL_LIGHTS], 1u);
     n = 0u;
     for (uint i = 0u; i < f.decal_count; ++i) {
         Decal d = f.decals.v[i];
@@ -48,4 +49,5 @@ void main() {
         n++;
     }
     f.froxels.v[base + 32u] = n > FROXEL_DECALS ? FROXEL_ALL : n;
+    if (n > FROXEL_DECALS) atomicAdd(f.stats.v[STAT_FROXEL_DECALS], 1u);
 }

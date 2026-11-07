@@ -56,7 +56,9 @@ int run_window(const Args &a, AppMemory &m) {
     if (set.fullscreen && !a.frames) platform_set_fullscreen(true);
     RenderConfig rc;
     rc.vsync = a.vsync && set.vsync;  // --novsync сильнее настройки и в файл не пишется
-    rc.validation = a.validation;
+    rc.validation = a.validation && !a.gpu_validation;
+    rc.gpu_validation = a.gpu_validation;
+    rc.gpu_validation_skip = a.gpu_validation_skip;
     char shader_dir[1024];
     snprintf(shader_dir, sizeof shader_dir, "%sshaders/", platform_exe_dir());
     rc.shader_dir = shader_dir;
@@ -83,9 +85,13 @@ int run_window(const Args &a, AppMemory &m) {
     HudMenu menu;
     HudStats hs{};
     // Проходы GPU для панели отладки: сумма за секунду → среднее (как остальные числа кадра)
-    const char *pass_names[8] = {};
-    f64 pass_sum[8] = {}, pass_avg[8] = {};
+    static_assert(RENDER_MAX_PASSES <= DEBUG_MAX_PASSES, "строк проходов в панели меньше, чем у отрисовки");
+    const char *pass_names[RENDER_MAX_PASSES] = {};
+    f64 pass_sum[RENDER_MAX_PASSES] = {}, pass_avg[RENDER_MAX_PASSES] = {};
     u32 npass = 0, npass_avg = 0, pass_frames = 0;
+    // Переполнения за секунду: по каждому — наибольшее «сколько просили»; прошлая секунда — для панели
+    RenderOverflow over_sec[DEBUG_MAX_OVERFLOWS], over_last[DEBUG_MAX_OVERFLOWS];
+    u32 nover_sec = 0, nover_last = 0;
     WorldInspect *inspect = arena_push<WorldInspect>(m.world, 1);
     *inspect = WorldInspect{};
     MouseOwner mouse_owner;
@@ -202,6 +208,12 @@ int run_window(const Args &a, AppMemory &m) {
                     di.pass_ms[i] = pass_avg[i];
                 }
                 di.vis_clusters = render_vis_clusters();
+                di.overflows = nover_last;
+                for (u32 i = 0; i < nover_last; ++i) {
+                    di.over_what[i] = over_last[i].what;
+                    di.over_want[i] = over_last[i].want;
+                    di.over_cap[i] = over_last[i].cap;
+                }
                 debug_panel(di, w, ds, *inspect);
             }
             hud_menu(menu, set);
@@ -325,13 +337,13 @@ int run_window(const Args &a, AppMemory &m) {
         }
         stat_add(st_cpu, (f64)(platform_time_ns() - tcpu) / 1e6 - render_wait_ms());
         {
-            const char *nm[8];
-            f64 ms[8];
-            u32 n = render_gpu_passes(nm, ms, 8);
+            const char *nm[RENDER_MAX_PASSES];
+            f64 ms[RENDER_MAX_PASSES];
+            u32 n = render_gpu_passes(nm, ms, RENDER_MAX_PASSES);
             bool same = n == npass;
             for (u32 i = 0; i < n && same; ++i) same = nm[i] == pass_names[i];
             if (!same) {  // другой набор проходов (переключили forward) — заново
-                for (u32 i = 0; i < 8; ++i) pass_sum[i] = 0;
+                for (u32 i = 0; i < RENDER_MAX_PASSES; ++i) pass_sum[i] = 0;
                 pass_frames = 0;
             }
             npass = n;
@@ -340,6 +352,14 @@ int run_window(const Args &a, AppMemory &m) {
                 pass_sum[i] += ms[i];
             }
             pass_frames++;
+            RenderOverflow ov[DEBUG_MAX_OVERFLOWS];
+            u32 nov = render_overflows(ov, DEBUG_MAX_OVERFLOWS);
+            for (u32 i = 0; i < nov; ++i) {
+                u32 k = 0;
+                while (k < nover_sec && over_sec[k].what != ov[i].what) k++;
+                if (k == nover_sec && nover_sec < DEBUG_MAX_OVERFLOWS) over_sec[nover_sec++] = ov[i];
+                else if (k < nover_sec && ov[i].want > over_sec[k].want) over_sec[k].want = ov[i].want;
+            }
         }
 
         frames++;
@@ -360,8 +380,18 @@ int run_window(const Args &a, AppMemory &m) {
             platform_set_title(title);
             npass_avg = npass;
             for (u32 i = 0; i < npass; ++i) pass_avg[i] = pass_frames ? pass_sum[i] / pass_frames : 0.0;
-            for (u32 i = 0; i < 8; ++i) pass_sum[i] = 0;
+            for (u32 i = 0; i < RENDER_MAX_PASSES; ++i) pass_sum[i] = 0;
             pass_frames = 0;
+            // Переполнения за секунду — в журнал предупреждением и в панель
+            for (u32 i = 0; i < nover_sec; ++i) {
+                const RenderOverflow &o = over_sec[i];
+                if (o.cap) log_warn("переполнение: %s — %llu из %llu", o.what, (unsigned long long)o.want,
+                                    (unsigned long long)o.cap);
+                else log_warn("переполнение: %s — %llu", o.what, (unsigned long long)o.want);
+                over_last[i] = o;
+            }
+            nover_last = nover_sec;
+            nover_sec = 0;
             hs = HudStats{(f64)frames_window / secs, st_frame.avg_last, st_cpu.avg_last, render_gpu_ms(), st_step.avg_last};
             log_info("%s", title);
             // Проходы GPU за секунду — те же числа, что в F3, для журнала и сравнения на другой машине

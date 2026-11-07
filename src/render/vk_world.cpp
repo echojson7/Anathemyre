@@ -6,7 +6,7 @@
 // 3) visibility buffer: кластеры и земля пишут номер треугольника и глубину;
 // 4) освещение в compute (light_cells.comp): surface() → light_surface() раз на ячейку, линейный цвет в HDR;
 // 5) стиль (style.frag) — в картинку swapchain, поверх — отладочные отрезки и точки, потом интерфейс
-#include "vk_state.h"
+#include "vk_graph.h"
 #include "../core/log.h"
 
 static RenderInstance g_mirror[RENDER_MAX_INSTANCES];  // что сейчас лежит в WorldGpu::inst
@@ -52,9 +52,18 @@ bool vk_world_init() {
         !vk_create_buffer(w.gverts, (VkDeviceSize)CLIP_LEVELS * (2 * CLIP_N + 1) * (2 * CLIP_N + 1) * 32, ssbo, true))
         return false;
     for (FrameSlot &fs : g_vk.frames)
-        if (!vk_create_buffer(fs.inst_upload, RENDER_MAX_INSTANCES * sizeof(RenderInstance), VK_BUFFER_USAGE_TRANSFER_SRC_BIT) ||
-            !vk_create_buffer(fs.readback, 16, VK_BUFFER_USAGE_TRANSFER_DST_BIT))
+        if (!vk_create_buffer(fs.inst_upload, RENDER_MAX_INSTANCES * sizeof(RenderInstance), VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
             return false;
+    const char *names[] = {"мир: экземпляры", "мир: счёт отсечения", "мир: вызовы", "мир: видимые кластеры",
+                           "мир: вершины земли"};
+    GpuBuffer *bs[] = {&w.inst, &w.cull, &w.draws, &w.vis, &w.gverts};
+    u8 *rs[] = {&w.rg_inst, &w.rg_cull, &w.rg_draws, &w.rg_vis, &w.rg_gverts};
+    for (u32 i = 0; i < 5; ++i) {
+        vk_buffer_name(*bs[i], names[i]);
+        *rs[i] = rg_buffer(names[i]);
+    }
+    w.rg_id = rg_image("мир: номера треугольников", VK_IMAGE_ASPECT_COLOR_BIT);
+    w.rg_hdr = rg_image("мир: HDR", VK_IMAGE_ASPECT_COLOR_BIT);
     w.inst_count = 0;
     PipeDesc vm{"vis_mesh.vert", "vis_mesh.frag"};
     vm.cull = VK_CULL_MODE_BACK_BIT;
@@ -96,10 +105,7 @@ void vk_world_shutdown() {
     vk_destroy_buffer(w.draws);
     vk_destroy_buffer(w.vis);
     vk_destroy_buffer(w.gverts);
-    for (FrameSlot &fs : g_vk.frames) {
-        vk_destroy_buffer(fs.inst_upload);
-        vk_destroy_buffer(fs.readback);
-    }
+    for (FrameSlot &fs : g_vk.frames) vk_destroy_buffer(fs.inst_upload);
     if (w.pool) vkDestroyDescriptorPool(g_vk.device, w.pool, nullptr);
     if (w.set_layout) vkDestroyDescriptorSetLayout(g_vk.device, w.set_layout, nullptr);
     w = WorldGpu{};
@@ -137,6 +143,10 @@ static bool ensure_images() {
         !create_image(w.hdr, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT))
         return false;
     w.extent = g_vk.extent;
+    vk_image_name(w.id.image, "мир: номера треугольников");
+    vk_image_name(w.hdr.image, "мир: HDR");
+    rg_bind_image(w.rg_id, w.id.image);
+    rg_bind_image(w.rg_hdr, w.hdr.image);
     VkDescriptorImageInfo ii[2] = {{VK_NULL_HANDLE, w.id.view, VK_IMAGE_LAYOUT_GENERAL},
                                    {VK_NULL_HANDLE, w.hdr.view, VK_IMAGE_LAYOUT_GENERAL}};
     VkWriteDescriptorSet wr[2] = {};
@@ -150,13 +160,6 @@ static bool ensure_images() {
     }
     vkUpdateDescriptorSets(g_vk.device, 2, wr, 0, nullptr);
     return true;
-}
-
-void vk_world_read(FrameSlot &fs) {
-    if (!fs.world) return;
-    vmaInvalidateAllocation(g_vk.vma, fs.readback.alloc, 0, VK_WHOLE_SIZE);
-    g_vk.world.vis_clusters = *(const u32 *)fs.readback.mapped;
-    fs.world = false;
 }
 
 void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
@@ -215,67 +218,48 @@ static void dispatch(VkCommandBuffer cmd, VkPipeline p, VkDeviceAddress frame, u
     vkCmdDispatch(cmd, gx, gy, 1);
 }
 
-bool vk_world_record(VkCommandBuffer cmd, FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, u32 nlines) {
-    WorldGpu &w = g_vk.world;
-    if (!w.id.image) return false;
-    const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-    const VkAccessFlags2 R = VK_ACCESS_2_SHADER_STORAGE_READ_BIT, W = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
-    const VkDeviceAddress frame = fs.frame.address;
-    u32 ninst = w.inst_count;
+// Кадр мира в графе: что нужно записи проходов
+struct WorldFrame {
+    VkDeviceAddress frame;
+    FrameSlot *fs;
+    u32 img, npoints, nlines;
+    bool ground;
+};
+static WorldFrame g_wf;
 
-    // Прошлый кадр мог ещё читать буферы отсечения и картинки: всё прошлое — до записи этого кадра
-    vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
-    if (g_ncopies) {
-        vkCmdCopyBuffer(cmd, fs.inst_upload.buffer, w.inst.buffer, g_ncopies, g_copies);
-        vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                          CS | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, R);
-    }
-    // 1. Вершины земли кадра: все кольца, по ряду групп на кольцо
-    const TerrainGpu &tg = g_vk.terrain;
-    const bool ground = tg.on && f.ground;
-    if (ground) {
-        const u32 row = 2 * CLIP_N + 1;
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, w.pipe_ground_bake);
-        PushConsts pg{frame, 0, 0};
-        vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pg, &pg);
-        vkCmdDispatch(cmd, (row * row + 63) / 64, CLIP_LEVELS, 1);
-        vk_memory_barrier(cmd, CS, W, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | CS, R);
-    }
-    vk_mark(cmd, "земля");
+static void record_inst_upload(VkCommandBuffer cmd, void *) {
+    vkCmdCopyBuffer(cmd, g_wf.fs->inst_upload.buffer, g_vk.world.inst.buffer, g_ncopies, g_copies);
+}
 
-    // 2. Отсечение: счёт, префиксная сумма, запись вызовов
-    u32 groups = (ninst + 63) / 64;
-    if (groups) dispatch(cmd, w.pipe_cull_count, frame, groups, 1);
-    vk_memory_barrier(cmd, CS, W, CS, R | W);
-    dispatch(cmd, w.pipe_cull_scan, frame, 1, 1);
-    vk_memory_barrier(cmd, CS, W, CS, R | W);
-    if (groups) dispatch(cmd, w.pipe_cull_write, frame, groups, 1);
-    vk_memory_barrier(cmd, CS, W,
-                      VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | CS |
-                          VK_PIPELINE_STAGE_2_COPY_BIT,
-                      VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | R | VK_ACCESS_2_TRANSFER_READ_BIT);
-    VkBufferCopy rb{0, 0, 4};
-    vkCmdCopyBuffer(cmd, w.cull.buffer, fs.readback.buffer, 1, &rb);
-    fs.world = true;
-    vk_mark(cmd, "отсечение");
+// Вершины земли кадра: все кольца, по ряду групп на кольцо
+static void record_ground_bake(VkCommandBuffer cmd, void *) {
+    const u32 row = 2 * CLIP_N + 1;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.world.pipe_ground_bake);
+    PushConsts pg{g_wf.frame, 0, 0};
+    vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pg, &pg);
+    vkCmdDispatch(cmd, (row * row + 63) / 64, CLIP_LEVELS, 1);
+}
 
-    // 3. Visibility buffer: номер треугольника и глубина
-    vk_image_barrier(cmd, w.id.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0,
-                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-    auto ca = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
-    ca.imageView = w.id.view;
-    ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    ca.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    ca.clearValue.color.uint32[0] = 0;  // пусто — небо
+static u32 cull_groups() { return (g_vk.world.inst_count + 63) / 64; }
+static void record_cull_count(VkCommandBuffer cmd, void *) {
+    if (cull_groups()) dispatch(cmd, g_vk.world.pipe_cull_count, g_wf.frame, cull_groups(), 1);
+}
+static void record_cull_scan(VkCommandBuffer cmd, void *) { dispatch(cmd, g_vk.world.pipe_cull_scan, g_wf.frame, 1, 1); }
+static void record_cull_write(VkCommandBuffer cmd, void *) {
+    if (cull_groups()) dispatch(cmd, g_vk.world.pipe_cull_write, g_wf.frame, cull_groups(), 1);
+}
+
+static VkRenderingAttachmentInfo depth_attachment(VkAttachmentLoadOp load, VkAttachmentStoreOp store) {
     auto da = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
     da.imageView = g_vk.depth.view;
     da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    da.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    da.storeOp = VK_ATTACHMENT_STORE_OP_STORE;  // по ней потом рисуются отладочные отрезки и точки
+    da.loadOp = load;
+    da.storeOp = store;
     da.clearValue.depthStencil = {0.0f, 0};
+    return da;
+}
+
+static void begin_rendering(VkCommandBuffer cmd, const VkRenderingAttachmentInfo &ca, const VkRenderingAttachmentInfo &da) {
     auto ri = vk_info<VkRenderingInfo>(VK_STRUCTURE_TYPE_RENDERING_INFO);
     ri.renderArea = {{0, 0}, g_vk.extent};
     ri.layerCount = 1;
@@ -287,19 +271,33 @@ bool vk_world_record(VkCommandBuffer cmd, FrameSlot &fs, const RenderFrame &f, u
     VkRect2D sc{{0, 0}, g_vk.extent};
     vkCmdSetViewport(cmd, 0, 1, &vp);
     vkCmdSetScissor(cmd, 0, 1, &sc);
-    PushConsts pc{frame, 0, 0};
-    if (ninst) {
+}
+
+// Visibility buffer: номер треугольника и глубина
+static void record_visibility(VkCommandBuffer cmd, void *) {
+    const WorldGpu &w = g_vk.world;
+    auto ca = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
+    ca.imageView = w.id.view;
+    ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    ca.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    ca.clearValue.color.uint32[0] = 0;  // пусто — небо
+    // Глубина сохраняется: по ней потом рисуются отладочные отрезки и точки
+    begin_rendering(cmd, ca, depth_attachment(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE));
+    PushConsts pc{g_wf.frame, 0, 0};
+    if (w.inst_count) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, w.pipe_vis_mesh);
         vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
         vkCmdBindIndexBuffer(cmd, g_vk.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexedIndirectCount(cmd, w.draws.buffer, 0, w.cull.buffer, 0, VIS_MAX_CLUSTERS,
                                       sizeof(VkDrawIndexedIndirectCommand));
     }
-    if (ground) {
+    if (g_wf.ground) {
+        const TerrainGpu &tg = g_vk.terrain;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, w.pipe_vis_ground);
         vkCmdBindIndexBuffer(cmd, tg.index.buffer, 0, VK_INDEX_TYPE_UINT32);
         for (i32 L = 0; L < CLIP_LEVELS; ++L) {
-            PushConsts pl{frame, (u32)L, 0};
+            PushConsts pl{g_wf.frame, (u32)L, 0};
             vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pl, &pl);
             u32 first = L == 0 ? tg.first_full : tg.first_ring[tg.ring[L]];
             u32 count = L == 0 ? tg.count_full : tg.count_ring;
@@ -307,54 +305,91 @@ bool vk_world_record(VkCommandBuffer cmd, FrameSlot &fs, const RenderFrame &f, u
         }
     }
     vkCmdEndRendering(cmd);
-    vk_mark(cmd, "visibility");
+}
 
-    // 4. Освещение раз на ячейку → HDR
-    vk_image_barrier(cmd, w.id.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                     VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, CS, R);
-    vk_image_barrier(cmd, w.hdr.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-                     VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0, CS, W);
+// Освещение раз на ячейку → HDR
+static void record_light(VkCommandBuffer cmd, void *) {
+    const WorldGpu &w = g_vk.world;
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.layout, 0, 1, &w.set, 0, nullptr);
-    dispatch(cmd, w.pipe_light, frame, (g_vk.extent.width + 7) / 8, (g_vk.extent.height + 7) / 8);
-    vk_image_barrier(cmd, w.hdr.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, CS, W,
-                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, R);
-    vk_mark(cmd, "освещение");
+    dispatch(cmd, w.pipe_light, g_wf.frame, (g_vk.extent.width + 7) / 8, (g_vk.extent.height + 7) / 8);
+}
 
-    // 5. Стиль в картинку swapchain, поверх — отладочные отрезки и точки по глубине кадра мира
-    vk_image_barrier(cmd, g_vk.depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+// Стиль в картинку swapchain, поверх — отладочные отрезки и точки по глубине кадра мира
+static void record_style(VkCommandBuffer cmd, void *) {
+    const WorldGpu &w = g_vk.world;
     auto sa = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
-    sa.imageView = g_vk.views[img];
+    sa.imageView = g_vk.views[g_wf.img];
     sa.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     sa.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;  // стиль закрывает весь кадр
     sa.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    da.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    da.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    ri.pColorAttachments = &sa;
-    vkCmdBeginRendering(cmd, &ri);
-    vkCmdSetViewport(cmd, 0, 1, &vp);
-    vkCmdSetScissor(cmd, 0, 1, &sc);
+    begin_rendering(cmd, sa, depth_attachment(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_DONT_CARE));
+    PushConsts pc{g_wf.frame, 0, 0};
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, w.pipe_style);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.layout, 0, 1, &w.set, 0, nullptr);
     vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
     vkCmdDraw(cmd, 3, 1, 0, 0);
-    if (nlines) {
+    if (g_wf.nlines) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_lines);
         vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
-        vkCmdDraw(cmd, nlines, 1, 0, 0);
+        vkCmdDraw(cmd, g_wf.nlines, 1, 0, 0);
     }
-    if (npoints) {
+    if (g_wf.npoints) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_points);
         vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
-        vkCmdDraw(cmd, 6, npoints, 0, 0);
+        vkCmdDraw(cmd, 6, g_wf.npoints, 0, 0);
     }
     vkCmdEndRendering(cmd);
-    vk_mark(cmd, "стиль");
+}
+
+bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, u32 nlines) {
+    const WorldGpu &w = g_vk.world;
+    if (!w.id.image) return false;
+    g_wf = WorldFrame{fs.frame.address, &fs, img, npoints, nlines, g_vk.terrain.on && f.ground};
+    // 1. Изменившиеся экземпляры и вершины земли кадра
+    if (g_ncopies) {
+        rg_pass("мир: экземпляры", "земля", record_inst_upload, nullptr);
+        rg_use(w.rg_inst, RG_COPY_WRITE);
+    }
+    if (g_wf.ground) {
+        rg_pass("земля: вершины", "земля", record_ground_bake, nullptr);
+        rg_use(w.rg_gverts, RG_CS_WRITE);
+    }
+    // 2. Отсечение: счёт, префиксная сумма, запись вызовов
+    rg_pass("отсечение: счёт", "отсечение", record_cull_count, nullptr);
+    rg_use(w.rg_inst, RG_CS_READ);
+    rg_use(w.rg_cull, RG_CS_WRITE);
+    rg_pass("отсечение: сумма", "отсечение", record_cull_scan, nullptr);
+    rg_use(w.rg_cull, RG_CS_WRITE);
+    rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
+    rg_pass("отсечение: вызовы", "отсечение", record_cull_write, nullptr);
+    rg_use(w.rg_inst, RG_CS_READ);
+    rg_use(w.rg_cull, RG_CS_READ);
+    rg_use(w.rg_draws, RG_CS_WRITE);
+    rg_use(w.rg_vis, RG_CS_WRITE);
+    // 3. Visibility buffer
+    rg_pass("visibility", "visibility", record_visibility, nullptr);
+    rg_use(w.rg_id, RG_COLOR, RG_DISCARD);
+    rg_use(g_vk.rg_depth, RG_DEPTH, RG_DISCARD);
+    rg_use(w.rg_draws, RG_INDIRECT);
+    rg_use(w.rg_cull, RG_INDIRECT);
+    rg_use(w.rg_vis, RG_VS_READ);
+    rg_use(w.rg_inst, RG_VS_READ);
+    rg_use(w.rg_gverts, RG_VS_READ);
+    // 4. Освещение
+    rg_pass("освещение", "освещение", record_light, nullptr);
+    rg_use(w.rg_id, RG_IMG_CS_READ);
+    rg_use(w.rg_hdr, RG_IMG_CS_WRITE, RG_DISCARD);
+    rg_use(w.rg_vis, RG_CS_READ);
+    rg_use(w.rg_inst, RG_CS_READ);
+    rg_use(w.rg_gverts, RG_CS_READ);
+    vk_sky_reads(RG_CS_READ);
+    vk_froxel_reads(RG_CS_READ);
+    // 5. Стиль, отрезки, точки
+    rg_pass("стиль", "стиль", record_style, nullptr);
+    rg_use(g_vk.rg_swap, RG_COLOR, RG_DISCARD);
+    rg_use(w.rg_hdr, RG_IMG_FS_READ);
+    rg_use(g_vk.rg_depth, RG_DEPTH);
+    vk_sky_reads(RG_FS_READ);
     return true;
 }
 

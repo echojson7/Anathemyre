@@ -34,7 +34,7 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     snprintf(t, sizeof t, "%.2f мс", in.gpu_ms);
     ui_value(f, "GPU", t);
     // Проходы кадра на GPU по меткам времени (docs/frame.md, «Замер»)
-    for (u32 i = 0; i < in.passes && i < 8; ++i) {
+    for (u32 i = 0; i < in.passes && i < DEBUG_MAX_PASSES; ++i) {
         snprintf(t, sizeof t, "%.2f мс", in.pass_ms[i]);
         char name[48];
         snprintf(name, sizeof name, "  %s", in.pass_names[i] ? in.pass_names[i] : "?");
@@ -43,6 +43,15 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     if (!d.forward) {
         snprintf(t, sizeof t, "%u", in.vis_clusters);
         ui_value(f, "видимых кластеров", t);
+    }
+    // Переполнения (docs/graph.md «Переполнения»): что-то не нарисовано или считается медленным путём
+    for (u32 i = 0; i < in.overflows && i < DEBUG_MAX_OVERFLOWS; ++i) {
+        if (in.over_cap[i]) snprintf(t, sizeof t, "%llu из %llu", (unsigned long long)in.over_want[i],
+                                     (unsigned long long)in.over_cap[i]);
+        else snprintf(t, sizeof t, "%llu", (unsigned long long)in.over_want[i]);
+        char name[64];
+        snprintf(name, sizeof name, "! %s", in.over_what[i] ? in.over_what[i] : "?");
+        ui_value(f, name, t);
     }
     snprintf(t, sizeof t, "%.3f мс", in.step_ms);
     ui_value(f, "шаг мира", t);

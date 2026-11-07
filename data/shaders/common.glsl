@@ -30,6 +30,11 @@ layout(buffer_reference, scalar) buffer Froxels { uint v[]; };  // списки 
 struct GroundVert { vec3 rel; float wdepth; vec3 normal; uint pad; };  // вершина земли кадра (ground_bake.comp)
 layout(buffer_reference, scalar) buffer GroundVerts { GroundVert v[]; };
 layout(buffer_reference, scalar) buffer Vec4s { vec4 v[]; };  // таблицы неба (пишут sky_*.comp)
+// Счётчики GPU кадра (docs/graph.md «Переполнения»): сколько не влезло; номера — как STAT_* в vk_state.h
+layout(buffer_reference, scalar) buffer Stats { uint v[]; };
+const uint STAT_VIS_WANT = 0u;       // видимых кластеров до обрезки по vis_max
+const uint STAT_FROXEL_LIGHTS = 1u;  // клеток, где огни не влезли (свет перебирает все огни кадра)
+const uint STAT_FROXEL_DECALS = 2u;  // клеток, где декали не влезли
 
 // Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы сеток и кластеров (MeshGpu, ClusterGpu в
 // src/render/vk_state.h), видимые кластеры кадра и косвенные вызовы, которые пишет отсечение (cull_*.comp)
@@ -117,6 +122,7 @@ layout(buffer_reference, scalar) buffer FrameData {
     float froxel_near, froxel_far;
     uint froxel_on, froxel_heat;
     GroundVerts g_verts;      // вершины колец земли этого кадра: кольцо L — с L·(2n+1)², см. ground_bake.comp
+    Stats stats;              // счётчики GPU кадра (STAT_*)
 };
 
 layout(push_constant, scalar) uniform Push {

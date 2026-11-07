@@ -27,5 +27,8 @@ void main() {
         f.cull.offset[k] = run;
         run += f.cull.count[k] & 0x1FFFFFFFu;
     }
-    if (t == 255u) f.cull.draw_count = min(s_sum[255], f.vis_max);
+    if (t == 255u) {
+        f.cull.draw_count = min(s_sum[255], f.vis_max);
+        f.stats.v[STAT_VIS_WANT] = s_sum[255];
+    }
 }

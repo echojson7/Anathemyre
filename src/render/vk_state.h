@@ -6,7 +6,7 @@
 
 constexpr u32 FRAMES_IN_FLIGHT = 2;
 // GPU-таймеры: метки на границах проходов, до GPU_MAX_MARKS на кадр
-constexpr u32 GPU_MAX_MARKS = 8;
+constexpr u32 GPU_MAX_MARKS = RENDER_MAX_PASSES + 1;
 constexpr u32 MAX_SWAPCHAIN_IMAGES = 8;
 // Общие буферы сеток (docs/frame.md): вершины и индексы всех сеток, место выдаёт виртуальный блок VMA
 constexpr VkDeviceSize GEOMETRY_VERTEX_BYTES = 64ull << 20;
@@ -66,7 +66,16 @@ struct FrameGpu {
     f32 froxel_near, froxel_far;
     u32 froxel_on, froxel_heat;
     VkDeviceAddress g_verts;  // вершины колец земли кадра (ground_bake.comp), 32 байта на вершину
+    VkDeviceAddress stats;    // счётчики GPU кадра (STAT_*), vk_diag.cpp
 };
+
+// Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
+constexpr u32 STAT_VIS_WANT = 0;       // сколько видимых кластеров нашло отсечение (до обрезки по VIS_MAX_CLUSTERS)
+constexpr u32 STAT_FROXEL_LIGHTS = 1;  // клеток froxels, где огни не влезли
+constexpr u32 STAT_FROXEL_DECALS = 2;  // клеток froxels, где декали не влезли
+constexpr u32 STAT_COUNT = 16;
+// Буфер чтения кадра: число видимых кластеров, с READBACK_STATS — счётчики
+constexpr VkDeviceSize READBACK_STATS = 16, READBACK_BYTES = READBACK_STATS + STAT_COUNT * 4;
 
 // Небо (vk_sky.cpp, docs/sky.md): таблицы в буферах видеопамяти, считают их compute-шейдеры sky_*.comp
 struct SkyGpu {
@@ -75,6 +84,7 @@ struct SkyGpu {
                pipe_sum = VK_NULL_HANDLE;
     bool luts_ready = false;
     RenderSky last{};  // параметры, по которым посчитаны таблицы пропускания и многократного рассеяния
+    u8 rg_trans = 0, rg_ms = 0, rg_sun = 0, rg_moon = 0, rg_out = 0;  // в графе кадра
 };
 
 // Земля clipmap'ом (vk_terrain.cpp): кольцо L — (2n+1)² вершин с шагом 0.5·2^L м. Кольцо 0 — сплошная сетка,
@@ -106,8 +116,10 @@ struct FrameSlot {
     GpuBuffer decals;
     GpuBuffer lights;       // огни кадра (RenderPointLight)
     GpuBuffer inst_upload;  // изменившиеся экземпляры кадра мира → постоянный буфер на GPU (копией)
-    GpuBuffer readback;     // число видимых кластеров кадра (копия из счёта отсечения)
-    bool world = false;     // кадр мира (visibility buffer), а не forward: readback заполнен
+    GpuBuffer readback;     // число видимых кластеров и счётчики GPU кадра (READBACK_*)
+    u8 rg_readback = 0;     // он же в графе кадра
+    bool world = false;     // кадр мира (visibility buffer), а не forward
+    bool stats_pending = false;  // readback заполнит отправленный кадр
     u32 marks = 0;          // записано меток времени
     const char *mark_names[GPU_MAX_MARKS] = {};  // проход, который кончается меткой k (k ≥ 1)
 };
@@ -130,6 +142,16 @@ struct WorldGpu {
     VkPipeline pipe_cull_count = VK_NULL_HANDLE, pipe_cull_scan = VK_NULL_HANDLE, pipe_cull_write = VK_NULL_HANDLE;
     VkPipeline pipe_light = VK_NULL_HANDLE, pipe_ground_bake = VK_NULL_HANDLE;
     u32 vis_clusters = 0;  // видимых кластеров в последнем прочитанном кадре
+    // Ресурсы графа кадра (vk_graph.h)
+    u8 rg_inst = 0, rg_cull = 0, rg_draws = 0, rg_vis = 0, rg_gverts = 0, rg_id = 0, rg_hdr = 0;
+};
+
+// Диагностика GPU (vk_diag.cpp): что умеет драйвер для разбора сбоя, буфер меток AMD, счётчики GPU
+struct DiagGpu {
+    bool nv_checkpoints = false, amd_marker = false, device_fault = false;
+    GpuBuffer markers;  // метки AMD: последний начатый и последний законченный проход
+    GpuBuffer stats;    // счётчики GPU (STAT_COUNT u32)
+    u8 rg_stats = 0;
 };
 
 // Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы для отсечения на GPU. Раскладки — MeshInfo и Cluster
@@ -198,6 +220,7 @@ struct VkState {
     bool swapchain_dirty = false;
     GpuImage depth;  // D32F, обратная глубина
     VkExtent2D depth_extent = {};
+    u8 rg_depth = 0, rg_swap = 0;  // глубина и картинка swapchain кадра в графе
 
     FrameSlot frames[FRAMES_IN_FLIGHT];
     u32 frame_index = 0;
@@ -216,6 +239,7 @@ struct VkState {
     bool capture_next = false;
     bool capture_ready = false;
     GpuBuffer capture;
+    u8 rg_capture = 0;
     VkExtent2D capture_extent = {};
 
     VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -233,6 +257,8 @@ struct VkState {
     GpuBuffer media;       // среда на клетку (туман и пыль, vec4) — место для света пользователя, пока нули
     u32 froxel_cap = 0;    // на сколько клеток выделены буферы
     VkPipeline pipe_froxel = VK_NULL_HANDLE;
+    u8 rg_froxels = 0, rg_media = 0;
+    DiagGpu diag;
     // Время проходов на GPU за прошлый кадр слота (render_gpu_passes)
     u32 pass_count = 0;
     const char *pass_names[GPU_MAX_MARKS] = {};
@@ -253,6 +279,20 @@ extern u32 g_vk_validation_errors;
 constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 
 bool vk_check(VkResult r, const char *what);
+// Диагностика GPU (vk_diag.cpp, docs/graph.md «Сбой GPU», «Переполнения»)
+bool vk_diag_init();
+void vk_diag_shutdown();
+void vk_diag_frame(u64 frame);  // начало записи кадра: новый круг меток проходов, переполнения процессора с нуля
+void vk_diag_begin(VkCommandBuffer cmd, u32 pass, const char *name);
+void vk_diag_end(VkCommandBuffer cmd, u32 pass);
+void vk_device_lost();  // в журнал: последние проходы и сведения драйвера (раз за запуск)
+// Живые буферы и их имена — для адреса сбоя и сообщений слоёв проверки
+void vk_buffer_track(const GpuBuffer &b);
+void vk_buffer_untrack(const GpuBuffer &b);
+void vk_buffer_name(const GpuBuffer &b, const char *name);
+void vk_image_name(VkImage img, const char *name);
+// Переполнение на стороне процессора в этом кадре (want > cap — в список)
+void vk_overflow(const char *what, u64 want, u64 cap);
 bool vk_create_swapchain();
 void vk_destroy_swapchain();
 // Буфер, видимый процессору (запись каждый кадр) или только видеокарте (device_local)
@@ -268,21 +308,14 @@ struct PushConsts {
 };
 // Стадии push-констант общей раскладки: все вызовы vkCmdPushConstants передают их целиком
 constexpr VkShaderStageFlags PUSH_STAGES = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-// Небо (vk_sky.cpp): буферы и compute-конвейеры; таблицы в начале кадра (до прохода forward)
+// Небо (vk_sky.cpp): буферы и compute-конвейеры; проходы кадра — в vk_graph.h
 bool vk_sky_init();
 void vk_sky_shutdown();
 void vk_sky_fill(FrameGpu &g, const RenderFrame &f);
-void vk_sky_record(VkCommandBuffer cmd, VkDeviceAddress frame);
 void vk_destroy_pipelines();
 // Compute-конвейер общей раскладки из шейдера name (.spv); VK_NULL_HANDLE — ошибка
 VkPipeline vk_make_compute(const char *name);
-// Барьер памяти между стадиями
-void vk_memory_barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 src, VkAccessFlags2 src_access,
-                       VkPipelineStageFlags2 dst, VkAccessFlags2 dst_access);
-void vk_image_barrier(VkCommandBuffer cmd, VkImage img, VkImageAspectFlags aspect, VkImageLayout from, VkImageLayout to,
-                      VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage,
-                      VkAccessFlags2 dst_access);
-// Метка времени GPU после прохода name (первая метка кадра — без имени)
+// Метка времени GPU после прохода name (первая метка кадра — без имени); ставит граф (rg_execute)
 void vk_mark(VkCommandBuffer cmd, const char *name);
 // Графический конвейер общей раскладки
 struct PipeDesc {
@@ -300,21 +333,15 @@ bool vk_world_layout();
 bool vk_world_init();
 void vk_world_shutdown();
 void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
-// Отсечение, visibility buffer, освещение; потом проход по картинке swapchain: стиль, отрезки, точки
-bool vk_world_record(VkCommandBuffer cmd, FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, u32 nlines);
-// Число видимых кластеров прошлого кадра этого слота
-void vk_world_read(FrameSlot &fs);
 // Froxels (vk_froxel.cpp, docs/frame.md «Froxels»): сетка клеток, огни и декали по клеткам
 constexpr u32 FROXEL_TILE = 64, FROXEL_Z = 32, FROXEL_STRIDE = 96;
 constexpr f32 FROXEL_NEAR = 1.0f, FROXEL_FAR = 512.0f;
 bool vk_froxel_init();
 void vk_froxel_shutdown();
 void vk_froxel_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
-void vk_froxel_record(VkCommandBuffer cmd, const FrameSlot &fs);
-// Интерфейс поверх кадра (vk_ui.cpp): свой конвейер без глубины, проход по картинке swapchain
+// Интерфейс поверх кадра (vk_ui.cpp): свой конвейер без глубины; проход — в vk_graph.h
 bool vk_ui_init();
 void vk_ui_shutdown();
-void vk_ui_record(VkCommandBuffer cmd, u32 img);
 // Геометрия и материалы (vk_geometry.cpp)
 bool vk_geometry_init();
 void vk_geometry_shutdown();

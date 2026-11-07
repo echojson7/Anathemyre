@@ -153,10 +153,13 @@ struct RenderFrame {
 struct RenderConfig {
     bool vsync = true;
     bool validation = false;  // слои проверки Vulkan с проверкой синхронизации
+    bool gpu_validation = false;  // слои проверки с проверкой на GPU (выход за границы буферов, GPU-AV) вместо синхронизации
+    const char *gpu_validation_skip = nullptr;  // шейдеры без проверки на GPU, через запятую (lavapipe их не тянет)
     const char *shader_dir = "";
 };
 
 constexpr u32 RENDER_MAX_POINTS = 4096;
+constexpr u32 RENDER_MAX_PASSES = 15;  // строк времени проходов GPU (F3)
 constexpr u32 RENDER_MAX_LINE_VERTICES = 32768;
 constexpr u32 RENDER_MAX_INSTANCES = 65536;
 constexpr u32 RENDER_MAX_MESHES = 4096;
@@ -225,6 +228,14 @@ f64 render_gpu_ms();
 u32 render_gpu_passes(const char **names, f64 *ms, u32 cap);
 // Видимых кластеров в прошлом кадре мира (0 — forward)
 u32 render_vis_clusters();
+// Переполнение (docs/graph.md, «Переполнения»): что не влезло в буфер с пределом. cap == 0 — счёт без предела
+// (например, клеток froxels, где огни не влезли и читатель перебирает весь список кадра)
+struct RenderOverflow {
+    const char *what;
+    u64 want, cap;
+};
+// Переполнения последнего кадра: процессор — этого кадра, GPU — прочитанного (на кадр-два раньше)
+u32 render_overflows(RenderOverflow *out, u32 cap);
 // Сколько последний render_frame ждал GPU и показ (забор кадра, картинка swapchain, vsync), мс
 f64 render_wait_ms();
 // Снимок: render_capture_next() перед render_frame, затем render_capture_take() — пиксели RGBA8 sRGB
