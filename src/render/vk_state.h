@@ -67,13 +67,23 @@ struct FrameGpu {
     u32 froxel_on, froxel_heat;
     VkDeviceAddress g_verts;  // вершины колец земли кадра (ground_bake.comp), 32 байта на вершину
     VkDeviceAddress stats;    // счётчики GPU кадра (STAT_*), vk_diag.cpp
+    VkDeviceAddress tiles;    // плитки по видам (Tiles в common.glsl, docs/tiles.md)
+    u32 tile_cap, tile_pad;   // мест в списке одного вида
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
 constexpr u32 STAT_VIS_WANT = 0;       // сколько видимых кластеров нашло отсечение (до обрезки по VIS_MAX_CLUSTERS)
 constexpr u32 STAT_FROXEL_LIGHTS = 1;  // клеток froxels, где огни не влезли
 constexpr u32 STAT_FROXEL_DECALS = 2;  // клеток froxels, где декали не влезли
+// Счётчики работы освещения (docs/tiles.md)
+constexpr u32 STAT_TILES = 3;          // плитки по видам, TILE_KINDS подряд
+constexpr u32 STAT_PX_SKY = 7, STAT_PX_GROUND = 8, STAT_PX_MESH = 9;  // пиксели по видам
+constexpr u32 STAT_SURF_GROUND = 10, STAT_SURF_MESH = 11;            // поверхности: surface() и свет раз на ячейку
+constexpr u32 STAT_SHADOW_STEPS = 12;  // шаги луча тени рельефа
 constexpr u32 STAT_COUNT = 16;
+// Виды плиток кадра мира (TILE_* в common.glsl): небо, земля (и небо), сетки (и небо), смесь земли и сеток
+constexpr u32 TILE_KINDS = 4;
+constexpr u32 TILE_HEADER = TILE_KINDS * 16;  // косвенные dispatch видов перед списками
 // Буфер чтения кадра: число видимых кластеров, с READBACK_STATS — счётчики
 constexpr VkDeviceSize READBACK_STATS = 16, READBACK_BYTES = READBACK_STATS + STAT_COUNT * 4;
 
@@ -131,6 +141,8 @@ struct WorldGpu {
     GpuBuffer draws;     // VkDrawIndexedIndirectCommand на видимый кластер
     GpuBuffer vis;       // видимый кластер: экземпляр, кластер
     GpuBuffer gverts;    // вершины колец земли кадра (ground_bake.comp)
+    GpuBuffer tiles;     // плитки по видам: косвенные dispatch и списки (light_tiles.comp), под размер кадра
+    u32 tile_cap = 0;    // плиток кадра — мест в списке одного вида
     u32 inst_count = 0;  // сколько экземпляров лежит в inst
     GpuImage id;         // visibility buffer R32_UINT
     GpuImage hdr;        // линейный цвет кадра RGBA16F (освещение → стиль)
@@ -140,10 +152,12 @@ struct WorldGpu {
     VkDescriptorSet set = VK_NULL_HANDLE;
     VkPipeline pipe_vis_mesh = VK_NULL_HANDLE, pipe_vis_ground = VK_NULL_HANDLE, pipe_style = VK_NULL_HANDLE;
     VkPipeline pipe_cull_count = VK_NULL_HANDLE, pipe_cull_scan = VK_NULL_HANDLE, pipe_cull_write = VK_NULL_HANDLE;
-    VkPipeline pipe_light = VK_NULL_HANDLE, pipe_ground_bake = VK_NULL_HANDLE;
+    VkPipeline pipe_light[TILE_KINDS] = {}, pipe_tiles = VK_NULL_HANDLE, pipe_ground_bake = VK_NULL_HANDLE;
     u32 vis_clusters = 0;  // видимых кластеров в последнем прочитанном кадре
+    u32 work[STAT_COUNT] = {};  // счётчики последнего прочитанного кадра мира (STAT_*)
+    bool work_valid = false;
     // Ресурсы графа кадра (vk_graph.h)
-    u8 rg_inst = 0, rg_cull = 0, rg_draws = 0, rg_vis = 0, rg_gverts = 0, rg_id = 0, rg_hdr = 0;
+    u8 rg_inst = 0, rg_cull = 0, rg_draws = 0, rg_vis = 0, rg_gverts = 0, rg_id = 0, rg_hdr = 0, rg_tiles = 0;
 };
 
 // Диагностика GPU (vk_diag.cpp): что умеет драйвер для разбора сбоя, буфер меток AMD, счётчики GPU
@@ -318,8 +332,9 @@ bool vk_sky_init();
 void vk_sky_shutdown();
 void vk_sky_fill(FrameGpu &g, const RenderFrame &f);
 void vk_destroy_pipelines();
-// Compute-конвейер общей раскладки из шейдера name (.spv); VK_NULL_HANDLE — ошибка
-VkPipeline vk_make_compute(const char *name);
+// Compute-конвейер общей раскладки из шейдера name (.spv); spec — константы специализации или nullptr.
+// VK_NULL_HANDLE — ошибка
+VkPipeline vk_make_compute(const char *name, const VkSpecializationInfo *spec = nullptr);
 // Метка времени GPU после прохода name (первая метка кадра — без имени); ставит граф (rg_execute)
 void vk_mark(VkCommandBuffer cmd, const char *name);
 // Графический конвейер общей раскладки

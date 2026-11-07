@@ -118,17 +118,22 @@ jobs:
           # кадр мира одинаков от запуска к запуску (docs/frame.md, «Сверка кадров»): два запуска с тестовыми огнями
           # и картой огней по клеткам, побайтно. Без интерфейса (к/с в нём разные) и --timelapse: кадр — ровно один
           # шаг мира, а не сколько успело по часам
+          # Первый запуск пишет и счётчики работы освещения (docs/tiles.md): сверка с эталоном ловит «стало делать
+          # больше работы» без видеокарты
           for k in 1 2; do
             xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --nohud --frames 4 --window 800 450 \
-              --lights --heat --cam 315 14 34 11704 -2336 --timelapse same_$k 15.5 15.5 | tail -2
+              --lights --heat --cam 315 14 34 11704 -2336 --timelapse same_$k 15.5 15.5 --work work_$k.txt | tail -2
           done
           cmp same_1_0003.bmp same_2_0003.bmp && echo "кадры двух запусков совпали"
+          cmp work_1.txt work_2.txt && echo "счётчики работы двух запусков совпали"
+          tools/work_check.sh tests/work_ref.txt work_1.txt
       - uses: actions/upload-artifact@v4
         with:
           name: frame
           path: |
             frame.bmp
             same_1_0003.bmp
+            work_1.txt
           retention-days: 7
 
   # Повтор Windows — на настоящем Windows (Wine не проверяет настоящий CRT), GPU не нужен

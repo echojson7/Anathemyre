@@ -63,6 +63,12 @@ struct DebugInfo {
     const char *pass_names[DEBUG_MAX_PASSES];
     f64 pass_ms[DEBUG_MAX_PASSES];
     u32 vis_clusters;         // видимых кластеров (кадр мира)
+    // Работа освещения прошлой секунды (render_work, docs/tiles.md); work = false — нет (forward)
+    bool work;
+    u32 work_tiles[4];        // плитки: небо, земля, сетки, смесь
+    u32 work_px[3];           // пиксели: небо, земля, сетки
+    u32 work_surf[2];         // поверхности (surface() и свет раз на ячейку): земля, сетки
+    u32 work_steps;           // шаги луча тени рельефа
     // Что не влезло за секунду (render_overflows): сколько просили, сколько есть (0 — счёт клеток без предела)
     u32 overflows;
     const char *over_what[DEBUG_MAX_OVERFLOWS];

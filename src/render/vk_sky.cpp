@@ -9,7 +9,7 @@ static constexpr u32 TRANS_W = 256, TRANS_H = 64, MS_N = 32;
 static constexpr u32 SKY_W = 192, SKY_H = 128, MOON_W = 96, MOON_H = 64;
 static constexpr u32 SKY_OUT = 8;
 
-VkPipeline vk_make_compute(const char *name) {
+VkPipeline vk_make_compute(const char *name, const VkSpecializationInfo *spec) {
     VkShaderModule m = vk_load_shader(name);
     if (!m) return VK_NULL_HANDLE;
     auto ci = vk_info<VkComputePipelineCreateInfo>(VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO);
@@ -17,6 +17,7 @@ VkPipeline vk_make_compute(const char *name) {
     ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     ci.stage.module = m;
     ci.stage.pName = "main";
+    ci.stage.pSpecializationInfo = spec;
     ci.layout = g_vk.layout;
     VkPipeline p = VK_NULL_HANDLE;
     vk_check(vkCreateComputePipelines(g_vk.device, g_vk.pipeline_cache, 1, &ci, nullptr, &p), name);

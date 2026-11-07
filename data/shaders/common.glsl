@@ -35,6 +35,19 @@ layout(buffer_reference, scalar) buffer Stats { uint v[]; };
 const uint STAT_VIS_WANT = 0u;       // видимых кластеров до обрезки по vis_max
 const uint STAT_FROXEL_LIGHTS = 1u;  // клеток, где огни не влезли (свет перебирает все огни кадра)
 const uint STAT_FROXEL_DECALS = 2u;  // клеток, где декали не влезли
+// Счётчики работы освещения (docs/tiles.md): плитки по видам, пиксели по видам, поверхности (surface() и
+// light_surface() раз на ячейку), шаги луча тени рельефа
+const uint STAT_TILES = 3u;          // 4 подряд: TILE_SKY..TILE_MIX
+const uint STAT_PX_SKY = 7u, STAT_PX_GROUND = 8u, STAT_PX_MESH = 9u;
+const uint STAT_SURF_GROUND = 10u, STAT_SURF_MESH = 11u;
+const uint STAT_SHADOW_STEPS = 12u;
+
+// Плитки 8×8 кадра мира по видам (docs/tiles.md, light_tiles.comp): небо — пусто; земля — земля и, может быть,
+// небо; сетки — сетки и, может быть, небо; смесь — земля и сетки. На вид — косвенный dispatch и список плиток
+const uint TILE_SKY = 0u, TILE_GROUND = 1u, TILE_MESH = 2u, TILE_MIX = 3u, TILE_KINDS = 4u;
+struct TileCmd { uint x, y, z, pad; };  // VkDispatchIndirectCommand, шаг 16 байт
+// Плитка в списке — x | y << 16 (номер плитки, не пикселя); список вида k — с k · tile_cap
+layout(buffer_reference, scalar) buffer Tiles { TileCmd cmd[TILE_KINDS]; uint list[]; };
 
 // Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы сеток и кластеров (MeshGpu, ClusterGpu в
 // src/render/vk_state.h), видимые кластеры кадра и косвенные вызовы, которые пишет отсечение (cull_*.comp)
@@ -123,6 +136,8 @@ layout(buffer_reference, scalar) buffer FrameData {
     uint froxel_on, froxel_heat;
     GroundVerts g_verts;      // вершины колец земли этого кадра: кольцо L — с L·(2n+1)², см. ground_bake.comp
     Stats stats;              // счётчики GPU кадра (STAT_*)
+    Tiles tiles;              // плитки по видам (light_tiles.comp → light_cells.comp)
+    uint tile_cap, tile_pad;  // мест в списке одного вида (плиток кадра)
 };
 
 layout(push_constant, scalar) uniform Push {

@@ -6,6 +6,14 @@
 #include "common.glsl"
 
 const uint HIT_SKY = 0u, HIT_MESH = 1u, HIT_GROUND = 2u;
+// Какие номера разбирать: конвейер вида плиток (docs/tiles.md) выключает ненужную ветку константой
+// специализации, и регистры берутся только по нужной. Номер выключенного вида разбирается как небо
+#ifndef RESOLVE_GROUND
+#define RESOLVE_GROUND true
+#endif
+#ifndef RESOLVE_MESH
+#define RESOLVE_MESH true
+#endif
 
 struct Hit {
     vec3 rel;      // точка относительно камеры
@@ -52,6 +60,7 @@ Hit resolve(ivec2 px, uint id) {
     if (id == 0u) return h;
     vec3 dir = h.rel;
     if ((id & VIS_GROUND) != 0u) {
+        if (!RESOLVE_GROUND) return h;
         uint L = (id >> 20) & 0x7FFu;
         uint base = f.g_first[L] + (id & 0xFFFFFu) * 3u;
         // Вершины кольца уже посчитаны на кадр (ground_bake.comp)
@@ -69,6 +78,7 @@ Hit resolve(ivec2 px, uint id) {
         h.level = L;
         return h;
     }
+    if (!RESOLVE_MESH) return h;
     uvec2 vc = f.vis.v[(id >> 7) - 1u];
     Instance it = f.vis_instances.v[vc.x];
     Cluster cl = f.clusters.v[vc.y];

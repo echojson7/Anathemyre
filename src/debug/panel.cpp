@@ -23,6 +23,23 @@ static void hm(f64 hour, char *out, usize n) {
     snprintf(out, n, "%02d:%02d", m / 60, m % 60);
 }
 
+// Счётчик коротко: 950, 12.3к, 862к, 4.56М
+static void count_str(u64 v, char *out, usize n) {
+    if (v < 10000) snprintf(out, n, "%llu", (unsigned long long)v);
+    else if (v < 100000) snprintf(out, n, "%.1fк", (double)v / 1e3);
+    else if (v < 1000000) snprintf(out, n, "%.0fк", (double)v / 1e3);
+    else snprintf(out, n, "%.2fМ", (double)v / 1e6);
+}
+
+// Два счётчика в строку: «a · b»
+static void pair_value(UiForm &f, const char *label, u64 a, u64 b) {
+    char sa[24], sb[24], t[64];
+    count_str(a, sa, sizeof sa);
+    count_str(b, sb, sizeof sb);
+    snprintf(t, sizeof t, "%s · %s", sa, sb);
+    ui_value(f, label, t);
+}
+
 static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     char t[96];
     ui_section(f, "КАДР");
@@ -44,6 +61,15 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     if (!d.forward) {
         snprintf(t, sizeof t, "%u", in.vis_clusters);
         ui_value(f, "видимых кластеров", t);
+    }
+    // Работа освещения (docs/tiles.md): сколько чего посчитано, а не за сколько
+    if (in.work) {
+        pair_value(f, "плитки неба · земли", in.work_tiles[0], in.work_tiles[1]);
+        pair_value(f, "плитки сеток · смеси", in.work_tiles[2], in.work_tiles[3]);
+        pair_value(f, "пиксели земли · сеток", in.work_px[1], in.work_px[2]);
+        pair_value(f, "поверхности земли · сеток", in.work_surf[0], in.work_surf[1]);
+        count_str(in.work_steps, t, sizeof t);
+        ui_value(f, "шаги тени рельефа", t);
     }
     // Переполнения (docs/graph.md «Переполнения»): что-то не нарисовано или считается медленным путём
     for (u32 i = 0; i < in.overflows && i < DEBUG_MAX_OVERFLOWS; ++i) {

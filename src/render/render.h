@@ -239,6 +239,16 @@ struct RenderOverflow {
 };
 // Переполнения последнего кадра: процессор — этого кадра, GPU — прочитанного (на кадр-два раньше)
 u32 render_overflows(RenderOverflow *out, u32 cap);
+// Работа освещения прочитанного кадра мира (docs/tiles.md): счётчики шейдеров. Для ракурса и часа они те же от
+// запуска к запуску, по ним CI ловит «стало делать больше работы». false — кадр не мира (forward) или ещё не прочитан
+constexpr u32 RENDER_TILE_KINDS = 4;  // плитки: небо, земля, сетки, смесь
+struct RenderWork {
+    u32 tiles[RENDER_TILE_KINDS];
+    u32 px_sky, px_ground, px_mesh;  // пиксели по видам
+    u32 surf_ground, surf_mesh;      // поверхности: surface() и light_surface() раз на ячейку
+    u32 shadow_steps;                // шаги луча тени рельефа
+};
+bool render_work(RenderWork &out);
 // Процессорное время последнего render_frame по частям, мс (docs/frame_time.md). Ожидание — fence, acquire и
 // present: там процессор стоит, пока GPU доделывает кадр N−2, swapchain отдаёт картинку или ждёт vsync
 struct RenderCpuTimes {
