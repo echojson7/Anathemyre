@@ -2,6 +2,7 @@
 // 1) экземпляры лежат на GPU постоянно, CPU копирует только изменившиеся;
 // 2) отсечение и LOD в compute (cull_*.comp): экземпляр → сфера сетки → LOD → кластеры, упорядоченно префиксной
 //    суммой; вызовы — vkCmdDrawIndexedIndirectCount, один на видимый кластер;
+//    вершины земли — раз за кадр на все кольца (ground_bake.comp), их читают visibility buffer и разбор;
 // 3) visibility buffer: кластеры и земля пишут номер треугольника и глубину;
 // 4) освещение в compute (light_cells.comp): surface() → light_surface() раз на ячейку, линейный цвет в HDR;
 // 5) стиль (style.frag) — в картинку swapchain, поверх — отладочные отрезки и точки, потом интерфейс
@@ -47,7 +48,8 @@ bool vk_world_init() {
     if (!vk_create_buffer(w.inst, RENDER_MAX_INSTANCES * sizeof(RenderInstance), ssbo | VK_BUFFER_USAGE_TRANSFER_DST_BIT, true) ||
         !vk_create_buffer(w.cull, CULL_BYTES, ssbo | ind | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true) ||
         !vk_create_buffer(w.draws, VIS_MAX_CLUSTERS * sizeof(VkDrawIndexedIndirectCommand), ssbo | ind, true) ||
-        !vk_create_buffer(w.vis, VIS_MAX_CLUSTERS * 8ull, ssbo, true))
+        !vk_create_buffer(w.vis, VIS_MAX_CLUSTERS * 8ull, ssbo, true) ||
+        !vk_create_buffer(w.gverts, (VkDeviceSize)CLIP_LEVELS * (2 * CLIP_N + 1) * (2 * CLIP_N + 1) * 32, ssbo, true))
         return false;
     for (FrameSlot &fs : g_vk.frames)
         if (!vk_create_buffer(fs.inst_upload, RENDER_MAX_INSTANCES * sizeof(RenderInstance), VK_BUFFER_USAGE_TRANSFER_SRC_BIT) ||
@@ -70,8 +72,9 @@ bool vk_world_init() {
     w.pipe_cull_scan = vk_make_compute("cull_scan.comp");
     w.pipe_cull_write = vk_make_compute("cull_write.comp");
     w.pipe_light = vk_make_compute("light_cells.comp");
+    w.pipe_ground_bake = vk_make_compute("ground_bake.comp");
     return w.pipe_vis_mesh && w.pipe_vis_ground && w.pipe_style && w.pipe_cull_count && w.pipe_cull_scan &&
-           w.pipe_cull_write && w.pipe_light;
+           w.pipe_cull_write && w.pipe_light && w.pipe_ground_bake;
 }
 
 static void destroy_image(GpuImage &im) {
@@ -83,7 +86,7 @@ static void destroy_image(GpuImage &im) {
 void vk_world_shutdown() {
     WorldGpu &w = g_vk.world;
     VkPipeline ps[] = {w.pipe_vis_mesh, w.pipe_vis_ground, w.pipe_style, w.pipe_cull_count,
-                       w.pipe_cull_scan, w.pipe_cull_write, w.pipe_light};
+                       w.pipe_cull_scan, w.pipe_cull_write, w.pipe_light, w.pipe_ground_bake};
     for (VkPipeline p : ps)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
     destroy_image(w.id);
@@ -92,6 +95,7 @@ void vk_world_shutdown() {
     vk_destroy_buffer(w.cull);
     vk_destroy_buffer(w.draws);
     vk_destroy_buffer(w.vis);
+    vk_destroy_buffer(w.gverts);
     for (FrameSlot &fs : g_vk.frames) {
         vk_destroy_buffer(fs.inst_upload);
         vk_destroy_buffer(fs.readback);
@@ -165,6 +169,7 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.draws = w.draws.address;
     g.indices = g_vk.indices.address;
     g.vis_max = VIS_MAX_CLUSTERS;
+    g.g_verts = w.gverts.address;
     g_ncopies = 0;
     if (f.style.forward) {
         g.instance_count = 0;
@@ -226,7 +231,20 @@ bool vk_world_record(VkCommandBuffer cmd, FrameSlot &fs, const RenderFrame &f, u
         vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                           CS | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, R);
     }
-    // 1. Отсечение: счёт, префиксная сумма, запись вызовов
+    // 1. Вершины земли кадра: все кольца, по ряду групп на кольцо
+    const TerrainGpu &tg = g_vk.terrain;
+    const bool ground = tg.on && f.ground;
+    if (ground) {
+        const u32 row = 2 * CLIP_N + 1;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, w.pipe_ground_bake);
+        PushConsts pg{frame, 0, 0};
+        vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pg, &pg);
+        vkCmdDispatch(cmd, (row * row + 63) / 64, CLIP_LEVELS, 1);
+        vk_memory_barrier(cmd, CS, W, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | CS, R);
+    }
+    vk_mark(cmd, "земля");
+
+    // 2. Отсечение: счёт, префиксная сумма, запись вызовов
     u32 groups = (ninst + 63) / 64;
     if (groups) dispatch(cmd, w.pipe_cull_count, frame, groups, 1);
     vk_memory_barrier(cmd, CS, W, CS, R | W);
@@ -242,7 +260,7 @@ bool vk_world_record(VkCommandBuffer cmd, FrameSlot &fs, const RenderFrame &f, u
     fs.world = true;
     vk_mark(cmd, "отсечение");
 
-    // 2. Visibility buffer: номер треугольника и глубина
+    // 3. Visibility buffer: номер треугольника и глубина
     vk_image_barrier(cmd, w.id.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0,
                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
@@ -277,8 +295,7 @@ bool vk_world_record(VkCommandBuffer cmd, FrameSlot &fs, const RenderFrame &f, u
         vkCmdDrawIndexedIndirectCount(cmd, w.draws.buffer, 0, w.cull.buffer, 0, VIS_MAX_CLUSTERS,
                                       sizeof(VkDrawIndexedIndirectCommand));
     }
-    const TerrainGpu &tg = g_vk.terrain;
-    if (tg.on && f.ground) {
+    if (ground) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, w.pipe_vis_ground);
         vkCmdBindIndexBuffer(cmd, tg.index.buffer, 0, VK_INDEX_TYPE_UINT32);
         for (i32 L = 0; L < CLIP_LEVELS; ++L) {
@@ -292,7 +309,7 @@ bool vk_world_record(VkCommandBuffer cmd, FrameSlot &fs, const RenderFrame &f, u
     vkCmdEndRendering(cmd);
     vk_mark(cmd, "visibility");
 
-    // 3. Освещение раз на ячейку → HDR
+    // 4. Освещение раз на ячейку → HDR
     vk_image_barrier(cmd, w.id.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                      VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, CS, R);
@@ -304,7 +321,7 @@ bool vk_world_record(VkCommandBuffer cmd, FrameSlot &fs, const RenderFrame &f, u
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, R);
     vk_mark(cmd, "освещение");
 
-    // 4. Стиль в картинку swapchain, поверх — отладочные отрезки и точки по глубине кадра мира
+    // 5. Стиль в картинку swapchain, поверх — отладочные отрезки и точки по глубине кадра мира
     vk_image_barrier(cmd, g_vk.depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                      VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,

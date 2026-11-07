@@ -65,6 +65,7 @@ struct FrameGpu {
     u32 light_count, froxel_x, froxel_y, froxel_z;
     f32 froxel_near, froxel_far;
     u32 froxel_on, froxel_heat;
+    VkDeviceAddress g_verts;  // вершины колец земли кадра (ground_bake.comp), 32 байта на вершину
 };
 
 // Небо (vk_sky.cpp, docs/sky.md): таблицы в буферах видеопамяти, считают их compute-шейдеры sky_*.comp
@@ -117,6 +118,7 @@ struct WorldGpu {
     GpuBuffer cull;      // CullData
     GpuBuffer draws;     // VkDrawIndexedIndirectCommand на видимый кластер
     GpuBuffer vis;       // видимый кластер: экземпляр, кластер
+    GpuBuffer gverts;    // вершины колец земли кадра (ground_bake.comp)
     u32 inst_count = 0;  // сколько экземпляров лежит в inst
     GpuImage id;         // visibility buffer R32_UINT
     GpuImage hdr;        // линейный цвет кадра RGBA16F (освещение → стиль)
@@ -126,7 +128,7 @@ struct WorldGpu {
     VkDescriptorSet set = VK_NULL_HANDLE;
     VkPipeline pipe_vis_mesh = VK_NULL_HANDLE, pipe_vis_ground = VK_NULL_HANDLE, pipe_style = VK_NULL_HANDLE;
     VkPipeline pipe_cull_count = VK_NULL_HANDLE, pipe_cull_scan = VK_NULL_HANDLE, pipe_cull_write = VK_NULL_HANDLE;
-    VkPipeline pipe_light = VK_NULL_HANDLE;
+    VkPipeline pipe_light = VK_NULL_HANDLE, pipe_ground_bake = VK_NULL_HANDLE;
     u32 vis_clusters = 0;  // видимых кластеров в последнем прочитанном кадре
 };
 

@@ -27,6 +27,8 @@ layout(buffer_reference, scalar) readonly buffer Words { uint v[]; };
 layout(buffer_reference, scalar) readonly buffer Decals { Decal v[]; };
 layout(buffer_reference, scalar) readonly buffer Lights { Light v[]; };
 layout(buffer_reference, scalar) buffer Froxels { uint v[]; };  // списки клеток (froxel.glsl)
+struct GroundVert { vec3 rel; float wdepth; vec3 normal; uint pad; };  // вершина земли кадра (ground_bake.comp)
+layout(buffer_reference, scalar) buffer GroundVerts { GroundVert v[]; };
 layout(buffer_reference, scalar) buffer Vec4s { vec4 v[]; };  // таблицы неба (пишут sky_*.comp)
 
 // Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы сеток и кластеров (MeshGpu, ClusterGpu в
@@ -114,6 +116,7 @@ layout(buffer_reference, scalar) buffer FrameData {
     uint light_count, froxel_x, froxel_y, froxel_z;
     float froxel_near, froxel_far;
     uint froxel_on, froxel_heat;
+    GroundVerts g_verts;      // вершины колец земли этого кадра: кольцо L — с L·(2n+1)², см. ground_bake.comp
 };
 
 layout(push_constant, scalar) uniform Push {

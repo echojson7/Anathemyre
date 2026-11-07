@@ -3,7 +3,7 @@
 // глубина — из луча, нормаль треугольника — из его вершин
 #ifndef RESOLVE_GLSL
 #define RESOLVE_GLSL
-#include "ground_vertex.glsl"
+#include "common.glsl"
 
 const uint HIT_SKY = 0u, HIT_MESH = 1u, HIT_GROUND = 2u;
 
@@ -54,9 +54,11 @@ Hit resolve(ivec2 px, uint id) {
     if ((id & VIS_GROUND) != 0u) {
         uint L = (id >> 20) & 0x7FFu;
         uint base = f.g_first[L] + (id & 0xFFFFFu) * 3u;
-        GroundVtx a = ground_vertex(int(L), int(f.g_indices.v[base]));
-        GroundVtx b = ground_vertex(int(L), int(f.g_indices.v[base + 1u]));
-        GroundVtx c = ground_vertex(int(L), int(f.g_indices.v[base + 2u]));
+        // Вершины кольца уже посчитаны на кадр (ground_bake.comp)
+        uint row = uint(2 * f.clip_n + 1), first = L * row * row;
+        GroundVert a = f.g_verts.v[first + f.g_indices.v[base]];
+        GroundVert b = f.g_verts.v[first + f.g_indices.v[base + 1u]];
+        GroundVert c = f.g_verts.v[first + f.g_indices.v[base + 2u]];
         vec4 w = ray_tri(dir, a.rel, b.rel, c.rel);
         h.kind = HIT_GROUND;
         h.rel = dir * w.w;
