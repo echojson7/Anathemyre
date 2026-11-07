@@ -454,6 +454,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
         vk_sky_reads(RG_CS_READ);
         vk_froxel_reads(RG_CS_READ);
+        vk_tshadow_reads(RG_CS_READ);
         vk_gcache_reads();
     }
     // 5. Стиль, отрезки, точки

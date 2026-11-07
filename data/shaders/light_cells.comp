@@ -7,7 +7,7 @@
 // пиксельности. Пиксели с одним треугольником и одной ячейкой — одна поверхность: surface() → light_surface()
 // считается раз, на первом из них, и раздаётся остальным. Ведущие пиксели сжимаются в начало группы, поэтому
 // считают их подряд идущие потоки. Пустые пиксели — небо (sky.glsl). Пишет линейный цвет в HDR-картинку,
-// стиль — отдельным проходом. Заодно считает свою работу (STAT_PX_*, STAT_SURF_*, STAT_SHADOW_STEPS).
+// стиль — отдельным проходом. Заодно считает свою работу (STAT_PX_*, STAT_SURF_*).
 // Земля (docs/gcache.md): поверхность — из кеша земли по текселю, который разбор плиток записал в gc_cells;
 // у земли поверхность — тексель, свет — раз на тексель. Плитка земли без разбора треугольников: если хоть
 // одного текселя нет в кеше (не хватило места), она уходит в «землю на пиксель». Та и смесь считают
@@ -16,8 +16,6 @@ layout(constant_id = 0) const uint TILE_KIND = 3u;  // TILE_* из common.glsl; 
 #define RESOLVE_GROUND (TILE_KIND == TILE_MIX || TILE_KIND == TILE_GROUND_PX)
 #define GC_KIND (TILE_KIND == TILE_GROUND || TILE_KIND == TILE_MIX || TILE_KIND == TILE_GROUND_PX)
 #define RESOLVE_MESH (TILE_KIND == TILE_MESH || TILE_KIND == TILE_MIX)
-uint g_steps = 0u;  // шаги луча тени рельефа этого потока (terrain.glsl)
-#define T_SHADOW_STEPS g_steps
 ivec2 g_origin;  // начало отсчёта узоров: чанк камеры, у текселя кеша — его чанк (gcache.glsl)
 #define ORIGIN_CHUNK g_origin
 #define GC_ORIGIN_VAR
@@ -37,7 +35,7 @@ shared uint s_lead[64];    // поток ведущего пикселя той 
 shared uint s_rank[64];    // у ведущего — его место среди ведущих
 shared uint s_list[64];    // ведущие по порядку
 shared vec3 s_color[64];
-shared uint s_work[7];     // пиксели неба, земли, сеток; поверхности земли, сеток; шаги тени; земля на пиксель
+shared uint s_work[6];     // пиксели неба, земли, сеток; поверхности земли, сеток; земля на пиксель
 shared uint s_bail;        // плитка земли уходит в «землю на пиксель»: текселя нет в кеше
 const uint HIT_GCACHE = 3u;  // земля из кеша: rel — точка пикселя, level — уровень, m0, m1 — номер текселя
 
@@ -96,9 +94,9 @@ vec3 shade_hit(Hit h, int phys) {
 
 // Работа группы — в счётчики кадра: одна атомарная операция на счётчик и плитку
 void work_flush() {
-    const uint at[7] = uint[7](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
-                               STAT_SHADOW_STEPS, STAT_GC_PX_DIRECT);
-    for (uint k = 0u; k < 7u; ++k)
+    const uint at[6] = uint[6](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
+                               STAT_GC_PX_DIRECT);
+    for (uint k = 0u; k < 6u; ++k)
         if (s_work[k] != 0u) atomicAdd(pc.frame.stats.v[at[k]], s_work[k]);
 }
 
@@ -119,7 +117,7 @@ void main() {
         }
         return;
     }
-    if (t < 7u) s_work[t] = 0u;
+    if (t < 6u) s_work[t] = 0u;
     if (t == 0u) s_bail = 0u;
     uint id = inside ? imageLoad(u_vis, px).r : 0xFFFFFFFFu;
     bool ground = inside && id != 0u && (id & VIS_GROUND) != 0u;
@@ -177,10 +175,10 @@ void main() {
             phys = gc_find(int(hl.level), ivec2(int(hl.m0), int(hl.m1)));
             if (phys < 0) {
                 if (TILE_KIND == TILE_GROUND) s_bail = 1u;
-                else atomicAdd(s_work[6], 1u);
+                else atomicAdd(s_work[5], 1u);
             }
         } else if (hl.kind == HIT_GROUND) {
-            atomicAdd(s_work[6], 1u);
+            atomicAdd(s_work[5], 1u);
         }
     }
     barrier();
@@ -193,7 +191,6 @@ void main() {
     }
     if (t < nlead) {
         s_color[t] = shade_hit(hl, phys);
-        if (g_steps != 0u) atomicAdd(s_work[5], g_steps);
     }
     barrier();
     if (inside) imageStore(u_hdr, px, vec4(s_color[s_rank[s_lead[t]]], 1.0));

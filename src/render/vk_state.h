@@ -29,6 +29,10 @@ struct GpuImage {
     VkImageView view = VK_NULL_HANDLE;
 };
 
+// Тень рельефа (docs/tshadow.md): уровней, текселей по стороне уровня, карт; тексель уровня 0 — как в tshadow.glsl
+constexpr u32 TS_LEVELS = 11, TS_W = 256, TS_MAPS = 3;  // как в tshadow.glsl
+constexpr f32 TS_CELL0 = 0.25f;
+
 // Данные кадра для шейдеров (FrameData в data/shaders/common.glsl), пишутся раз за кадр
 struct FrameGpu {
     VkDeviceAddress vertices, instances, materials, lines, points;
@@ -74,6 +78,13 @@ struct FrameGpu {
     u32 gc_w, gc_pages_n, gc_req_cap, gc_frame;
     i32 gc_tpc0;
     u32 gc_on, gc_pad0, gc_pad1;
+    // Тень рельефа (vk_tshadow.cpp, docs/tshadow.md)
+    VkDeviceAddress ts_maps;
+    u32 ts_on, ts_a, ts_b, ts_c;
+    f32 ts_mix;
+    u32 ts_first, ts_count, ts_pad;
+    f32 ts_sun[4];
+    i32 ts_org[TS_MAPS * TS_LEVELS][2];
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -189,6 +200,25 @@ struct GcacheGpu {
     u8 rg_table = 0, rg_pages = 0, rg_texels = 0, rg_req = 0, rg_cells = 0;
 };
 
+// Тень рельефа дальнего плана (vk_tshadow.cpp, docs/tshadow.md): три карты по TS_LEVELS уровней TS_W² текселей
+// вокруг камеры. Кадр показывает смесь двух готовых (a → b), третья (c) собирается кусками для нового светила
+struct TshadowGpu {
+    GpuBuffer maps;
+    VkPipeline pipe = VK_NULL_HANDLE;
+    u8 rg_maps = 0;
+    bool valid = false;     // карты собраны (иначе — сборка целиком в этом кадре)
+    u32 a = 0, b = 0, c = 1;
+    u32 done = 0;           // собрано кусков карты c; 0 — c не собирается
+    u32 blend = 0;          // кадров перехода a → b без сборки (сборка не нужна, а переход не закончен)
+    u32 terrain_gen = 0, seen_terrain = ~0u;
+    f32 sun[TS_MAPS][3] = {};
+    f64 cam[TS_MAPS][2] = {};  // камера (метры карты), вокруг которой стоят окна карты
+    i32 org[TS_MAPS][TS_LEVELS][2] = {};
+    f32 last_sun[3] = {};   // светило прошлого кадра: скачок — сборка целиком
+    f64 last_cam[2] = {};
+    u32 first = 0, count = 0;  // тексели этого кадра
+};
+
 // Диагностика GPU (vk_diag.cpp): что умеет драйвер для разбора сбоя, буфер меток AMD, счётчики GPU
 struct DiagGpu {
     bool nv_checkpoints = false, amd_marker = false, device_fault = false;
@@ -297,6 +327,7 @@ struct VkState {
     TerrainGpu terrain;
     WorldGpu world;
     GcacheGpu gcache;
+    TshadowGpu tshadow;
     // Froxels (vk_froxel.cpp): клетки 64×64 пикселя × FROXEL_Z слоёв глубины
     GpuBuffer froxels;     // списки на клетку, FROXEL_STRIDE u32
     GpuBuffer media;       // среда на клетку (туман и пыль, vec4) — место для света пользователя, пока нули
@@ -389,6 +420,11 @@ bool vk_gcache_init();
 void vk_gcache_shutdown();
 void vk_gcache_fill(FrameGpu &g, const RenderFrame &f, bool images);
 void vk_gcache_read(const u32 *stats);
+// Тень рельефа (vk_tshadow.cpp, docs/tshadow.md): буфер карт и конвейер сборки; какие карты кадр показывает и что
+// собирает (проходы — в vk_graph.h)
+bool vk_tshadow_init();
+void vk_tshadow_shutdown();
+void vk_tshadow_fill(FrameGpu &g, const RenderFrame &f);
 // Froxels (vk_froxel.cpp, docs/frame.md «Froxels»): сетка клеток, огни и декали по клеткам
 constexpr u32 FROXEL_TILE = 64, FROXEL_Z = 32, FROXEL_STRIDE = 96;
 constexpr f32 FROXEL_NEAR = 1.0f, FROXEL_FAR = 512.0f;

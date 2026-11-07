@@ -1,0 +1,40 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Сборка карты тени рельефа (docs/tshadow.md): поток на тексель карты ts_c, тексели [ts_first, ts_first + ts_count)
+// по порядку уровней. Светило и окна уровней — той карты (её начала — в ts_org). Тексели уровня k, которые
+// лежат внутри окна уровня k−1 вдали от его края, никто не читает — их не считаем
+#include "tshadow.glsl"
+layout(local_size_x = 64) in;
+
+shared uint s_steps;
+
+void main() {
+    FrameData f = pc.frame;
+    if (gl_LocalInvocationIndex == 0u) s_steps = 0u;
+    barrier();
+    uint n = f.ts_first + gl_GlobalInvocationID.x;
+    uint per = uint(TS_W * TS_W);
+    uint steps = 0u;
+    if (gl_GlobalInvocationID.x < f.ts_count && n < per * uint(TS_LEVELS)) {
+        int k = int(n / per);
+        ivec2 i = ivec2(int(n % per) % TS_W, int(n % per) / TS_W);
+        uint word = ts_lit_word();
+        vec3 l = f.ts_sun.xyz;
+        float e = max(abs(float(i.x) - 0.5 * float(TS_W - 1)), abs(float(i.y) - 0.5 * float(TS_W - 1)));
+        bool inner = k > 0 && e < 0.25 * float(TS_W) - 0.5 * TS_BAND - 3.0;
+        if (f.t_on != 0u && l.y > 0.0 && !inner) {
+            float s = TS_CELL0 * float(1 << k);
+            vec2 g = (vec2(f.ts_org[f.ts_c * uint(TS_LEVELS) + uint(k)] + i) + 0.5) * s;
+            float hb = t_base_height(g);
+            ivec2 gc = clamp(ivec2(floor(g)), ivec2(0), ivec2(f.t_size_x, f.t_size_z));
+            bool dunes = t_masks2(gc.x, gc.y).x > 0;
+            vec2 r = t_shadow_ramp(g, hb, l, dunes, steps);
+            float y0 = max(r.x - hb, TS_LIT);
+            word = packHalf2x16(vec2(y0, max(r.y - hb - y0, 0.3)));
+        }
+        f.ts_maps.v[(f.ts_c * uint(TS_LEVELS) + uint(k)) * per + uint(i.y * TS_W + i.x)] = word;
+    }
+    if (steps != 0u) atomicAdd(s_steps, steps);
+    barrier();
+    if (gl_LocalInvocationIndex == 0u && s_steps != 0u) atomicAdd(f.stats.v[STAT_SHADOW_STEPS], s_steps);
+}

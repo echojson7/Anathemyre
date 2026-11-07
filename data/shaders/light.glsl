@@ -1,9 +1,9 @@
 // Свет — пользователя (docs/invariants.md, шов 6; docs/roadmap.md, этап 6).
 // ВРЕМЕННЫЙ свет этапов 1–3, чтобы было видно сетки и рельеф: главный свет (солнце, ночью луна) по Ламберту
-// с тенью рельефа (луч по сетке высот, terrain.glsl), свет неба по нормали (atmo_ambient, вместе с отсветом
+// с тенью рельефа (карта дальнего плана, tshadow.glsl), свет неба по нормали (atmo_ambient, вместе с отсветом
 // земли), блик и отражение неба по Френелю для гладкого (вода), дымка atmo_fog() (atmosphere.glsl, этап 3).
 // Теней от объектов нет. Пользователь пишет свой алгоритм на месте этой функции; каркас зовёт только light_surface()
-#include "terrain.glsl"
+#include "tshadow.glsl"
 #include "atmosphere.glsl"
 
 vec3 light_surface(Surface s) {
@@ -13,7 +13,7 @@ vec3 light_surface(Surface s) {
     vec3 v = dist > 1e-4 ? -s.pos / dist : vec3(0.0, 1.0, 0.0);
     vec3 nrm = s.normal;
     float ndl = max(dot(nrm, l), 0.0);
-    float shadow = ndl > 0.0 ? t_shadow(s.pos, l) : 0.0;
+    float shadow = ndl > 0.0 ? t_sun_shadow(s.pos) : 0.0;
     vec3 amb = atmo_ambient(nrm) * s.ao;
     vec3 c = s.albedo * (f.sun_color.rgb * ndl * shadow + amb);
     // Блик и отражение неба: заметны только у гладкого

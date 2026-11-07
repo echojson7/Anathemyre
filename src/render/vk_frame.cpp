@@ -157,7 +157,7 @@ bool vk_create_pipelines() {
     g_vk.pipe_points = vk_make_pipeline(points);
     g_vk.pipe_lines = vk_make_pipeline(lines);
     return g_vk.pipe_mesh && g_vk.pipe_ground && g_vk.pipe_points && g_vk.pipe_lines && g_vk.pipe_sky && vk_sky_init() &&
-           vk_world_init() && vk_froxel_init() && vk_ui_init();
+           vk_tshadow_init() && vk_world_init() && vk_froxel_init() && vk_ui_init();
 }
 
 void vk_destroy_pipelines() {
@@ -165,6 +165,7 @@ void vk_destroy_pipelines() {
     vk_world_shutdown();
     vk_froxel_shutdown();
     vk_sky_shutdown();
+    vk_tshadow_shutdown();
     VkPipeline ps[] = {g_vk.pipe_mesh, g_vk.pipe_ground, g_vk.pipe_points, g_vk.pipe_lines, g_vk.pipe_sky};
     for (VkPipeline p : ps)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
@@ -247,6 +248,7 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.ndc_per_pixel[1] = 2.0f / (h > 0 ? h : 1.0f);
     vk_terrain_fill(g, f);
     vk_sky_fill(g, f);
+    vk_tshadow_fill(g, f);
     vk_world_fill(g, f, fs);
     vk_froxel_fill(g, f, fs);
 }
@@ -445,6 +447,8 @@ bool render_frame(const RenderFrame &f) {
     // Таблицы неба и froxels — до кадра: их читают земля, сетки (дымка, свет неба), небо и освещение
     vk_sky_passes(fs.frame.address);
     vk_froxel_passes(fs);
+    // Тень рельефа (docs/tshadow.md): кусок новой карты; её читает свет и кадра мира, и forward
+    vk_tshadow_passes(fs.frame.address);
     fs.world = !f.style.forward;
     if (fs.world) {
         if (!vk_world_passes(fs, f, img, npoints, nlines)) {
@@ -458,6 +462,7 @@ bool render_frame(const RenderFrame &f) {
         rg_use(g_vk.rg_depth, RG_DEPTH, RG_DISCARD);
         vk_sky_reads(RG_FS_READ);
         vk_froxel_reads(RG_FS_READ);
+        vk_tshadow_reads(RG_FS_READ);
     }
     vk_stats_copy_pass(fs);
     // Интерфейс — после замеров GPU (таймер меряет кадр мира) и до снимка: снимок с интерфейсом

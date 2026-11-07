@@ -64,6 +64,8 @@ layout(buffer_reference, scalar) buffer GcTexels { uvec4 v[]; };  // тексе�
 layout(buffer_reference, scalar) buffer GcReq { uint req_n, old_n, recent_n, pad; uvec4 bake; uint v[]; };
 struct GcCell { uint kt; int tz; float depth; };  // ячейка земли пикселя: уровень << 24 | x, z; глубина
 layout(buffer_reference, scalar) buffer GcCells { GcCell v[]; };
+// Карты тени рельефа (docs/tshadow.md, tshadow.glsl): три карты по TS_LEVELS уровней TS_W² слов (две половины f16)
+layout(buffer_reference, scalar) buffer TsMaps { uint v[]; };
 
 // Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы сеток и кластеров (MeshGpu, ClusterGpu в
 // src/render/vk_state.h), видимые кластеры кадра и косвенные вызовы, которые пишет отсечение (cull_*.comp)
@@ -163,6 +165,15 @@ layout(buffer_reference, scalar) buffer FrameData {
     uint gc_w, gc_pages_n, gc_req_cap, gc_frame;  // кадр кеша: с 1, растёт на кадр мира
     int gc_tpc0;              // текселей уровня 0 на чанк (256 м / cell_min)
     uint gc_on, gc_pad0, gc_pad1;  // 0 — кеш выключен: вся земля на пиксель (F3, --nogcache)
+    // Тень рельефа (docs/tshadow.md): кадр показывает mix(карта ts_a, карта ts_b, ts_mix), собирается ts_c —
+    // тексели [ts_first, ts_first + ts_count) для светила ts_sun. ts_org — начало окна уровня (тексели уровня от
+    // угла карты), по TS_LEVELS на карту
+    TsMaps ts_maps;
+    uint ts_on, ts_a, ts_b, ts_c;
+    float ts_mix;
+    uint ts_first, ts_count, ts_pad;
+    vec4 ts_sun;
+    ivec2 ts_org[33];
 };
 
 layout(push_constant, scalar) uniform Push {

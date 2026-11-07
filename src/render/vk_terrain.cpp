@@ -93,6 +93,7 @@ bool render_terrain_set(const RenderTerrain &d) {
     vk_terrain_shutdown();
     t.desc = d;
     g_vk.gcache.terrain_gen++;  // тексели кеша земли — от старой земли
+    g_vk.tshadow.terrain_gen++;  // карты тени рельефа — тоже
     // Сетка высот и её сглаженные уровни подряд, каждый с чётного номера u16 (шейдер читает пары из u32)
     u32 mip_x[TERRAIN_MIPS], mip_z[TERRAIN_MIPS];
     VkDeviceSize hcount = 0;

@@ -64,6 +64,9 @@ void vk_sky_reads(RgUse u);
 // Froxels (vk_froxel.cpp): среда и списки огней и декалей по клеткам; чтение их проходом
 void vk_froxel_passes(const FrameSlot &fs);
 void vk_froxel_reads(RgUse u);
+// Тень рельефа (vk_tshadow.cpp, docs/tshadow.md): кусок собираемой карты; чтение карт светом (u — стадия)
+void vk_tshadow_passes(VkDeviceAddress frame);
+void vk_tshadow_reads(RgUse u);
 // Кадр мира (vk_world.cpp): земля, отсечение, visibility buffer, освещение, стиль с отрезками и точками.
 // false — нет картинок кадра мира
 bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, u32 nlines);
