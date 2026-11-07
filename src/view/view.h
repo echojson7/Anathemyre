@@ -55,6 +55,7 @@ struct ViewInput {
     const DebugDraw *dbg;   // может быть nullptr
     i32 width, height;      // пиксели кадра
     bool pixel;             // правило ячейки (P)
+    bool forward;           // старый forward вместо кадра мира (F3, --forward)
     ScatterCache *scatter;  // рассыпка камней (кеш между кадрами), может быть nullptr
 };
 

@@ -261,6 +261,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     const f32 pixel_angle = 2.0f * v.tan_half_fov / (f32)(in.height > 0 ? in.height : 1080);  // радиан на пиксель
     v.near_m = NEAR_M;
     out.style.pixel = in.pixel;
+    out.style.forward = in.forward;
 
     // Небо, светила и временный главный свет — из часов мира (docs/sky.md). Воздух пустыни (пыль, тёплая
     // дымка) — по маске пустыни под камерой, на перевале — плавно
@@ -309,18 +310,19 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
         draws[ni] = {render_key(LAYER_OPAQUE, PIPE_MESH, mesh, lod, dot(rel, b.forward)), ni, 0};
         ni++;
     }
-    // Рассыпка камней: позади камеры не рисуется
+    // Рассыпка камней: экземпляры — все (кадр мира отсекает сам, а постоянный список на GPU не должен сдвигаться
+    // от поворота камеры), вызовы forward — только перед камерой
+    u32 nd = ni;
     for (u32 i = 0; i < nscat && ni < RENDER_MAX_INSTANCES; ++i) {
         const RenderInstance &r = in.scatter->items[i];
         Vec3 rel = delta(eye, r.cx, r.cz, r.x, r.y, r.z);
         f32 depth = dot(rel, b.forward);
-        if (depth < -2.0f) continue;
         inst[ni] = r;
-        draws[ni] = {render_key(LAYER_OPAQUE, PIPE_MESH, r.mesh, 0, depth), ni, 0};
+        if (depth >= -2.0f) draws[nd++] = {render_key(LAYER_OPAQUE, PIPE_MESH, r.mesh, 0, depth), ni, 0};
         ni++;
     }
     out.instances = {inst, ni};
-    out.draws = {draws, ni};
+    out.draws = {draws, nd};
     if (cur.decals) build_decals(*cur.decals, assets, eye, frame, out);
 
     // Точки-заглушки этапа 0 — чуть над землёй, с интерполяцией

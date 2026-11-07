@@ -9,7 +9,7 @@ static constexpr u32 TRANS_W = 256, TRANS_H = 64, MS_N = 32;
 static constexpr u32 SKY_W = 192, SKY_H = 128, MOON_W = 96, MOON_H = 64;
 static constexpr u32 SKY_OUT = 8;
 
-static VkPipeline make_compute(const char *name) {
+VkPipeline vk_make_compute(const char *name) {
     VkShaderModule m = vk_load_shader(name);
     if (!m) return VK_NULL_HANDLE;
     auto ci = vk_info<VkComputePipelineCreateInfo>(VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO);
@@ -32,10 +32,10 @@ bool vk_sky_init() {
         !vk_create_buffer(s.ms, MS_N * MS_N * v4, ssbo, true) || !vk_create_buffer(s.sun, SKY_W * SKY_H * v4, ssbo, true) ||
         !vk_create_buffer(s.moon, MOON_W * MOON_H * v4, ssbo, true) || !vk_create_buffer(s.out, SKY_OUT * v4, ssbo, true))
         return false;
-    s.pipe_trans = make_compute("sky_trans.comp");
-    s.pipe_ms = make_compute("sky_ms.comp");
-    s.pipe_view = make_compute("sky_view.comp");
-    s.pipe_sum = make_compute("sky_sum.comp");
+    s.pipe_trans = vk_make_compute("sky_trans.comp");
+    s.pipe_ms = vk_make_compute("sky_ms.comp");
+    s.pipe_view = vk_make_compute("sky_view.comp");
+    s.pipe_sum = vk_make_compute("sky_sum.comp");
     s.luts_ready = false;
     return s.pipe_trans && s.pipe_ms && s.pipe_view && s.pipe_sum;
 }
@@ -70,7 +70,7 @@ void vk_sky_fill(FrameGpu &g, const RenderFrame &f) {
 }
 
 // Запись шейдером → чтение следующими compute и фрагментами
-static void storage_barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 src, VkAccessFlags2 src_access,
+void vk_memory_barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 src, VkAccessFlags2 src_access,
                             VkPipelineStageFlags2 dst, VkAccessFlags2 dst_access) {
     auto b = vk_info<VkMemoryBarrier2>(VK_STRUCTURE_TYPE_MEMORY_BARRIER_2);
     b.srcStageMask = src;
@@ -96,18 +96,18 @@ void vk_sky_record(VkCommandBuffer cmd, VkDeviceAddress frame) {
     const VkPipelineStageFlags2 FS = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
     const VkAccessFlags2 W = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, R = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
     // Прошлый кадр мог ещё читать таблицы во фрагментах: запись — после него (те же буферы на все кадры)
-    storage_barrier(cmd, FS | CS, R | W, CS, R | W);
+    vk_memory_barrier(cmd, FS | CS, R | W, CS, R | W);
     if (!s.luts_ready || !same_air(s.last, g_pending_sky)) {
         dispatch(cmd, s.pipe_trans, frame, 0, TRANS_W / 8, TRANS_H / 8);
-        storage_barrier(cmd, CS, W, CS, R);
+        vk_memory_barrier(cmd, CS, W, CS, R);
         dispatch(cmd, s.pipe_ms, frame, 0, MS_N / 8, MS_N / 8);
-        storage_barrier(cmd, CS, W, CS, R);
+        vk_memory_barrier(cmd, CS, W, CS, R);
         s.last = g_pending_sky;
         s.luts_ready = true;
     }
     dispatch(cmd, s.pipe_view, frame, 0, SKY_W / 8, SKY_H / 8);
     dispatch(cmd, s.pipe_view, frame, 1, MOON_W / 8, MOON_H / 8);
-    storage_barrier(cmd, CS, W, CS, R);
+    vk_memory_barrier(cmd, CS, W, CS, R);
     dispatch(cmd, s.pipe_sum, frame, 0, 1, 1);
-    storage_barrier(cmd, CS, W, CS | FS, R);
+    vk_memory_barrier(cmd, CS, W, CS | FS, R);
 }

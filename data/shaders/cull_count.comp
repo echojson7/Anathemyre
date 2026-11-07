@@ -1,0 +1,14 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Отсечение, шаг 1: на экземпляр — сколько его кластеров видно и какой LOD
+#include "cull.glsl"
+layout(local_size_x = 64) in;
+
+void main() {
+    FrameData f = pc.frame;
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= f.instance_count) return;
+    uint lod;
+    uint n = cull_instance(i, false, 0u, lod);
+    f.cull.count[i] = n | (lod << 29);
+}

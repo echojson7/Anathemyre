@@ -1,11 +1,11 @@
-// Forward этапов 1–4: точка фрагмента → центр ячейки → surface() → light_surface(). С этапа 5 то же
-// делает освещение в compute по visibility buffer (docs/render.md, «Проходы с этапа 5»)
+// Точка сетки → центр ячейки → surface() → декали (mesh_surface), потом light_surface(). Зовут forward
+// (mesh.frag) и освещение в compute по visibility buffer (docs/render.md, «Проходы с этапа 5»)
 #include "surface.glsl"
 #include "light.glsl"
 #include "decal.glsl"
 
 // rel — точка относительно камеры, mat1/blend — второй материал вершины и доля смеси (по ячейкам, вразброс)
-vec3 shade(vec3 rel, vec3 n, uint mat0, uint mat1, float blend, float ao, uint seed) {
+Surface mesh_surface(vec3 rel, vec3 n, uint mat0, uint mat1, float blend, float ao, uint seed) {
     FrameData f = pc.frame;
     float depth = dot(rel, f.forward.xyz);
     float cell = cell_size(depth);
@@ -22,5 +22,9 @@ vec3 shade(vec3 rel, vec3 n, uint mat0, uint mat1, float blend, float ao, uint s
     s = apply_decals(s, p - f.cam_off, n);
     s.ao *= ao;
     s.pos = p - f.cam_off;
-    return light_surface(s);
+    return s;
+}
+
+vec3 shade(vec3 rel, vec3 n, uint mat0, uint mat1, float blend, float ao, uint seed) {
+    return light_surface(mesh_surface(rel, n, mat0, mat1, blend, ao, seed));
 }

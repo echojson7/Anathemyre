@@ -124,10 +124,16 @@ static void load_mesh(const char *name, void *user) {
     ViewMesh vm{};
     vm.lod_count = md.lods.count < RENDER_MESH_MAX_LODS ? (u32)md.lods.count : RENDER_MESH_MAX_LODS;
     for (u32 i = 0; i < vm.lod_count; ++i) {
-        lods[i] = {md.lods.data[i].first_index, md.lods.data[i].index_count};
-        vm.lod_error[i] = md.lods.data[i].error;
+        const MeshLod &l = md.lods.data[i];
+        lods[i] = {l.first_index, l.index_count, l.first_cluster, l.cluster_count, l.error};
+        vm.lod_error[i] = l.error;
     }
-    vm.id = render_mesh_create(md.vertices, md.indices, {lods, vm.lod_count});
+    RenderCluster *cl = arena_push<RenderCluster>(L.m->load, md.clusters.count);
+    for (usize i = 0; i < md.clusters.count; ++i) {
+        const MeshCluster &c = md.clusters.data[i];
+        cl[i] = {c.first_index, c.tri_count, {c.cx, c.cy, c.cz, c.radius}};
+    }
+    vm.id = render_mesh_create(md.vertices, md.indices, {lods, vm.lod_count}, {cl, md.clusters.count});
     arena_restore(L.m->load, mark);
     if (!vm.id) { L.failed++; return; }
     if (L.view->mesh_count >= VIEW_MAX_MESHES) { log_error("сеток больше %u", VIEW_MAX_MESHES); L.failed++; return; }

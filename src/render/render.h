@@ -89,6 +89,7 @@ struct RenderView {
 // cell_min метров и растёт с глубиной степенями двойки, пока не станет пикселем кадра
 struct RenderStyle {
     bool pixel = true;     // выключается клавишей P
+    bool forward = false;  // старый forward этапов 1–4 вместо кадра мира (для сравнения, F3 или --forward)
     f32 cell_min = 1.0f / 80.0f;
     f32 cell_pixels = 1.0f;  // ячейка — не меньше стольких пикселей кадра
 };
@@ -163,12 +164,21 @@ const char *render_device_name();
 // Сетки: номер в таблице (0 — нет сетки). Место в общих буферах вершин и индексов выдаёт виртуальный блок
 // VMA; освобождение — через несколько кадров, когда GPU их точно дорисовал. Загрузка ждёт копию на GPU
 // Индексы всех LOD лежат одним массивом, LOD — диапазон в нём (кусок LODS .mesh); без LOD — весь массив
+// Кластеры (≤ 124 треугольников, индексы подряд) — для отсечения на GPU кадра мира; LOD — диапазон индексов
+// для forward и диапазон кластеров. Без кластеров рендер режет индексы LOD на куски сам
 struct MeshVertex;
 constexpr u32 RENDER_MESH_MAX_LODS = 8;
 struct RenderLod {
     u32 first_index, index_count;
+    u32 first_cluster, cluster_count;  // в кластерах сетки
+    f32 error;                         // ошибка упрощения, м
 };
-u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices, Span<const RenderLod> lods);
+struct RenderCluster {
+    u32 first_index, tri_count;  // от начала индексов сетки
+    f32 sphere[4];               // в осях сетки
+};
+u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices, Span<const RenderLod> lods,
+                       Span<const RenderCluster> clusters);
 void render_mesh_destroy(u32 mesh);
 // Таблица материалов целиком (номер = место). Ждёт, пока GPU закончит кадры: только при загрузке
 bool render_set_materials(Span<const RenderMaterial> materials);
@@ -196,8 +206,12 @@ struct RenderTerrain {
 };
 bool render_terrain_set(const RenderTerrain &t);
 
-// Время кадра на GPU (небо и forward) за прошлый кадр, мс (0 — таймеров нет)
+// Время кадра мира на GPU за прошлый кадр (без интерфейса), мс (0 — таймеров нет)
 f64 render_gpu_ms();
+// Время проходов прошлого кадра: имена и мс, до cap; возвращает число проходов (0 — таймеров нет)
+u32 render_gpu_passes(const char **names, f64 *ms, u32 cap);
+// Видимых кластеров в прошлом кадре мира (0 — forward)
+u32 render_vis_clusters();
 // Сколько последний render_frame ждал GPU и показ (забор кадра, картинка swapchain, vsync), мс
 f64 render_wait_ms();
 // Снимок: render_capture_next() перед render_frame, затем render_capture_take() — пиксели RGBA8 sRGB

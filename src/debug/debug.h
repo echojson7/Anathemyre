@@ -11,6 +11,7 @@ struct DebugState {
     // Что держится между кадрами (правда — в настройках, run_window копирует туда и обратно)
     bool lines = true;        // L — отладочные отрезки
     bool pixel = true;        // P — правило ячейки
+    bool forward = false;     // старый forward вместо кадра мира (сравнение, не сохраняется)
     u32 tab = 0;              // вкладка панели: DEBUG_TAB_*
     // Просьбы этого кадра от клавиш и панели (debug_clear_frame после исполнения)
     bool step_once = false;   // «.» на паузе — один шаг
@@ -51,6 +52,10 @@ struct DebugInfo {
     bool cam_free;
     f64 cam[3];               // глаз камеры, метры от начала карты
     f64 cam_above;            // над землёй, м
+    u32 passes;               // проходы GPU прошлого кадра (render_gpu_passes)
+    const char *pass_names[8];
+    f64 pass_ms[8];
+    u32 vis_clusters;         // видимых кластеров (кадр мира)
 };
 
 struct World;

@@ -82,6 +82,10 @@ int run_window(const Args &a, AppMemory &m) {
     const bool hud_on = !a.nohud && !a.timelapse && ui_init(m.world, m.load, data_dir);
     HudMenu menu;
     HudStats hs{};
+    // Проходы GPU для панели отладки: сумма за секунду → среднее (как остальные числа кадра)
+    const char *pass_names[8] = {};
+    f64 pass_sum[8] = {}, pass_avg[8] = {};
+    u32 npass = 0, npass_avg = 0, pass_frames = 0;
     WorldInspect *inspect = arena_push<WorldInspect>(m.world, 1);
     *inspect = WorldInspect{};
     MouseOwner mouse_owner;
@@ -192,6 +196,12 @@ int run_window(const Args &a, AppMemory &m) {
                 di.cam[1] = eye.y;
                 di.cam[2] = (f64)eye.cz * CHUNK_M + eye.z;
                 di.cam_above = eye.y - ground_at(w.terrain, eye).height;
+                di.passes = npass_avg;
+                for (u32 i = 0; i < npass_avg; ++i) {
+                    di.pass_names[i] = pass_names[i];
+                    di.pass_ms[i] = pass_avg[i];
+                }
+                di.vis_clusters = render_vis_clusters();
                 debug_panel(di, w, ds, *inspect);
             }
             hud_menu(menu, set);
@@ -297,7 +307,8 @@ int run_window(const Args &a, AppMemory &m) {
         // Замер CPU кадра: вид + запись команд, без шага мира и без ожидания GPU и показа (vsync)
         u64 tcpu = platform_time_ns();
         arena_reset(m.frame);
-        ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused || a.timelapse ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel, scatter};
+        ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused || a.timelapse ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel,
+                     a.forward || ds.forward, scatter};
         if (!ds.lines) vi.dbg = nullptr;
         RenderFrame rf;
         u32 dbg_keep = dbg.count;  // метка осмотра — только на этот кадр, шаг мира её не видит
@@ -313,6 +324,23 @@ int run_window(const Args &a, AppMemory &m) {
             if (!debug_write_shot(path, m.load)) { rc_exit = 1; break; }
         }
         stat_add(st_cpu, (f64)(platform_time_ns() - tcpu) / 1e6 - render_wait_ms());
+        {
+            const char *nm[8];
+            f64 ms[8];
+            u32 n = render_gpu_passes(nm, ms, 8);
+            bool same = n == npass;
+            for (u32 i = 0; i < n && same; ++i) same = nm[i] == pass_names[i];
+            if (!same) {  // другой набор проходов (переключили forward) — заново
+                for (u32 i = 0; i < 8; ++i) pass_sum[i] = 0;
+                pass_frames = 0;
+            }
+            npass = n;
+            for (u32 i = 0; i < n; ++i) {
+                pass_names[i] = nm[i];
+                pass_sum[i] += ms[i];
+            }
+            pass_frames++;
+        }
 
         frames++;
         frames_window++;
@@ -330,6 +358,10 @@ int run_window(const Args &a, AppMemory &m) {
                      st_step.avg_last, (f64)SPEEDS[tc.speed], tc.paused ? " · пауза" : "", pixel ? "" : " · без ячеек",
                      w.step, hour_hm / 60, hour_hm % 60);
             platform_set_title(title);
+            npass_avg = npass;
+            for (u32 i = 0; i < npass; ++i) pass_avg[i] = pass_frames ? pass_sum[i] / pass_frames : 0.0;
+            for (u32 i = 0; i < 8; ++i) pass_sum[i] = 0;
+            pass_frames = 0;
             hs = HudStats{(f64)frames_window / secs, st_frame.avg_last, st_cpu.avg_last, render_gpu_ms(), st_step.avg_last};
             log_info("%s", title);
             frames_window = 0;

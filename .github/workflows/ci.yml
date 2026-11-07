@@ -107,6 +107,8 @@ jobs:
           export ASAN_SYMBOLIZER_PATH=~/.cache/anathemyre/llvm-$LLVM_VER/bin/llvm-symbolizer  # иначе подавления не видят имён функций
           # ASan + слои проверки: ошибки Vulkan видны с первых кадров, малое окно — lavapipe считает пиксели
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation --window 640 360 2>&1 | tail -40
+          # старый forward (переключатель сравнения) — тоже под слоями проверки
+          xvfb-run -a -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 10 --validation --window 640 360 --forward 2>&1 | tail -5
           # снимок в полный размер для глаза
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 10 --validation --shot frame.bmp | tail -5
       - uses: actions/upload-artifact@v4

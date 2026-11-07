@@ -12,7 +12,7 @@ void main() {
     FrameData f = pc.frame;
     Vertex vx = f.vertices.v[gl_VertexIndex];
     Instance it = f.instances.v[gl_InstanceIndex];
-    vec4 q = normalize(vec4(unpackSnorm2x16(it.rot_xy), unpackSnorm2x16(it.rot_zw)));
+    vec4 q = inst_quat(it);
     vec3 local = quat_rotate(q, vec3(vx.px, vx.py, vx.pz) * it.scale);
     vec3 rel = rel_to_camera(ivec2(it.cx, it.cz), vec3(it.x, it.y, it.z)) + local;
     gl_Position = to_clip(rel);

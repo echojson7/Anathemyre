@@ -1,0 +1,31 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Отсечение, шаг 2: префиксная сумма числа кластеров по экземплярам одной группой. Места в списке кадра идут
+// по порядку экземпляров, поэтому вызовы и номера в visibility buffer одинаковы от запуска к запуску
+#include "common.glsl"
+layout(local_size_x = 256) in;
+shared uint s_sum[256];
+
+void main() {
+    FrameData f = pc.frame;
+    uint t = gl_LocalInvocationID.x;
+    uint n = f.instance_count;
+    uint per = (n + 255u) / 256u;
+    uint b = min(t * per, n), e = min(b + per, n);
+    uint sum = 0u;
+    for (uint k = b; k < e; ++k) sum += f.cull.count[k] & 0x1FFFFFFFu;
+    s_sum[t] = sum;
+    barrier();
+    for (uint d = 1u; d < 256u; d <<= 1) {
+        uint v = t >= d ? s_sum[t - d] : 0u;
+        barrier();
+        s_sum[t] += v;
+        barrier();
+    }
+    uint run = s_sum[t] - sum;
+    for (uint k = b; k < e; ++k) {
+        f.cull.offset[k] = run;
+        run += f.cull.count[k] & 0x1FFFFFFFu;
+    }
+    if (t == 255u) f.cull.draw_count = min(s_sum[255], f.vis_max);
+}

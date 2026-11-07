@@ -33,15 +33,7 @@ VkShaderModule vk_load_shader(const char *name) {
     return m;
 }
 
-struct PipeDesc {
-    const char *vs, *fs;
-    VkPrimitiveTopology topo = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    bool blend = false;
-    bool depth_write = true;
-    VkCullModeFlags cull = VK_CULL_MODE_NONE;
-};
-
-static VkPipeline make_pipeline(const PipeDesc &d) {
+VkPipeline vk_make_pipeline(const PipeDesc &d) {
     VkShaderModule vs = vk_load_shader(d.vs);
     VkShaderModule fs = vk_load_shader(d.fs);
     VkPipeline p = VK_NULL_HANDLE;
@@ -71,7 +63,7 @@ static VkPipeline make_pipeline(const PipeDesc &d) {
         ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         // Обратная глубина: ближе — больше, очистка нулём
         auto dss = vk_info<VkPipelineDepthStencilStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO);
-        dss.depthTestEnable = VK_TRUE;
+        dss.depthTestEnable = d.depth_test ? VK_TRUE : VK_FALSE;
         dss.depthWriteEnable = d.depth_write ? VK_TRUE : VK_FALSE;
         dss.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
         VkPipelineColorBlendAttachmentState ba{};
@@ -94,8 +86,9 @@ static VkPipeline make_pipeline(const PipeDesc &d) {
         ds.dynamicStateCount = 2;
         ds.pDynamicStates = dyn;
         auto ri = vk_info<VkPipelineRenderingCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO);
+        VkFormat color = d.color != VK_FORMAT_UNDEFINED ? d.color : g_vk.format;
         ri.colorAttachmentCount = 1;
-        ri.pColorAttachmentFormats = &g_vk.format;
+        ri.pColorAttachmentFormats = &color;
         ri.depthAttachmentFormat = DEPTH_FORMAT;
         auto pi = vk_info<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
         pi.pNext = &ri;
@@ -118,8 +111,12 @@ static VkPipeline make_pipeline(const PipeDesc &d) {
 }
 
 bool vk_create_pipelines() {
+    // Общая раскладка: push-константы и набор картинок кадра мира (visibility buffer, HDR)
+    if (!vk_world_layout()) return false;
     VkPushConstantRange pc{PUSH_STAGES, 0, sizeof(PushConsts)};
     auto li = vk_info<VkPipelineLayoutCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
+    li.setLayoutCount = 1;
+    li.pSetLayouts = &g_vk.world.set_layout;
     li.pushConstantRangeCount = 1;
     li.pPushConstantRanges = &pc;
     if (!vk_check(vkCreatePipelineLayout(g_vk.device, &li, nullptr, &g_vk.layout), "vkCreatePipelineLayout")) return false;
@@ -133,17 +130,18 @@ bool vk_create_pipelines() {
     PipeDesc lines{"lines.vert", "color.frag", VK_PRIMITIVE_TOPOLOGY_LINE_LIST, true, false};
     PipeDesc sky{"sky.vert", "sky.frag"};
     sky.depth_write = false;
-    g_vk.pipe_sky = make_pipeline(sky);
-    g_vk.pipe_mesh = make_pipeline(mesh);
-    g_vk.pipe_ground = make_pipeline(ground);
-    g_vk.pipe_points = make_pipeline(points);
-    g_vk.pipe_lines = make_pipeline(lines);
+    g_vk.pipe_sky = vk_make_pipeline(sky);
+    g_vk.pipe_mesh = vk_make_pipeline(mesh);
+    g_vk.pipe_ground = vk_make_pipeline(ground);
+    g_vk.pipe_points = vk_make_pipeline(points);
+    g_vk.pipe_lines = vk_make_pipeline(lines);
     return g_vk.pipe_mesh && g_vk.pipe_ground && g_vk.pipe_points && g_vk.pipe_lines && g_vk.pipe_sky && vk_sky_init() &&
-           vk_ui_init();
+           vk_world_init() && vk_ui_init();
 }
 
 void vk_destroy_pipelines() {
     vk_ui_shutdown();
+    vk_world_shutdown();
     vk_sky_shutdown();
     VkPipeline ps[] = {g_vk.pipe_mesh, g_vk.pipe_ground, g_vk.pipe_points, g_vk.pipe_lines, g_vk.pipe_sky};
     for (VkPipeline p : ps)
@@ -153,9 +151,9 @@ void vk_destroy_pipelines() {
     g_vk.layout = VK_NULL_HANDLE;
 }
 
-static void image_barrier(VkCommandBuffer cmd, VkImage img, VkImageAspectFlags aspect, VkImageLayout from, VkImageLayout to,
-                          VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
-                          VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
+void vk_image_barrier(VkCommandBuffer cmd, VkImage img, VkImageAspectFlags aspect, VkImageLayout from, VkImageLayout to,
+                      VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage,
+                      VkAccessFlags2 dst_access) {
     auto b = vk_info<VkImageMemoryBarrier2>(VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2);
     b.srcStageMask = src_stage;
     b.srcAccessMask = src_access;
@@ -172,17 +170,44 @@ static void image_barrier(VkCommandBuffer cmd, VkImage img, VkImageAspectFlags a
     vkCmdPipelineBarrier2(cmd, &di);
 }
 
-// Метки времени прошлого использования слота: время прохода forward на GPU
-static void read_gpu_time(FrameSlot &fs, u32 slot) {
-    if (!fs.timed || !g_vk.queries) return;
-    u64 t[2] = {};
-    VkResult r = vkGetQueryPoolResults(g_vk.device, g_vk.queries, slot * 2, 2, sizeof t, t, sizeof(u64),
-                                       VK_QUERY_RESULT_64_BIT);
-    if (r == VK_SUCCESS && t[1] >= t[0]) g_vk.gpu_ms = (f64)(t[1] - t[0]) * (f64)g_vk.timestamp_period / 1e6;
-    fs.timed = false;
+// Метка времени на границе проходов: всё записанное до неё закончилось. Первая метка кадра — начало
+void vk_mark(VkCommandBuffer cmd, const char *name) {
+    if (!g_vk.queries) return;
+    FrameSlot &fs = g_vk.frames[g_vk.frame_index];
+    if (fs.marks >= GPU_MAX_MARKS) return;
+    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, g_vk.queries,
+                         g_vk.frame_index * GPU_MAX_MARKS + fs.marks);
+    fs.mark_names[fs.marks++] = name;
 }
 
-static void fill_frame(FrameGpu &g, const RenderFrame &f, const FrameSlot &fs) {
+// Метки времени прошлого использования слота: время кадра мира и его проходов на GPU
+static void read_gpu_time(FrameSlot &fs, u32 slot) {
+    if (fs.marks < 2 || !g_vk.queries) { fs.marks = 0; return; }
+    u64 t[GPU_MAX_MARKS] = {};
+    VkResult r = vkGetQueryPoolResults(g_vk.device, g_vk.queries, slot * GPU_MAX_MARKS, fs.marks, sizeof t, t,
+                                       sizeof(u64), VK_QUERY_RESULT_64_BIT);
+    if (r == VK_SUCCESS) {
+        const f64 k = (f64)g_vk.timestamp_period / 1e6;
+        g_vk.gpu_ms = t[fs.marks - 1] >= t[0] ? (f64)(t[fs.marks - 1] - t[0]) * k : 0.0;
+        g_vk.pass_count = fs.marks - 1;
+        for (u32 i = 1; i < fs.marks; ++i) {
+            g_vk.pass_names[i - 1] = fs.mark_names[i];
+            g_vk.pass_ms[i - 1] = t[i] >= t[i - 1] ? (f64)(t[i] - t[i - 1]) * k : 0.0;
+        }
+    }
+    fs.marks = 0;
+}
+
+u32 render_gpu_passes(const char **names, f64 *ms, u32 cap) {
+    u32 n = g_vk.pass_count < cap ? g_vk.pass_count : cap;
+    for (u32 i = 0; i < n; ++i) {
+        names[i] = g_vk.pass_names[i];
+        ms[i] = g_vk.pass_ms[i];
+    }
+    return n;
+}
+
+static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g = FrameGpu{};
     g.vertices = g_vk.vertices.address;
     g.instances = fs.instances.address;
@@ -218,6 +243,7 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, const FrameSlot &fs) {
     g.ndc_per_pixel[1] = 2.0f / (h > 0 ? h : 1.0f);
     vk_terrain_fill(g, f);
     vk_sky_fill(g, f);
+    vk_world_fill(g, f, fs);
 }
 
 // Копия картинки кадра в буфер снимка (до перевода в PRESENT)
@@ -227,16 +253,16 @@ static void record_capture(VkCommandBuffer cmd, VkImage img) {
         vk_destroy_buffer(g_vk.capture);
         if (!vk_create_buffer(g_vk.capture, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT)) return;
     }
-    image_barrier(cmd, img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+    vk_image_barrier(cmd, img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
     VkBufferImageCopy c{};
     c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     c.imageExtent = {g_vk.extent.width, g_vk.extent.height, 1};
     vkCmdCopyImageToBuffer(cmd, img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_vk.capture.buffer, 1, &c);
-    image_barrier(cmd, img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
-                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+    vk_image_barrier(cmd, img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
     g_vk.capture_extent = g_vk.extent;
     g_vk.capture_ready = true;
 }
@@ -255,6 +281,7 @@ bool render_frame(const RenderFrame &f) {
     u64 t0 = platform_time_ns();
     if (!vk_check(vkWaitForFences(g_vk.device, 1, &fs.done, VK_TRUE, UINT64_MAX), "vkWaitForFences")) return false;
     read_gpu_time(fs, slot);
+    vk_world_read(fs);
     vk_geometry_collect();
 
     u32 img = 0;
@@ -264,8 +291,10 @@ bool render_frame(const RenderFrame &f) {
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) return vk_check(r, "vkAcquireNextImageKHR");
     vkResetFences(g_vk.device, 1, &fs.done);
 
-    // Вызовы по ключу порядка; экземпляры пишутся в буфер кадра в том же порядке, подряд для одной сетки
+    // Forward: вызовы по ключу порядка; экземпляры пишутся в буфер кадра в том же порядке, подряд для одной сетки.
+    // Кадр мира берёт экземпляры как есть (vk_world_fill), ключи ему не нужны
     usize ndraws = f.draws.count < RENDER_MAX_INSTANCES ? f.draws.count : RENDER_MAX_INSTANCES;
+    if (!f.style.forward) ndraws = 0;
     radix_sort_u64(f.draws.data, g_sort_tmp, ndraws, [](const RenderDraw &d) { return d.key; });
     RenderInstance *inst = (RenderInstance *)fs.instances.mapped;
     u32 ninst = 0;
@@ -291,106 +320,111 @@ bool render_frame(const RenderFrame &f) {
     auto bi = vk_info<VkCommandBufferBeginInfo>(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &bi);
-    if (g_vk.queries) {
-        vkCmdResetQueryPool(cmd, g_vk.queries, slot * 2, 2);
-        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, g_vk.queries, slot * 2);
-    }
+    if (g_vk.queries) vkCmdResetQueryPool(cmd, g_vk.queries, slot * GPU_MAX_MARKS, GPU_MAX_MARKS);
+    fs.marks = 0;
+    vk_mark(cmd, nullptr);
     // Таблицы неба — до прохода: их читают земля, сетки (дымка, свет неба) и небо
     vk_sky_record(cmd, fs.frame.address);
+    vk_mark(cmd, "небо");
 
-    image_barrier(cmd, g_vk.images[img], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
-                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+    vk_image_barrier(cmd, g_vk.images[img], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
     // Глубина прошлого кадра не нужна: из UNDEFINED, очистка нулём (обратная глубина: 0 — бесконечность)
-    image_barrier(cmd, g_vk.depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                  VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                  VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    vk_image_barrier(cmd, g_vk.depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
 
-    auto ca = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
-    ca.imageView = g_vk.views[img];
-    ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    ca.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    ca.clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};  // пустые пиксели закрашивает небо
-    auto da = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
-    da.imageView = g_vk.depth.view;
-    da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    da.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    da.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    da.clearValue.depthStencil = {0.0f, 0};
-    auto ri = vk_info<VkRenderingInfo>(VK_STRUCTURE_TYPE_RENDERING_INFO);
-    ri.renderArea = {{0, 0}, g_vk.extent};
-    ri.layerCount = 1;
-    ri.colorAttachmentCount = 1;
-    ri.pColorAttachments = &ca;
-    ri.pDepthAttachment = &da;
-    vkCmdBeginRendering(cmd, &ri);
+    if (!f.style.forward) {
+        if (!vk_world_record(cmd, fs, f, img, npoints, nlines)) {
+            vkEndCommandBuffer(cmd);
+            log_error("кадр мира: нет картинок");
+            return false;
+        }
+    } else {
+        auto ca = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
+        ca.imageView = g_vk.views[img];
+        ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        ca.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        ca.clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};  // пустые пиксели закрашивает небо
+        auto da = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
+        da.imageView = g_vk.depth.view;
+        da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        da.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        da.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        da.clearValue.depthStencil = {0.0f, 0};
+        auto ri = vk_info<VkRenderingInfo>(VK_STRUCTURE_TYPE_RENDERING_INFO);
+        ri.renderArea = {{0, 0}, g_vk.extent};
+        ri.layerCount = 1;
+        ri.colorAttachmentCount = 1;
+        ri.pColorAttachments = &ca;
+        ri.pDepthAttachment = &da;
+        vkCmdBeginRendering(cmd, &ri);
 
-    VkViewport vp{0, 0, (f32)g_vk.extent.width, (f32)g_vk.extent.height, 0, 1};
-    VkRect2D sc{{0, 0}, g_vk.extent};
-    vkCmdSetViewport(cmd, 0, 1, &vp);
-    vkCmdSetScissor(cmd, 0, 1, &sc);
-    PushConsts pc{fs.frame.address, 0, 0};
-    const VkShaderStageFlags pcs = PUSH_STAGES;
+        VkViewport vp{0, 0, (f32)g_vk.extent.width, (f32)g_vk.extent.height, 0, 1};
+        VkRect2D sc{{0, 0}, g_vk.extent};
+        vkCmdSetViewport(cmd, 0, 1, &vp);
+        vkCmdSetScissor(cmd, 0, 1, &sc);
+        PushConsts pc{fs.frame.address, 0, 0};
+        const VkShaderStageFlags pcs = PUSH_STAGES;
 
-    // Сетки: подряд идущие вызовы одной сетки — один вызов с экземплярами
-    if (ndraws) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_mesh);
-        vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
-        vkCmdBindIndexBuffer(cmd, g_vk.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-        u32 first = 0;
-        for (usize i = 0; i < ndraws;) {
-            u64 key = f.draws.data[i].key;
-            usize j = i + 1;
-            while (j < ndraws && render_key_mesh_lod(f.draws.data[j].key) == render_key_mesh_lod(key) &&
-                   render_key_pipe(f.draws.data[j].key) == render_key_pipe(key))
-                j++;
-            u32 n = (u32)(j - i);
-            u32 mesh = render_key_mesh(key);
-            if (key != ~0ull && mesh && mesh < RENDER_MAX_MESHES && g_vk.meshes[mesh].used) {
-                const MeshSlot &m = g_vk.meshes[mesh];
-                u32 lod = render_key_lod(key);
-                const RenderLod &l = m.lods[lod < m.lod_count ? lod : m.lod_count - 1];
-                vkCmdDrawIndexed(cmd, l.index_count, n, m.first_index + l.first_index, (i32)m.first_vertex, first);
+        // Сетки: подряд идущие вызовы одной сетки — один вызов с экземплярами
+        if (ndraws) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_mesh);
+            vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
+            vkCmdBindIndexBuffer(cmd, g_vk.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+            u32 first = 0;
+            for (usize i = 0; i < ndraws;) {
+                u64 key = f.draws.data[i].key;
+                usize j = i + 1;
+                while (j < ndraws && render_key_mesh_lod(f.draws.data[j].key) == render_key_mesh_lod(key) &&
+                       render_key_pipe(f.draws.data[j].key) == render_key_pipe(key))
+                    j++;
+                u32 n = (u32)(j - i);
+                u32 mesh = render_key_mesh(key);
+                if (key != ~0ull && mesh && mesh < RENDER_MAX_MESHES && g_vk.meshes[mesh].used) {
+                    const MeshSlot &m = g_vk.meshes[mesh];
+                    u32 lod = render_key_lod(key);
+                    const RenderLod &l = m.lods[lod < m.lod_count ? lod : m.lod_count - 1];
+                    vkCmdDrawIndexed(cmd, l.index_count, n, m.first_index + l.first_index, (i32)m.first_vertex, first);
+                }
+                if (key != ~0ull) first += n;
+                i = j;
             }
-            if (key != ~0ull) first += n;
-            i = j;
         }
-    }
-    // Земля clipmap'ом: кольцо — номер в push-константе, буфер индексов — по сдвигу дыры
-    const TerrainGpu &tg = g_vk.terrain;
-    if (tg.on && f.ground) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_ground);
-        vkCmdBindIndexBuffer(cmd, tg.index.buffer, 0, VK_INDEX_TYPE_UINT32);
-        for (i32 L = 0; L < CLIP_LEVELS; ++L) {
-            PushConsts pl{fs.frame.address, (u32)L, 0};
-            vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pl, &pl);
-            u32 first = L == 0 ? tg.first_full : tg.first_ring[tg.ring[L]];
-            u32 count = L == 0 ? tg.count_full : tg.count_ring;
-            vkCmdDrawIndexed(cmd, count, 1, first, 0, 0);
+        // Земля clipmap'ом: кольцо — номер в push-константе, буфер индексов — по сдвигу дыры
+        const TerrainGpu &tg = g_vk.terrain;
+        if (tg.on && f.ground) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_ground);
+            vkCmdBindIndexBuffer(cmd, tg.index.buffer, 0, VK_INDEX_TYPE_UINT32);
+            for (i32 L = 0; L < CLIP_LEVELS; ++L) {
+                PushConsts pl{fs.frame.address, (u32)L, 0};
+                vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pl, &pl);
+                u32 first = L == 0 ? tg.first_full : tg.first_ring[tg.ring[L]];
+                u32 count = L == 0 ? tg.count_full : tg.count_ring;
+                vkCmdDrawIndexed(cmd, count, 1, first, 0, 0);
+            }
         }
-    }
-    // Небо — после непрозрачного: только пустые пиксели (глубина 0)
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_sky);
-    vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
-    vkCmdDraw(cmd, 3, 1, 0, 0);
-    if (nlines) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_lines);
+        // Небо — после непрозрачного: только пустые пиксели (глубина 0)
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_sky);
         vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
-        vkCmdDraw(cmd, nlines, 1, 0, 0);
-    }
-    if (npoints) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_points);
-        vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
-        vkCmdDraw(cmd, 6, npoints, 0, 0);
-    }
-    vkCmdEndRendering(cmd);
-    if (g_vk.queries) {
-        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, g_vk.queries, slot * 2 + 1);
-        fs.timed = true;
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+        if (nlines) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_lines);
+            vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
+            vkCmdDraw(cmd, nlines, 1, 0, 0);
+        }
+        if (npoints) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_points);
+            vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
+            vkCmdDraw(cmd, 6, npoints, 0, 0);
+        }
+        vkCmdEndRendering(cmd);
+        vk_mark(cmd, "forward");
     }
     // Интерфейс — после замера GPU (таймер меряет кадр мира) и до снимка: снимок с интерфейсом
     vk_ui_record(cmd, img);
@@ -399,9 +433,9 @@ bool render_frame(const RenderFrame &f) {
         record_capture(cmd, g_vk.images[img]);
     }
 
-    image_barrier(cmd, g_vk.images[img], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                  VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0);
+    vk_image_barrier(cmd, g_vk.images[img], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0);
     vkEndCommandBuffer(cmd);
 
     auto wait = vk_info<VkSemaphoreSubmitInfo>(VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO);
