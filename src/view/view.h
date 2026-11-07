@@ -55,6 +55,9 @@ struct ViewInput {
     const DebugDraw *dbg;   // может быть nullptr
     i32 width, height;      // пиксели кадра
     bool pixel;             // правило ячейки (P)
+    bool forward;           // старый forward вместо кадра мира (F3, --forward)
+    bool test_lights;       // тестовые огни вокруг опоры камеры (F3): проверка списков froxels
+    bool froxel_heat;       // тепловая карта числа огней по клеткам (F3)
     ScatterCache *scatter;  // рассыпка камней (кеш между кадрами), может быть nullptr
 };
 

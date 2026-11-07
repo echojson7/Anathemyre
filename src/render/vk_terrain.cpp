@@ -113,7 +113,7 @@ bool render_terrain_set(const RenderTerrain &d) {
     if (!vk_create_buffer(t.height, hbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true) ||
         !vk_create_buffer(t.mask, mbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true) ||
         !vk_create_buffer(t.water, wbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true) ||
-        !vk_create_buffer(t.index, ibytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | dst, true) ||
+        !vk_create_buffer(t.index, ibytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true) ||
         !vk_create_buffer(t.mask2, mbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true) ||
         !vk_create_buffer(t.dune, dbytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true))
         return false;
@@ -247,5 +247,8 @@ void vk_terrain_fill(FrameGpu &g, const RenderFrame &f) {
             g.clip[L][2] = hx;
             g.clip[L][3] = hz;
         }
+        // Начало индексов кольца — для разбора visibility buffer (номер треугольника кольца → вершины)
+        g.g_first[L] = L == 0 ? t.first_full : t.first_ring[t.ring[L]];
     }
+    g.g_indices = t.index.address;
 }

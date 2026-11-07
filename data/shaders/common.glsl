@@ -14,6 +14,8 @@ struct Material { uint kind, pad0, pad1, pad2; vec4 p0, p1, p2; };
 struct LineVtx { float x, y, z; uint rgba; };
 // Декаль — RenderDecal (src/render/render.h), 48 байт
 struct Decal { vec3 c; float ux, uz; vec3 h; uint kind, material, seed, pad; };
+// Огонь — RenderPointLight (src/render/render.h), 32 байта: шар относительно камеры, линейный цвет × сила
+struct Light { vec3 c; float radius; vec3 color; uint pad; };
 struct PointVtx { float x, y, z, size; uint rgba, pad0, pad1, pad2; };
 
 layout(buffer_reference, scalar) readonly buffer Vertices { Vertex v[]; };
@@ -23,7 +25,22 @@ layout(buffer_reference, scalar) readonly buffer Lines { LineVtx v[]; };
 layout(buffer_reference, scalar) readonly buffer Points { PointVtx v[]; };
 layout(buffer_reference, scalar) readonly buffer Words { uint v[]; };
 layout(buffer_reference, scalar) readonly buffer Decals { Decal v[]; };
+layout(buffer_reference, scalar) readonly buffer Lights { Light v[]; };
+layout(buffer_reference, scalar) buffer Froxels { uint v[]; };  // списки клеток (froxel.glsl)
 layout(buffer_reference, scalar) buffer Vec4s { vec4 v[]; };  // таблицы неба (пишут sky_*.comp)
+
+// Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы сеток и кластеров (MeshGpu, ClusterGpu в
+// src/render/vk_state.h), видимые кластеры кадра и косвенные вызовы, которые пишет отсечение (cull_*.comp)
+struct MeshInfo { uint first_vertex, first_index, lod_count, pad; vec4 sphere; uvec4 lods[8]; };  // lods: первый кластер, число, ошибка (биты f32), 0
+struct Cluster { uint first_index, tri_count; vec4 sphere; uint pad0, pad1; };  // first_index — от начала индексов сетки
+struct DrawCmd { uint index_count, instance_count, first_index; int vertex_offset; uint first_instance; };
+layout(buffer_reference, scalar) readonly buffer MeshInfos { MeshInfo v[]; };
+layout(buffer_reference, scalar) readonly buffer Clusters { Cluster v[]; };
+layout(buffer_reference, scalar) buffer VisClusters { uvec2 v[]; };  // экземпляр, кластер (номер в Clusters)
+layout(buffer_reference, scalar) buffer DrawCmds { DrawCmd v[]; };
+// Счёт отсечения: число вызовов (его читает vkCmdDrawIndexedIndirectCount), на экземпляр — видимые кластеры
+// и LOD (count | lod << 29) и начало его кластеров в списке кадра
+layout(buffer_reference, scalar) buffer CullData { uint draw_count, pad0, pad1, pad2; uint count[65536]; uint offset[65536]; };
 
 // Не readonly: через него compute-шейдеры неба пишут свои таблицы (sky_*), сам буфер кадра никто не пишет
 layout(buffer_reference, scalar) buffer FrameData {
@@ -79,6 +96,24 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec4 a_misc;       // x — множитель рассеянного света неба
     Decals decals;     // декали (docs/ruin.md), decal_count подряд
     uint decal_count, decal_pad;
+    // Кадр мира (этап 5): сетки, кластеры, постоянные экземпляры на GPU, видимые кластеры, вызовы, индексы
+    MeshInfos meshes;
+    Clusters clusters;
+    Instances vis_instances;  // постоянный список экземпляров (vk_cull.cpp), instance_count подряд
+    VisClusters vis;          // видимые кластеры кадра: номер — в visibility buffer
+    CullData cull;
+    DrawCmds draws;
+    Words indices;            // общий буфер индексов сеток
+    Words g_indices;          // индексы колец земли
+    uint instance_count, vis_max;
+    uint g_first[12];         // начало индексов кольца L в g_indices в этом кадре (по сдвигу дыры)
+    // Froxels (docs/frame.md «Froxels», froxel.glsl): огни кадра, списки огней и декалей по клеткам, среда клеток
+    Lights lights;
+    Froxels froxels;
+    Vec4s media;              // туман и пыль на клетку — место для света пользователя, пока нули
+    uint light_count, froxel_x, froxel_y, froxel_z;
+    float froxel_near, froxel_far;
+    uint froxel_on, froxel_heat;
 };
 
 layout(push_constant, scalar) uniform Push {
@@ -106,6 +141,12 @@ vec3 quat_rotate(vec4 q, vec3 v) {
     vec3 t = 2.0 * cross(q.xyz, v);
     return v + q.w * t + cross(q.xyz, t);
 }
+
+vec4 inst_quat(Instance it) { return normalize(vec4(unpackSnorm2x16(it.rot_xy), unpackSnorm2x16(it.rot_zw))); }
+
+// Номер в visibility buffer (docs/frame.md): 0 — пусто; сетка — (видимый кластер + 1) << 7 | треугольник
+// кластера (≤ 124); земля — старший бит | кольцо << 20 | треугольник кольца
+const uint VIS_GROUND = 0x80000000u;
 
 // Октаэдр (два snorm16) → единичная нормаль
 vec3 oct_decode(uint packed) {

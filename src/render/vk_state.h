@@ -5,6 +5,8 @@
 #include "vma/vk_mem_alloc.h"
 
 constexpr u32 FRAMES_IN_FLIGHT = 2;
+// GPU-таймеры: метки на границах проходов, до GPU_MAX_MARKS на кадр
+constexpr u32 GPU_MAX_MARKS = 8;
 constexpr u32 MAX_SWAPCHAIN_IMAGES = 8;
 // Общие буферы сеток (docs/frame.md): вершины и индексы всех сеток, место выдаёт виртуальный блок VMA
 constexpr VkDeviceSize GEOMETRY_VERTEX_BYTES = 64ull << 20;
@@ -54,6 +56,15 @@ struct FrameGpu {
     RenderSky sky;
     VkDeviceAddress decals;  // RenderDecal подряд
     u32 decal_count, decal_pad;
+    // Кадр мира (этап 5, vk_world.cpp): таблицы сеток и кластеров, экземпляры на GPU, отсечение, индексы
+    VkDeviceAddress meshes, clusters, vis_instances, vis, cull, draws, indices, g_indices;
+    u32 instance_count, vis_max;
+    u32 g_first[12];  // начало индексов кольца земли L в этом кадре
+    // Froxels (vk_froxel.cpp): огни кадра и списки огней и декалей по клеткам
+    VkDeviceAddress lights, froxels, media;
+    u32 light_count, froxel_x, froxel_y, froxel_z;
+    f32 froxel_near, froxel_far;
+    u32 froxel_on, froxel_heat;
 };
 
 // Небо (vk_sky.cpp, docs/sky.md): таблицы в буферах видеопамяти, считают их compute-шейдеры sky_*.comp
@@ -92,13 +103,61 @@ struct FrameSlot {
     GpuBuffer points;
     GpuBuffer lines;
     GpuBuffer decals;
-    bool timed = false;   // в этом слоте записаны метки времени
+    GpuBuffer lights;       // огни кадра (RenderPointLight)
+    GpuBuffer inst_upload;  // изменившиеся экземпляры кадра мира → постоянный буфер на GPU (копией)
+    GpuBuffer readback;     // число видимых кластеров кадра (копия из счёта отсечения)
+    bool world = false;     // кадр мира (visibility buffer), а не forward: readback заполнен
+    u32 marks = 0;          // записано меток времени
+    const char *mark_names[GPU_MAX_MARKS] = {};  // проход, который кончается меткой k (k ≥ 1)
 };
 
+// Кадр мира (vk_world.cpp): постоянные экземпляры, отсечение, visibility buffer, освещение в compute, стиль
+struct WorldGpu {
+    GpuBuffer inst;      // экземпляры на GPU, порядок — как в RenderFrame::instances
+    GpuBuffer cull;      // CullData
+    GpuBuffer draws;     // VkDrawIndexedIndirectCommand на видимый кластер
+    GpuBuffer vis;       // видимый кластер: экземпляр, кластер
+    u32 inst_count = 0;  // сколько экземпляров лежит в inst
+    GpuImage id;         // visibility buffer R32_UINT
+    GpuImage hdr;        // линейный цвет кадра RGBA16F (освещение → стиль)
+    VkExtent2D extent = {};
+    VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    VkPipeline pipe_vis_mesh = VK_NULL_HANDLE, pipe_vis_ground = VK_NULL_HANDLE, pipe_style = VK_NULL_HANDLE;
+    VkPipeline pipe_cull_count = VK_NULL_HANDLE, pipe_cull_scan = VK_NULL_HANDLE, pipe_cull_write = VK_NULL_HANDLE;
+    VkPipeline pipe_light = VK_NULL_HANDLE;
+    u32 vis_clusters = 0;  // видимых кластеров в последнем прочитанном кадре
+};
+
+// Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы для отсечения на GPU. Раскладки — MeshInfo и Cluster
+// в data/shaders/common.glsl
+constexpr u32 GEOMETRY_MAX_CLUSTERS = 1u << 18;  // кластеров всех сеток
+constexpr u32 VIS_MAX_CLUSTERS = 1u << 18;       // видимых кластеров за кадр
+struct MeshGpu {
+    u32 first_vertex, first_index, lod_count, pad;
+    f32 sphere[4];  // сфера сетки в её осях
+    struct Lod {
+        u32 first_cluster, cluster_count;  // номера в общей таблице кластеров
+        f32 error;
+        u32 pad;
+    } lods[8];
+};
+static_assert(sizeof(MeshGpu) == 160, "MeshGpu — как MeshInfo в common.glsl");
+struct ClusterGpu {
+    u32 first_index, tri_count;  // от начала индексов сетки
+    f32 sphere[4];
+    u32 pad[2];
+};
+static_assert(sizeof(ClusterGpu) == 32, "ClusterGpu — как Cluster в common.glsl");
+// Счёт отсечения (CullData в common.glsl): число вызовов, на экземпляр — число кластеров с LOD и начало
+constexpr VkDeviceSize CULL_BYTES = 16 + 2ull * RENDER_MAX_INSTANCES * sizeof(u32);
+
 struct MeshSlot {
-    VmaVirtualAllocation vtx = VK_NULL_HANDLE, idx = VK_NULL_HANDLE;
+    VmaVirtualAllocation vtx = VK_NULL_HANDLE, idx = VK_NULL_HANDLE, cls = VK_NULL_HANDLE;
     u32 first_vertex = 0, vertex_count = 0;
     u32 first_index = 0, index_count = 0;
+    u32 first_cluster = 0, cluster_count = 0;
     u32 lod_count = 0;
     RenderLod lods[RENDER_MESH_MAX_LODS];  // от начала индексов сетки
     bool used = false;
@@ -144,7 +203,9 @@ struct VkState {
 
     // Общая геометрия и таблицы
     GpuBuffer vertices, indices, materials;
-    VmaVirtualBlock vtx_block = VK_NULL_HANDLE, idx_block = VK_NULL_HANDLE;
+    GpuBuffer mesh_table;  // MeshGpu на номер сетки (видим процессору, пишется при создании сетки)
+    GpuBuffer clusters;    // ClusterGpu всех сеток
+    VmaVirtualBlock vtx_block = VK_NULL_HANDLE, idx_block = VK_NULL_HANDLE, cls_block = VK_NULL_HANDLE;
     MeshSlot meshes[RENDER_MAX_MESHES];
     PendingFree pending[MAX_PENDING_FREES];
     u32 pending_count = 0;
@@ -164,6 +225,16 @@ struct VkState {
     SkyGpu sky;
 
     TerrainGpu terrain;
+    WorldGpu world;
+    // Froxels (vk_froxel.cpp): клетки 64×64 пикселя × FROXEL_Z слоёв глубины
+    GpuBuffer froxels;     // списки на клетку, FROXEL_STRIDE u32
+    GpuBuffer media;       // среда на клетку (туман и пыль, vec4) — место для света пользователя, пока нули
+    u32 froxel_cap = 0;    // на сколько клеток выделены буферы
+    VkPipeline pipe_froxel = VK_NULL_HANDLE;
+    // Время проходов на GPU за прошлый кадр слота (render_gpu_passes)
+    u32 pass_count = 0;
+    const char *pass_names[GPU_MAX_MARKS] = {};
+    f64 pass_ms[GPU_MAX_MARKS] = {};
 };
 
 extern VkState g_vk;
@@ -201,6 +272,43 @@ void vk_sky_shutdown();
 void vk_sky_fill(FrameGpu &g, const RenderFrame &f);
 void vk_sky_record(VkCommandBuffer cmd, VkDeviceAddress frame);
 void vk_destroy_pipelines();
+// Compute-конвейер общей раскладки из шейдера name (.spv); VK_NULL_HANDLE — ошибка
+VkPipeline vk_make_compute(const char *name);
+// Барьер памяти между стадиями
+void vk_memory_barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 src, VkAccessFlags2 src_access,
+                       VkPipelineStageFlags2 dst, VkAccessFlags2 dst_access);
+void vk_image_barrier(VkCommandBuffer cmd, VkImage img, VkImageAspectFlags aspect, VkImageLayout from, VkImageLayout to,
+                      VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage,
+                      VkAccessFlags2 dst_access);
+// Метка времени GPU после прохода name (первая метка кадра — без имени)
+void vk_mark(VkCommandBuffer cmd, const char *name);
+// Графический конвейер общей раскладки
+struct PipeDesc {
+    const char *vs, *fs;
+    VkPrimitiveTopology topo = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    bool blend = false;
+    bool depth_write = true;
+    VkCullModeFlags cull = VK_CULL_MODE_NONE;
+    VkFormat color = VK_FORMAT_UNDEFINED;  // UNDEFINED — формат swapchain
+    bool depth_test = true;
+};
+VkPipeline vk_make_pipeline(const PipeDesc &d);
+// Кадр мира (vk_world.cpp): набор картинок для шейдеров (до раскладки конвейеров), конвейеры, кадр
+bool vk_world_layout();
+bool vk_world_init();
+void vk_world_shutdown();
+void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
+// Отсечение, visibility buffer, освещение; потом проход по картинке swapchain: стиль, отрезки, точки
+bool vk_world_record(VkCommandBuffer cmd, FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, u32 nlines);
+// Число видимых кластеров прошлого кадра этого слота
+void vk_world_read(FrameSlot &fs);
+// Froxels (vk_froxel.cpp, docs/frame.md «Froxels»): сетка клеток, огни и декали по клеткам
+constexpr u32 FROXEL_TILE = 64, FROXEL_Z = 32, FROXEL_STRIDE = 96;
+constexpr f32 FROXEL_NEAR = 1.0f, FROXEL_FAR = 512.0f;
+bool vk_froxel_init();
+void vk_froxel_shutdown();
+void vk_froxel_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
+void vk_froxel_record(VkCommandBuffer cmd, const FrameSlot &fs);
 // Интерфейс поверх кадра (vk_ui.cpp): свой конвейер без глубины, проход по картинке swapchain
 bool vk_ui_init();
 void vk_ui_shutdown();

@@ -1,0 +1,85 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Освещение кадра мира (docs/render.md, проход 5): плитка 8×8 пикселей. Каждый пиксель разбирает свой номер
+// visibility buffer (resolve.glsl) и находит центр своей ячейки правила пиксельности. Пиксели с одним
+// треугольником и одной ячейкой — одна поверхность: surface() → light_surface() считается раз, на первом из них,
+// и раздаётся остальным. Ведущие пиксели сжимаются в начало группы, поэтому считают их подряд идущие потоки.
+// Пустые пиксели — небо (sky.glsl). Пишет линейный цвет в HDR-картинку, стиль — отдельным проходом
+#include "resolve.glsl"
+#include "ground_surface.glsl"
+#include "shade.glsl"
+#include "sky.glsl"
+#include "froxel.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, r32ui) uniform readonly uimage2D u_vis;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D u_hdr;
+
+shared Hit s_hit[64];
+shared uint s_id[64];
+shared vec3 s_cell[64];
+shared uint s_lead[64];    // поток ведущего пикселя той же поверхности
+shared uint s_rank[64];    // у ведущего — его место среди ведущих
+shared uint s_list[64];    // ведущие по порядку
+shared vec3 s_color[64];
+
+// Центр ячейки точки, как у surface(): на плоскости поперёк главной оси нормали
+vec3 cell_key(Hit h) {
+    FrameData f = pc.frame;
+    if (h.kind == HIT_SKY || f.pixel == 0u) return h.rel;
+    float cell = cell_size(dot(h.rel, f.forward.xyz));
+    vec3 n = h.kind == HIT_GROUND ? h.ng : normalize(h.n);
+    return cell_snap(f.cam_off + h.rel, n, cell);
+}
+
+// Тепловая карта froxels (F3): число огней клетки — синий (1–3), зелёный (4–7), жёлтый (8–15), красный (16+),
+// белый — не влезли в клетку; без огней — серый. Яркость — от освещения, чтобы форма читалась
+vec3 froxel_heat(vec3 c, vec3 rel) {
+    uint fi = froxel_at(rel);
+    if (fi == FROXEL_NONE) return c;
+    uint n = pc.frame.froxels.v[fi * FROXEL_STRIDE];
+    vec3 heat = n == 0u ? vec3(0.35) : n < 4u ? vec3(0.1, 0.25, 1.0) : n < 8u ? vec3(0.1, 0.9, 0.2)
+              : n < 16u ? vec3(1.0, 0.85, 0.1) : n == FROXEL_ALL ? vec3(1.0) : vec3(1.0, 0.1, 0.05);
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    return heat * l * 0.9 + c * 0.1;
+}
+
+vec3 shade_hit(Hit h) {
+    if (h.kind == HIT_SKY) return sky_radiance(normalize(h.rel));
+    Surface s;
+    if (h.kind == HIT_GROUND) s = ground_surface(h.rel, normalize(h.n), h.level, h.blend, h.ng);
+    else s = mesh_surface(h.rel, normalize(h.n), h.m0, h.m1, h.blend, h.ao, h.seed);
+    vec3 c = light_surface(s);
+    return pc.frame.froxel_heat != 0u ? froxel_heat(c, s.pos) : c;
+}
+
+void main() {
+    FrameData f = pc.frame;
+    uint t = gl_LocalInvocationIndex;
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    bool inside = px.x < int(f.viewport.x) && px.y < int(f.viewport.y);
+    uint id = inside ? imageLoad(u_vis, px).r : 0xFFFFFFFFu;
+    Hit h = resolve(px, inside ? id : 0u);
+    s_hit[t] = h;
+    s_id[t] = id;
+    s_cell[t] = cell_key(h);
+    barrier();
+    // Ведущий — первый пиксель плитки с тем же номером и той же ячейкой; небо и чужие края — сами себе
+    uint lead = t;
+    if (inside && id != 0u)
+        for (uint j = 0u; j < t; ++j)
+            if (s_id[j] == id && all(equal(floatBitsToUint(s_cell[j]), floatBitsToUint(s_cell[t])))) { lead = j; break; }
+    s_lead[t] = lead;
+    barrier();
+    if (lead == t && inside) {
+        uint r = 0u;
+        for (uint j = 0u; j < t; ++j) r += s_lead[j] == j && s_id[j] != 0xFFFFFFFFu ? 1u : 0u;
+        s_rank[t] = r;
+        s_list[r] = t;
+    }
+    barrier();
+    uint nlead = 0u;
+    for (uint j = 0u; j < 64u; ++j) nlead += s_lead[j] == j && s_id[j] != 0xFFFFFFFFu ? 1u : 0u;
+    if (t < nlead) s_color[t] = shade_hit(s_hit[s_list[t]]);
+    barrier();
+    if (inside) imageStore(u_hdr, px, vec4(s_color[s_rank[s_lead[t]]], 1.0));
+}

@@ -34,6 +34,16 @@ struct RenderDecal {
 };
 static_assert(sizeof(RenderDecal) == 48, "RenderDecal — 48 байт");
 
+// Огонь (вход света пользователя, docs/frame.md «Froxels»): шар относительно камеры, цвет. 32 байта, как Light
+// в data/shaders/common.glsl. Каркас огни только раскладывает по клеткам, светит ими light.glsl (этап 6)
+struct RenderPointLight {
+    f32 x, y, z;       // метры от камеры
+    f32 radius;        // дальше света нет, м
+    f32 r, g, b;       // линейный цвет × сила
+    u32 pad;
+};
+static_assert(sizeof(RenderPointLight) == 32, "RenderPointLight — 32 байта");
+
 struct RenderMaterial {
     u32 kind;
     u32 pad[3];
@@ -89,6 +99,8 @@ struct RenderView {
 // cell_min метров и растёт с глубиной степенями двойки, пока не станет пикселем кадра
 struct RenderStyle {
     bool pixel = true;     // выключается клавишей P
+    bool forward = false;  // старый forward этапов 1–4 вместо кадра мира (для сравнения, F3 или --forward)
+    bool froxel_heat = false;  // тепловая карта числа огней в клетке froxels поверх кадра (F3)
     f32 cell_min = 1.0f / 80.0f;
     f32 cell_pixels = 1.0f;  // ячейка — не меньше стольких пикселей кадра
 };
@@ -134,7 +146,8 @@ struct RenderFrame {
     Span<RenderDraw> draws;  // рендер сортирует по ключу на месте
     Span<const RenderPoint> points;
     Span<const RenderLineVertex> lines;  // пары вершин
-    Span<const RenderDecal> decals;      // все, что задевают видимое; шейдер перебирает их подряд (этап 5 — списки на клетку)
+    Span<const RenderDecal> decals;      // все, что задевают видимое; по клеткам их раскладывает рендер (froxels)
+    Span<const RenderPointLight> lights; // огни кадра; по клеткам их раскладывает рендер (froxels)
 };
 
 struct RenderConfig {
@@ -149,6 +162,7 @@ constexpr u32 RENDER_MAX_INSTANCES = 65536;
 constexpr u32 RENDER_MAX_MESHES = 4096;
 constexpr u32 RENDER_MAX_MATERIALS = 1024;
 constexpr u32 RENDER_MAX_DECALS = 512;
+constexpr u32 RENDER_MAX_LIGHTS = 1024;
 
 bool render_init(const RenderConfig &cfg);
 void render_shutdown();
@@ -163,12 +177,21 @@ const char *render_device_name();
 // Сетки: номер в таблице (0 — нет сетки). Место в общих буферах вершин и индексов выдаёт виртуальный блок
 // VMA; освобождение — через несколько кадров, когда GPU их точно дорисовал. Загрузка ждёт копию на GPU
 // Индексы всех LOD лежат одним массивом, LOD — диапазон в нём (кусок LODS .mesh); без LOD — весь массив
+// Кластеры (≤ 124 треугольников, индексы подряд) — для отсечения на GPU кадра мира; LOD — диапазон индексов
+// для forward и диапазон кластеров. Без кластеров рендер режет индексы LOD на куски сам
 struct MeshVertex;
 constexpr u32 RENDER_MESH_MAX_LODS = 8;
 struct RenderLod {
     u32 first_index, index_count;
+    u32 first_cluster, cluster_count;  // в кластерах сетки
+    f32 error;                         // ошибка упрощения, м
 };
-u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices, Span<const RenderLod> lods);
+struct RenderCluster {
+    u32 first_index, tri_count;  // от начала индексов сетки
+    f32 sphere[4];               // в осях сетки
+};
+u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices, Span<const RenderLod> lods,
+                       Span<const RenderCluster> clusters);
 void render_mesh_destroy(u32 mesh);
 // Таблица материалов целиком (номер = место). Ждёт, пока GPU закончит кадры: только при загрузке
 bool render_set_materials(Span<const RenderMaterial> materials);
@@ -196,8 +219,12 @@ struct RenderTerrain {
 };
 bool render_terrain_set(const RenderTerrain &t);
 
-// Время кадра на GPU (небо и forward) за прошлый кадр, мс (0 — таймеров нет)
+// Время кадра мира на GPU за прошлый кадр (без интерфейса), мс (0 — таймеров нет)
 f64 render_gpu_ms();
+// Время проходов прошлого кадра: имена и мс, до cap; возвращает число проходов (0 — таймеров нет)
+u32 render_gpu_passes(const char **names, f64 *ms, u32 cap);
+// Видимых кластеров в прошлом кадре мира (0 — forward)
+u32 render_vis_clusters();
 // Сколько последний render_frame ждал GPU и показ (забор кадра, картинка swapchain, vsync), мс
 f64 render_wait_ms();
 // Снимок: render_capture_next() перед render_frame, затем render_capture_take() — пиксели RGBA8 sRGB

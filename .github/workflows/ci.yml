@@ -107,12 +107,24 @@ jobs:
           export ASAN_SYMBOLIZER_PATH=~/.cache/anathemyre/llvm-$LLVM_VER/bin/llvm-symbolizer  # иначе подавления не видят имён функций
           # ASan + слои проверки: ошибки Vulkan видны с первых кадров, малое окно — lavapipe считает пиксели
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation --window 640 360 2>&1 | tail -40
+          # старый forward (переключатель сравнения) — тоже под слоями проверки
+          xvfb-run -a -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 10 --validation --window 640 360 --forward 2>&1 | tail -5
           # снимок в полный размер для глаза
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 10 --validation --shot frame.bmp | tail -5
+          # кадр мира одинаков от запуска к запуску (docs/frame.md, «Сверка кадров»): два запуска с тестовыми огнями
+          # и картой огней по клеткам, побайтно. Без интерфейса (к/с в нём разные) и --timelapse: кадр — ровно один
+          # шаг мира, а не сколько успело по часам
+          for k in 1 2; do
+            xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --nohud --frames 4 --window 800 450 \
+              --lights --heat --cam 315 14 34 11704 -2336 --timelapse same_$k 15.5 15.5 | tail -2
+          done
+          cmp same_1_0003.bmp same_2_0003.bmp && echo "кадры двух запусков совпали"
       - uses: actions/upload-artifact@v4
         with:
           name: frame
-          path: frame.bmp
+          path: |
+            frame.bmp
+            same_1_0003.bmp
           retention-days: 7
 
   # Повтор Windows — на настоящем Windows (Wine не проверяет настоящий CRT), GPU не нужен

@@ -71,6 +71,10 @@ static bool create_device() {
     f12.descriptorBindingPartiallyBound = VK_TRUE;
     f12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
     f12.scalarBlockLayout = VK_TRUE;
+    f12.drawIndirectCount = VK_TRUE;  // кадр мира: вызовы видимых кластеров
+    // gl_PrimitiveID во фрагменте visibility buffer требует возможности геометрического шейдера
+    VkPhysicalDeviceFeatures f10{};
+    f10.geometryShader = VK_TRUE;
 
     vkb::PhysicalDeviceSelector sel(vi);
     auto pick = sel.set_surface(g_vk.surface)
@@ -78,6 +82,7 @@ static bool create_device() {
                     .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
                     .set_required_features_13(f13)
                     .set_required_features_12(f12)
+                    .set_required_features(f10)
                     .select();
     if (!pick) {
         log_error("нет видеокарты с Vulkan 1.3 и нужными возможностями: %s", pick.error().message().c_str());
@@ -273,7 +278,7 @@ static bool create_frames() {
     if (g_vk.timestamp_period > 0) {
         auto qi = vk_info<VkQueryPoolCreateInfo>(VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO);
         qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
-        qi.queryCount = 2 * FRAMES_IN_FLIGHT;
+        qi.queryCount = GPU_MAX_MARKS * FRAMES_IN_FLIGHT;
         if (!vk_check(vkCreateQueryPool(g_vk.device, &qi, nullptr, &g_vk.queries), "vkCreateQueryPool")) return false;
     }
     return true;

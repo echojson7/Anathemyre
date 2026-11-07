@@ -33,6 +33,17 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_value(f, "CPU кадра", t);
     snprintf(t, sizeof t, "%.2f мс", in.gpu_ms);
     ui_value(f, "GPU", t);
+    // Проходы кадра на GPU по меткам времени (docs/frame.md, «Замер»)
+    for (u32 i = 0; i < in.passes && i < 8; ++i) {
+        snprintf(t, sizeof t, "%.2f мс", in.pass_ms[i]);
+        char name[48];
+        snprintf(name, sizeof name, "  %s", in.pass_names[i] ? in.pass_names[i] : "?");
+        ui_value(f, name, t);
+    }
+    if (!d.forward) {
+        snprintf(t, sizeof t, "%u", in.vis_clusters);
+        ui_value(f, "видимых кластеров", t);
+    }
     snprintf(t, sizeof t, "%.3f мс", in.step_ms);
     ui_value(f, "шаг мира", t);
     ui_value(f, "видеокарта", in.gpu_name ? in.gpu_name : "—");
@@ -80,6 +91,9 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_section(f, "ВИД");
     ui_toggle(f, "отрезки и точки", d.lines);
     ui_toggle(f, "пиксельное правило", d.pixel);
+    ui_toggle(f, "старый forward", d.forward);
+    ui_toggle(f, "тестовые огни", d.test_lights);
+    ui_toggle(f, "огни по клеткам", d.froxel_heat);
 }
 
 // --- Осмотр мира: таблицы — приставки имён столбцов до точки ---

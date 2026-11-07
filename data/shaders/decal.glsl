@@ -1,10 +1,11 @@
 // Декали (docs/ruin.md, «Декали»): потёки, грязь у пола, пыль, пятна поверх Surface детали. Коробка проекции —
 // RenderDecal (src/render/render.h); узор считается в осях коробки по точке ячейки (пиксельность сохраняется).
 // Цвет и шероховатость — из материала декали (p0), сила — extra.x (0 — 1). Этапы 1–4 перебирают все декали
-// кадра; на этапе 5 — списки на клетку, как у огней, и атлас .tex вместо узора по виду (docs/render.md)
+// кадра; с этапа 5 — только декали своей клетки froxels (froxel.glsl). Потом — атлас .tex вместо узора по виду
 #ifndef DECAL_GLSL
 #define DECAL_GLSL
 #include "surface.glsl"
+#include "froxel.glsl"
 
 // Шум значений по плоскости в осях декали (метры), решётка 1, [0, 1]
 float d_noise(vec2 x, uint seed) {
@@ -66,8 +67,11 @@ float decal_amount(Decal d, vec3 l, vec3 nl) {
 // Наложить декали кадра на поверхность детали. rel — точка ячейки относительно камеры
 Surface apply_decals(Surface s, vec3 rel, vec3 n) {
     FrameData f = pc.frame;
-    for (uint k = 0u; k < f.decal_count; ++k) {
-        Decal d = f.decals.v[k];
+    uint fi = froxel_at(rel);
+    bool all = f.froxel_on == 0u;  // сетки нет — все декали кадра
+    uint count = all ? f.decal_count : froxel_decal_count(fi);
+    for (uint k = 0u; k < count; ++k) {
+        Decal d = f.decals.v[all ? k : froxel_decal(fi, k)];
         vec3 dp = rel - d.c;
         vec3 ux = vec3(d.ux, 0.0, d.uz), uz = vec3(-d.uz, 0.0, d.ux);
         vec3 l = vec3(dot(dp, ux), dp.y, dot(dp, uz));
