@@ -13,7 +13,8 @@ allowed() {
         ai)       echo "core sim ai" ;;
         render)   echo "core asset platform render" ;;
         view)     echo "core asset platform anim sim render view" ;;
-        debug|app) echo "core asset platform anim sim ai render view debug app" ;;
+        ui)       echo "core platform render ui" ;;
+        debug|app) echo "core asset platform anim sim ai render view ui debug app" ;;
         *)        echo "" ;;
     esac
 }

@@ -215,6 +215,14 @@ void platform_toggle_fullscreen() {
     SDL_SetWindowFullscreen(g_window, !full);
 }
 
+void platform_set_fullscreen(bool on) {
+    if (g_window && platform_is_fullscreen() != on) SDL_SetWindowFullscreen(g_window, on);
+}
+
+bool platform_is_fullscreen() {
+    return g_window && (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN) != 0;
+}
+
 PlatformProc platform_vk_get_instance_proc_addr() {
     return (PlatformProc)SDL_Vulkan_GetVkGetInstanceProcAddr();
 }

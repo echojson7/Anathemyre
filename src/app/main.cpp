@@ -22,9 +22,10 @@ static bool parse_u64(const char *s, u64 &out) {
 }
 
 static void usage() {
-    log_info("anathemyre [--seed N] [--novsync] [--validation] [--frames N] [--record файл.rec] [--nopixel]");
+    log_info("anathemyre [--seed N] [--novsync] [--validation] [--frames N] [--record файл.rec] [--nopixel] [--nohud]");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z]   снимок (градусы, метры)");
+    log_info("           [--nohud] [--open menu|keys|debug|world]                     без интерфейса; открыть меню или панель");
     log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
@@ -94,6 +95,12 @@ int main(int argc, char **argv) {
             i += 5;
         }
         else if (!strcmp(s, "--nopixel")) a.nopixel = true;
+        else if (!strcmp(s, "--nohud")) a.nohud = true;
+        else if (!strcmp(s, "--open")) {
+            a.open = next;
+            ok = next && (!strcmp(next, "menu") || !strcmp(next, "keys") || !strcmp(next, "debug") || !strcmp(next, "world"));
+            i++;
+        }
         else if (!strcmp(s, "--hour")) {
             ok = next && parse_f32(Str{next, (u32)strlen(next)}, a.hour) && a.hour >= 0 && a.hour < 24;
             a.hour_set = true;
