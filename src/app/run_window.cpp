@@ -69,13 +69,13 @@ int run_window(const Args &a, AppMemory &m) {
         cam.yaw = a.cam[0] * deg;
         cam.pitch = a.cam[1] * deg;
         cam.dist = a.cam[2];
-        cam.target.x = a.cam[3];
-        cam.target.z = a.cam[4];
-        wpos_rebase(cam.target);
-        cam.target.y = ground_at(w.terrain, cam.target).height;
+        cam.pivot.x = a.cam[3];
+        cam.pivot.z = a.cam[4];
+        wpos_rebase(cam.pivot);
     } else {
-        cam.target.z = 10.0f;  // сцена этапа 1 — к северу от начала карты
+        cam.pivot.z = 10.0f;  // сцена этапа 1 — к северу от начала карты
     }
+    cam.pivot = view_pivot_at(w.terrain, cam.pivot);
     TimeCtl tc;
     DebugState ds;
     u32 clock_speed = 0;  // номер в CLOCK_SPEEDS
