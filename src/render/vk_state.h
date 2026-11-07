@@ -207,7 +207,8 @@ struct VkState {
     f32 timestamp_period = 0;  // нс на тик; 0 — меток времени нет
     VkQueryPool queries = VK_NULL_HANDLE;
     f64 gpu_ms = 0;
-    u64 wait_ns = 0;  // ожидание в последнем render_frame: забор кадра, картинка swapchain, показ
+    RenderCpuTimes cpu{};  // части последнего render_frame
+    VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     VkFormat format = VK_FORMAT_UNDEFINED;
@@ -299,6 +300,10 @@ void vk_destroy_swapchain();
 bool vk_create_buffer(GpuBuffer &b, VkDeviceSize size, VkBufferUsageFlags usage, bool device_local = false);
 void vk_destroy_buffer(GpuBuffer &b);
 bool vk_create_pipelines();
+// Кеш конвейеров на диске (vk_pipecache.cpp): открыть до создания конвейеров, записать после, закрыть при выходе
+bool vk_pipeline_cache_open();
+void vk_pipeline_cache_save();
+void vk_pipeline_cache_close();
 // Шейдер из shader_dir (файл .spv); VK_NULL_HANDLE — нет файла или ошибка
 VkShaderModule vk_load_shader(const char *name);
 // Push-константы общей раскладки — как layout(push_constant) в data/shaders/common.glsl

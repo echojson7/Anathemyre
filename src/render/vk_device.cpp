@@ -323,9 +323,13 @@ bool render_init(const RenderConfig &cfg) {
     g_vk.rg_capture = rg_buffer("снимок кадра");
     if (!vk_diag_init()) return false;
     if (!vk_geometry_init()) return false;
+    if (!vk_pipeline_cache_open()) return false;
+    u64 t0 = platform_time_ns();
     if (!vk_create_pipelines()) return false;
-    log_info("Vulkan: %s, кадр %ux%u, %s", g_vk.gpu_name, g_vk.extent.width, g_vk.extent.height,
-             cfg.vsync ? "vsync" : "без vsync");
+    f64 pipes_ms = (f64)(platform_time_ns() - t0) / 1e6;
+    vk_pipeline_cache_save();
+    log_info("Vulkan: %s, кадр %ux%u, %s, конвейеры за %.0f мс", g_vk.gpu_name, g_vk.extent.width, g_vk.extent.height,
+             cfg.vsync ? "vsync" : "без vsync", pipes_ms);
     return true;
 }
 
@@ -334,6 +338,7 @@ void render_shutdown() {
     if (g_vk.device) {
         vkDeviceWaitIdle(g_vk.device);
         vk_destroy_pipelines();
+        vk_pipeline_cache_close();
         vk_terrain_shutdown();
         vk_geometry_shutdown();
         vk_destroy_buffer(g_vk.capture);
@@ -362,5 +367,5 @@ void render_shutdown() {
 
 u32 render_validation_errors() { return g_vk_validation_errors; }
 f64 render_gpu_ms() { return g_vk.gpu_ms; }
-f64 render_wait_ms() { return (f64)g_vk.wait_ns / 1e6; }
+RenderCpuTimes render_cpu_times() { return g_vk.cpu; }
 const char *render_device_name() { return g_vk.gpu_name; }
