@@ -1,0 +1,51 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Сферы кластеров человека после скиннинга (docs/people.md, «Скиннинг»): группа на кластер, y — человек кадра.
+// Коробка вершин кластера → середина и наибольшее расстояние до неё (как bound_sphere в vk_geometry.cpp);
+// по ним отсекает cull.glsl. Пересчитываются кластеры LOD, вершины которого скинены, и грубее
+#include "common.glsl"
+layout(local_size_x = 64) in;
+
+shared vec3 s_lo[64], s_hi[64];
+shared float s_r[64];
+
+void main() {
+    FrameData f = pc.frame;
+    SkinJob j = f.skin_jobs.v[gl_WorkGroupID.y];
+    if (gl_WorkGroupID.x >= j.cluster_count) return;  // вся группа разом
+    uint t = gl_LocalInvocationIndex;
+    uint ci = j.first_cluster + gl_WorkGroupID.x;
+    Cluster c = f.clusters.v[ci];
+    uint n = c.tri_count * 3u, first = j.first_index + c.first_index;
+    vec3 lo = vec3(1e30), hi = vec3(-1e30);
+    for (uint k = t; k < n; k += 64u) {
+        Vertex v = f.vertices.v[j.dst_vertex + f.indices.v[first + k]];
+        vec3 p = vec3(v.px, v.py, v.pz);
+        lo = min(lo, p);
+        hi = max(hi, p);
+    }
+    s_lo[t] = lo;
+    s_hi[t] = hi;
+    barrier();
+    for (uint s = 32u; s > 0u; s >>= 1u) {
+        if (t < s) {
+            s_lo[t] = min(s_lo[t], s_lo[t + s]);
+            s_hi[t] = max(s_hi[t], s_hi[t + s]);
+        }
+        barrier();
+    }
+    vec3 mid = (s_lo[0] + s_hi[0]) * 0.5;
+    float r2 = 0.0;
+    for (uint k = t; k < n; k += 64u) {
+        Vertex v = f.vertices.v[j.dst_vertex + f.indices.v[first + k]];
+        vec3 d = vec3(v.px, v.py, v.pz) - mid;
+        r2 = max(r2, dot(d, d));
+    }
+    s_r[t] = r2;
+    barrier();
+    for (uint s = 32u; s > 0u; s >>= 1u) {
+        if (t < s) s_r[t] = max(s_r[t], s_r[t + s]);
+        barrier();
+    }
+    if (t == 0u) f.clusters_w.v[ci].sphere = vec4(mid, sqrt(s_r[0]) * 1.0001 + 1e-4);
+}

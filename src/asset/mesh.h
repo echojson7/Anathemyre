@@ -29,6 +29,24 @@ struct MeshLod {
     f32 error;         // ошибка упрощения в метрах (LOD 0 — 0)
 };
 
+// Веса костей вершин для одного скелета (кусок SKIN, люди): кости по имени, как в .skel того же имени
+constexpr u32 MESH_MAX_SKINS = 4;
+constexpr u32 MESH_MAX_MORPHS = 8;
+struct MeshSkin {
+    Str skeleton;           // имя скелета (game_engine, mixamo): файл data/people/<сетка>.<скелет>.skel
+    Span<Str> bones;        // имена костей; номер кости в вершине — место здесь
+    Span<u32> bones4;       // на вершину: 4 номера костей u8 (младший байт — первая)
+    Span<u32> weights4;     // на вершину: 4 веса unorm8, сумма 255
+};
+// Морфы (кусок MRPH): на вершину на морф 3 слова — dx | dy << 16, dz | nx << 16 | ny << 24, nz (i16 × шаг,
+// нормаль i8 / 127). Слова вершины подряд по морфам: [вершина][морф][3]
+struct MeshMorphs {
+    u32 count = 0;
+    Str names[MESH_MAX_MORPHS];
+    f32 step[MESH_MAX_MORPHS];  // метров на единицу сдвига
+    Span<u32> data;
+};
+
 // Коробка коллайдера или грубой формы в осях сетки
 struct MeshBox {
     f32 cx, cy, cz;    // центр
@@ -45,6 +63,11 @@ struct MeshData {
     Span<MeshLod> lods;
     Span<MeshBox> collider;
     Span<MeshBox> coarse;
+    // Люди (tools/humanconv): веса по скелетам, морфы, вершин LOD k — префикс [0, lod_vertices[k]) (кусок LODV)
+    MeshSkin skins[MESH_MAX_SKINS];
+    u32 skin_count = 0;
+    MeshMorphs morphs;
+    Span<u32> lod_vertices;
 };
 
 // Разобрать файл; строки и массивы — в арене (данные файла можно освободить). false — ошибка в *err

@@ -3,12 +3,18 @@
 // LOD упрощением с закреплённой границей (стыки соседних деталей не расходятся), кластеры по соседству
 // ≤ 124 треугольников со сферой. Коллайдер и грубая форма переписываются как есть.
 //
-//     meshpack <вход.mesh> <выход.mesh>
+//     meshpack [--lods n1,n2,…] <вход.mesh> <выход.mesh>
+//
+// Сетка с весами костей (куски SKIN, MRPH — люди, tools/humanconv): потоки вершин SKIN и MRPH идут вместе с VERT
+// (склейка по всем, тот же порядок), граница не закрепляется (это не стык деталей), --lods задаёт треугольники
+// LOD 1… (LOD 0 — вся сетка), а вершины упорядочены по LOD: вершины LOD k — префикс, длины пишутся в LODV.
+// Скиннинг тогда считает только префикс выбранного LOD (docs/mesh.md)
 //
 // Офлайн-инструмент: в игру не входит, правила шага мира на него не распространяются. Байты результата зависят
 // только от входа и версии meshoptimizer (third_party/meshoptimizer), CI сверяет их с data/meshes в git.
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -74,14 +80,68 @@ struct Cluster {
     float c[4];
 };
 
+
+// Поток вершин сверх VERT (SKIN, MRPH): шапка куска как есть, дальше записи по stride байт на вершину
+struct Stream {
+    const Chunk *chunk;
+    size_t head, stride;
+    std::vector<uint8_t> data;  // записи вершин
+};
+
+// Длина строки «u8 + байты» в куске с места pos; 0 — за концом
+size_t skip_name(const std::vector<uint8_t> &b, size_t pos) { return pos < b.size() && pos + 1 + b[pos] <= b.size() ? 1 + b[pos] : 0; }
+
+// Шапка SKIN: имя скелета, число костей u32, имена костей; дальше 8 байт на вершину (4 кости u8, 4 веса u8)
+bool skin_stream(const Chunk &c, size_t nv, Stream &s) {
+    size_t pos = skip_name(c.body, 0);
+    if (!pos || pos + 4 > c.body.size()) return false;
+    uint32_t nb;
+    memcpy(&nb, &c.body[pos], 4);
+    pos += 4;
+    for (uint32_t i = 0; i < nb; ++i) {
+        size_t k = skip_name(c.body, pos);
+        if (!k) return false;
+        pos += k;
+    }
+    s = Stream{&c, pos, 8, {}};
+    return c.body.size() - pos == nv * 8;
+}
+
+// Шапка MRPH: число морфов u32, на морф — имя и шаг f32; дальше на вершину на морф 9 байт (i16×3, i8×3)
+bool morph_stream(const Chunk &c, size_t nv, Stream &s) {
+    if (c.body.size() < 4) return false;
+    uint32_t n;
+    memcpy(&n, c.body.data(), 4);
+    size_t pos = 4;
+    for (uint32_t i = 0; i < n; ++i) {
+        size_t k = skip_name(c.body, pos);
+        if (!k || pos + k + 4 > c.body.size()) return false;
+        pos += k + 4;
+    }
+    s = Stream{&c, pos, 9ull * n, {}};
+    return s.stride && c.body.size() - pos == nv * s.stride;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "использование: meshpack <вход.mesh> <выход.mesh>\n");
+    std::vector<size_t> lod_tris;  // --lods: треугольников LOD 1…
+    int arg = 1;
+    if (argc == 5 && !strcmp(argv[1], "--lods")) {
+        for (const char *p = argv[2]; *p;) {
+            char *end;
+            unsigned long n = strtoul(p, &end, 10);
+            if (end == p || n < 12) return fprintf(stderr, "meshpack: --lods — числа через запятую, не меньше 12\n"), 2;
+            lod_tris.push_back(n);
+            p = *end == ',' ? end + 1 : end;
+            if (*end && *end != ',') return fprintf(stderr, "meshpack: --lods — числа через запятую\n"), 2;
+        }
+        arg = 3;
+    } else if (argc != 3) {
+        fprintf(stderr, "использование: meshpack [--lods n1,n2,…] <вход.mesh> <выход.mesh>\n");
         return 2;
     }
-    const char *in_path = argv[1];
+    const char *in_path = argv[arg], *out_path = argv[arg + 1];
     std::vector<uint8_t> data;
     if (!read_file(in_path, data)) return die("не читается", in_path), 1;
     if (data.size() < 8 || memcmp(data.data(), "ANAMESH1", 8) != 0) return die("не .mesh", in_path), 1;
@@ -116,38 +176,99 @@ int main(int argc, char **argv) {
     for (uint32_t i : idx)
         if (i >= verts.size()) return die("индекс за вершинами", in_path), 1;
 
-    // Склейка одинаковых вершин (все 20 байт), порядок треугольников под кеш, вершины — по первому обращению
+    // Потоки вершин людей: веса костей (по куску на скелет) и сдвиги морфов
+    std::vector<Stream> streams;
+    for (const Chunk &c : chunks) {
+        Stream s;
+        if (!memcmp(c.tag, "SKIN", 4)) {
+            if (!skin_stream(c, verts.size(), s)) return die("кусок SKIN не сходится с VERT", in_path), 1;
+        } else if (!memcmp(c.tag, "MRPH", 4)) {
+            if (!morph_stream(c, verts.size(), s)) return die("кусок MRPH не сходится с VERT", in_path), 1;
+        } else {
+            continue;
+        }
+        s.data.assign(c.body.begin() + (long)s.head, c.body.end());
+        streams.push_back(std::move(s));
+    }
+    const bool skinned = !streams.empty();
+    if (skinned != !lod_tris.empty()) return die("--lods — только для сетки с весами костей (SKIN) и для неё обязателен", in_path), 1;
+
+    // Склейка одинаковых вершин (все 20 байт и все потоки), порядок треугольников под кеш, вершины — по первому
+    // обращению (у сетки с весами — потом по LOD)
     std::vector<uint32_t> remap(verts.size());
-    size_t nv = meshopt_generateVertexRemap(remap.data(), idx.data(), idx.size(), verts.data(), verts.size(), sizeof(Vert));
+    std::vector<meshopt_Stream> ms{{verts.data(), sizeof(Vert), sizeof(Vert)}};
+    for (const Stream &s : streams) ms.push_back({s.data.data(), s.stride, s.stride});
+    size_t nv = meshopt_generateVertexRemapMulti(remap.data(), idx.data(), idx.size(), verts.size(), ms.data(), ms.size());
     std::vector<Vert> v(nv);
     meshopt_remapVertexBuffer(v.data(), verts.data(), verts.size(), sizeof(Vert), remap.data());
+    for (Stream &s : streams) {
+        std::vector<uint8_t> d(nv * s.stride);
+        meshopt_remapVertexBuffer(d.data(), s.data.data(), verts.size(), s.stride, remap.data());
+        s.data.swap(d);
+    }
     meshopt_remapIndexBuffer(idx.data(), idx.data(), idx.size(), remap.data());
     meshopt_optimizeVertexCache(idx.data(), idx.data(), idx.size(), nv);
     {
+        std::vector<uint32_t> r(nv);
+        nv = meshopt_optimizeVertexFetchRemap(r.data(), idx.data(), idx.size(), nv);
         std::vector<Vert> f(nv);
-        nv = meshopt_optimizeVertexFetch(f.data(), idx.data(), idx.size(), v.data(), nv, sizeof(Vert));
-        f.resize(nv);
+        meshopt_remapVertexBuffer(f.data(), v.data(), v.size(), sizeof(Vert), r.data());
         v.swap(f);
+        for (Stream &s : streams) {
+            std::vector<uint8_t> d(nv * s.stride);
+            meshopt_remapVertexBuffer(d.data(), s.data.data(), s.data.size() / s.stride, s.stride, r.data());
+            s.data.swap(d);
+        }
+        meshopt_remapIndexBuffer(idx.data(), idx.data(), idx.size(), r.data());
     }
 
-    // Цепочка LOD: каждый следующий из предыдущего, граница сетки закреплена
+    // Цепочка LOD: каждый следующий из предыдущего. У деталей граница закреплена (стыки соседних деталей не
+    // расходятся), LOD — вдвое меньше; у сетки с весами граница свободна, число треугольников — из --lods
     const float scale = meshopt_simplifyScale(&v[0].p[0], nv, sizeof(Vert));
     std::vector<std::vector<uint32_t>> lods{idx};
     std::vector<float> lod_err{0.0f};
-    while (lods.size() < MAX_LODS) {
+    while (skinned ? lods.size() <= lod_tris.size() : lods.size() < MAX_LODS) {
         const std::vector<uint32_t> &src = lods.back();
-        size_t target = (size_t)((float)src.size() * LOD_STEP) / 3 * 3;
+        size_t target = skinned ? lod_tris[lods.size() - 1] * 3 : (size_t)((float)src.size() * LOD_STEP) / 3 * 3;
         if (target < 36) break;
         std::vector<uint32_t> dst(src.size());
         float err = 0.0f;
         size_t n = meshopt_simplify(dst.data(), src.data(), src.size(), &v[0].p[0], nv, sizeof(Vert), target,
-                                    LOD_MAX_ERROR / scale, meshopt_SimplifyLockBorder, &err);
-        if (n == 0 || (float)n > (float)src.size() * LOD_MIN_GAIN) break;
+                                    LOD_MAX_ERROR / scale, skinned ? 0u : (unsigned)meshopt_SimplifyLockBorder, &err);
+        if (n == 0 || (float)n > (float)src.size() * LOD_MIN_GAIN) {
+            if (skinned) return die("LOD из --lods не вышел: упрощение остановилось", in_path), 1;
+            break;
+        }
         dst.resize(n);
         meshopt_optimizeVertexCache(dst.data(), dst.data(), n, nv);
         float e = lod_err.back() + err * scale;  // ошибка каждого шага — от предыдущего LOD, копится
         lods.push_back(std::move(dst));
         lod_err.push_back(e);
+    }
+
+    // Сетка с весами: вершины по LOD — сначала вершины самого грубого, потом добавленные следующим и т.д. (в каждом
+    // — по первому обращению). Вершины LOD k+1 — часть вершин LOD k (упрощение их не создаёт), поэтому вершины
+    // LOD k — префикс [0, lod_verts[k]), и скиннинг считает только его
+    std::vector<uint32_t> lod_verts;
+    if (skinned) {
+        std::vector<uint32_t> r(nv, ~0u);
+        uint32_t next = 0;
+        lod_verts.assign(lods.size(), 0);
+        for (size_t l = lods.size(); l-- > 0;) {
+            for (uint32_t i : lods[l])
+                if (r[i] == ~0u) r[i] = next++;
+            lod_verts[l] = next;
+        }
+        if (next != nv) return die("вершина вне треугольников", in_path), 1;
+        std::vector<Vert> f(nv);
+        meshopt_remapVertexBuffer(f.data(), v.data(), nv, sizeof(Vert), r.data());
+        v.swap(f);
+        for (Stream &s : streams) {
+            std::vector<uint8_t> d(nv * s.stride);
+            meshopt_remapVertexBuffer(d.data(), s.data.data(), nv, s.stride, r.data());
+            s.data.swap(d);
+        }
+        for (std::vector<uint32_t> &l : lods) meshopt_remapIndexBuffer(l.data(), l.data(), l.size(), r.data());
     }
 
     // Кластеры по соседству на каждый LOD; индексы кластера идут подряд (кусок CLUS: первый индекс + число)
@@ -211,7 +332,22 @@ int main(int argc, char **argv) {
         put(b, l.error);
     }
     put_chunk(out, "LODS", b);
-    static const char *const known[] = {"HEAD", "MATS", "VERT", "INDX", "CLUS", "LODS"};
+    // Потоки вершин людей — в новом порядке вершин, со своими шапками; длины префиксов LOD — в LODV
+    for (const Stream &s : streams) {
+        b.assign(s.chunk->body.begin(), s.chunk->body.begin() + (long)s.head);
+        b.insert(b.end(), s.data.begin(), s.data.end());
+        out.insert(out.end(), s.chunk->tag, s.chunk->tag + 4);
+        put(out, s.chunk->version);
+        put(out, (uint64_t)b.size());
+        out.insert(out.end(), b.begin(), b.end());
+    }
+    if (skinned) {
+        b.clear();
+        put(b, (uint32_t)lod_verts.size());
+        for (uint32_t n : lod_verts) put(b, n);
+        put_chunk(out, "LODV", b);
+    }
+    static const char *const known[] = {"HEAD", "MATS", "VERT", "INDX", "CLUS", "LODS", "SKIN", "MRPH", "LODV"};
     for (const Chunk &c : chunks) {
         bool skip = false;
         for (const char *k : known) skip |= !memcmp(c.tag, k, 4);
@@ -222,10 +358,10 @@ int main(int argc, char **argv) {
         out.insert(out.end(), c.body.begin(), c.body.end());
     }
 
-    FILE *f = fopen(argv[2], "wb");
-    if (!f || fwrite(out.data(), 1, out.size(), f) != out.size()) return die("не пишется", argv[2]), 1;
+    FILE *f = fopen(out_path, "wb");
+    if (!f || fwrite(out.data(), 1, out.size(), f) != out.size()) return die("не пишется", out_path), 1;
     fclose(f);
-    printf("meshpack: %s — вершин %zu, треугольников %zu, LOD %zu (", argv[2], nv, idx.size() / 3, lods.size());
+    printf("meshpack: %s — вершин %zu, треугольников %zu, LOD %zu (", out_path, nv, idx.size() / 3, lods.size());
     for (size_t l = 0; l < lods.size(); ++l) printf("%s%zu/%.3f м", l ? ", " : "", lods[l].size() / 3, (double)lod_err[l]);
     printf("), кластеров %zu\n", clusters.size());
     return 0;

@@ -33,6 +33,8 @@ uint cull_instance(uint i, bool with_write, uint first, out uint lod) {
     if (!sphere_visible(origin + quat_rotate(q, m.sphere.xyz * it.scale), m.sphere.w * it.scale)) return 0u;
     float limit = LOD_PIXELS * f.pixel_angle * max(length(origin), 0.1);
     while (lod + 1u < m.lod_count && uintBitsToFloat(m.lods[lod + 1u].z) * it.scale <= limit) lod++;
+    // Не тоньше lod_min: у человека скинены вершины только этого LOD и грубее (src/render/vk_skin.cpp)
+    lod = clamp(max(lod, it.lod_min), 0u, m.lod_count - 1u);
     uvec4 L = m.lods[lod];
     uint n = 0u;
     for (uint k = 0u; k < L.y; ++k) {

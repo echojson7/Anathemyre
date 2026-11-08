@@ -93,7 +93,7 @@ else
 endif
 
 # --- unity по модулю: build/<цель>/unity_<модуль>.cpp включает все .cpp модуля ---
-MODULES := core platform asset sim view render ui app $(if $(filter 1,$(NODEBUG)),,debug)
+MODULES := core platform asset anim sim view render ui app $(if $(filter 1,$(NODEBUG)),,debug)
 $(shell mkdir -p $(OUT)/shaders/gen $(OUT)/data/meshes)
 define unity_file
 $(shell printf '%s\n' '// создано Makefile, не править' $(foreach f,$(sort $(wildcard src/$(1)/*.cpp)),'#include "$(CURDIR)/$(f)"') > $(OUT)/unity_$(1).tmp; \
@@ -113,7 +113,7 @@ $(shell ./tools/matgen.sh $(OUT))
 
 # Данные рядом с исполняемым файлом: описания и сетки (.mesh пишет tools/meshgen.py, лежат в data/meshes)
 DATA_SRC := data/materials.txt data/scene.txt data/sky.txt data/terrain.txt data/ui/plex.font $(sort $(wildcard data/meshes/*.mesh)) \
-            $(sort $(wildcard data/dunes/*.dun)) $(sort $(wildcard data/prefabs/*.txt))
+            $(sort $(wildcard data/dunes/*.dun)) $(sort $(wildcard data/prefabs/*.txt)) $(sort $(wildcard data/people/*.skel))
 DATA_OUT := $(patsubst data/%,$(OUT)/data/%,$(DATA_SRC))
 
 .PHONY: all clean check sim-check sim-ref compdb toolchain third_party meshes
@@ -139,6 +139,7 @@ $(HOST_TC)/.ok:
 endif
 meshes: $(MESHPACK)
 	python3 tools/meshgen.py data/meshes $(MESHPACK)
+	./tools/humanconv/fetch.sh $(MESHPACK)
 
 # Компилятор и SDL3 — до любой компиляции
 $(TC_STAMP):

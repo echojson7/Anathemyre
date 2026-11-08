@@ -16,6 +16,53 @@ static bool read_boxes(Reader &b, Arena &arena, Span<MeshBox> &out) {
     return !b.bad;
 }
 
+// Строка «u8 длина + байты» в арену
+static Str read_name(Reader &b, Arena &arena) {
+    u8 len = get_u8(b);
+    char *s = arena_push<char>(arena, (usize)len + 1);
+    get_bytes(b, s, len);
+    s[b.bad ? 0 : len] = 0;
+    return {s, b.bad ? 0u : len};
+}
+
+static bool read_skin(Reader &b, Arena &arena, u32 nverts, MeshSkin &k) {
+    k.skeleton = read_name(b, arena);
+    u32 nb = get_u32(b);
+    if (b.bad || nb == 0 || nb > 255) return false;
+    k.bones = {arena_push<Str>(arena, nb), nb};
+    for (u32 i = 0; i < nb; ++i) k.bones.data[i] = read_name(b, arena);
+    if (b.bad || (u64)nverts * 8 != b.size - b.pos) return false;
+    k.bones4 = {arena_push<u32>(arena, nverts), nverts};
+    k.weights4 = {arena_push<u32>(arena, nverts), nverts};
+    for (u32 i = 0; i < nverts; ++i) {
+        k.bones4.data[i] = get_u32(b);
+        k.weights4.data[i] = get_u32(b);
+        for (u32 j = 0; j < 4; ++j)
+            if (((k.bones4.data[i] >> (8 * j)) & 255) >= nb) return false;
+    }
+    return !b.bad;
+}
+
+static bool read_morphs(Reader &b, Arena &arena, u32 nverts, MeshMorphs &m) {
+    m.count = get_u32(b);
+    if (b.bad || m.count == 0 || m.count > MESH_MAX_MORPHS) return false;
+    for (u32 k = 0; k < m.count; ++k) {
+        m.names[k] = read_name(b, arena);
+        m.step[k] = get_f32(b);
+    }
+    if (b.bad || (u64)nverts * m.count * 9 != b.size - b.pos) return false;
+    u32 n = nverts * m.count;
+    m.data = {arena_push<u32>(arena, (usize)n * 3), (usize)n * 3};
+    for (u32 i = 0; i < n; ++i) {
+        u32 dx = get_u16(b), dy = get_u16(b), dz = get_u16(b);
+        u32 nx = get_u8(b), ny = get_u8(b), nz = get_u8(b);
+        m.data.data[i * 3] = dx | dy << 16;
+        m.data.data[i * 3 + 1] = dz | nx << 16 | ny << 24;
+        m.data.data[i * 3 + 2] = nz;
+    }
+    return !b.bad;
+}
+
 bool mesh_parse(const u8 *data, usize size, Arena &arena, MeshData &out, const char **err) {
     out = MeshData{};
     if (size < sizeof MESH_MAGIC || memcmp(data, MESH_MAGIC, sizeof MESH_MAGIC) != 0) { *err = "не файл .mesh"; return false; }
@@ -91,6 +138,18 @@ bool mesh_parse(const u8 *data, usize size, Arena &arena, MeshData &out, const c
             if (!read_boxes(b, arena, out.collider)) { *err = "кусок COLL испорчен"; return false; }
         } else if (chunk_is(c, "COAR") && c.version == 1) {
             if (!read_boxes(b, arena, out.coarse)) { *err = "кусок COAR испорчен"; return false; }
+        } else if (chunk_is(c, "SKIN") && c.version == 1) {
+            if (!verts) { *err = "SKIN раньше VERT"; return false; }
+            if (out.skin_count >= MESH_MAX_SKINS) { *err = "скелетов больше 4"; return false; }
+            if (!read_skin(b, arena, nverts, out.skins[out.skin_count++])) { *err = "кусок SKIN испорчен"; return false; }
+        } else if (chunk_is(c, "MRPH") && c.version == 1) {
+            if (!verts) { *err = "MRPH раньше VERT"; return false; }
+            if (!read_morphs(b, arena, nverts, out.morphs)) { *err = "кусок MRPH испорчен"; return false; }
+        } else if (chunk_is(c, "LODV") && c.version == 1) {
+            u32 n = get_u32(b);
+            if ((u64)n * 4 != b.size - b.pos) { *err = "кусок LODV испорчен"; return false; }
+            out.lod_vertices = {arena_push<u32>(arena, n), n};
+            for (u32 i = 0; i < n; ++i) out.lod_vertices.data[i] = get_u32(b);
         }
         // незнакомый кусок пропускается
     }
@@ -113,6 +172,17 @@ bool mesh_parse(const u8 *data, usize size, Arena &arena, MeshData &out, const c
             return false;
         }
     if (out.lods.count == 0) { *err = "нет LOD (LODS)"; return false; }
+    if (out.skin_count) {
+        // Вершины LOD — префикс: каждый индекс LOD k меньше lod_vertices[k], префиксы не растут к грубым
+        if (out.lod_vertices.count != out.lods.count) { *err = "у сетки с весами нет LODV на каждый LOD"; return false; }
+        for (usize l = 0; l < out.lods.count; ++l) {
+            u32 nv = out.lod_vertices.data[l];
+            if (nv > nverts || (l && nv > out.lod_vertices.data[l - 1])) { *err = "LODV не префиксы вершин"; return false; }
+            const MeshLod &lod = out.lods.data[l];
+            for (u32 i = 0; i < lod.index_count; ++i)
+                if (out.indices.data[lod.first_index + i] >= nv) { *err = "индекс LOD за его префиксом вершин"; return false; }
+        }
+    }
     return true;
 }
 

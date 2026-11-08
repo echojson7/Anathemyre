@@ -76,5 +76,10 @@ void vk_gcache_begin(VkDeviceAddress frame);
 void vk_gcache_tiles_uses();
 void vk_gcache_bake_passes();
 void vk_gcache_reads();
+// Скиннинг людей (vk_skin.cpp): вершины копий и сферы их кластеров — до отсечения; кто читает общие вершины
+// (u — стадия) и таблицу кластеров (отсечение)
+void vk_skin_passes(const VkDeviceAddress *frame);
+void vk_skin_vertices_read(RgUse u);
+void vk_skin_clusters_read();
 // Интерфейс поверх кадра (vk_ui.cpp)
 void vk_ui_pass(u32 img);

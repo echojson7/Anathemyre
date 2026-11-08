@@ -11,6 +11,7 @@ void debug_keys(const Input &in, DebugState &d) {
     if (in.key_pressed[KEY_F1]) debug_print_help();
     d.clock_hours += (in.key_pressed[KEY_RIGHTBRACKET] ? 1 : 0) - (in.key_pressed[KEY_LEFTBRACKET] ? 1 : 0);
     if (in.key_pressed[KEY_T]) d.clock_speed = true;
+    if (in.key_pressed[KEY_B]) d.stand_bend = !d.stand_bend;
 }
 
 void autoplay_intents(u64 step, Rng &rng, FixedArray<Intent> &out) {
@@ -37,6 +38,7 @@ void debug_print_help() {
     log_info("        F — свободный полёт (WASD, Q/E вниз/вверх, правая кнопка — взгляд) и обратно на орбиту");
     log_info("точки: левая кнопка — притянуть, Ctrl + левая — вспышка, R — отпустить");
     log_info("сутки: [ ] — час назад/вперёд, T — скорость суток (обычная, ×20, ×120, стоп)");
+    log_info("стенд людей (у руины): B — согнуть кость, скелет и морф — в F3");
 }
 
 static void put16(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); }

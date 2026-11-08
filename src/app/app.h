@@ -27,6 +27,7 @@ struct Args {
     bool froxel_heat = false;       // --heat: тепловая карта огней по клеткам froxels
     bool nogcache = false;          // --nogcache: без кеша поверхности земли (сравнение)
     bool nohud = false;             // --nohud: без интерфейса (видео и снимки мира)
+    const char *stand = nullptr;    // --stand off|elbow|knee|mixamo|morphN через запятую: стенд людей (снимки)
     const char *open = nullptr;     // --open menu|keys|debug|world: открыть меню или вкладку панели (снимки интерфейса)
     bool hour_set = false;          // --hour H: час дня в начале (намерением, запись повтора его помнит)
     f32 hour = 0;

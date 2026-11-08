@@ -78,6 +78,10 @@ struct FrameGpu {
     VkDeviceAddress h_map;
     u32 h_on;
     f32 h_max;
+    // Скиннинг людей (vk_skin.cpp, docs/people.md): работы кадра и палитры костей
+    VkDeviceAddress skin_jobs, bones;
+    VkDeviceAddress vertices_w, clusters_w;  // те же общие вершины и кластеры — для записи (skin*.comp)
+    u32 skin_count, skin_pad;
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -92,6 +96,7 @@ constexpr u32 STAT_SHADOW_TAPS = 13;  // выборки карты горизо�
 // Кеш поверхности земли (docs/gcache.md): страницы, прочитанные кадром; запечённые; не получившие места;
 // поверхности земли, посчитанные освещением мимо кеша (крутые склоны, нет места)
 constexpr u32 STAT_GC_USED = 14, STAT_GC_BAKED = 15, STAT_GC_OVER = 16, STAT_GC_PX_DIRECT = 17;
+constexpr u32 STAT_SKIN_VERTS = 18;  // вершин скинено (skin.comp)
 constexpr u32 STAT_COUNT = 20;
 // Виды плиток кадра мира (TILE_* в common.glsl): небо, земля из кеша (и небо), сетки (и небо), смесь земли и
 // сеток, земля на пиксель (и небо)
@@ -140,6 +145,8 @@ struct FrameSlot {
     GpuBuffer lights;       // огни кадра (RenderPointLight)
     GpuBuffer inst_upload;  // изменившиеся экземпляры кадра мира → постоянный буфер на GPU (копией)
     GpuBuffer readback;     // число видимых кластеров и счётчики GPU кадра (READBACK_*)
+    GpuBuffer skin_jobs;    // работы скиннинга кадра (SkinJobGpu)
+    GpuBuffer bones;        // палитры костей людей кадра (RenderBone)
     u8 rg_readback = 0;     // он же в графе кадра
     bool stats_pending = false;  // readback заполнит отправленный кадр
     u32 marks = 0;          // записано меток времени
@@ -236,6 +243,7 @@ constexpr VkDeviceSize CULL_BYTES = 16 + 2ull * RENDER_MAX_INSTANCES * sizeof(u3
 
 struct MeshSlot {
     VmaVirtualAllocation vtx = VK_NULL_HANDLE, idx = VK_NULL_HANDLE, cls = VK_NULL_HANDLE;
+    u32 skin = 0;  // копия человека (render_skinned_create): номер источника скиннинга; индексы — источника
     u32 first_vertex = 0, vertex_count = 0;
     u32 first_index = 0, index_count = 0;
     u32 first_cluster = 0, cluster_count = 0;
@@ -245,6 +253,36 @@ struct MeshSlot {
     bool dying = false;  // ждёт освобождения в очереди
 };
 
+// Скиннинг (vk_skin.cpp, docs/people.md «Скиннинг»): данные источников в одном буфере видеопамяти (только
+// растёт, до render_shutdown), работы кадра — в буфере слота. Раскладка SkinJobGpu — SkinJob в skin.comp
+constexpr VkDeviceSize SKIN_DATA_BYTES = 32ull << 20;
+struct SkinSource {
+    u32 mesh = 0, vertex_count = 0, bone_count = 0, morph_count = 0;
+    VkDeviceAddress skin = 0, morphs = 0;  // слова весов (2 на вершину) и морфов (3 на вершину на морф)
+    f32 step[RENDER_MAX_MORPHS] = {};
+    u32 lod_vertices[RENDER_MESH_MAX_LODS] = {};
+};
+struct SkinJobGpu {
+    u32 src_vertex, dst_vertex, vertex_count, first_bone;
+    VkDeviceAddress skin, morphs;
+    u32 morph_count, first_cluster, cluster_count, first_index;
+    f32 morph[RENDER_MAX_MORPHS];  // веса морфов
+    f32 step[RENDER_MAX_MORPHS];   // шаг морфа, м на единицу сдвига
+};
+static_assert(sizeof(SkinJobGpu) == 112, "SkinJobGpu — как SkinJob в common.glsl");
+struct SkinGpu {
+    GpuBuffer data;
+    VkDeviceSize used = 0;
+    SkinSource src[RENDER_MAX_SKINS + 1];  // 0 — нет
+    u32 count = 0;
+    VkPipeline pipe_skin = VK_NULL_HANDLE, pipe_bounds = VK_NULL_HANDLE;
+    u32 jobs = 0, max_verts = 0, max_clusters = 0;  // этого кадра
+    u32 skinned_verts = 0;                          // вершин скинено в этом кадре (CPU)
+    u8 lod_min[RENDER_MAX_INSTANCES] = {};          // LOD экземпляра не тоньше (RenderInstance::lod_min)
+    u32 touched[RENDER_MAX_SKINNED] = {};           // экземпляры с lod_min этого кадра (обнулить в следующем)
+    u32 touched_count = 0;
+    u8 rg_vertices = 0, rg_clusters = 0;            // общие буферы вершин и кластеров в графе кадра
+};
 struct PendingFree {
     u32 mesh;
     u64 frame;  // освободить, когда кадров нарисовано не меньше
@@ -316,6 +354,7 @@ struct VkState {
     VkPipeline pipe_froxel = VK_NULL_HANDLE;
     u8 rg_froxels = 0, rg_media = 0;
     DiagGpu diag;
+    SkinGpu skin;
     // Время проходов на GPU за прошлый кадр слота (render_gpu_passes)
     u32 pass_count = 0;
     const char *pass_names[GPU_MAX_MARKS] = {};
@@ -414,6 +453,10 @@ constexpr f32 FROXEL_NEAR = 1.0f, FROXEL_FAR = 512.0f;
 bool vk_froxel_init();
 void vk_froxel_shutdown();
 void vk_froxel_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
+// Скиннинг людей (vk_skin.cpp): данные и конвейеры; работы кадра и LOD людей (до vk_world_fill)
+bool vk_skin_init();
+void vk_skin_shutdown();
+void vk_skin_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
 // Интерфейс поверх кадра (vk_ui.cpp): свой конвейер без глубины; проход — в vk_graph.h
 bool vk_ui_init();
 void vk_ui_shutdown();

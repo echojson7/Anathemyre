@@ -331,6 +331,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
         r.material = cur.prop_material[i] && assets.materials ? material_find(*assets.materials, cur.prop_material[i])
                                                              : RENDER_NO_MATERIAL;
         r.seed = cur.prop_seed[i];
+        r.lod_min = 0;
         ni++;
     }
     // Рассыпка камней: экземпляры — все (кадр мира отсекает и выбирает LOD сам, а постоянный список на GPU не

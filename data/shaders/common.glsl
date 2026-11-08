@@ -9,7 +9,7 @@
 // Вершина детали — MeshVertex (src/asset/mesh.h), 24 байта
 struct Vertex { float px, py, pz; uint normal; uint mats; uint misc; };
 // Экземпляр — RenderInstance (src/render/render.h), 48 байт
-struct Instance { int cx, cz; float x, y, z; uint rot_xy, rot_zw; float scale; uint mesh, material, seed, pad; };
+struct Instance { int cx, cz; float x, y, z; uint rot_xy, rot_zw; float scale; uint mesh, material, seed, lod_min; };
 // Материал — RenderMaterial, 64 байта: p0 = color.rgb + rough, p1 = color2.rgb + texel, p2 = extra
 struct Material { uint kind, pad0, pad1, pad2; vec4 p0, p1, p2; };
 struct LineVtx { float x, y, z; uint rgba; };
@@ -46,6 +46,7 @@ const uint STAT_SHADOW_TAPS = 13u;
 // Кеш поверхности земли (docs/gcache.md): страницы, которые кадр читал; запечённые; не получившие места;
 // пиксели земли мимо кеша (крутые склоны, правило пиксельности выключено)
 const uint STAT_GC_USED = 14u, STAT_GC_BAKED = 15u, STAT_GC_OVER = 16u, STAT_GC_PX_DIRECT = 17u;
+const uint STAT_SKIN_VERTS = 18u;  // вершин скинено (skin.comp)
 
 // Плитки 8×8 кадра мира по видам (docs/tiles.md, light_tiles.comp): небо — пусто; земля — земля из кеша
 // (docs/gcache.md) и, может быть, небо; сетки — сетки и, может быть, небо; смесь — земля и сетки; земля на
@@ -77,6 +78,19 @@ layout(buffer_reference, scalar) buffer VisClusters { uvec2 v[]; };  // экзе
 layout(buffer_reference, scalar) buffer DrawCmds { DrawCmd v[]; };
 // Счёт отсечения: число вызовов (его читает vkCmdDrawIndexedIndirectCount), на экземпляр — видимые кластеры
 // и LOD (count | lod << 29) и начало его кластеров в списке кадра
+// Скиннинг людей (src/render/vk_skin.cpp, skin.comp): работа на человека, палитры костей (3 строки vec4 на
+// кость), запись общих вершин и кластеров
+struct SkinJob {
+    uint src_vertex, dst_vertex, vertex_count, first_bone;
+    Words skin, morphs;  // 2 слова на вершину (кости, веса); 3 слова на вершину на морф
+    uint morph_count, first_cluster, cluster_count, first_index;
+    float morph[8];      // веса морфов
+    float step[8];       // шаг морфа, м на единицу сдвига
+};
+layout(buffer_reference, scalar) readonly buffer SkinJobs { SkinJob v[]; };
+layout(buffer_reference, scalar) readonly buffer Bones { vec4 v[]; };
+layout(buffer_reference, scalar) buffer VerticesW { Vertex v[]; };
+layout(buffer_reference, scalar) buffer ClustersW { Cluster v[]; };
 layout(buffer_reference, scalar) buffer CullData { uint draw_count, pad0, pad1, pad2; uint count[65536]; uint offset[65536]; };
 
 // Не readonly: через него compute-шейдеры неба пишут свои таблицы (sky_*), сам буфер кадра никто не пишет
@@ -167,6 +181,12 @@ layout(buffer_reference, scalar) buffer FrameData {
     HMap h_map;
     uint h_on;                // 0 — карты нет (земли нет или ещё не собрана): тени земли нет
     float h_max;              // высшая точка сетки 8 м, м (сборка: где луч может кончиться)
+    // Скиннинг людей (vk_skin.cpp): работы кадра, палитры, общие вершины и кластеры для записи
+    SkinJobs skin_jobs;
+    Bones bones;
+    VerticesW vertices_w;
+    ClustersW clusters_w;
+    uint skin_count, skin_pad;
 };
 
 layout(push_constant, scalar) uniform Push {

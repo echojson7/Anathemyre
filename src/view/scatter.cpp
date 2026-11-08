@@ -88,7 +88,7 @@ void scatter_update(ScatterCache &c, const Terrain &t, const WPos &eye, const u3
             if (!it.mesh) continue;
             it.material = RENDER_NO_MATERIAL;
             it.seed = h;
-            it.pad = 0;
+            it.lod_min = 0;
             c.count++;
         }
 }
