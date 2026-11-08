@@ -2,6 +2,7 @@
 // Файлы — куски «тег, версия, длина»: незнакомый кусок читатель пропускает.
 #pragma once
 #include "mem.h"
+#include "text.h"
 
 struct Writer {
     u8 *data = nullptr;
@@ -79,3 +80,11 @@ inline bool next_chunk(Reader &r, Chunk &c) {
     return true;
 }
 inline bool chunk_is(const Chunk &c, const char tag[4]) { return memcmp(c.tag, tag, 4) == 0; }
+
+// Имя (u8 длина + байты) → устойчивый хеш (содержимое по имени); 0 — файл испорчен
+inline u64 get_name_hash(Reader &r) {
+    char s[256];
+    u8 n = get_u8(r);
+    get_bytes(r, s, n);
+    return r.bad ? 0 : str_hash(Str{s, n});
+}

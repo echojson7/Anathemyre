@@ -1,0 +1,7 @@
+# Метки клипа sword_a (docs/anim.md). Источник: cmu/002/02_07.bvh 0.6–2.9 с; CMU Graphics Lab Motion Capture Database (BVH Б. Хане), свободно
+# двуручный меч: сверху вниз и обратный снизу вверх
+# Время — ключи 30/с от начала клипа. Строки foot ставит tools/retarget/bake.py, остальное — руками
+keys 70
+weapon sword2
+foot l 0 69
+foot r 0 69

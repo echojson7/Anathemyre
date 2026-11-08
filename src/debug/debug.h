@@ -21,6 +21,16 @@ struct DebugState {
     u32 stand_bone = 0;       // 0 — локоть, 1 — колено
     u32 stand_skel = 0;       // 0 — game_engine, 1 — как у Mixamo
     u32 stand_morph = 0;
+    // Клипы на стенде (docs/anim.md): номер в списке имён (0 — нет), второй — для смешивания с долей blend
+    u32 stand_clip = 0;
+    u32 stand_clip_b = 0;
+    f32 stand_blend = 0.5f;
+    u32 stand_speed = 0;      // номер в STAND_SPEEDS
+    bool stand_pause = false;
+    bool stand_restart = false;
+    bool stand_inplace = true;  // на месте: корень клипа только поворачивает
+    bool stand_caps = true;     // капсулы и клинок из запечённых дорожек
+    bool stand_both = false;    // оба скелета рядом: game_engine слева, Mixamo справа
     u32 tab = 0;              // вкладка панели: DEBUG_TAB_*
     // Просьбы этого кадра от клавиш и панели (debug_clear_frame после исполнения)
     bool step_once = false;   // «.» на паузе — один шаг
@@ -45,6 +55,8 @@ inline void debug_clear_frame(DebugState &d) {
 }
 // Скорости суток по T: тиков часов за шаг (1 — обычный ход: сутки за 48 минут; 60 — за 48 секунд)
 constexpr u32 CLOCK_SPEEDS[] = {1, 20, 120, 0};
+// Скорости клипа на стенде
+constexpr f32 STAND_SPEEDS[] = {1.0f, 0.5f, 0.25f, 0.1f};
 enum DebugTab : u32 { DEBUG_TAB_MAIN, DEBUG_TAB_FRAME, DEBUG_TAB_WORLD, DEBUG_TABS };
 
 // Строк проходов GPU и переполнений в панели
@@ -113,9 +125,14 @@ void debug_inspect_pick(const World &w, WorldInspect &wi, const WPos &at);
 bool debug_write_shot(const char *path, Arena &scratch);
 // Карта земли сверху (отмывка рельефа и маски) → .bmp
 bool debug_write_terrain_map(const Terrain &t, const char *path, Arena &scratch);
-// Стенд людей (stand.cpp, docs/people.md «Стенд»): человек у руины — экземпляр, палитра и морфы в кадр
-void debug_stand(const DebugState &d, const ViewAssets &assets, const Terrain &ground, Arena &frame, RenderFrame &rf);
-// --stand: off, elbow, knee, mixamo, morphN через запятую (снимки и CI); nullptr — как есть
+// Стенд людей (stand.cpp, docs/people.md «Стенд», docs/anim.md): до view_build — время клипа, поза и капсулы
+// дорожек в dbg (nullptr — без капсул); после — экземпляры, палитры и морфы в кадр
+void debug_stand_update(DebugState &d, const ViewAssets &assets, const Terrain &ground, f64 dt, DebugDraw *dbg);
+void debug_stand(const DebugState &d, const ViewAssets &assets, Arena &frame, RenderFrame &rf);
+// Имена клипов для панели (0 — «нет»)
+const char *const *debug_stand_clip_names(u32 *count);
+// --stand через запятую (снимки, видео, CI): off, elbow, knee, mixamo, morphN, both, move, nocaps, clip=имя,
+// blend=имя, w=доля %, speed=100|50|25|10, t=начало в сотых с (< 0 — выдержка), seq=a+b+… (очередь клипов); nullptr — как есть
 void debug_stand_args(DebugState &d, const char *spec);
 #else
 inline void debug_keys(const Input &, DebugState &) {}
@@ -126,6 +143,7 @@ inline void debug_inspect_pick(const World &, WorldInspect &, const WPos &) {}
 inline void debug_inspect_mark(const World &, const WorldInspect &, DebugDraw &) {}
 inline bool debug_write_shot(const char *, Arena &) { return false; }
 inline bool debug_write_terrain_map(const Terrain &, const char *, Arena &) { return false; }
-inline void debug_stand(const DebugState &, const ViewAssets &, const Terrain &, Arena &, RenderFrame &) {}
+inline void debug_stand_update(DebugState &, const ViewAssets &, const Terrain &, f64, DebugDraw *) {}
+inline void debug_stand(const DebugState &, const ViewAssets &, Arena &, RenderFrame &) {}
 inline void debug_stand_args(DebugState &, const char *) {}
 #endif

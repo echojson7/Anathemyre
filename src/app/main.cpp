@@ -28,12 +28,13 @@ static void usage() {
     log_info("           [--lights] [--heat]                                          тестовые огни, огни по клеткам froxels");
     log_info("           [--nogcache]                                                 без кеша поверхности земли (сравнение)");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
-    log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z]   снимок (градусы, метры)");
+    log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z] [--pivot м]   снимок (градусы, метры; опора над землёй)");
     log_info("           [--work файл.txt]                                            счётчики работы освещения в файл (с --frames)");
     log_info("           [--nohud] [--open menu|keys|debug|frame|world]               без интерфейса; открыть меню или панель");
-    log_info("           [--stand off|elbow|knee|mixamo|morphN,…]                     стенд людей у руины: выкл, кость, скелет, морф");
+    log_info("           [--stand off|elbow|knee|mixamo|morphN|both|move|nocaps|clip=…|blend=…|w=…|speed=…|t=…,…]  стенд людей (docs/anim.md)");
     log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
+    log_info("           --frames N --video префикс                                   каждый кадр → префикс_0000.bmp… (стенд: 1/30 с на кадр)");
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
     log_info("           --replay файл.rec                                            проверка повтора");
     log_info("           --terrain-map файл.bmp                                       карта земли сверху");
@@ -128,6 +129,8 @@ int main(int argc, char **argv) {
             }
             i += 3;
         }
+        else if (!strcmp(s, "--pivot")) { ok = next && parse_f32(Str{next, (u32)strlen(next)}, a.pivot_above); i++; }
+        else if (!strcmp(s, "--video")) { a.video = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--terrain-map")) { a.terrain_map = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--novsync")) a.vsync = false;
         else if (!strcmp(s, "--validation")) a.validation = true;

@@ -33,6 +33,8 @@ struct Args {
     f32 hour = 0;
     const char *timelapse = nullptr;  // --timelapse префикс H0 H1: каждый кадр — свой час, снимок в префикс_NNNN.bmp
     f32 timelapse_hours[2] = {};
+    f32 pivot_above = -1.0f;          // --pivot м: опора камеры над землёй (крупные планы стенда)
+    const char *video = nullptr;      // --video префикс: каждый кадр в префикс_NNNN.bmp (мир идёт как обычно)
     const char *terrain_map = nullptr;  // --terrain-map файл.bmp: карта земли сверху и выход
 };
 

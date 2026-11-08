@@ -29,7 +29,8 @@ PowerShell от администратора:
 `mesa-vulkan-drivers` + `xvfb` — запуск и кадры без окна (lavapipe); `python3-numpy` — конвертер людей;
 `cmake`, `ninja-build` и заголовки X11 — только для сборки SDL3 (`tools/third_party.sh`). Компилятор игры —
 не `clang` из apt, а закреплённый LLVM и llvm-mingw одной версии, их скачивает `tools/run.sh` (`docs/stack.md`).
-Позже для ретаргета захвата движения понадобится Blender 4.x (`sudo apt install -y blender` или с blender.org).
+Для ретаргета захвата движения (`make retarget`, `docs/anim.md`) — Blender как модуль Python: `pip install bpy`
+(версия 5.x под Python 3.13). Игре и CI он не нужен: в git лежат готовые `.anim`.
 `vulkan-validationlayers` — слои проверки Vulkan для отладочной сборки и `--validation`. По желанию `wine64` —
 быстро проверить Windows `.exe` из Linux (`docs/build.md`). Первый `./tools/run.sh` сам скачает компилятор и
 соберёт SDL3: несколько минут, дальше — секунды.

@@ -32,7 +32,7 @@ Quat quat_axis_angle(Vec3 axis, f32 rad) {
     return {axis.x * s, axis.y * s, axis.z * s, c};
 }
 
-void pose_palette(const Skel &s, const Quat *rot, PoseMatrix *out) {
+void pose_palette(const Skel &s, const Quat *rot, PoseMatrix *out, i32 trans_bone, const Vec3 *trans) {
     // Поза костей в осях сетки: поворот и голова. Кость — бинд-поза родителя в позе · местная бинд-поза · rot
     constexpr u32 MAX = SKEL_MAX_BONES;
     M33 wr[MAX];
@@ -52,6 +52,7 @@ void pose_palette(const Skel &s, const Quat *rot, PoseMatrix *out) {
             r = mul(wr[b.parent], lr);
             p = wp[b.parent] + apply(wr[b.parent], lp);
         }
+        if (trans && (i32)i == trans_bone) p = *trans;
         if (rot) r = mul(r, quat_m33(rot[i].x, rot[i].y, rot[i].z, rot[i].w));
         wr[i] = r;
         wp[i] = p;

@@ -1,0 +1,6 @@
+# Метки клипа block (docs/anim.md). Источник: cmu/144/144_07.bvh 11.4–12.7 с; CMU Graphics Lab Motion Capture Database (BVH Б. Хане), свободно
+# блок рукой (бокс)
+# Время — ключи 30/с от начала клипа. Строки foot ставит tools/retarget/bake.py, остальное — руками
+keys 40
+foot l 9 27
+foot r 0 39

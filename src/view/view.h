@@ -4,6 +4,8 @@
 #pragma once
 #include "../asset/material.h"
 #include "../asset/mesh.h"
+#include "../anim/clip.h"
+#include "../anim/track.h"
 #include "../asset/skel.h"
 #include "../core/dbgdraw.h"
 #include "../platform/platform.h"
@@ -30,6 +32,7 @@ struct Camera {
     f32 pitch = 0.42f;      // радианы: > 0 — глаз выше опоры, смотрит вниз; < 0 — смотрит вверх
     f32 dist = 24.0f;       // желаемая длина штанги, метров (0 — вид от глаз)
     f32 arm = -1.0f;        // длина штанги в кадре, после земли (< 0 — ещё не считали)
+    f32 pivot_above = -1.0f;  // опора орбиты над землёй, м (< 0 — на высоте глаз; --pivot для крупных планов)
     CameraSettings settings;
 };
 
@@ -51,6 +54,15 @@ struct ViewBody {
     u32 morph_count;
     u64 morph_name[MESH_MAX_MORPHS];
 };
+// Клип захвата движения одного скелета (docs/anim.md): клип, запечённые дорожки и метки
+constexpr u32 VIEW_MAX_CLIPS = 64;
+struct ViewClip {
+    u64 name;                      // хеш имени клипа (файл до первой точки)
+    char label[32];                // имя для отладки (стенд)
+    AnimClip clip;
+    Track track;                   // ticks = 0 — нет дорожек
+    AnimLabels labels;
+};
 struct ViewAssets {
     ViewMesh meshes[VIEW_MAX_MESHES];
     u32 mesh_count = 0;
@@ -59,6 +71,8 @@ struct ViewAssets {
     u32 rocks[SCATTER_MESHES] = {};                 // сетки камней рассыпки
     ViewBody bodies[VIEW_MAX_BODIES];               // люди: тела с весами (стенд, потом таблица людей)
     u32 body_count = 0;
+    ViewClip clips[VIEW_MAX_CLIPS];                 // клипы людей: имя × скелет
+    u32 clip_count = 0;
     SkyDesc sky;                                    // небо и воздух (data/sky.txt)
 };
 

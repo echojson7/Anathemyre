@@ -1,0 +1,7 @@
+# Метки клипа lunge (docs/anim.md). Источник: cmu/002/02_07.bvh 14.7–17.3 с; CMU Graphics Lab Motion Capture Database (BVH Б. Хане), свободно
+# выпад с глубоким приседом
+# Время — ключи 30/с от начала клипа. Строки foot ставит tools/retarget/bake.py, остальное — руками
+keys 79
+weapon sword2
+foot l 0 78
+foot r 0 78

@@ -1,0 +1,11 @@
+# Метки клипа stairs (docs/anim.md). Источник: cmu/083/83_34.bvh 4.0–7.2 с; CMU Graphics Lab Motion Capture Database (BVH Б. Хане), свободно
+# подъём по ступеням
+# Время — ключи 30/с от начала клипа. Строки foot ставит tools/retarget/bake.py, остальное — руками
+keys 97
+foot l 4 23
+foot l 39 69
+foot l 89 126
+foot r 0 6
+foot r 20 45
+foot r 64 100
+foot r 115 126

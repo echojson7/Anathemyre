@@ -45,6 +45,11 @@ jobs:
           # люди: исходники MakeHuman качает tools/humanconv/fetch.sh в кеш (sha256), docs/people.md
           make -s meshes
           git diff --exit-code data/meshes data/people
+      - name: Дорожки клипов в git совпадают с запеканием
+        run: |
+          # ретаргет (bpy, сырые BVH/FBX) в CI не гоняем: запекание читает закоммиченные .anim (docs/anim.md)
+          make -s anims
+          git diff --exit-code data/anims
       - name: Сборки
         run: |
           J=$(nproc)
