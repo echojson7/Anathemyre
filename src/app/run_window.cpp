@@ -199,6 +199,10 @@ int run_window(const Args &a, AppMemory &m) {
         cam.pivot.z = 10.0f;  // сцена этапа 1 — к северу от начала карты
     }
     cam.pivot = view_pivot_at(w.terrain, cam.pivot);
+    if (a.pivot_above >= 0) {
+        cam.pivot_above = a.pivot_above;
+        cam.pivot.y = ground_at(w.terrain, cam.pivot).height + a.pivot_above;
+    }
     TimeCtl tc;
     DebugState ds;
     u32 clock_speed = 0;  // номер в CLOCK_SPEEDS
@@ -249,7 +253,6 @@ int run_window(const Args &a, AppMemory &m) {
         if (in.key_pressed[KEY_ESCAPE] && !hud_on) break;  // без интерфейса Esc по-прежнему закрывает окно
         if (in.key_pressed[KEY_F11]) set.fullscreen = !set.fullscreen;
         ds.lines = set.lines;
-    debug_stand_args(ds, a.stand);
         ds.pixel = set.pixel;
         if (set.debug && !menu.open) {
             if (in.key_pressed[KEY_SPACE]) ds.pause_toggle = true;
@@ -433,12 +436,14 @@ int run_window(const Args &a, AppMemory &m) {
         RenderFrame rf;
         u32 dbg_keep = dbg.count;  // метка осмотра — только на этот кадр, шаг мира её не видит
         if (hud_on && set.debug && set.debug_panel && ds.tab == DEBUG_TAB_WORLD) debug_inspect_mark(w, *inspect, dbg);
+        // Стенд: в видео и снимках время клипа идёт ровно 1/30 с на кадр
+        if (set.debug) debug_stand_update(ds, *assets, w.terrain, a.frames ? 1.0 / 30.0 : dt, vi.dbg ? &dbg : nullptr);
         view_build(cam, *assets, vi, m.frame, rf);
-        if (set.debug) debug_stand(ds, *assets, w.terrain, m.frame, rf);
+        if (set.debug) debug_stand(ds, *assets, m.frame, rf);
         dbg.count = dbg_keep;
         prof_part(*prof, FP_VIEW, platform_time_ns());
         bool last_frame = a.frames && frames + 1 >= a.frames;
-        if ((last_frame && a.shot) || a.timelapse) render_capture_next();
+        if ((last_frame && a.shot) || a.timelapse || a.video) render_capture_next();
         if (!render_frame(rf)) { rc_exit = 1; break; }
         {
             RenderCpuTimes rt = render_cpu_times();
@@ -454,9 +459,9 @@ int run_window(const Args &a, AppMemory &m) {
             f64 g = render_gpu_ms();
             if (g > 0) stat_add(st_gpu, g);
         }
-        if (a.timelapse) {
+        if (a.timelapse || a.video) {
             char path[1024];
-            snprintf(path, sizeof path, "%s_%04u.bmp", a.timelapse, (u32)frames);
+            snprintf(path, sizeof path, "%s_%04u.bmp", a.timelapse ? a.timelapse : a.video, (u32)frames);
             if (!debug_write_shot(path, m.load)) { rc_exit = 1; break; }
         }
         {

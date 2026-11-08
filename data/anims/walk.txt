@@ -1,0 +1,8 @@
+# Метки клипа walk (docs/anim.md). Источник: cmu/002/02_01.bvh 0.5–1.65 с; CMU Graphics Lab Motion Capture Database (BVH Б. Хане), свободно
+# шаг, один цикл
+# Время — ключи 30/с от начала клипа. Строки foot ставит tools/retarget/bake.py, остальное — руками
+keys 34
+loop
+foot l 0 6
+foot l 21 33
+foot r 4 22

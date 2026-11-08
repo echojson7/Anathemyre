@@ -1,0 +1,7 @@
+# Метки клипа sword_b (docs/anim.md). Источник: cmu/002/02_07.bvh 11.6–13.7 с; CMU Graphics Lab Motion Capture Database (BVH Б. Хане), свободно
+# быстрый косой удар
+# Время — ключи 30/с от начала клипа. Строки foot ставит tools/retarget/bake.py, остальное — руками
+keys 64
+weapon sword2
+foot l 0 63
+foot r 0 63

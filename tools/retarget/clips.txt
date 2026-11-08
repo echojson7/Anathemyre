@@ -1,0 +1,33 @@
+# Клипы для ретаргета (tools/retarget/retarget.py, docs/anim.md).
+#   source <имя> <файл в downloads/anims> [sha256]   cmu/… качает fetch.sh с зеркала на GitHub;
+#                                                   mixamo/… кладёт пользователь (сырые FBX не в git)
+#   clip <имя> <источник> <начало с> <конец с> [loop] [sword|sword2]   # заметка (sword2 — двуручный хват)
+# loop — петля: конец ищется около заданного (±10 ключей) по ближайшей к началу позе.
+# Время — секунды от начала файла (у CMU кадр 0 — T-поза Хане, его не берём)
+source cmu_02_01 cmu/002/02_01.bvh cf56db43157acc3d200b3d4215523f54d354a8926bea67e1f6c8031bd335ba7e
+source cmu_16_35 cmu/016/16_35.bvh d20d54a9ccebd7aaf4aa6c4d7662c4905d47009401895de216a914edecf287be
+source cmu_02_07 cmu/002/02_07.bvh 40999e80d85823b2a10f0d1175065d86543d22cd115bad759d3c10ddf712c6de
+
+clip walk      cmu_02_01 0.50 1.65 loop          # шаг, один цикл
+clip run       cmu_16_35 0.20 1.00 loop          # бег, один цикл
+clip sword_a   cmu_02_07 0.60 2.90 sword2      # двуручный меч: сверху вниз и обратный снизу вверх
+clip sword_b   cmu_02_07 11.60 13.70 sword2    # быстрый косой удар
+clip lunge     cmu_02_07 14.70 17.30 sword2    # выпад с глубоким приседом
+source cmu_36_02 cmu/036/36_02.bvh 2a6e9f62ee04428f9542f00f41439acc01a71b06acc24717c1b4a07e5d6ddf6a
+source cmu_83_34 cmu/083/83_34.bvh e2f1e77432fdb2697f895de05c7f625a0d3d57bfe7e3c4951ec886911889a174
+source cmu_140_09 cmu/140/140_09.bvh f436f560e73b6b67d6afc179bb35d584bbfe2f95b34d5166395bcd2dccda6cc2
+source cmu_90_18 cmu/090/90_18.bvh 32a6bcf85820af466fb141f7e05a7131fbb7d0b76a4f7d407379c6f9457cac10
+source cmu_76_03 cmu/076/76_03.bvh ee3c4f559ad2fde91b40b77b076d149c2269e33da4acd6c87bfa03d596f1104a
+source cmu_144_07 cmu/144/144_07.bvh f5861729e56fa5e98194a3f52e25a2e07f8760a3e8cb5d84ccadc1733f58b890
+
+clip turn180   cmu_36_02 2.40 5.00               # шаг, разворот на 180° и шаг обратно
+clip stairs    cmu_83_34 3.00 7.20               # подъём по ступеням
+clip getup     cmu_140_09 1.20 6.00              # подъём с земли со спины
+clip fall      cmu_90_18 0.30 2.40               # падение назад (выдернули опору)
+clip dodge     cmu_76_03 6.30 8.10               # уклон от нападающего, присед
+clip block     cmu_144_07 11.40 12.70            # блок рукой (бокс)
+
+# Mixamo (кладёт пользователь в downloads/anims/mixamo, FBX Without Skin, 30 к/с). Имена файлов — как скачались;
+# после появления файлов раскомментировать и поправить время:
+# source mx_slash   mixamo/<удар сверху>.fbx
+# clip mx_overhead  mx_slash 0 0 sword

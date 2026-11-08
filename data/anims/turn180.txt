@@ -1,0 +1,9 @@
+# Метки клипа turn180 (docs/anim.md). Источник: cmu/036/36_02.bvh 2.4–5.0 с; CMU Graphics Lab Motion Capture Database (BVH Б. Хане), свободно
+# шаг, разворот на 180° и шаг обратно
+# Время — ключи 30/с от начала клипа. Строки foot ставит tools/retarget/bake.py, остальное — руками
+keys 79
+foot l 0 4
+foot l 19 45
+foot l 52 78
+foot r 0 27
+foot r 37 78

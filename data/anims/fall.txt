@@ -1,0 +1,9 @@
+# Метки клипа fall (docs/anim.md). Источник: cmu/090/90_18.bvh 0.3–2.4 с; CMU Graphics Lab Motion Capture Database (BVH Б. Хане), свободно
+# падение назад (выдернули опору)
+# Время — ключи 30/с от начала клипа. Строки foot ставит tools/retarget/bake.py, остальное — руками
+keys 64
+foot l 0 4
+foot l 27 29
+foot l 39 63
+foot r 0 4
+foot r 32 63

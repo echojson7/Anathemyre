@@ -187,6 +187,44 @@ static void load_mesh(const char *name, void *user) {
     L.view->meshes[L.view->mesh_count++] = vm;
 }
 
+// Клип data/anims/<клип>.<скелет>.anim, рядом дорожки .trk того же скелета и метки <клип>.txt (docs/anim.md).
+// Всё в арене мира: живёт весь запуск
+static void load_clip(const char *name, void *user) {
+    MeshLoad &L = *(MeshLoad *)user;
+    if (L.view->clip_count >= VIEW_MAX_CLIPS) { log_error("клипов больше %u", VIEW_MAX_CLIPS); L.failed++; return; }
+    ViewClip &vc = L.view->clips[L.view->clip_count];
+    vc = ViewClip{};
+    usize n = strlen(name) - 5, dot = 0;
+    while (dot < n && name[dot] != '.') ++dot;
+    char rel[512];
+    u8 *data = nullptr;
+    usize size = 0;
+    const char *err = "";
+    snprintf(rel, sizeof rel, "anims/%s", name);
+    usize mark = arena_mark(L.m->load);
+    if (!read_data(rel, L.m->load, &data, &size) || !anim_parse(data, size, L.m->world, vc.clip, &err)) {
+        log_error("клип %s: %s", name, err);
+        L.failed++;
+        arena_restore(L.m->load, mark);
+        return;
+    }
+    snprintf(rel, sizeof rel, "anims/%.*s.trk", (int)n, name);
+    if (read_data(rel, L.m->load, &data, &size) && !track_parse(data, size, L.m->world, vc.track, &err)) {
+        log_error("дорожки %s: %s", rel, err);
+        L.failed++;
+    }
+    snprintf(rel, sizeof rel, "anims/%.*s.txt", (int)dot, name);
+    char why[256];
+    if (read_data(rel, L.m->load, &data, &size) && !anim_labels_parse(data, size, vc.labels, why, sizeof why)) {
+        log_error("метки %s: %s", rel, why);
+        L.failed++;
+    }
+    arena_restore(L.m->load, mark);
+    vc.name = hash_bytes(name, dot);
+    snprintf(vc.label, sizeof vc.label, "%.*s", (int)dot, name);
+    L.view->clip_count++;
+}
+
 bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
     u8 *kinds = nullptr, *text = nullptr;
     usize kinds_size = 0, size = 0;
@@ -236,7 +274,9 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
             if (view.meshes[i].name == hname) view.rocks[k] = view.meshes[i].id;
         if (!view.rocks[k]) log_warn("нет сетки %s для рассыпки камней", rocks[k]);
     }
-    log_info("ассеты: материалов %u (видов %u), сеток %u", mats.count, mats.kind_count, view.mesh_count);
+    snprintf(dir, sizeof dir, "%sdata/anims", platform_exe_dir());
+    if (!platform_list_dir(dir, ".anim", load_clip, &L)) log_warn("нет папки %s: клипов людей нет", dir);
+    log_info("ассеты: материалов %u (видов %u), сеток %u, клипов %u", mats.count, mats.kind_count, view.mesh_count, view.clip_count);
     return L.failed == 0;
 }
 

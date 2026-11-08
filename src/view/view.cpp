@@ -137,6 +137,7 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &gr
     for (f32 w = in.wheel; w < -0.5f; w += 1.0f) cam.dist = cam.dist < DIST_SNAP ? DIST_SNAP : cam.dist / 0.85f;
     cam.dist = f_clamp(cam.dist, DIST_MIN, DIST_MAX);
     cam.pivot = view_pivot_at(ground, cam.pivot);
+    if (cam.pivot_above >= 0) cam.pivot.y = ground_at(ground, cam.pivot).height + cam.pivot_above;
     // Штанга: земля укорачивает её сразу (глаз не уходит под склон), назад — плавно, чтобы на кочках
     // не дёргалась. Взгляд при этом не меняется
     f32 room = arm_room(cam, ground);

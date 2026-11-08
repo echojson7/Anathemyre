@@ -1,0 +1,8 @@
+# Метки клипа getup (docs/anim.md). Источник: cmu/140/140_09.bvh 1.2–6.0 с; CMU Graphics Lab Motion Capture Database (BVH Б. Хане), свободно
+# подъём с земли со спины
+# Время — ключи 30/с от начала клипа. Строки foot ставит tools/retarget/bake.py, остальное — руками
+keys 145
+foot l 0 144
+foot r 2 45
+foot r 53 55
+foot r 59 144

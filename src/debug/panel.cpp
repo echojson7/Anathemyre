@@ -152,6 +152,21 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_choice(f, "скелет", d.stand_skel, SKELS, ANA_COUNTOF(SKELS));
     static const char *const MORPHS[] = {"нет", "полнее", "худее", "сильнее", "нос", "челюсть"};
     ui_choice(f, "морф", d.stand_morph, MORPHS, ANA_COUNTOF(MORPHS));
+    ui_toggle(f, "оба скелета рядом", d.stand_both);
+    u32 nclips = 0;
+    const char *const *clips = debug_stand_clip_names(&nclips);
+    if (nclips) {
+        ui_choice(f, "клип", d.stand_clip, clips, nclips);
+        ui_choice(f, "смешать с", d.stand_clip_b, clips, nclips);
+        if (d.stand_clip_b) ui_slider(f, "доля второго", d.stand_blend, 0.0f, 1.0f, 0.05f, "%.2f");
+        static const char *const SPEEDS[] = {"×1", "×0.5", "×0.25", "×0.1"};
+        static_assert(ANA_COUNTOF(SPEEDS) == ANA_COUNTOF(STAND_SPEEDS), "скорости стенда");
+        ui_choice(f, "скорость клипа", d.stand_speed, SPEEDS, ANA_COUNTOF(SPEEDS));
+        ui_toggle(f, "пауза клипа", d.stand_pause);
+        if (ui_button_row(f, "с начала")) d.stand_restart = true;
+        ui_toggle(f, "на месте", d.stand_inplace);
+        ui_toggle(f, "капсулы дорожек", d.stand_caps);
+    }
     char sv[24];
     count_str(in.work_skin, sv, sizeof sv);
     ui_value(f, "скинено вершин", in.work ? sv : "—");
