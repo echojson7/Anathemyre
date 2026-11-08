@@ -3,6 +3,7 @@
 #include "../core/log.h"
 #include "../debug/debug.h"
 #include "../platform/platform.h"
+#include "../sim/ground.h"
 #include "../sim/record.h"
 #include "../sim/step.h"
 #include <inttypes.h>
@@ -28,23 +29,32 @@ int run_sim(const Args &a, AppMemory &m) {
     char *text = nullptr;
     usize text_len = 0, text_cap = 0;
     if (a.hashes) {
-        text_cap = 128 + (a.sim_steps / 1000 + 1) * 48;
+        text_cap = 512 + (a.sim_steps / 1000 + 1) * 48;
         text = arena_push<char>(m.load, text_cap);
         char thex[17];
-        text_len = (usize)snprintf(text, text_cap, "# anathemyre --sim: хеш земли и хеш мира каждые 1000 шагов\nsim_version %u\nseed %" PRIu64 "\nterrain %s\n",
-                                   SIM_VERSION, a.seed, hex_u64(w.terrain.hash, thex));
+        char shex[17], whex[17];
+        text_len = (usize)snprintf(text, text_cap,
+                                   "# anathemyre --sim: хеш земли, сетки ходимости, неизменного (коллайдеры, сетка, длины шага) и хеш мира "
+                                   "каждые 1000 шагов\nsim_version %u\nseed %" PRIu64 "\nterrain %s\nwalk %s\nstatic %s\n",
+                                   SIM_VERSION, a.seed, hex_u64(w.terrain.hash, thex), hex_u64(w.walk.hash, whex),
+                                   hex_u64(world_static_hash(w), shex));
     }
 
-    f64 max_us = 0;
+    f64 max_us = 0, people_us = 0;
+    u64 max_at = 0;
+    u64 people_steps = 0;
+    StepStats stats;
+    stats.now_ns = platform_time_ns;
     u64 t0 = platform_time_ns();
     for (u64 s = 0; s < a.sim_steps; ++s) {
         intents.clear();
-        autoplay_intents(w.step, player, intents);
-        StepCtx ctx{intents.span(), &m.step, nullptr};
+        autoplay_intents(w, player, intents);
+        StepCtx ctx{intents.span(), &m.step, nullptr, &stats};
         u64 ts = platform_time_ns();
         sim_step(w, ctx);
         f64 us = (f64)(platform_time_ns() - ts) / 1000.0;
-        if (us > max_us) max_us = us;
+        if (w.people.live) { people_steps++; people_us += us; }
+        if (us > max_us) { max_us = us; max_at = w.step; }
         if (a.record) recorder_step(rec, w, intents.span());
         if (text && w.step % 1000 == 0 && text_len + 48 < text_cap) {
             char hex[17];
@@ -54,9 +64,25 @@ int run_sim(const Args &a, AppMemory &m) {
     }
     f64 total_ms = (f64)(platform_time_ns() - t0) / 1e6;
     char hex[17];
-    log_info("--sim: %" PRIu64 " шагов за %.1f мс, шаг в среднем %.1f мкс, макс %.1f мкс; точек %u; хеш %s",
-             a.sim_steps, total_ms, total_ms * 1000.0 / (f64)a.sim_steps, max_us, w.dots.live,
+    log_info("--sim: %" PRIu64 " шагов за %.1f мс, шаг в среднем %.1f мкс, макс %.1f мкс (шаг %" PRIu64 "); точек %u; хеш %s",
+             a.sim_steps, total_ms, total_ms * 1000.0 / (f64)a.sim_steps, max_us, max_at, w.dots.live,
              hex_u64(world_hash(w), hex));
+    // Бенч людей (docs/people.md, цель шага мира ≤ 2 мс на 512 в бою): средний шаг с людьми и работа поиска пути
+    if (people_steps) {
+        const People &p = w.people;
+        u32 on_box = 0, high = 0, going = 0;
+        for (u32 s = 0; s < PEOPLE_CAPACITY; ++s) {
+            if (!p.alive[s]) continue;
+            on_box += p.support[s] != 0;
+            high += p.support[s] && p.y[s] > ground_at(w.terrain, p.cx[s], p.cz[s], p.x[s], p.z[s]).height + 3.0f;
+            going += p.state[s] != MOVE_STAND;
+        }
+        log_info("--sim люди: %u живых (на постройках %u, из них выше 3 м %u; в пути %u), шаг с людьми в среднем %.1f мкс, "
+                 "из них системы людей %.1f мкс; путей %u, раскрыто узлов %" PRIu64 " (%.0f на путь)",
+                 p.live, on_box, high, going, people_us / (f64)people_steps, (f64)stats.people_ns / 1000.0 / (f64)people_steps,
+                 stats.paths, stats.expanded,
+                 stats.paths ? (f64)stats.expanded / (f64)stats.paths : 0.0);
+    }
     int rc = 0;
     if (text && !platform_write_file(a.hashes, text, text_len)) { log_error("не записать %s", a.hashes); rc = 1; }
     if (a.record && !save_record(rec, a.record, m.load)) rc = 1;
@@ -135,4 +161,10 @@ int run_terrain_map(const Args &a, AppMemory &m) {
     World w;
     if (!app_world_create(w, m, a.seed, nullptr)) return 1;
     return debug_write_terrain_map(w.terrain, a.terrain_map, m.load) ? 0 : 1;
+}
+
+int run_walk_map(const Args &a, AppMemory &m) {
+    World w;
+    if (!app_world_create(w, m, a.seed, nullptr)) return 1;
+    return debug_write_walk_map(w, a.walk_map, m.load) ? 0 : 1;
 }

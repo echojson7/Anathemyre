@@ -2,6 +2,7 @@
 // (только кадр). Всё читается при старте из <папка игры>/data/ — туда их кладёт make
 #include "app.h"
 #include "../asset/material.h"
+#include "../anim/track.h"
 #include "../asset/mesh.h"
 #include "../core/hash.h"
 #include "../core/log.h"
@@ -39,6 +40,135 @@ static bool prefab_read(void *ctx, Str name, const u8 **text, usize *size) {
     *text = data;
     L.hash = hash_combine(L.hash, text_hash(data, *size));
     return true;
+}
+
+
+// Коллайдеры построек для шага мира: коробки COLL сеток, которые стоят в сцене, — в оси мира (docs/people.md).
+// Папка читается в любом порядке, коробки складываются в порядке деталей сцены
+constexpr u32 STATIC_MAX_MESHES = 128;
+struct CollLoad {
+    AppMemory *m;
+    u64 want[STATIC_MAX_MESHES];
+    Span<MeshBox> boxes[STATIC_MAX_MESHES];
+    u32 count;
+    u32 failed;
+};
+static void load_coll(const char *name, void *user) {
+    CollLoad &L = *(CollLoad *)user;
+    u64 h = hash_bytes(name, strlen(name) - 5);
+    u32 k = 0;
+    while (k < L.count && L.want[k] != h) ++k;
+    if (k == L.count) return;
+    char rel[512];
+    snprintf(rel, sizeof rel, "meshes/%s", name);
+    // Разбор целиком — в арену загрузки; коробки копируются в её начало, остальное откатывается
+    usize mark = arena_mark(L.m->load);
+    u8 *data = nullptr;
+    usize size = 0;
+    MeshData md;
+    const char *err = "";
+    if (!read_data(rel, L.m->load, &data, &size) || !mesh_parse(data, size, L.m->load, md, &err)) {
+        log_error("сетка %s: %s", name, err);
+        L.failed++;
+        arena_restore(L.m->load, mark);
+        return;
+    }
+    usize n = md.collider.count;
+    MeshBox tmp[256];
+    if (n > 256) { log_error("сетка %s: коробок коллайдера больше 256", name); L.failed++; n = 0; }
+    memcpy(tmp, md.collider.data, n * sizeof(MeshBox));
+    arena_restore(L.m->load, mark);
+    MeshBox *keep = arena_push<MeshBox>(L.m->load, n + 1);
+    memcpy(keep, tmp, n * sizeof(MeshBox));
+    L.boxes[k] = {keep, n};
+}
+
+// Длина цикла шага клипа (data/anims/<клип>.game_engine.trk): сдвиг корня за петлю и её время
+static bool gait_clip(AppMemory &m, const char *clip, f32 *v, f32 *len, u64 *hash) {
+    char rel[128];
+    snprintf(rel, sizeof rel, "anims/%s.game_engine.trk", clip);
+    u8 *data = nullptr;
+    usize size = 0;
+    Track t;
+    const char *err = "";
+    if (!read_data(rel, m.load, &data, &size) || !track_parse(data, size, m.load, t, &err) || t.ticks < 2) {
+        log_error("дорожки %s: %s", rel, err);
+        return false;
+    }
+    *hash = hash_combine(*hash, hash_bytes(data, size));
+    const i32 *a = t.root, *b = t.root + (t.ticks - 1) * 3;
+    f32 dx = (f32)(b[0] - a[0]) * 0.001f, dz = (f32)(b[1] - a[1]) * 0.001f;
+    *len = f_sqrt(dx * dx + dz * dz);
+    *v = *len / ((f32)(t.ticks - 1) / (f32)TRACK_TICKS_PER_S);
+    return *len > 0.1f;
+}
+
+static bool world_static_load(World &w, AppMemory &m) {
+    usize mark = arena_mark(m.load);
+    CollLoad L{};
+    L.m = &m;
+    const Props &p = w.props;
+    for (u32 i = 0; i < p.count; ++i) {
+        u32 k = 0;
+        while (k < L.count && L.want[k] != p.mesh[i]) ++k;
+        if (k == L.count) {
+            if (L.count >= STATIC_MAX_MESHES) { log_error("сеток в сцене больше %u", STATIC_MAX_MESHES); return false; }
+            L.want[L.count++] = p.mesh[i];
+        }
+    }
+    char dir[1024];
+    snprintf(dir, sizeof dir, "%sdata/meshes", platform_exe_dir());
+    if (!platform_list_dir(dir, ".mesh", load_coll, &L) || L.failed) {
+        log_error("коллайдеры: нет папки %s или сетка не читается", dir);
+        arena_restore(m.load, mark);
+        return false;
+    }
+    CollBoxIn *boxes = arena_push<CollBoxIn>(m.load, COLL_MAX_BOXES);
+    u32 n = 0;
+    for (u32 i = 0; i < p.count; ++i) {
+        u32 k = 0;
+        while (L.want[k] != p.mesh[i]) ++k;
+        f32 sy, cy;
+        sincos_turn(p.yaw[i], &sy, &cy);
+        f32 sc = p.scale[i];
+        for (const MeshBox &b : L.boxes[k]) {
+            if (n >= COLL_MAX_BOXES) { log_error("коробок коллайдеров больше %u", COLL_MAX_BOXES); arena_restore(m.load, mark); return false; }
+            // Наклонная коробка — её объём в осях детали; дальше поворот детали вокруг вертикали
+            f32 x = b.qx, y = b.qy, z = b.qz, ww = b.qw;
+            f32 r[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - ww * z), 2 * (x * z + ww * y)},
+                           {2 * (x * y + ww * z), 1 - 2 * (x * x + z * z), 2 * (y * z - ww * x)},
+                           {2 * (x * z - ww * y), 2 * (y * z + ww * x), 1 - 2 * (x * x + y * y)}};
+            f32 h[3] = {b.hx, b.hy, b.hz}, e[3];
+            for (u32 a = 0; a < 3; ++a) e[a] = (f_abs(r[a][0]) * h[0] + f_abs(r[a][1]) * h[1] + f_abs(r[a][2]) * h[2]) * sc;
+            f32 lx = b.cx * sc, lz = b.cz * sc;
+            CollBoxIn &o = boxes[n++];
+            o.at = {p.cx[i], p.cz[i], p.x[i] + lx * cy + lz * sy, p.y[i] + b.cy * sc, p.z[i] - lx * sy + lz * cy};
+            o.hx = e[0];
+            o.hy = e[1];
+            o.hz = e[2];
+            o.yaw = p.yaw[i];
+        }
+    }
+    GaitTable gait;
+    u64 gh = 0x6A17ull;
+    if (!gait_clip(m, "walk", &gait.walk_v, &gait.walk_len, &gh) || !gait_clip(m, "run", &gait.run_v, &gait.run_len, &gh)) {
+        arena_restore(m.load, mark);
+        return false;
+    }
+    gait.hash = gh;
+    u64 t0 = platform_time_ns();
+    bool ok = world_build_static(w, boxes, n, gait, m.world, m.load);
+    if (!ok) log_error("коллайдеры: коробок или чанков с ними больше предела");
+    else {
+        char h1[17], h2[17];
+        log_info("коллайдеры: %u коробок, %u чанков; сетка ходимости: %u областей, %u уровней, %.0f мс, хеш %s; шаг: "
+                 "цикл %.2f м при %.2f м/с, бег %.2f м при %.2f м/с; хеш неизменного %s",
+                 n, w.coll.tiles, w.walk.count, w.walk.levels_total, (f64)(platform_time_ns() - t0) / 1e6,
+                 hex_u64(w.walk.hash, h1), gait.walk_len, gait.walk_v, gait.run_len, gait.run_v,
+                 hex_u64(world_static_hash(w), h2));
+    }
+    arena_restore(m.load, mark);
+    return ok;
 }
 
 bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash) {
@@ -79,12 +209,13 @@ bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash) {
         PrefabLoad pl{&m, 0x9EFAB0ull};
         ok = scene_load(w, text, size, prefab_read, &pl, err, sizeof err);
         if (!ok) log_error("data/scene.txt: %s", err);
+        if (ok) ok = world_static_load(w, m);
         // Хеш описаний, которые читает шаг мира: сцена с заготовками, описание земли и сама сетка (её строит
         // код генератора)
         if (desc_hash)
             *desc_hash = hash_combine(hash_combine(hash_combine(hash_combine(0x5CE7Eull, text_hash(text, size)), pl.hash),
                                                    terrain_text),
-                                      w.terrain.hash);
+                                      hash_combine(w.terrain.hash, world_static_hash(w)));
     }
     arena_restore(m.load, mark);
     return ok;
