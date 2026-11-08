@@ -1,6 +1,6 @@
 // Рендер: Vulkan 1.3. Только рисует то, что дал вид; мир не читает и не меняет (шов 2).
 // Швы кадра (docs/stack.md, docs/frame.md): общий буфер сеток, экземпляры в буфере GPU, 64-битный ключ порядка,
-// обратная глубина, всё относительно камеры, surface()/light_surface(). Поверх — простой forward этапов 1–4
+// обратная глубина, всё относительно камеры, surface()/light_surface(). Кадр мира — visibility buffer (этап 5)
 #pragma once
 #include "../core/mem.h"
 
@@ -63,29 +63,6 @@ struct RenderPoint {
     u32 pad[3];
 };
 
-// Ключ порядка отрисовки (не адрес сетки): слой 4 бита | конвейер 8 | сетка 17 | LOD 3 | глубина 32.
-// Глубина — биты положительного f32 расстояния: для непрозрачного ближние раньше
-enum RenderLayer : u32 { LAYER_OPAQUE = 0, LAYER_TRANSPARENT = 8 };
-enum RenderPipe : u32 { PIPE_MESH = 0 };
-inline u64 render_key(u32 layer, u32 pipe, u32 mesh, u32 lod, f32 depth) {
-    u32 d;
-    memcpy(&d, &depth, 4);
-    if (depth < 0.0f) d = 0;
-    return ((u64)(layer & 0xF) << 60) | ((u64)(pipe & 0xFF) << 52) | ((u64)(mesh & 0x1FFFF) << 35) |
-           ((u64)(lod & 0x7) << 32) | d;
-}
-inline u32 render_key_mesh(u64 key) { return (u32)(key >> 35) & 0x1FFFF; }
-inline u32 render_key_lod(u64 key) { return (u32)(key >> 32) & 0x7; }
-// Сетка и LOD вместе: подряд идущие вызовы с одним значением сливаются в один вызов с экземплярами
-inline u32 render_key_mesh_lod(u64 key) { return (u32)(key >> 32) & 0xFFFFF; }
-inline u32 render_key_pipe(u64 key) { return (u32)(key >> 52) & 0xFF; }
-
-struct RenderDraw {
-    u64 key;
-    u32 instance;  // номер в RenderFrame::instances
-    u32 pad;
-};
-
 // Камера: положение чанк + смещение, базис взгляда, проекция с обратной глубиной до бесконечности
 struct RenderView {
     i32 cx, cz;
@@ -99,7 +76,6 @@ struct RenderView {
 // cell_min метров и растёт с глубиной степенями двойки, пока не станет пикселем кадра
 struct RenderStyle {
     bool pixel = true;     // выключается клавишей P
-    bool forward = false;  // старый forward этапов 1–4 вместо кадра мира (для сравнения, F3 или --forward)
     bool froxel_heat = false;  // тепловая карта числа огней в клетке froxels поверх кадра (F3)
     bool gcache = true;        // кеш поверхности земли (docs/gcache.md); выкл — земля на пиксель (F3, --nogcache)
     f32 cell_min = 1.0f / 80.0f;
@@ -144,7 +120,6 @@ struct RenderFrame {
     bool ground;       // рисовать землю (её данные — render_terrain_set)
     u32 ground_layers[RENDER_GROUND_LAYERS];  // материалы слоёв
     Span<const RenderInstance> instances;
-    Span<RenderDraw> draws;  // рендер сортирует по ключу на месте
     Span<const RenderPoint> points;
     Span<const RenderLineVertex> lines;  // пары вершин
     Span<const RenderDecal> decals;      // все, что задевают видимое; по клеткам их раскладывает рендер (froxels)
@@ -185,7 +160,7 @@ const char *render_device_name();
 // VMA; освобождение — через несколько кадров, когда GPU их точно дорисовал. Загрузка ждёт копию на GPU
 // Индексы всех LOD лежат одним массивом, LOD — диапазон в нём (кусок LODS .mesh); без LOD — весь массив
 // Кластеры (≤ 124 треугольников, индексы подряд) — для отсечения на GPU кадра мира; LOD — диапазон индексов
-// для forward и диапазон кластеров. Без кластеров рендер режет индексы LOD на куски сам
+// и диапазон кластеров. Без кластеров рендер режет индексы LOD на куски сам
 struct MeshVertex;
 constexpr u32 RENDER_MESH_MAX_LODS = 8;
 struct RenderLod {
@@ -230,7 +205,7 @@ bool render_terrain_set(const RenderTerrain &t);
 f64 render_gpu_ms();
 // Время проходов прошлого кадра: имена и мс, до cap; возвращает число проходов (0 — таймеров нет)
 u32 render_gpu_passes(const char **names, f64 *ms, u32 cap);
-// Видимых кластеров в прошлом кадре мира (0 — forward)
+// Видимых кластеров в прошлом кадре мира
 u32 render_vis_clusters();
 // Переполнение (docs/graph.md, «Переполнения»): что не влезло в буфер с пределом. cap == 0 — счёт без предела
 // (например, клеток froxels, где огни не влезли и читатель перебирает весь список кадра)
@@ -241,16 +216,17 @@ struct RenderOverflow {
 // Переполнения последнего кадра: процессор — этого кадра, GPU — прочитанного (на кадр-два раньше)
 u32 render_overflows(RenderOverflow *out, u32 cap);
 // Работа освещения прочитанного кадра мира (docs/tiles.md): счётчики шейдеров. Для ракурса и часа они те же от
-// запуска к запуску, по ним CI ловит «стало делать больше работы». false — кадр не мира (forward) или ещё не прочитан
+// запуска к запуску, по ним CI ловит «стало делать больше работы». false — кадр ещё не прочитан
 constexpr u32 RENDER_TILE_KINDS = 5;  // плитки: небо, земля, сетки, смесь, земля на пиксель
 struct RenderWork {
     u32 tiles[RENDER_TILE_KINDS];
     u32 px_sky, px_ground, px_mesh;  // пиксели по видам
     u32 surf_ground, surf_mesh;      // поверхности: surface() и light_surface() раз на ячейку
-    u32 shadow_steps;                // шаги луча тени рельефа
+    u32 shadow_taps;                // выборки карты горизонта (тень земли, docs/horizon.md)
     // Кеш поверхности земли (docs/gcache.md): страницы, прочитанные кадром; запечённые; без места; поверхности
     // земли, посчитанные освещением мимо кеша (крутые склоны, нет места)
     u32 gc_used, gc_baked, gc_over, gc_direct;
+    const char *gc_off;  // почему кеш земли выключен (nullptr — включён); в --work не пишется
 };
 bool render_work(RenderWork &out);
 // Процессорное время последнего render_frame по частям, мс (docs/frame_time.md). Ожидание — fence, acquire и

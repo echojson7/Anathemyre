@@ -1,15 +1,12 @@
-// Конвейеры и кадр forward (этапы 1–4): сетки экземплярами по ключу порядка, земля, отладочные отрезки и точки.
-// Обратная глубина D32F до бесконечности, координаты относительно камеры. Вершины шейдер читает сам по
-// адресу буфера (без входа вершин конвейера), как потом visibility buffer (docs/frame.md)
+// Конвейеры и кадр: общая раскладка, графические конвейеры, отправка и показ кадра; проходы кадра мира —
+// vk_world.cpp. Обратная глубина D32F до бесконечности, координаты относительно камеры. Вершины шейдер читает
+// сам по адресу буфера (без входа вершин конвейера, docs/frame.md)
 #include "vk_graph.h"
 #include "../asset/mesh.h"
 #include "../core/log.h"
-#include "../core/sort.h"
 #include "../platform/platform.h"
 #include <stdio.h>
 #include <string.h>
-
-static RenderDraw g_sort_tmp[RENDER_MAX_INSTANCES];
 
 // name — один из списка через запятую
 static bool name_listed(const char *list, const char *name) {
@@ -141,23 +138,14 @@ bool vk_create_pipelines() {
     li.pushConstantRangeCount = 1;
     li.pPushConstantRanges = &pc;
     if (!vk_check(vkCreatePipelineLayout(g_vk.device, &li, nullptr, &g_vk.layout), "vkCreatePipelineLayout")) return false;
-    PipeDesc mesh{"mesh.vert", "mesh.frag"};
-    mesh.cull = VK_CULL_MODE_BACK_BIT;
-    PipeDesc ground{"ground.vert", "ground.frag"};
-    ground.cull = VK_CULL_MODE_BACK_BIT;
     PipeDesc points{"points.vert", "color.frag"};
     points.blend = true;
     points.depth_write = false;
     PipeDesc lines{"lines.vert", "color.frag", VK_PRIMITIVE_TOPOLOGY_LINE_LIST, true, false};
-    PipeDesc sky{"sky.vert", "sky.frag"};
-    sky.depth_write = false;
-    g_vk.pipe_sky = vk_make_pipeline(sky);
-    g_vk.pipe_mesh = vk_make_pipeline(mesh);
-    g_vk.pipe_ground = vk_make_pipeline(ground);
     g_vk.pipe_points = vk_make_pipeline(points);
     g_vk.pipe_lines = vk_make_pipeline(lines);
-    return g_vk.pipe_mesh && g_vk.pipe_ground && g_vk.pipe_points && g_vk.pipe_lines && g_vk.pipe_sky && vk_sky_init() &&
-           vk_world_init() && vk_froxel_init() && vk_ui_init();
+    return g_vk.pipe_points && g_vk.pipe_lines && vk_sky_init() &&
+           vk_horizon_init() && vk_world_init() && vk_froxel_init() && vk_ui_init();
 }
 
 void vk_destroy_pipelines() {
@@ -165,11 +153,12 @@ void vk_destroy_pipelines() {
     vk_world_shutdown();
     vk_froxel_shutdown();
     vk_sky_shutdown();
-    VkPipeline ps[] = {g_vk.pipe_mesh, g_vk.pipe_ground, g_vk.pipe_points, g_vk.pipe_lines, g_vk.pipe_sky};
+    vk_horizon_shutdown();
+    VkPipeline ps[] = {g_vk.pipe_points, g_vk.pipe_lines};
     for (VkPipeline p : ps)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
     if (g_vk.layout) vkDestroyPipelineLayout(g_vk.device, g_vk.layout, nullptr);
-    g_vk.pipe_mesh = g_vk.pipe_ground = g_vk.pipe_points = g_vk.pipe_lines = g_vk.pipe_sky = VK_NULL_HANDLE;
+    g_vk.pipe_points = g_vk.pipe_lines = VK_NULL_HANDLE;
     g_vk.layout = VK_NULL_HANDLE;
 }
 
@@ -213,7 +202,6 @@ u32 render_gpu_passes(const char **names, f64 *ms, u32 cap) {
 static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g = FrameGpu{};
     g.vertices = g_vk.vertices.address;
-    g.instances = fs.instances.address;
     g.materials = g_vk.materials.address;
     g.lines = fs.lines.address;
     g.points = fs.points.address;
@@ -247,6 +235,7 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.ndc_per_pixel[1] = 2.0f / (h > 0 ? h : 1.0f);
     vk_terrain_fill(g, f);
     vk_sky_fill(g, f);
+    vk_horizon_fill(g, f);
     vk_world_fill(g, f, fs);
     vk_froxel_fill(g, f, fs);
 }
@@ -276,100 +265,6 @@ static void capture_pass(u32 img) {
     rg_use(g_vk.rg_capture, RG_COPY_WRITE);
     g_vk.capture_extent = g_vk.extent;
     g_vk.capture_ready = true;
-}
-
-// Forward («старый forward», F3): сетки по ключам порядка, земля, небо, отрезки и точки в картинку swapchain
-struct ForwardFrame {
-    const RenderFrame *f;
-    VkDeviceAddress frame;
-    u32 img, ndraws, npoints, nlines;
-};
-static ForwardFrame g_ff;
-
-static void record_forward(VkCommandBuffer cmd, void *) {
-    const RenderFrame &f = *g_ff.f;
-    const usize ndraws = g_ff.ndraws;
-    const u32 npoints = g_ff.npoints, nlines = g_ff.nlines;
-    auto ca = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
-    ca.imageView = g_vk.views[g_ff.img];
-    ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    ca.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    ca.clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};  // пустые пиксели закрашивает небо
-    // Глубина прошлого кадра не нужна: очистка нулём (обратная глубина: 0 — бесконечность)
-    auto da = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
-    da.imageView = g_vk.depth.view;
-    da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    da.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    da.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    da.clearValue.depthStencil = {0.0f, 0};
-    auto ri = vk_info<VkRenderingInfo>(VK_STRUCTURE_TYPE_RENDERING_INFO);
-    ri.renderArea = {{0, 0}, g_vk.extent};
-    ri.layerCount = 1;
-    ri.colorAttachmentCount = 1;
-    ri.pColorAttachments = &ca;
-    ri.pDepthAttachment = &da;
-    vkCmdBeginRendering(cmd, &ri);
-
-    VkViewport vp{0, 0, (f32)g_vk.extent.width, (f32)g_vk.extent.height, 0, 1};
-    VkRect2D sc{{0, 0}, g_vk.extent};
-    vkCmdSetViewport(cmd, 0, 1, &vp);
-    vkCmdSetScissor(cmd, 0, 1, &sc);
-    PushConsts pc{g_ff.frame, 0, 0};
-    const VkShaderStageFlags pcs = PUSH_STAGES;
-
-    // Сетки: подряд идущие вызовы одной сетки — один вызов с экземплярами
-    if (ndraws) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_mesh);
-        vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
-        vkCmdBindIndexBuffer(cmd, g_vk.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-        u32 first = 0;
-        for (usize i = 0; i < ndraws;) {
-            u64 key = f.draws.data[i].key;
-            usize j = i + 1;
-            while (j < ndraws && render_key_mesh_lod(f.draws.data[j].key) == render_key_mesh_lod(key) &&
-                   render_key_pipe(f.draws.data[j].key) == render_key_pipe(key))
-                j++;
-            u32 n = (u32)(j - i);
-            u32 mesh = render_key_mesh(key);
-            if (key != ~0ull && mesh && mesh < RENDER_MAX_MESHES && g_vk.meshes[mesh].used) {
-                const MeshSlot &m = g_vk.meshes[mesh];
-                u32 lod = render_key_lod(key);
-                const RenderLod &l = m.lods[lod < m.lod_count ? lod : m.lod_count - 1];
-                vkCmdDrawIndexed(cmd, l.index_count, n, m.first_index + l.first_index, (i32)m.first_vertex, first);
-            }
-            if (key != ~0ull) first += n;
-            i = j;
-        }
-    }
-    // Земля clipmap'ом: кольцо — номер в push-константе, буфер индексов — по сдвигу дыры
-    const TerrainGpu &tg = g_vk.terrain;
-    if (tg.on && f.ground) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_ground);
-        vkCmdBindIndexBuffer(cmd, tg.index.buffer, 0, VK_INDEX_TYPE_UINT32);
-        for (i32 L = 0; L < CLIP_LEVELS; ++L) {
-            PushConsts pl{g_ff.frame, (u32)L, 0};
-            vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pl, &pl);
-            u32 first = L == 0 ? tg.first_full : tg.first_ring[tg.ring[L]];
-            u32 count = L == 0 ? tg.count_full : tg.count_ring;
-            vkCmdDrawIndexed(cmd, count, 1, first, 0, 0);
-        }
-    }
-    // Небо — после непрозрачного: только пустые пиксели (глубина 0)
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_sky);
-    vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
-    vkCmdDraw(cmd, 3, 1, 0, 0);
-    if (nlines) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_lines);
-        vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
-        vkCmdDraw(cmd, nlines, 1, 0, 0);
-    }
-    if (npoints) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.pipe_points);
-        vkCmdPushConstants(cmd, g_vk.layout, pcs, 0, sizeof pc, &pc);
-        vkCmdDraw(cmd, 6, npoints, 0, 0);
-    }
-    vkCmdEndRendering(cmd);
 }
 
 bool render_frame(const RenderFrame &f) {
@@ -406,24 +301,11 @@ bool render_frame(const RenderFrame &f) {
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) return vk_check(r, "vkAcquireNextImageKHR");
     vkResetFences(g_vk.device, 1, &fs.done);
 
-    // Forward: вызовы по ключу порядка; экземпляры пишутся в буфер кадра в том же порядке, подряд для одной сетки.
-    // Кадр мира берёт экземпляры как есть (vk_world_fill), ключи ему не нужны
-    usize ndraws = f.draws.count < RENDER_MAX_INSTANCES ? f.draws.count : RENDER_MAX_INSTANCES;
-    vk_overflow("вызовы сеток", f.draws.count, RENDER_MAX_INSTANCES);
     vk_overflow("экземпляры", f.instances.count, RENDER_MAX_INSTANCES);
     vk_overflow("точки", f.points.count, RENDER_MAX_POINTS);
     vk_overflow("вершины отрезков", f.lines.count, RENDER_MAX_LINE_VERTICES);
     vk_overflow("декали", f.decals.count, RENDER_MAX_DECALS);
     vk_overflow("огни", f.lights.count, RENDER_MAX_LIGHTS);
-    if (!f.style.forward) ndraws = 0;
-    radix_sort_u64(f.draws.data, g_sort_tmp, ndraws, [](const RenderDraw &d) { return d.key; });
-    RenderInstance *inst = (RenderInstance *)fs.instances.mapped;
-    u32 ninst = 0;
-    for (usize i = 0; i < ndraws; ++i) {
-        u32 k = f.draws.data[i].instance;
-        if (k < f.instances.count) inst[ninst++] = f.instances.data[k];
-        else f.draws.data[i].key = ~0ull;  // плохой номер — вызов пропускается
-    }
     FrameGpu &g = *(FrameGpu *)fs.frame.mapped;
     fill_frame(g, f, fs);
 
@@ -445,19 +327,11 @@ bool render_frame(const RenderFrame &f) {
     // Таблицы неба и froxels — до кадра: их читают земля, сетки (дымка, свет неба), небо и освещение
     vk_sky_passes(fs.frame.address);
     vk_froxel_passes(fs);
-    fs.world = !f.style.forward;
-    if (fs.world) {
-        if (!vk_world_passes(fs, f, img, npoints, nlines)) {
-            log_error("кадр мира: нет картинок");
-            return false;
-        }
-    } else {
-        g_ff = ForwardFrame{&f, fs.frame.address, img, (u32)ndraws, npoints, nlines};
-        rg_pass("forward", "forward", record_forward, nullptr);
-        rg_use(g_vk.rg_swap, RG_COLOR, RG_DISCARD);
-        rg_use(g_vk.rg_depth, RG_DEPTH, RG_DISCARD);
-        vk_sky_reads(RG_FS_READ);
-        vk_froxel_reads(RG_FS_READ);
+    // Карта горизонта (docs/horizon.md): только в первом кадре новой земли
+    vk_horizon_passes(fs.frame.address);
+    if (!vk_world_passes(fs, f, img, npoints, nlines)) {
+        log_error("кадр мира: нет картинок");
+        return false;
     }
     vk_stats_copy_pass(fs);
     // Интерфейс — после замеров GPU (таймер меряет кадр мира) и до снимка: снимок с интерфейсом

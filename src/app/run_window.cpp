@@ -77,6 +77,29 @@ struct TimeCtl {
 struct MouseOwner {
     bool world[MOUSE_COUNT] = {};
 };
+// Отладочные режимы, с которыми к/с и мс нельзя сравнивать с бюджетом (docs/budget.md): без ячеек кеш земли не
+// работает и вся земля считается на пиксель; vsync упирает к/с в частоту экрана; слои проверки и отладочная
+// сборка медленнее в разы. Пусто — замер честный
+static void unfair_modes(char *out, usize cap, bool pixel, bool nogcache, bool lights, bool heat, bool validation,
+                         bool vsync) {
+    out[0] = 0;
+    usize n = 0;
+    auto add = [&](bool on, const char *what) {
+        if (!on || n + 1 >= cap) return;
+        int k = snprintf(out + n, cap - n, "%s%s", n ? ", " : "", what);
+        if (k > 0) n = (usize)k + n < cap ? n + (usize)k : cap - 1;
+    };
+    add(!pixel, "без ячеек (P)");
+    add(nogcache, "без кеша земли");
+    add(lights, "тестовые огни");
+    add(heat, "огни по клеткам");
+    add(validation, "слои проверки");
+#ifdef ANA_DEBUG
+    add(true, "отладочная сборка");
+#endif
+    add(vsync, "vsync");
+}
+
 static Input world_input(const Input &in, MouseOwner &mo, bool ui_mouse, bool ui_keys) {
     Input w = in;
     for (u32 b = 0; b < MOUSE_COUNT; ++b) {
@@ -131,6 +154,8 @@ int run_window(const Args &a, AppMemory &m) {
     const bool hud_on = !a.nohud && !a.timelapse && ui_init(m.world, m.load, data_dir);
     HudMenu menu;
     HudStats hs{};
+    char unfair[160] = "";  // включённые отладочные режимы (unfair_modes); пусто — замер честный
+    hs.unfair = unfair;
     // Проходы GPU для панели отладки: сумма за секунду → среднее (как остальные числа кадра)
     static_assert(RENDER_MAX_PASSES <= DEBUG_MAX_PASSES, "строк проходов в панели меньше, чем у отрисовки");
     const char *pass_names[RENDER_MAX_PASSES] = {};
@@ -250,6 +275,7 @@ int run_window(const Args &a, AppMemory &m) {
                 di.prof = prof;
                 di.step_ms = hs.step_ms;
                 di.gpu_name = render_device_name();
+                di.unfair = unfair;
                 di.step = w.step;
                 di.hash = last_hash;
                 di.hour = sky_hour(w.clock, (f64)w.clock.tick);
@@ -276,11 +302,12 @@ int run_window(const Args &a, AppMemory &m) {
                 di.work_px[2] = work.px_mesh;
                 di.work_surf[0] = work.surf_ground;
                 di.work_surf[1] = work.surf_mesh;
-                di.work_steps = work.shadow_steps;
+                di.work_shadow = work.shadow_taps;
                 di.work_gc[0] = work.gc_used;
                 di.work_gc[1] = work.gc_baked;
                 di.work_gc[2] = work.gc_over;
                 di.work_gc[3] = work.gc_direct;
+                di.gc_off = work.gc_off;
                 di.overflows = nover_last;
                 for (u32 i = 0; i < nover_last; ++i) {
                     di.over_what[i] = over_last[i].what;
@@ -310,6 +337,8 @@ int run_window(const Args &a, AppMemory &m) {
         }
         cam.settings = CameraSettings{set.mouse_sens, set.invert_y, set.fov_deg};
         bool pixel = set.pixel && !a.nopixel;
+        unfair_modes(unfair, sizeof unfair, pixel, a.nogcache || ds.gcache_off, a.test_lights || ds.test_lights,
+                     a.froxel_heat || ds.froxel_heat, a.validation || a.gpu_validation, vsync_applied);
         dbg.enabled = ds.lines;
 
         Input win = world_input(in, mouse_owner, hud_on && ui_wants_mouse(), menu.open);
@@ -395,7 +424,7 @@ int run_window(const Args &a, AppMemory &m) {
 
         arena_reset(m.frame);
         ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused || a.timelapse ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel,
-                     a.forward || ds.forward, a.test_lights || ds.test_lights, a.froxel_heat || ds.froxel_heat,
+                     a.test_lights || ds.test_lights, a.froxel_heat || ds.froxel_heat,
                      a.nogcache || ds.gcache_off, scatter};
         if (!ds.lines) vi.dbg = nullptr;
         RenderFrame rf;
@@ -432,7 +461,7 @@ int run_window(const Args &a, AppMemory &m) {
             u32 n = render_gpu_passes(nm, ms, RENDER_MAX_PASSES);
             bool same = n == npass;
             for (u32 i = 0; i < n && same; ++i) same = nm[i] == pass_names[i];
-            if (!same) {  // другой набор проходов (переключили forward) — заново
+            if (!same) {  // другой набор проходов (сборка карты горизонта, пересчёт таблиц неба) — заново
                 for (u32 i = 0; i < RENDER_MAX_PASSES; ++i) pass_sum[i] = 0;
                 pass_frames = 0;
             }
@@ -467,11 +496,11 @@ int run_window(const Args &a, AppMemory &m) {
             char title[320];
             snprintf(title, sizeof title,
                      "Anathemyre — %.0f к/с · кадр %.2f мс (макс %.2f) · CPU кадра %.2f мс · GPU %.2f мс (макс %.2f) · "
-                     "шаг %.3f мс · ×%g%s%s · шаг %" PRIu64 " · %02d:%02d",
+                     "шаг %.3f мс · ×%g%s · шаг %" PRIu64 " · %02d:%02d%s%s",
                      (f64)frames_window / secs, st_frame.avg_last, st_frame.max_last, st_cpu.avg_last, st_gpu.avg_last,
                      st_gpu.max_last,
-                     st_step.avg_last, (f64)SPEEDS[tc.speed], tc.paused ? " · пауза" : "", pixel ? "" : " · без ячеек",
-                     w.step, hour_hm / 60, hour_hm % 60);
+                     st_step.avg_last, (f64)SPEEDS[tc.speed], tc.paused ? " · пауза" : "", w.step, hour_hm / 60,
+                     hour_hm % 60, unfair[0] ? " · НЕ ДЛЯ ЗАМЕРА: " : "", unfair);
             platform_set_title(title);
             npass_avg = npass;
             for (u32 i = 0; i < npass; ++i) pass_avg[i] = pass_frames ? pass_sum[i] / pass_frames : 0.0;
@@ -487,7 +516,7 @@ int run_window(const Args &a, AppMemory &m) {
             }
             nover_last = nover_sec;
             nover_sec = 0;
-            hs = HudStats{(f64)frames_window / secs, st_frame.avg_last, st_cpu.avg_last, st_gpu.avg_last, st_step.avg_last};
+            hs = HudStats{(f64)frames_window / secs, st_frame.avg_last, st_cpu.avg_last, st_gpu.avg_last, st_step.avg_last, unfair};
             log_info("%s", title);
             // Проходы GPU за секунду — те же числа, что в F3, для журнала и сравнения на другой машине
             if (npass_avg) {
@@ -499,12 +528,13 @@ int run_window(const Args &a, AppMemory &m) {
                 log_info("%s", line);
             }
             log_frame_parts(*prof);
+            if (work_have && work.gc_off) log_info("кеш земли выключен: %s — вся земля считается на пиксель", work.gc_off);
             if (work_have)
                 log_info("работа освещения: плитки небо %u земля %u сетки %u смесь %u земля на пиксель %u · пиксели небо %u земля %u "
-                         "сетки %u · поверхности земли %u сеток %u · шаги тени %u · кеш земли: страниц %u запечено %u "
+                         "сетки %u · поверхности земли %u сеток %u · выборки тени %u · кеш земли: страниц %u запечено %u "
                          "без места %u, мимо кеша %u",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
-                         work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_steps, work.gc_used,
+                         work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
                          work.gc_baked, work.gc_over, work.gc_direct);
             frames_window = 0;
             window_t0 = now;
@@ -521,12 +551,12 @@ int run_window(const Args &a, AppMemory &m) {
         i32 n = snprintf(t, sizeof t,
                          "tiles_sky %u\ntiles_ground %u\ntiles_mesh %u\ntiles_mix %u\ntiles_ground_px %u\npx_sky %u\n"
                          "px_ground %u\n"
-                         "px_mesh %u\nsurf_ground %u\nsurf_mesh %u\nshadow_steps %u\ngc_used %u\ngc_baked %u\n"
+                         "px_mesh %u\nsurf_ground %u\nsurf_mesh %u\nshadow_taps %u\ngc_used %u\ngc_baked %u\n"
                          "gc_over %u\ngc_direct %u\n",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
-                         work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_steps, work.gc_used,
+                         work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
                          work.gc_baked, work.gc_over, work.gc_direct);
-        if (!work_have) log_error("--work: кадр мира не прочитан (forward или мало кадров)");
+        if (!work_have) log_error("--work: кадр мира не прочитан (мало кадров)");
         if (!work_have || n <= 0 || !platform_write_file(a.work, t, (usize)n)) rc_exit = 1;
     }
     if (a.record && !save_record(rec, a.record, m.load)) rc_exit = 1;

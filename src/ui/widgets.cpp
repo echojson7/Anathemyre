@@ -36,7 +36,7 @@ void ui_section(UiForm &f, const char *title) {
     f.y += ui_px(4);
 }
 
-void ui_value(UiForm &f, const char *label, const char *value) {
+void ui_value(UiForm &f, const char *label, const char *value, u32 rgba) {
     f32 row = ui_px(24);
     f32 y = floorf(f.y + (row - ui_line(UI_TEXT)) * 0.5f);
     f32 lx = ui_text(f.x, y, UI_TEXT, ui_col::DIM, label);
@@ -52,7 +52,7 @@ void ui_value(UiForm &f, const char *label, const char *value) {
         }
         snprintf(cut + n, sizeof cut - n, "…");
     }
-    ui_text_right(f.x + f.w, y, UI_TEXT, ui_col::TEXT, cut);
+    ui_text_right(f.x + f.w, y, UI_TEXT, rgba, cut);
     f.y += row;
 }
 

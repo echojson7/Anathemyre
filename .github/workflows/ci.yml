@@ -107,12 +107,10 @@ jobs:
           export ASAN_SYMBOLIZER_PATH=~/.cache/anathemyre/llvm-$LLVM_VER/bin/llvm-symbolizer  # иначе подавления не видят имён функций
           # ASan + слои проверки: ошибки Vulkan видны с первых кадров, малое окно — lavapipe считает пиксели
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation --window 640 360 2>&1 | tail -40
-          # старый forward (переключатель сравнения) — тоже под слоями проверки
-          xvfb-run -a -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 10 --validation --window 640 360 --forward 2>&1 | tail -5
           # проверка на GPU (GPU-AV, docs/graph.md «Проверки»): чтение и запись мимо буферов по адресам, кадр мира.
-          # Шесть шейдеров lavapipe под GPU-AV не тянет (падает или съедает ~14 ГБ) — без проверки
+          # Четыре шейдера lavapipe под GPU-AV не тянет (падает, съедает ~14 ГБ или считает минуты) — без проверки
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 4 --window 640 360 --gpuav \
-            --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,ground.vert,ground.frag,mesh.frag 2>&1 | tail -5
+            --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp 2>&1 | tail -5
           # снимок в полный размер для глаза
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 10 --validation --shot frame.bmp | tail -5
           # кадр мира одинаков от запуска к запуску (docs/frame.md, «Сверка кадров»): два запуска с тестовыми огнями
@@ -127,6 +125,11 @@ jobs:
           cmp same_1_0003.bmp same_2_0003.bmp && echo "кадры двух запусков совпали"
           cmp work_1.txt work_2.txt && echo "счётчики работы двух запусков совпали"
           tools/work_check.sh tests/work_ref.txt work_1.txt
+          # потолки работы на пиксель кадра (docs/budget.md): эталон можно обновить, бюджет — только решением
+          tools/budget_check.sh tests/work_budget.txt work_1.txt
+          # кеш земли в обычной сцене включён и не пуст (docs/gcache.md, «Когда кеш выключен»): выключенный кеш
+          # молча уводит всю землю на пиксель, а кадр при этом верный — ловим по счётчику, отдельно от допуска эталона
+          awk '$1 == "gc_used" { ok = $2 > 0 } END { if (!ok) { print "кеш земли пуст: gc_used = 0"; exit 1 } }' work_1.txt
       - uses: actions/upload-artifact@v4
         with:
           name: frame

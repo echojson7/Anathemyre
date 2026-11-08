@@ -84,7 +84,7 @@ void ground_eval(GroundIn g, out Surface s0, out Surface s1) {
 
 // Входы земли в точке rel (относительно камеры) на пиксель: vnormal — нормаль вершин, level — кольцо, wdepth —
 // глубина воды, ng — нормаль треугольника вверх (выбирает плоскость привязки ячейки). Кадр мира берёт землю из
-// кеша (gcache.glsl), этот путь — у крутых склонов, без правила пиксельности и у forward
+// кеша (gcache.glsl), этот путь — у крутых склонов и без правила пиксельности
 GroundIn ground_pixel_in(vec3 v_rel, vec3 v_normal, uint v_level, float v_wdepth, vec3 ng) {
     FrameData f = pc.frame;
     float depth = dot(v_rel, f.forward.xyz);

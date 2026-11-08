@@ -7,7 +7,7 @@
 // пиксельности. Пиксели с одним треугольником и одной ячейкой — одна поверхность: surface() → light_surface()
 // считается раз, на первом из них, и раздаётся остальным. Ведущие пиксели сжимаются в начало группы, поэтому
 // считают их подряд идущие потоки. Пустые пиксели — небо (sky.glsl). Пишет линейный цвет в HDR-картинку,
-// стиль — отдельным проходом. Заодно считает свою работу (STAT_PX_*, STAT_SURF_*, STAT_SHADOW_STEPS).
+// стиль — отдельным проходом. Заодно считает свою работу (STAT_PX_*, STAT_SURF_*, STAT_SHADOW_TAPS).
 // Земля (docs/gcache.md): поверхность — из кеша земли по текселю, который разбор плиток записал в gc_cells;
 // у земли поверхность — тексель, свет — раз на тексель. Плитка земли без разбора треугольников: если хоть
 // одного текселя нет в кеше (не хватило места), она уходит в «землю на пиксель». Та и смесь считают
@@ -16,7 +16,7 @@ layout(constant_id = 0) const uint TILE_KIND = 3u;  // TILE_* из common.glsl; 
 #define RESOLVE_GROUND (TILE_KIND == TILE_MIX || TILE_KIND == TILE_GROUND_PX)
 #define GC_KIND (TILE_KIND == TILE_GROUND || TILE_KIND == TILE_MIX || TILE_KIND == TILE_GROUND_PX)
 #define RESOLVE_MESH (TILE_KIND == TILE_MESH || TILE_KIND == TILE_MIX)
-uint g_steps = 0u;  // шаги луча тени рельефа этого потока (terrain.glsl)
+uint g_steps = 0u;  // выборки карты горизонта этого потока (horizon.glsl)
 #define T_SHADOW_STEPS g_steps
 ivec2 g_origin;  // начало отсчёта узоров: чанк камеры, у текселя кеша — его чанк (gcache.glsl)
 #define ORIGIN_CHUNK g_origin
@@ -37,7 +37,7 @@ shared uint s_lead[64];    // поток ведущего пикселя той 
 shared uint s_rank[64];    // у ведущего — его место среди ведущих
 shared uint s_list[64];    // ведущие по порядку
 shared vec3 s_color[64];
-shared uint s_work[7];     // пиксели неба, земли, сеток; поверхности земли, сеток; шаги тени; земля на пиксель
+shared uint s_work[7];     // пиксели неба, земли, сеток; поверхности земли, сеток; выборки тени; земля на пиксель
 shared uint s_bail;        // плитка земли уходит в «землю на пиксель»: текселя нет в кеше
 const uint HIT_GCACHE = 3u;  // земля из кеша: rel — точка пикселя, level — уровень, m0, m1 — номер текселя
 
@@ -97,7 +97,7 @@ vec3 shade_hit(Hit h, int phys) {
 // Работа группы — в счётчики кадра: одна атомарная операция на счётчик и плитку
 void work_flush() {
     const uint at[7] = uint[7](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
-                               STAT_SHADOW_STEPS, STAT_GC_PX_DIRECT);
+                               STAT_SHADOW_TAPS, STAT_GC_PX_DIRECT);
     for (uint k = 0u; k < 7u; ++k)
         if (s_work[k] != 0u) atomicAdd(pc.frame.stats.v[at[k]], s_work[k]);
 }
