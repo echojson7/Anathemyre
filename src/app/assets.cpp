@@ -97,6 +97,51 @@ struct MeshLoad {
     u32 failed;
 };
 
+// Тело человека: на каждый скелет из SKIN — файл data/people/<сетка>.<скелет>.skel (кости по имени, в том же
+// порядке, что в сетке) и источник скиннинга. Скелеты — в арене мира (живут весь запуск)
+static bool load_body(MeshLoad &L, const char *file, const MeshData &md, u32 mesh) {
+    if (L.view->body_count >= VIEW_MAX_BODIES) { log_error("тел людей больше %u", VIEW_MAX_BODIES); return false; }
+    ViewBody &b = L.view->bodies[L.view->body_count];
+    b = ViewBody{};
+    usize nlen = strlen(file) - 5;
+    b.name = hash_bytes(file, nlen);
+    b.mesh = mesh;
+    for (u32 k = 0; k < md.skin_count; ++k) {
+        const MeshSkin &sk = md.skins[k];
+        char rel[512];
+        snprintf(rel, sizeof rel, "people/%.*s.%.*s.skel", (int)nlen, file, (int)sk.skeleton.n, sk.skeleton.p);
+        u8 *data = nullptr;
+        usize size = 0;
+        const char *err = "";
+        Skel &s = b.skel[k];
+        if (!read_data(rel, L.m->load, &data, &size) || !skel_parse(data, size, L.m->world, s, &err)) {
+            log_error("скелет %s: %s", rel, err);
+            return false;
+        }
+        if (s.bones.count != sk.bones.count) { log_error("скелет %s: костей %zu, в сетке %zu", rel, s.bones.count, sk.bones.count); return false; }
+        for (usize i = 0; i < s.bones.count; ++i)
+            if (s.bones.data[i].hash != str_hash(sk.bones.data[i])) { log_error("скелет %s: кость %zu не та, что в сетке", rel, i); return false; }
+        RenderSkinDesc d{};
+        d.mesh = mesh;
+        d.bone_count = (u32)s.bones.count;
+        d.bones4 = sk.bones4;
+        d.weights4 = sk.weights4;
+        d.morph_count = md.morphs.count;
+        d.morph_step = md.morphs.step;
+        d.morphs = md.morphs.data;
+        d.lod_vertices = md.lod_vertices;
+        b.skin[k] = render_skin_create(d);
+        if (!b.skin[k]) return false;
+        b.skel_name[k] = str_hash(sk.skeleton);
+        b.skin_count++;
+    }
+    b.morph_count = md.morphs.count;
+    for (u32 k = 0; k < md.morphs.count; ++k) b.morph_name[k] = str_hash(md.morphs.names[k]);
+    L.view->body_count++;
+    log_info("тело %.*s: скелетов %u, морфов %u", (int)nlen, file, b.skin_count, b.morph_count);
+    return true;
+}
+
 static void load_mesh(const char *name, void *user) {
     MeshLoad &L = *(MeshLoad *)user;
     char rel[512];
@@ -133,6 +178,7 @@ static void load_mesh(const char *name, void *user) {
         cl[i] = {c.first_index, c.tri_count, {c.cx, c.cy, c.cz, c.radius}};
     }
     vm.id = render_mesh_create(md.vertices, md.indices, {lods, nlod}, {cl, md.clusters.count});
+    if (vm.id && md.skin_count && !load_body(L, name, md, vm.id)) L.failed++;
     arena_restore(L.m->load, mark);
     if (!vm.id) { L.failed++; return; }
     if (L.view->mesh_count >= VIEW_MAX_MESHES) { log_error("сеток больше %u", VIEW_MAX_MESHES); L.failed++; return; }

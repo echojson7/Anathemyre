@@ -207,6 +207,7 @@ int run_window(const Args &a, AppMemory &m) {
     if (a.hour_set) pending.push_back({0, INTENT_CLOCK_SET, WPos{}, hour_turn(a.hour)});
     if (a.timelapse) pending.push_back({0, INTENT_CLOCK_RATE, WPos{}, 0});
     ds.lines = set.lines;
+    debug_stand_args(ds, a.stand);
     if (a.open && (!strcmp(a.open, "menu") || !strcmp(a.open, "keys"))) {
         menu.open = true;
         menu.tab = !strcmp(a.open, "keys") ? HUD_TAB_CONTROLS : HUD_TAB_SCREEN;
@@ -248,6 +249,7 @@ int run_window(const Args &a, AppMemory &m) {
         if (in.key_pressed[KEY_ESCAPE] && !hud_on) break;  // без интерфейса Esc по-прежнему закрывает окно
         if (in.key_pressed[KEY_F11]) set.fullscreen = !set.fullscreen;
         ds.lines = set.lines;
+    debug_stand_args(ds, a.stand);
         ds.pixel = set.pixel;
         if (set.debug && !menu.open) {
             if (in.key_pressed[KEY_SPACE]) ds.pause_toggle = true;
@@ -307,6 +309,7 @@ int run_window(const Args &a, AppMemory &m) {
                 di.work_gc[1] = work.gc_baked;
                 di.work_gc[2] = work.gc_over;
                 di.work_gc[3] = work.gc_direct;
+                di.work_skin = work.skin_verts;
                 di.gc_off = work.gc_off;
                 di.overflows = nover_last;
                 for (u32 i = 0; i < nover_last; ++i) {
@@ -431,6 +434,7 @@ int run_window(const Args &a, AppMemory &m) {
         u32 dbg_keep = dbg.count;  // метка осмотра — только на этот кадр, шаг мира её не видит
         if (hud_on && set.debug && set.debug_panel && ds.tab == DEBUG_TAB_WORLD) debug_inspect_mark(w, *inspect, dbg);
         view_build(cam, *assets, vi, m.frame, rf);
+        if (set.debug) debug_stand(ds, *assets, w.terrain, m.frame, rf);
         dbg.count = dbg_keep;
         prof_part(*prof, FP_VIEW, platform_time_ns());
         bool last_frame = a.frames && frames + 1 >= a.frames;
@@ -532,10 +536,10 @@ int run_window(const Args &a, AppMemory &m) {
             if (work_have)
                 log_info("работа освещения: плитки небо %u земля %u сетки %u смесь %u земля на пиксель %u · пиксели небо %u земля %u "
                          "сетки %u · поверхности земли %u сеток %u · выборки тени %u · кеш земли: страниц %u запечено %u "
-                         "без места %u, мимо кеша %u",
+                         "без места %u, мимо кеша %u · скинено вершин %u",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
-                         work.gc_baked, work.gc_over, work.gc_direct);
+                         work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts);
             frames_window = 0;
             window_t0 = now;
             prof_part(*prof, FP_LOG, platform_time_ns());
@@ -552,10 +556,10 @@ int run_window(const Args &a, AppMemory &m) {
                          "tiles_sky %u\ntiles_ground %u\ntiles_mesh %u\ntiles_mix %u\ntiles_ground_px %u\npx_sky %u\n"
                          "px_ground %u\n"
                          "px_mesh %u\nsurf_ground %u\nsurf_mesh %u\nshadow_taps %u\ngc_used %u\ngc_baked %u\n"
-                         "gc_over %u\ngc_direct %u\n",
+                         "gc_over %u\ngc_direct %u\nskin_verts %u\n",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
-                         work.gc_baked, work.gc_over, work.gc_direct);
+                         work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts);
         if (!work_have) log_error("--work: кадр мира не прочитан (мало кадров)");
         if (!work_have || n <= 0 || !platform_write_file(a.work, t, (usize)n)) rc_exit = 1;
     }

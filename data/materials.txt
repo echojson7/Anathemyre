@@ -150,3 +150,26 @@ material stone rock
     rough 0.75
     texel 0.0625
     extra 0.18 0.0625 0.7 0.3
+
+# Люди (стенд этапа 7, docs/people.md): временные ровные цвета — кожа и бельё «по-настоящему» после света (этап 6)
+material human_skin flat
+    color 0.52 0.37 0.28
+    rough 0.6
+
+# Бельё из небелёного холста и тёмная резинка
+material human_linen flat
+    color 0.55 0.50 0.42
+    rough 0.9
+
+material human_band flat
+    color 0.18 0.16 0.14
+    rough 0.8
+
+# Глаза: белок и радужка
+material human_eye flat
+    color 0.46 0.43 0.39
+    rough 0.3
+
+material human_iris flat
+    color 0.07 0.05 0.04
+    rough 0.3

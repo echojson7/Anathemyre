@@ -40,10 +40,13 @@ Windows, ~2 ГБ архив LLVM для Linux, распаковывается т
 Шейдеры `data/shaders/*.vert|frag|comp` → `build/<цель>/shaders/*.spv` (`glslangValidator --depfile`,
 `spirv-val --scalar-block-layout`), игра ищет их рядом с исполняемым файлом. Пути `#include`: `data/shaders/` и
 `build/<цель>/shaders/gen/` (там `materials.glsl` от `tools/matgen.sh`, `docs/materials.md`).
-Данные (`data/materials.txt`, `data/scene.txt`, `data/sky.txt`, `data/terrain.txt`, `data/meshes/*.mesh`, `data/prefabs/*.txt`) копируются в `build/<цель>/data/`; туда же
+Данные (`data/materials.txt`, `data/scene.txt`, `data/sky.txt`, `data/terrain.txt`, `data/meshes/*.mesh`, `data/people/*.skel`, `data/prefabs/*.txt`) копируются в `build/<цель>/data/`; туда же
 `matgen.sh` пишет `material_kinds.txt`. Без них игра не стартует, и `--sim` тоже (сцена — часть мира).
 `make meshes` собирает `build/tools/meshpack` (meshoptimizer, тем же clang под Linux) и пересобирает все `.mesh`
 (`tools/meshgen.py` пишет сырую сетку, `meshpack` — сварка, порядок вершин, LOD и кластеры; `docs/mesh.md`).
+Людей пересобирает `tools/humanconv/fetch.sh`: качает исходники MakeHuman (~38 МБ, sha256 закреплены) в
+`~/.cache/anathemyre/makehuman`, нужен Python 3 с numpy (`apt install python3-numpy`), пишет `data/meshes/human_*.mesh`
+и `data/people/*.skel` (`docs/people.md`). Байты одни на numpy 1.26 и 2.x.
 
 ## CI (`.github/workflows/ci.yml`)
 - **linux** (ubuntu-24.04): слои и запреты; сетки в git совпадают с генератором; сборки релиз, Windows, отладка, gcc, без debug — все с `-Werror`;

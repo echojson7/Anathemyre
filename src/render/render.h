@@ -15,7 +15,7 @@ struct RenderInstance {
     u32 mesh;          // номер сетки в таблице
     u32 material;      // подмена материала, RENDER_NO_MATERIAL — материалы вершин
     u32 seed;          // зерно разнообразия узора
-    u32 pad;
+    u32 lod_min;       // не тоньше этого LOD; пишет рендер (у человека — LOD, вершины которого скинены), вид кладёт 0
 };
 static_assert(sizeof(RenderInstance) == 48, "RenderInstance — 48 байт");
 constexpr u32 RENDER_NO_MATERIAL = 0xFFFFFFFFu;
@@ -112,6 +112,8 @@ static_assert(sizeof(RenderSky) == 16 * 16, "RenderSky — 16 vec4");
 // пустыни (тот же вид земли, другой материал — по маске пустыни)
 constexpr u32 RENDER_GROUND_LAYERS = 8;
 
+struct RenderSkinned;
+struct RenderBone;
 struct RenderFrame {
     RenderView view;
     RenderStyle style;
@@ -124,6 +126,8 @@ struct RenderFrame {
     Span<const RenderLineVertex> lines;  // пары вершин
     Span<const RenderDecal> decals;      // все, что задевают видимое; по клеткам их раскладывает рендер (froxels)
     Span<const RenderPointLight> lights; // огни кадра; по клеткам их раскладывает рендер (froxels)
+    Span<const RenderSkinned> skinned;   // люди кадра: экземпляр, палитра, морфы (скиннинг, ниже)
+    Span<const RenderBone> bones;        // палитры костей людей кадра подряд
 };
 
 struct RenderConfig {
@@ -145,6 +149,10 @@ constexpr u32 RENDER_MAX_MESHES = 4096;
 constexpr u32 RENDER_MAX_MATERIALS = 1024;
 constexpr u32 RENDER_MAX_DECALS = 512;
 constexpr u32 RENDER_MAX_LIGHTS = 1024;
+constexpr u32 RENDER_MAX_SKINS = 64;       // источников скиннинга (сетка × скелет)
+constexpr u32 RENDER_MAX_SKINNED = 256;    // людей в кадре
+constexpr u32 RENDER_MAX_BONES = 16384;    // матриц костей в кадре
+constexpr u32 RENDER_MAX_MORPHS = 8;
 
 bool render_init(const RenderConfig &cfg);
 void render_shutdown();
@@ -175,6 +183,38 @@ struct RenderCluster {
 u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices, Span<const RenderLod> lods,
                        Span<const RenderCluster> clusters);
 void render_mesh_destroy(u32 mesh);
+
+// Скиннинг (docs/people.md, «Скиннинг»). Источник — сетка с весами одного скелета (render_mesh_create вершин
+// бинд-позы) и её морфы; у каждого человека своя копия вершин и кластеров (render_skinned_create, отдельный
+// номер сетки для экземпляра, индексы общие с источником). Каждый кадр compute-проход пишет в копию вершины
+// префикса LOD (вершины по LOD — префиксы, кусок LODV .mesh) из палитры костей и пересчитывает сферы кластеров;
+// дальше человек идёт в кадр мира как деталь. Источники и копии живут до render_shutdown
+struct RenderSkinDesc {
+    u32 mesh;                     // сетка вершин бинд-позы (render_mesh_create)
+    u32 bone_count;               // костей скелета: палитра человека — столько матриц
+    Span<const u32> bones4;       // на вершину: 4 номера костей u8
+    Span<const u32> weights4;     // на вершину: 4 веса unorm8, сумма 255
+    u32 morph_count;              // ≤ RENDER_MAX_MORPHS
+    const f32 *morph_step;        // метров на единицу сдвига, на морф
+    Span<const u32> morphs;       // 3 слова на вершину на морф (MeshMorphs, src/asset/mesh.h)
+    Span<const u32> lod_vertices; // вершин LOD k (префикс), на каждый LOD сетки
+};
+// Номер источника (0 — ошибка). Загрузка ждёт копию на GPU: только при загрузке
+u32 render_skin_create(const RenderSkinDesc &d);
+// Копия вершин и кластеров источника для одного человека: номер сетки для RenderInstance::mesh (0 — ошибка).
+// Вершины до первого скиннинга — бинд-поза
+u32 render_skinned_create(u32 skin);
+// Матрица кости 3×4 по строкам: точка сетки в бинд-позе → точка сетки в позе (поза · обратная бинд-матрица)
+struct RenderBone {
+    f32 m[12];
+};
+// Человек кадра: экземпляр в RenderFrame::instances (его сетка — из render_skinned_create), палитра —
+// RenderFrame::bones[first_bone …], веса морфов источника
+struct RenderSkinned {
+    u32 instance;
+    u32 first_bone;
+    f32 morph[RENDER_MAX_MORPHS];
+};
 // Таблица материалов целиком (номер = место). Ждёт, пока GPU закончит кадры: только при загрузке
 bool render_set_materials(Span<const RenderMaterial> materials);
 
@@ -226,6 +266,7 @@ struct RenderWork {
     // Кеш поверхности земли (docs/gcache.md): страницы, прочитанные кадром; запечённые; без места; поверхности
     // земли, посчитанные освещением мимо кеша (крутые склоны, нет места)
     u32 gc_used, gc_baked, gc_over, gc_direct;
+    u32 skin_verts;                  // вершин скинено (люди, docs/people.md)
     const char *gc_off;  // почему кеш земли выключен (nullptr — включён); в --work не пишется
 };
 bool render_work(RenderWork &out);

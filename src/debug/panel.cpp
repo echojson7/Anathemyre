@@ -141,6 +141,20 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_toggle(f, "тестовые огни", d.test_lights);
     ui_toggle(f, "огни по клеткам", d.froxel_heat);
     ui_toggle(f, "без кеша земли", d.gcache_off);
+
+    // Стенд людей (stand.cpp): человек у руины, проверка весов и морфов
+    ui_section(f, "ЛЮДИ: СТЕНД");
+    ui_toggle(f, "человек у руины", d.stand);
+    ui_toggle(f, "согнуть кость (B)", d.stand_bend);
+    static const char *const BONES[] = {"локоть", "колено"};
+    ui_choice(f, "кость", d.stand_bone, BONES, ANA_COUNTOF(BONES));
+    static const char *const SKELS[] = {"game_engine", "mixamo"};
+    ui_choice(f, "скелет", d.stand_skel, SKELS, ANA_COUNTOF(SKELS));
+    static const char *const MORPHS[] = {"нет", "полнее", "худее", "сильнее", "нос", "челюсть"};
+    ui_choice(f, "морф", d.stand_morph, MORPHS, ANA_COUNTOF(MORPHS));
+    char sv[24];
+    count_str(in.work_skin, sv, sizeof sv);
+    ui_value(f, "скинено вершин", in.work ? sv : "—");
 }
 
 // --- Кадр по частям (docs/frame_time.md): график последних кадров и части за секунду ---

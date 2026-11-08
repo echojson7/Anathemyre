@@ -31,6 +31,7 @@ static void usage() {
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z]   снимок (градусы, метры)");
     log_info("           [--work файл.txt]                                            счётчики работы освещения в файл (с --frames)");
     log_info("           [--nohud] [--open menu|keys|debug|frame|world]               без интерфейса; открыть меню или панель");
+    log_info("           [--stand off|elbow|knee|mixamo|morphN,…]                     стенд людей у руины: выкл, кость, скелет, морф");
     log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
@@ -106,6 +107,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--heat")) a.froxel_heat = true;
         else if (!strcmp(s, "--nogcache")) a.nogcache = true;
         else if (!strcmp(s, "--nohud")) a.nohud = true;
+        else if (!strcmp(s, "--stand")) { a.stand = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--open")) {
             a.open = next;
             ok = next && (!strcmp(next, "menu") || !strcmp(next, "keys") || !strcmp(next, "debug") || !strcmp(next, "world") ||

@@ -3,6 +3,8 @@
 // на шаг мира и повтор она не влияет (docs/invariants.md)
 #pragma once
 #include "../asset/material.h"
+#include "../asset/mesh.h"
+#include "../asset/skel.h"
 #include "../core/dbgdraw.h"
 #include "../platform/platform.h"
 #include "../render/render.h"
@@ -37,12 +39,26 @@ struct ViewMesh {
     u32 id;
 };
 constexpr u32 VIEW_MAX_MESHES = 1024;
+// Тело человека (docs/people.md): сетка с весами; на скелет — источник скиннинга и сам скелет
+constexpr u32 VIEW_MAX_BODIES = 8;
+struct ViewBody {
+    u64 name;                      // хеш имени сетки
+    u32 mesh;                      // сетка бинд-позы
+    u32 skin_count;
+    u32 skin[MESH_MAX_SKINS];      // источник скиннинга (render_skin_create)
+    u64 skel_name[MESH_MAX_SKINS]; // хеш имени скелета (game_engine, mixamo)
+    Skel skel[MESH_MAX_SKINS];
+    u32 morph_count;
+    u64 morph_name[MESH_MAX_MORPHS];
+};
 struct ViewAssets {
     ViewMesh meshes[VIEW_MAX_MESHES];
     u32 mesh_count = 0;
     const MaterialTable *materials = nullptr;
     u32 ground_layers[RENDER_GROUND_LAYERS] = {};  // материалы слоёв земли по GroundKind
     u32 rocks[SCATTER_MESHES] = {};                 // сетки камней рассыпки
+    ViewBody bodies[VIEW_MAX_BODIES];               // люди: тела с весами (стенд, потом таблица людей)
+    u32 body_count = 0;
     SkyDesc sky;                                    // небо и воздух (data/sky.txt)
 };
 

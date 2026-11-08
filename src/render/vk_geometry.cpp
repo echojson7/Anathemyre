@@ -13,7 +13,8 @@ static bool make_block(VmaVirtualBlock &b, VkDeviceSize size) {
 }
 
 bool vk_geometry_init() {
-    const VkBufferUsageFlags dst = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    // Источник копии — для людей: копия вершин и кластеров на человека (vk_skin.cpp)
+    const VkBufferUsageFlags dst = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     if (!vk_create_buffer(g_vk.vertices, GEOMETRY_VERTEX_BYTES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true)) return false;
     if (!vk_create_buffer(g_vk.indices, GEOMETRY_INDEX_BYTES, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true)) return false;
     if (!vk_create_buffer(g_vk.materials, RENDER_MAX_MATERIALS * sizeof(RenderMaterial), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT))

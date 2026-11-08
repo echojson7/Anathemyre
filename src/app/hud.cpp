@@ -77,7 +77,7 @@ static void tab_controls(UiForm &f, Settings &s, bool &ch) {
     static const char *const MAIN[][2] = {{"Esc", "настройки"}, {"F11", "весь экран"}, {"F3", "панель отладки"}};
     static const char *const DBG[][2] = {{"Space", "пауза"}, {".", "шаг на паузе"}, {"−  =", "скорость мира"},
                                           {"[  ]", "час назад, вперёд"}, {"T", "ход суток"}, {"L", "отрезки"},
-                                          {"P", "пиксельное правило"}};
+                                          {"P", "пиксельное правило"}, {"B", "стенд: согнуть кость"}};
     f32 gap = ui_px(28), cw = (f.w - gap) * 0.5f;
     UiForm l = f, r = f;
     l.w = r.w = cw;

@@ -1,0 +1,64 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Скиннинг людей (docs/people.md, «Скиннинг»): поток на вершину префикса LOD, группа по y — человек кадра.
+// Вершина бинд-позы источника + морфы (сдвиг положения и нормали, веса экземпляра) → 4 кости палитры → копия
+// человека в общем буфере вершин. Материалы и затенение вершины переписываются как есть
+#include "common.glsl"
+layout(local_size_x = 64) in;
+
+// Единичная нормаль → октаэдр с осью y (как oct_decode в common.glsl и oct_encode в tools/meshgen.py)
+uint oct_encode(vec3 n) {
+    n /= abs(n.x) + abs(n.y) + abs(n.z);
+    vec2 e = n.xz;
+    if (n.y < 0.0) e = (1.0 - abs(e.yx)) * vec2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
+    return packSnorm2x16(e);
+}
+
+// Строки матрицы 3×4 кости b палитры
+void bone_rows(uint b, out vec4 r0, out vec4 r1, out vec4 r2) {
+    FrameData f = pc.frame;
+    r0 = f.bones.v[b * 3u];
+    r1 = f.bones.v[b * 3u + 1u];
+    r2 = f.bones.v[b * 3u + 2u];
+}
+
+void main() {
+    FrameData f = pc.frame;
+    SkinJob j = f.skin_jobs.v[gl_WorkGroupID.y];
+    uint base = gl_WorkGroupID.x * 64u;
+    if (base >= j.vertex_count) return;
+    if (gl_LocalInvocationIndex == 0u) atomicAdd(f.stats.v[STAT_SKIN_VERTS], min(64u, j.vertex_count - base));
+    uint i = base + gl_LocalInvocationIndex;
+    if (i >= j.vertex_count) return;
+    Vertex v = f.vertices.v[j.src_vertex + i];
+    vec3 p = vec3(v.px, v.py, v.pz);
+    vec3 n = oct_decode(v.normal);
+    // Морфы: i16 × шаг для положения, i8 / 127 для нормали (MeshMorphs, src/asset/mesh.h)
+    for (uint k = 0u; k < j.morph_count; ++k) {
+        float w = j.morph[k];
+        if (w == 0.0) continue;
+        uint o = (i * j.morph_count + k) * 3u;
+        uint a = j.morphs.v[o], b = j.morphs.v[o + 1u], c = j.morphs.v[o + 2u];
+        vec3 dp = vec3(float(int(a << 16) >> 16), float(int(a) >> 16), float(int(b << 16) >> 16));
+        vec3 dn = vec3(float(int(b << 8) >> 24), float(int(b) >> 24), float(int(c << 24) >> 24)) / 127.0;
+        p += dp * (w * j.step[k]);
+        n += dn * w;
+    }
+    uint bi = j.skin.v[i * 2u], wi = j.skin.v[i * 2u + 1u];
+    vec4 wt = unpackUnorm4x8(wi);
+    vec4 r0 = vec4(0.0), r1 = vec4(0.0), r2 = vec4(0.0);
+    [[unroll]] for (uint k = 0u; k < 4u; ++k) {
+        float w = wt[k];
+        if (w == 0.0) continue;
+        vec4 a, b, c;
+        bone_rows(j.first_bone + ((bi >> (8u * k)) & 255u), a, b, c);
+        r0 += a * w;
+        r1 += b * w;
+        r2 += c * w;
+    }
+    vec4 ph = vec4(p, 1.0);
+    vec3 q = vec3(dot(r0, ph), dot(r1, ph), dot(r2, ph));
+    n = normalize(n);
+    vec3 m = normalize(vec3(dot(r0.xyz, n), dot(r1.xyz, n), dot(r2.xyz, n)));
+    f.vertices_w.v[j.dst_vertex + i] = Vertex(q.x, q.y, q.z, oct_encode(m), v.mats, v.misc);
+}

@@ -15,6 +15,12 @@ struct DebugState {
     bool test_lights = false; // тестовые огни вокруг камеры (froxels)
     bool froxel_heat = false; // тепловая карта огней по клеткам froxels
     bool gcache_off = false;  // без кеша поверхности земли (сравнение, не сохраняется)
+    // Стенд людей (stand.cpp): человек у руины, кость согнута (B), скелет, морф (0 — нет, k — морф k − 1)
+    bool stand = true;
+    bool stand_bend = false;
+    u32 stand_bone = 0;       // 0 — локоть, 1 — колено
+    u32 stand_skel = 0;       // 0 — game_engine, 1 — как у Mixamo
+    u32 stand_morph = 0;
     u32 tab = 0;              // вкладка панели: DEBUG_TAB_*
     // Просьбы этого кадра от клавиш и панели (debug_clear_frame после исполнения)
     bool step_once = false;   // «.» на паузе — один шаг
@@ -71,6 +77,7 @@ struct DebugInfo {
     u32 work_surf[2];         // поверхности (surface() и свет раз на ячейку): земля, сетки
     u32 work_shadow;           // выборки карты горизонта (тень земли, docs/horizon.md)
     u32 work_gc[4];           // кеш земли: страницы кадра, запечено, без места, поверхности мимо кеша
+    u32 work_skin;            // вершин скинено (люди)
     const char *gc_off;       // почему кеш земли выключен (nullptr — включён)
     // Что не влезло за секунду (render_overflows): сколько просили, сколько есть (0 — счёт клеток без предела)
     u32 overflows;
@@ -79,6 +86,8 @@ struct DebugInfo {
 };
 
 struct World;
+struct ViewAssets;
+struct RenderFrame;
 // Осмотр мира (вкладка «Мир»): только читает столбцы мира (world_columns), ничего в мире не решает
 struct WorldInspect {
     u32 table = 1;            // выбранная таблица (номер в списке таблиц)
@@ -104,6 +113,10 @@ void debug_inspect_pick(const World &w, WorldInspect &wi, const WPos &at);
 bool debug_write_shot(const char *path, Arena &scratch);
 // Карта земли сверху (отмывка рельефа и маски) → .bmp
 bool debug_write_terrain_map(const Terrain &t, const char *path, Arena &scratch);
+// Стенд людей (stand.cpp, docs/people.md «Стенд»): человек у руины — экземпляр, палитра и морфы в кадр
+void debug_stand(const DebugState &d, const ViewAssets &assets, const Terrain &ground, Arena &frame, RenderFrame &rf);
+// --stand: off, elbow, knee, mixamo, morphN через запятую (снимки и CI); nullptr — как есть
+void debug_stand_args(DebugState &d, const char *spec);
 #else
 inline void debug_keys(const Input &, DebugState &) {}
 inline void autoplay_intents(u64, Rng &, FixedArray<Intent> &) {}
@@ -113,4 +126,6 @@ inline void debug_inspect_pick(const World &, WorldInspect &, const WPos &) {}
 inline void debug_inspect_mark(const World &, const WorldInspect &, DebugDraw &) {}
 inline bool debug_write_shot(const char *, Arena &) { return false; }
 inline bool debug_write_terrain_map(const Terrain &, const char *, Arena &) { return false; }
+inline void debug_stand(const DebugState &, const ViewAssets &, const Terrain &, Arena &, RenderFrame &) {}
+inline void debug_stand_args(DebugState &, const char *) {}
 #endif

@@ -203,11 +203,20 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     u32 n = f.instances.count < RENDER_MAX_INSTANCES ? (u32)f.instances.count : RENDER_MAX_INSTANCES;
     RenderInstance *up = (RenderInstance *)fs.inst_upload.mapped;
     u32 first_dirty = n, last_dirty = 0;
+    // Экземпляр, каким его увидит GPU: lod_min ставит рендер (у людей — LOD, вершины которого скинены, vk_skin.cpp)
+    auto eff = [&f](u32 i) {
+        RenderInstance e = f.instances.data[i];
+        e.lod_min = g_vk.skin.lod_min[i];
+        return e;
+    };
     for (u32 i = 0; i < n;) {
-        if (i < w.inst_count && !memcmp(&g_mirror[i], &f.instances.data[i], sizeof(RenderInstance))) { ++i; continue; }
+        RenderInstance e = eff(i);
+        if (i < w.inst_count && !memcmp(&g_mirror[i], &e, sizeof(RenderInstance))) { ++i; continue; }
         u32 j = i;
-        while (j < n && (j >= w.inst_count || memcmp(&g_mirror[j], &f.instances.data[j], sizeof(RenderInstance)))) {
-            g_mirror[j] = up[j] = f.instances.data[j];
+        while (j < n) {
+            e = eff(j);
+            if (j < w.inst_count && !memcmp(&g_mirror[j], &e, sizeof(RenderInstance))) break;
+            g_mirror[j] = up[j] = e;
             ++j;
         }
         if (g_ncopies < MAX_COPIES) {
@@ -390,7 +399,8 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     const WorldGpu &w = g_vk.world;
     if (!w.id.image) return false;
     g_wf = WorldFrame{fs.frame.address, &fs, img, npoints, nlines, g_vk.terrain.on && f.ground};
-    // 1. Изменившиеся экземпляры и вершины земли кадра
+    // 1. Люди (вершины и сферы кластеров), изменившиеся экземпляры и вершины земли кадра
+    vk_skin_passes(&fs.frame.address);
     if (g_ncopies) {
         rg_pass("мир: экземпляры", "земля", record_inst_upload, nullptr);
         rg_use(w.rg_inst, RG_COPY_WRITE);
@@ -403,6 +413,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     rg_pass("отсечение: счёт", "отсечение", record_cull_count, nullptr);
     rg_use(w.rg_inst, RG_CS_READ);
     rg_use(w.rg_cull, RG_CS_WRITE);
+    vk_skin_clusters_read();
     rg_pass("отсечение: сумма", "отсечение", record_cull_scan, nullptr);
     rg_use(w.rg_cull, RG_CS_WRITE);
     rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
@@ -411,6 +422,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     rg_use(w.rg_cull, RG_CS_READ);
     rg_use(w.rg_draws, RG_CS_WRITE);
     rg_use(w.rg_vis, RG_CS_WRITE);
+    vk_skin_clusters_read();
     // 3. Visibility buffer
     rg_pass("visibility", "visibility", record_visibility, nullptr);
     rg_use(w.rg_id, RG_COLOR, RG_DISCARD);
@@ -420,6 +432,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     rg_use(w.rg_vis, RG_VS_READ);
     rg_use(w.rg_inst, RG_VS_READ);
     rg_use(w.rg_gverts, RG_VS_READ);
+    vk_skin_vertices_read(RG_VS_READ);
     // 4. Плитки по видам и освещение: вид — свой конвейер и своя строка F3. Виды пишут разные пиксели HDR, но
     // барьер между ними граф ставит (запись после записи): без него слой проверки синхронизации видел бы гонку,
     // а цена — хвост одного dispatch, пока следующий не начался (docs/tiles.md)
@@ -448,6 +461,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         rg_use(w.rg_inst, RG_CS_READ);
         rg_use(w.rg_gverts, RG_CS_READ);
         rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
+        vk_skin_vertices_read(RG_CS_READ);
         vk_sky_reads(RG_CS_READ);
         vk_froxel_reads(RG_CS_READ);
         vk_gcache_reads();
