@@ -3,6 +3,7 @@
 #include "../core/log.h"
 #include "../platform/platform.h"
 #include "../core/text.h"
+#include "../render/render.h"
 #include "../sim/record.h"
 #include <inttypes.h>
 #include <stdio.h>
@@ -27,6 +28,7 @@ static void usage() {
     log_info("           [--gpuav-skip a.comp,b.frag]                                 шейдеры без проверки на GPU");
     log_info("           [--lights] [--heat]                                          тестовые огни, огни по клеткам froxels");
     log_info("           [--nogcache]                                                 без кеша поверхности земли (сравнение)");
+    log_info("           [--tonemap agx|aces] [--light low|medium|high|ultra]         тонмаппинг, качество света (docs/light.md)");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z] [--pivot м]   снимок (градусы, метры; опора над землёй)");
     log_info("           [--work файл.txt]                                            счётчики работы освещения в файл (с --frames)");
@@ -107,6 +109,18 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--lights")) a.test_lights = true;
         else if (!strcmp(s, "--heat")) a.froxel_heat = true;
         else if (!strcmp(s, "--nogcache")) a.nogcache = true;
+        else if (!strcmp(s, "--tonemap")) {
+            a.tonemap = next && !strcmp(next, "agx") ? (i32)RENDER_TONEMAP_AGX : next && !strcmp(next, "aces") ? (i32)RENDER_TONEMAP_ACES : -1;
+            ok = a.tonemap >= 0;
+            i++;
+        }
+        else if (!strcmp(s, "--light")) {
+            const char *q[] = {"low", "medium", "high", "ultra"};
+            for (i32 k = 0; k < 4; ++k)
+                if (next && !strcmp(next, q[k])) a.light_quality = k;
+            ok = a.light_quality >= 0;
+            i++;
+        }
         else if (!strcmp(s, "--nohud")) a.nohud = true;
         else if (!strcmp(s, "--stand")) { a.stand = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--open")) {

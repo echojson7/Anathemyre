@@ -31,7 +31,7 @@ bool vk_sky_init() {
     const VkDeviceSize v4 = 16;
     if (!vk_create_buffer(s.trans, TRANS_W * TRANS_H * v4, ssbo, true) ||
         !vk_create_buffer(s.ms, MS_N * MS_N * v4, ssbo, true) || !vk_create_buffer(s.sun, SKY_W * SKY_H * v4, ssbo, true) ||
-        !vk_create_buffer(s.moon, MOON_W * MOON_H * v4, ssbo, true) || !vk_create_buffer(s.out, SKY_OUT * v4, ssbo, true))
+        !vk_create_buffer(s.moon, MOON_W * MOON_H * v4, ssbo, true) || !vk_create_buffer(s.out, SKY_OUT * v4, ssbo | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true))
         return false;
     const char *names[] = {"небо: пропускание", "небо: рассеяние", "небо: вид от солнца", "небо: вид от луны", "небо: свет"};
     GpuBuffer *bs[] = {&s.trans, &s.ms, &s.sun, &s.moon, &s.out};

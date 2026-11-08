@@ -87,6 +87,11 @@ struct ViewInput {
     bool froxel_heat;       // тепловая карта числа огней по клеткам (F3)
     bool gcache_off;        // без кеша поверхности земли: земля на пиксель (F3, --nogcache)
     ScatterCache *scatter;  // рассыпка камней (кеш между кадрами), может быть nullptr
+    // Свет (docs/light.md): секунды кадра и «привыкнуть сразу» для глаза, тонмаппинг (F3), качество (меню)
+    f32 dt = 0.0f;
+    bool eye_snap = true;
+    u32 tonemap = RENDER_TONEMAP_AGX;
+    u32 light_quality = RENDER_LIGHT_HIGH;
 };
 
 // Память под экземпляры, точки и отрезки — из арены кадра

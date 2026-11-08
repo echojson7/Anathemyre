@@ -82,6 +82,9 @@ struct FrameGpu {
     VkDeviceAddress skin_jobs, bones;
     VkDeviceAddress vertices_w, clusters_w;  // те же общие вершины и кластеры — для записи (skin*.comp)
     u32 skin_count, skin_pad;
+    // Свет (docs/light.md): время кадра, сразу ли привыкать глазу, тонмаппинг, качество света
+    f32 dt;
+    u32 eye_snap, tonemap, light_q;
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -103,8 +106,10 @@ constexpr u32 STAT_COUNT = 20;
 constexpr u32 TILE_KINDS = 5;
 constexpr u32 TILE_KIND_GROUND = 1, TILE_KIND_MIX = 3, TILE_KIND_GROUND_PX = 4;
 constexpr u32 TILE_HEADER = TILE_KINDS * 16;  // косвенные dispatch видов перед списками
-// Буфер чтения кадра: число видимых кластеров, с READBACK_STATS — счётчики
-constexpr VkDeviceSize READBACK_STATS = 16, READBACK_BYTES = READBACK_STATS + STAT_COUNT * 4;
+// Буфер чтения кадра: число видимых кластеров, с READBACK_STATS — счётчики, с READBACK_EYE — глаз (sky_out [4], [5])
+constexpr VkDeviceSize READBACK_STATS = 16, READBACK_EYE = READBACK_STATS + STAT_COUNT * 4;
+constexpr VkDeviceSize READBACK_BYTES = READBACK_EYE + 32;
+constexpr u32 SKY_OUT_EYE = 4;  // sky_out: [4], [5] — экспозиция и освещённость (sky_sum.comp, common.glsl)
 
 // Небо (vk_sky.cpp, docs/sky.md): таблицы в буферах видеопамяти, считают их compute-шейдеры sky_*.comp
 struct SkyGpu {
@@ -174,6 +179,7 @@ struct WorldGpu {
     VkPipeline pipe_light[TILE_KINDS] = {}, pipe_tiles = VK_NULL_HANDLE, pipe_ground_bake = VK_NULL_HANDLE;
     u32 vis_clusters = 0;  // видимых кластеров в последнем прочитанном кадре
     u32 work[STAT_COUNT] = {};  // счётчики последнего прочитанного кадра мира (STAT_*)
+    f32 eye[8] = {};            // глаз того же кадра: sky_out [4], [5] (render_light)
     bool work_valid = false;
     // Ресурсы графа кадра (vk_graph.h)
     u8 rg_inst = 0, rg_cull = 0, rg_draws = 0, rg_vis = 0, rg_gverts = 0, rg_id = 0, rg_hdr = 0, rg_tiles = 0;

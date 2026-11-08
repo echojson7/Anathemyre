@@ -15,6 +15,7 @@ struct DebugState {
     bool test_lights = false; // тестовые огни вокруг камеры (froxels)
     bool froxel_heat = false; // тепловая карта огней по клеткам froxels
     bool gcache_off = false;  // без кеша поверхности земли (сравнение, не сохраняется)
+    u32 tonemap = 0;          // тонмаппинг: 0 — AgX, 1 — ACES (RENDER_TONEMAP_*; docs/light.md), выбор по кадрам
     // Стенд людей (stand.cpp): человек у руины, кость согнута (B), скелет, морф (0 — нет, k — морф k − 1)
     bool stand = true;
     bool stand_bend = false;
@@ -91,6 +92,9 @@ struct DebugInfo {
     u32 work_gc[4];           // кеш земли: страницы кадра, запечено, без места, поверхности мимо кеша
     u32 work_skin;            // вершин скинено (люди)
     const char *gc_off;       // почему кеш земли выключен (nullptr — включён)
+    // Глаз прочитанного кадра (render_light, docs/light.md): освещённость земли, лк, и EV100; light = false — нет
+    bool light;
+    f32 lux_key, lux_sky, ev100, ev100_goal;
     // Что не влезло за секунду (render_overflows): сколько просили, сколько есть (0 — счёт клеток без предела)
     u32 overflows;
     const char *over_what[DEBUG_MAX_OVERFLOWS];

@@ -38,5 +38,7 @@ Surface surf_ground(SurfIn i) {
     s.ao = 1.0 - crack * 0.5;
     s.emissive = vec3(0.0);
     s.height = 0.45 + clump * 0.4 - crack * 0.3;
+    s.metal = 1.0;
+    s.nvar = 0.0;
     return s;
 }

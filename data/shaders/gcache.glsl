@@ -85,6 +85,8 @@ Surface gc_unpack(uvec2 v) {
     s.pos = vec3(0.0);
     s.emissive = vec3(0.0);
     s.height = 0.0;
+    s.metal = 0.0;  // металла в земле нет; шероховатость уже с поправкой Токсвига (surface())
+    s.nvar = 0.0;
     return s;
 }
 

@@ -1,7 +1,7 @@
 # Таблица материалов (docs/materials.md). Вид — файл data/shaders/materials/<вид>.glsl.
 # material <имя> <вид>, дальше параметры до следующего material:
 #   color r g b (sRGB-подобные доли, линейно) · rough k · color2 r g b · texel м (квадрат узора, делит 256 м)
-#   extra a b c d (смысл — в шапке файла вида)
+#   extra a b c d (смысл — в шапке файла вида) · metal 0..1 (металл: color — цвет отражения F0, docs/light.md)
 # Номер 0 — «missing», его ставит игра сама.
 
 material ground ground
@@ -68,7 +68,7 @@ material decal_stain flat
 
 material decal_damp flat
     color 0.17 0.145 0.12
-    rough 0.85
+    rough 0.55
     extra 0.4 0 0 0
 
 material decal_salt flat
@@ -77,9 +77,10 @@ material decal_salt flat
     extra 0.55 0 0 0
 
 material rust_metal metal
-    color 0.20 0.21 0.21
+    color 0.56 0.57 0.58
     color2 0.33 0.14 0.06
-    rough 0.6
+    rough 0.45
+    metal 1
     texel 0.0625
     extra 0.55 0.6 0.3 0
 

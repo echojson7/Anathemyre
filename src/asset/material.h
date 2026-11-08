@@ -14,6 +14,7 @@ struct MaterialDesc {
     u32 kind;      // номер вида = номер функции в surface()
     // Параметры: p[0..2] color, p[3] rough, p[4..6] color2, p[7] texel, p[8..11] extra (смысл — у вида)
     f32 p[12];
+    f32 metal;     // 0 — диэлектрик, 1 — металл (у вида — где металл виден: ржавчина и краска — нет)
 };
 
 struct MaterialTable {

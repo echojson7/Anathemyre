@@ -21,8 +21,9 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"rayleigh", &d.rayleigh, 1},     {"mie", &d.mie, 1},             {"mie_g", &d.mie_g, 1},
         {"haze", &d.haze, 1},             {"haze_height", &d.haze_height, 1}, {"haze_tint", d.haze_tint, 3},
         {"ozone", &d.ozone, 1},           {"alt0", &d.alt0, 1},           {"ground", d.ground, 3},
-        {"stars", &d.stars, 1},           {"night_glow", &d.night_glow, 1}, {"exposure", &d.exposure, 1},
+        {"stars", &d.stars, 1},           {"night_glow", &d.night_glow, 1}, {"exposure_ev", &d.exposure_ev, 1},
         {"adapt", &d.adapt, 1},           {"exposure_ref", &d.exposure_ref, 1}, {"night_blue", &d.night_blue, 1},
+        {"adapt_dark", &d.adapt_dark, 1}, {"adapt_light", &d.adapt_light, 1},
         {"sky_gain", &d.sky_gain, 1},     {"desert_mie", &d.desert_mie, 1}, {"desert_haze", &d.desert_haze, 1},
         {"desert_haze_height", &d.desert_haze_height, 1}, {"desert_haze_tint", d.desert_haze_tint, 3},
         {"desert_ground", d.desert_ground, 3},
@@ -47,8 +48,9 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
                 return false;
             }
     }
-    if (d.haze_height < 10.0f || d.desert_haze_height < 10.0f || d.mie_g <= -0.99f || d.mie_g >= 0.99f || d.sun <= 0.0f || d.exposure_ref <= 0.0f) {
-        snprintf(err, err_cap, "haze_height и desert_haze_height ≥ 10, |mie_g| < 0.99, sun > 0, exposure_ref > 0");
+    if (d.haze_height < 10.0f || d.desert_haze_height < 10.0f || d.mie_g <= -0.99f || d.mie_g >= 0.99f || d.sun <= 0.0f || d.exposure_ref <= 0.0f ||
+        d.adapt_dark <= 0.0f || d.adapt_light <= 0.0f) {
+        snprintf(err, err_cap, "haze_height и desert_haze_height ≥ 10, |mie_g| < 0.99, sun > 0, exposure_ref > 0, adapt_dark и adapt_light > 0");
         return false;
     }
     return true;
@@ -193,13 +195,16 @@ void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f
     alt = alt > 1.0f ? alt : 1.0f;
     transmittance(a, alt, o.sun_dir, SUN_RADIUS, o.sun_t);
     transmittance(a, alt, o.moon_dir, MOON_RADIUS, o.moon_t);
-    o.post[0] = d.exposure;
+    // Глаз (docs/light.md, «Экспозиция»): «норма» — EV100 освещённости exposure_ref (лк)
+    o.post[0] = d.exposure_ev;
     o.post[1] = d.adapt;
-    o.post[2] = d.exposure_ref;
+    o.post[2] = log2f(d.exposure_ref / 2.5f);
     o.post[3] = d.night_blue;
     o.sky_gain = d.sky_gain;
+    o.adapt_dark = d.adapt_dark;
+    o.adapt_light = d.adapt_light;
 
-    // Главный свет временного light.glsl — то светило, что сейчас светит сильнее. Переход — когда солнце
+    // Главный свет light.glsl — то светило, что сейчас светит сильнее. Переход — когда солнце
     // ушло за горизонт и его свет уже меньше лунного, поэтому скачка направления не видно
     f32 es[3], em[3];
     for (u32 k = 0; k < 3; ++k) {

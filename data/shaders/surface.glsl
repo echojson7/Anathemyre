@@ -6,13 +6,16 @@
 #include "common.glsl"
 
 struct Surface {
-    vec3 albedo;    // линейный
-    float rough;
+    vec3 albedo;    // линейный; у металла — цвет отражения (F0)
+    float rough;    // воспринимаемая шероховатость, α = rough² (docs/light.md)
     vec3 normal;    // мировая
     float ao;       // 1 — без затенения
     vec3 pos;       // относительно камеры, центр ячейки
     vec3 emissive;
     float height;   // высота узора 0..1: на стыке слоёв земли побеждает выступающий (docs/terrain.md)
+    float metal;    // где виден металл: материал отдаёт долю (ржавчина и краска — 0), surface() умножает на metal таблицы
+    float nvar;     // разброс наклона узора, погашенного мельче пикселя (дисперсия по оси): surface() переводит
+                    // его в шероховатость (Токсвиг), свет его не видит
 };
 
 // Вход вида материала
@@ -88,6 +91,14 @@ float fbm_n(vec3 p, float size, int octaves, uint seed) {
 // Точка в центр квадрата size: узор как текстура низкого разрешения
 vec3 snap(vec3 p, float size) { return (floor(p / size) + 0.5) * size; }
 
+// Против искр без TAA (docs/light.md, «Искры»): узор, погашенный мельче пикселя, не пропадает, а уходит в
+// шероховатость — блик ячейки шире на столько, сколько нормалей она усреднила (Токсвиг, Капланян 2016):
+// α'² = α² + 2σ². Предел 0.18 — как у Капланяна: дальняя гладь не становится мелом
+float surf_toksvig(float rough, float nvar) {
+    float a = rough * rough;
+    return sqrt(sqrt(a * a + min(2.0 * max(nvar, 0.0), 0.18)));
+}
+
 #include "materials.glsl"
 
 Surface surface(uint id, vec3 p, vec3 n, float cell, float foot, uint seed) {
@@ -100,6 +111,9 @@ Surface surface(uint id, vec3 p, vec3 n, float cell, float foot, uint seed) {
     i.m = pc.frame.materials.v[id];
     Surface s = surface_kind(i.m.kind, i);
     s.normal = normalize(s.normal);
+    s.metal = clamp(s.metal * uintBitsToFloat(i.m.pad0), 0.0, 1.0);
+    s.rough = surf_toksvig(s.rough, s.nvar);
+    s.nvar = 0.0;
     s.pos = vec3(0.0);
     return s;
 }

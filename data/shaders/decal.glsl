@@ -84,6 +84,7 @@ Surface apply_decals(Surface s, vec3 rel, vec3 n) {
         a = clamp(a * strength, 0.0, 1.0);
         s.albedo = mix(s.albedo, m.p0.rgb, a);
         s.rough = mix(s.rough, m.p0.a, a);
+        s.metal *= 1.0 - a;  // декаль — грязь, вода, пыль: диэлектрик поверх
     }
     return s;
 }
