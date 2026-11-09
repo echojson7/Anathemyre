@@ -22,6 +22,15 @@ struct GaitTable {
     u64 hash = 0;                          // хеш чисел — в хеше описаний
 };
 
+// Длина цикла шага при скорости v (её же берёт вид для подгонки шага). Медленнее клипа ходьбы — короче шаг;
+// между клипами — по скорости; быстрее клипа бега шаг удлиняется как корень из скорости: частота растёт медленнее
+// скорости, как у живого бегуна (клип бега CMU — 2.2 м/с, бег игры — 4.8 м/с)
+inline f32 gait_cycle_len(const GaitTable &g, f32 v) {
+    if (v <= g.walk_v) return g.walk_len * (0.5f + 0.5f * v / g.walk_v);
+    if (v >= g.run_v) return g.run_len * f_sqrt(v / g.run_v);
+    return g.walk_len + (g.run_len - g.walk_len) * (v - g.walk_v) / (g.run_v - g.walk_v);
+}
+
 struct People {
     u16 *gen;
     u8 *alive;

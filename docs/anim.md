@@ -93,7 +93,8 @@ downloads/anims/cmu/*.bvh  (fetch.sh, не в git)        downloads/anims/mixamo
 ## Рантайм вида (`src/anim/clip.h`)
 `anim_parse` → `anim_bind` (кость скелета → кость клипа по имени) → `anim_sample` (два соседних ключа,
 нормированная сумма кватернионов) → `anim_blend` (два клипа) → `pose_palette` (палитра этапа 7, голова таза из
-клипа). Без IK (этап 9). Метки — `anim_labels_parse`. Загрузка — `app/assets.cpp`, все клипы в арене мира.
+клипа). Ходьба по фазе шага мира — `src/anim/gait.cpp`, IK ног — `src/anim/ik.cpp`, поза в осях сетки —
+`pose_world` (этап 9б, `docs/people.md`). Метки — `anim_labels_parse`. Загрузка — `app/assets.cpp`, все клипы в арене мира.
 
 ## Стенд (`src/debug/stand.cpp`, F3 «ЛЮДИ: СТЕНД»)
 Клип и второй клип для смешивания с долей, скорость ×1/×0.5/×0.25/×0.1, пауза, «с начала», «на месте» (корень

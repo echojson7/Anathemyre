@@ -13,6 +13,7 @@
 #include "../sim/record.h"
 #include "../sim/step.h"
 #include "../ui/ui.h"
+#include "../view/people.h"
 #include "../view/view.h"
 #include <inttypes.h>
 #include <stdarg.h>
@@ -144,6 +145,25 @@ int run_window(const Args &a, AppMemory &m) {
     ViewAssets *assets = arena_push<ViewAssets>(m.world, 1);
     ScatterCache *scatter = arena_push<ScatterCache>(m.world, 1);
     scatter_init(*scatter, m.world);
+    PeopleView *pv = arena_push<PeopleView>(m.world, 1);  // ~1.3 МБ: не на стек
+    people_view_init(*pv);
+    // Приказы по кадрам (--go): «кадр место x z y аллюр», через «;»
+    struct GoOrder {
+        u64 frame;
+        u32 slot, gait;
+        f32 x, z, y;
+    };
+    GoOrder go[32];
+    u32 ngo = 0;
+    for (const char *q = a.go; q && *q && ngo < 32;) {
+        unsigned long long f = 0;
+        unsigned sl = 0, g = 0;
+        float x = 0, z = 0, y = 0;
+        if (sscanf(q, " %llu %u %f %f %f %u", &f, &sl, &x, &z, &y, &g) == 6) go[ngo++] = {(u64)f, sl, g, x, z, y};
+        else log_warn("--go: непонятный приказ %s", q);
+        const char *e = strchr(q, ';');
+        q = e ? e + 1 : nullptr;
+    }
     if (!app_world_create(w, m, a.seed, &desc) || !app_assets_load(m, mats, *assets) || !app_terrain_upload(w)) {
         log_error("мир или ассеты не загрузились (причина — строкой выше)");
         render_shutdown();
@@ -234,6 +254,7 @@ int run_window(const Args &a, AppMemory &m) {
     }
     ds.lines = set.lines;
     debug_stand_args(ds, a.stand);
+    if (a.people_lines) ds.people_lines = true;
     if (a.open && (!strcmp(a.open, "menu") || !strcmp(a.open, "keys"))) {
         menu.open = true;
         menu.tab = !strcmp(a.open, "keys") ? HUD_TAB_CONTROLS : HUD_TAB_SCREEN;
@@ -260,6 +281,7 @@ int run_window(const Args &a, AppMemory &m) {
         f64 dt = (f64)(now - last) / 1e9;
         last = now;
         if (dt > 0.25) dt = 0.25;
+        if (a.video) dt = 1.0 / 30.0;  // видео: мир и вид идут ровно 1/30 с на кадр, как бы долго ни рисовался кадр
         stat_add(st_frame, dt * 1000.0);
 
         platform_poll(in);
@@ -380,13 +402,54 @@ int run_window(const Args &a, AppMemory &m) {
         if (ds.speed_set >= 0 && (u32)ds.speed_set < ANA_COUNTOF(SPEEDS)) tc.speed = (u32)ds.speed_set;
         view_camera_control(cam, win, (f32)dt, w.terrain);
 
-        // Мышь → намерения игрока: левая — притянуть точки, с Ctrl — вспышка; R — отпустить.
+        // Мышь → выбор и намерения игрока (docs/ui.md, «Управление»): левая — выбрать человека; мимо — снять выбор
+        // и притянуть точки (с Ctrl — вспышка). Правая — приказ выбранному «идти» (Shift — бег, Ctrl — трусца),
+        // Alt + правая — вращать камеру. C — камера за выбранным. R — отпустить точки.
         // На вкладке «Мир» панели отладки левая кнопка выбирает строку точки, а не приказывает
         bool inspecting = hud_on && set.debug && set.debug_panel && ds.tab == DEBUG_TAB_WORLD;
+        const Extract &seen = ring_cur(ring);
         WPos at;
-        if (win.mouse_pressed[MOUSE_LEFT] && view_screen_to_ground(cam, ww, wh, in.mouse_x, in.mouse_y, w.terrain, at)) {
-            if (inspecting) debug_inspect_pick(w, *inspect, at);
-            else pending.push_back({0, win.key_down[KEY_CTRL] ? (u32)INTENT_BURST : (u32)INTENT_ATTRACT, at, 0});
+        if (win.mouse_pressed[MOUSE_LEFT]) {
+            i32 hit = inspecting ? -1 : people_view_pick(*pv, seen, cam, ww, wh, in.mouse_x, in.mouse_y);
+            if (hit >= 0) {
+                pv->sel = hit;
+                pv->sel_gen = seen.person_gen[hit];
+            } else if (view_screen_to_ground(cam, ww, wh, in.mouse_x, in.mouse_y, w.terrain, at)) {
+                if (inspecting) debug_inspect_pick(w, *inspect, at);
+                else {
+                    pv->sel = -1;
+                    cam.follow = false;
+                    pending.push_back({0, win.key_down[KEY_CTRL] ? (u32)INTENT_BURST : (u32)INTENT_ATTRACT, at, 0});
+                }
+            }
+        }
+        auto order_go = [&](u32 slot, u16 gen, const WPos &to, u32 gait) {
+            pending.push_back({0, INTENT_GO, to, (u64)slot | ((u64)gen << 16) | ((u64)gait << 32)});
+            if ((i32)slot == pv->sel) {
+                pv->mark_on = true;
+                pv->mark = to;
+                pv->mark_fade = 1.0f;
+                pv->mark_step = w.step;
+            }
+        };
+        if (win.mouse_pressed[MOUSE_RIGHT] && !win.key_down[KEY_ALT] && pv->sel >= 0 &&
+            view_screen_to_support(cam, ww, wh, in.mouse_x, in.mouse_y, w.terrain, &w.coll, at))
+            order_go((u32)pv->sel, pv->sel_gen, at, win.key_down[KEY_SHIFT] ? GAIT_RUN : win.key_down[KEY_CTRL] ? GAIT_JOG : GAIT_WALK);
+        if (win.key_pressed[KEY_C] && pv->sel >= 0) cam.follow = !cam.follow;
+        // Выбор и приказы из командной строки (видео, проверка повтора)
+        if (a.select >= 0 && pv->sel < 0 && seen.person_gen[a.select] && frames < 4) {
+            pv->sel = a.select;
+            pv->sel_gen = seen.person_gen[a.select];
+            cam.follow = a.follow;
+        }
+        for (u32 i = 0; i < ngo; ++i) {
+            if (go[i].frame != frames || go[i].slot >= PEOPLE_CAPACITY || !seen.person_gen[go[i].slot]) continue;
+            WPos to;
+            to.x = go[i].x;
+            to.z = go[i].z;
+            wpos_rebase(to);
+            to.y = ground_at(w.terrain, to).height + go[i].y;  // y — над землёй (плита, пол руины)
+            order_go(go[i].slot, seen.person_gen[go[i].slot], to, go[i].gait);
         }
         if (win.key_pressed[KEY_R]) pending.push_back({0, INTENT_RELEASE, WPos{}, 0});
         // Часы (отладка): [ ] и ползунок — час, T и выбор — скорость суток; через намерения, запись повтора их помнит
@@ -458,7 +521,7 @@ int run_window(const Args &a, AppMemory &m) {
         arena_reset(m.frame);
         ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused || a.timelapse ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel,
                      a.test_lights || ds.test_lights, a.froxel_heat || ds.froxel_heat,
-                     a.nogcache || ds.gcache_off, scatter};
+                     a.nogcache || ds.gcache_off, scatter, pv};
         // Глаз привыкает по времени кадра; в видео — ровно 1/30 с. Сразу — первые два кадра (час из --hour
         // мир ставит после первого), снимок и --timelapse (кадр — свой час)
         vi.dt = a.frames ? 1.0f / 30.0f : (f32)dt;
@@ -466,12 +529,19 @@ int run_window(const Args &a, AppMemory &m) {
         vi.tonemap = ds.tonemap;
         vi.light_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.light_quality;
         if (!ds.lines) vi.dbg = nullptr;
+        vi.people_debug = vi.dbg && ds.people_lines;
         RenderFrame rf;
         u32 dbg_keep = dbg.count;  // метка осмотра — только на этот кадр, шаг мира её не видит
         if (hud_on && set.debug && set.debug_panel && ds.tab == DEBUG_TAB_WORLD) debug_inspect_mark(w, *inspect, dbg);
         // Стенд: в видео и снимках время клипа идёт ровно 1/30 с на кадр
         if (set.debug) debug_stand_update(ds, *assets, w.terrain, a.frames ? 1.0 / 30.0 : dt, vi.dbg ? &dbg : nullptr);
-        if (set.debug && vi.dbg) debug_people(w, dbg);
+        if (set.debug && vi.dbg && ds.people_lines) debug_people(w, dbg, pv->sel);
+        // Камера за выбранным: опора — его голова на этот кадр
+        if (cam.follow) {
+            WPos head;
+            if (people_view_head(*pv, *vi.prev, *vi.cur, vi.alpha, head)) view_camera_follow(cam, head, (f32)dt, w.terrain, &w.coll);
+            else if (pv->sel < 0) cam.follow = false;  // выбран, но тела ещё не было — подождать кадр
+        }
         view_build(cam, *assets, vi, m.frame, rf);
         if (set.debug) debug_stand(ds, *assets, m.frame, rf);
         dbg.count = dbg_keep;

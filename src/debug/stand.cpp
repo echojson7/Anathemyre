@@ -144,10 +144,11 @@ static void capsule(DebugDraw &dbg, const WPos &a, const WPos &b, f32 r, u32 rgb
     }
 }
 
-// Люди шага мира капсулами (пока у них нет тела в кадре — этап 9б): капсула тела r 0.3 до 1.8 м и курс тела
-void debug_people(const World &w, DebugDraw &dbg) {
+// Люди шага мира капсулами поверх тела (капсула шага r 0.3 до 1.8 м и курс тела): видно расхождение шага и вида.
+// У выбранного — путь: от него к следующему узлу и дальше по узлам сетки, последний отрезок — к цели
+void debug_people(const World &w, DebugDraw &dbg, i32 selected) {
     const People &p = w.people;
-    const u32 col = rgba8(90, 220, 255), head = rgba8(255, 230, 90);
+    const u32 col = rgba8(90, 220, 255), head = rgba8(255, 230, 90), path = rgba8(60, 255, 120);
     for (u32 s = 0; s < PEOPLE_CAPACITY; ++s) {
         if (!p.alive[s]) continue;
         WPos feet{p.cx[s], p.cz[s], p.x[s], p.y[s], p.z[s]};
@@ -162,6 +163,20 @@ void debug_people(const World &w, DebugDraw &dbg) {
         d.z += cs * 0.6f;
         wpos_rebase(d);
         dbg_line(dbg, c, d, head);
+        if ((i32)s != selected || p.state[s] == MOVE_STAND) continue;
+        WPos from = feet;
+        from.y += 0.05f;
+        if (p.path_area[s] != PATH_DIRECT && p.path_area[s] < w.walk.count) {
+            const WalkArea &ar = w.walk.area[p.path_area[s]];
+            for (u32 k = p.path_i[s]; k < p.path_n[s]; ++k) {
+                WPos to = walk_node_pos(ar, p.path[s * PATH_MAX + k]);
+                to.y += 0.05f;
+                dbg_line(dbg, from, to, path);
+                from = to;
+            }
+        }
+        WPos goal{p.gcx[s], p.gcz[s], p.gx[s], p.gy[s] + 0.05f, p.gz[s]};
+        dbg_line(dbg, from, goal, path);
     }
 }
 
@@ -359,6 +374,7 @@ void debug_stand(const DebugState &d, const ViewAssets &assets, Arena &frame, Re
 }
 
 void debug_stand_args(DebugState &d, const char *spec) {
+    if (spec && *spec) d.stand = true;  // стенд выключен по умолчанию; --stand включает (off — выключает)
     for (const char *p = spec; p && *p;) {
         const char *e = p;
         while (*e && *e != ',') ++e;

@@ -31,12 +31,15 @@ void extract_init(Extract &e, Arena &arena) {
     e.person_speed = arena_push<f32>(arena, np);
     e.person_phase = arena_push<u32>(arena, np);
     e.person_seed = arena_push<u32>(arena, np);
+    e.person_state = arena_push<u8>(arena, np);
 }
 
 void sim_extract(const World &w, Extract &e) {
     const Dots &d = w.dots;
     e.terrain = &w.terrain;
     e.decals = &w.decals;
+    e.coll = &w.coll;
+    e.gait = &w.gait;
     e.step = w.step;
     e.clock = w.clock;
     for (u32 i = 0; i < DOTS_CAPACITY; ++i) e.gen[i] = d.alive[i] ? d.gen[i] : 0;
@@ -75,6 +78,7 @@ void sim_extract(const World &w, Extract &e) {
     memcpy(e.person_speed, q.speed, np * sizeof *e.person_speed);
     memcpy(e.person_phase, q.phase, np * sizeof *e.person_phase);
     memcpy(e.person_seed, q.seed, np * sizeof *e.person_seed);
+    memcpy(e.person_state, q.state, np * sizeof *e.person_state);
 }
 
 void ring_init(ExtractRing &r, Arena &arena) {

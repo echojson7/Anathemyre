@@ -10,12 +10,12 @@ static constexpr f32 R_GROUND = 6360e3f, R_TOP = 6460e3f;  // как в atmosphe
 static constexpr f32 SUN_RADIUS = 0.00465f, MOON_RADIUS = 0.0045f;  // угловые радиусы, рад
 
 bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap) {
-    struct Key {
+    struct SkyKey {
         const char *name;
         f32 *v;
         u32 n;
     };
-    const Key keys[] = {
+    const SkyKey keys[] = {
         {"latitude", &d.latitude, 1},     {"season", &d.season, 1},       {"moon_age", &d.moon_age, 1},
         {"sun", &d.sun, 1},               {"moon_boost", &d.moon_boost, 1}, {"moon_albedo", &d.moon_albedo, 1},
         {"rayleigh", &d.rayleigh, 1},     {"mie", &d.mie, 1},             {"mie_g", &d.mie_g, 1},
@@ -31,8 +31,8 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
     TextReader r = text_reader(text, size);
     TextLine l;
     while (text_next(r, l)) {
-        const Key *k = nullptr;
-        for (const Key &q : keys)
+        const SkyKey *k = nullptr;
+        for (const SkyKey &q : keys)
             if (str_eq(l.w[0], q.name)) k = &q;
         if (!k) {
             snprintf(err, err_cap, "строка %u: неизвестный ключ %.*s", l.line, (int)l.w[0].n, l.w[0].p);
