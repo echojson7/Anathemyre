@@ -42,6 +42,7 @@ void settings_load(Settings &s, const char *path) {
         else if (str_eq(k, "mouse_sens") && num) s.mouse_sens = clampf(f, 0.2f, 4.0f);
         else if (str_eq(k, "invert_y") && num) s.invert_y = b;
         else if (str_eq(k, "fov") && num) s.fov_deg = clampf(f, 40.0f, 100.0f);
+        else if (str_eq(k, "light_quality") && parse_u32(v, u)) s.light_quality = u < 4 ? u : 2;
         else if (str_eq(k, "debug") && num) s.debug = b;
         else if (str_eq(k, "debug_panel") && num) s.debug_panel = b;
         else if (str_eq(k, "lines") && num) s.lines = b;
@@ -57,9 +58,10 @@ bool settings_save(const Settings &s, const char *path) {
                      "fullscreen %d\nvsync %d\n"
                      "ui_scale %.2f\ntext_scale %.2f\nfps %u\n"
                      "mouse_sens %.2f\ninvert_y %d\nfov %.0f\n"
+                     "light_quality %u\n"
                      "debug %d\ndebug_panel %d\nlines %d\npixel %d\n",
                      s.fullscreen, s.vsync, (double)s.ui_scale, (double)s.text_scale, s.fps, (double)s.mouse_sens,
-                     s.invert_y, (double)s.fov_deg, s.debug, s.debug_panel, s.lines, s.pixel);
+                     s.invert_y, (double)s.fov_deg, s.light_quality, s.debug, s.debug_panel, s.lines, s.pixel);
     bool ok = n > 0 && platform_write_file(path, t, (usize)n);
     if (!ok) log_error("не записать настройки %s", path);
     return ok;

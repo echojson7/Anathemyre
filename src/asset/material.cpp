@@ -64,6 +64,7 @@ bool material_table_parse(const u8 *kinds_text, usize kinds_size, const u8 *text
         else if (str_eq(k, "color2")) ok = numbers(l, cur->p + 4, 3);
         else if (str_eq(k, "texel")) ok = numbers(l, cur->p + 7, 1) && cur->p[7] > 0.0f;
         else if (str_eq(k, "extra")) ok = numbers(l, cur->p + 8, 4);
+        else if (str_eq(k, "metal")) ok = numbers(l, &cur->metal, 1) && cur->metal >= 0.0f && cur->metal <= 1.0f;
         else return fail(err, err_cap, l.line, "неизвестный параметр");
         if (!ok) return fail(err, err_cap, l.line, "не те числа у параметра");
     }

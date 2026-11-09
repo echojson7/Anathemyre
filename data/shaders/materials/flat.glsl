@@ -7,5 +7,7 @@ Surface surf_flat(SurfIn i) {
     s.ao = 1.0;
     s.emissive = vec3(0.0);
     s.height = 0.5;
+    s.metal = 1.0;
+    s.nvar = 0.0;
     return s;
 }

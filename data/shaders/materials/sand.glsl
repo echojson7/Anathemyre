@@ -122,6 +122,8 @@ Surface sand_surf(SurfIn i, vec2 wind) {
     s.ao = 1.0;
     s.emissive = vec3(0.0);
     s.height = 0.2 + 0.15 * h1 * k1;
+    s.metal = 1.0;
+    s.nvar = 0.0;
     return s;
 }
 

@@ -7,7 +7,8 @@
 // пиксельности. Пиксели с одним треугольником и одной ячейкой — одна поверхность: surface() → light_surface()
 // считается раз, на первом из них, и раздаётся остальным. Ведущие пиксели сжимаются в начало группы, поэтому
 // считают их подряд идущие потоки. Пустые пиксели — небо (sky.glsl). Пишет линейный цвет в HDR-картинку,
-// стиль — отдельным проходом. Заодно считает свою работу (STAT_PX_*, STAT_SURF_*, STAT_SHADOW_TAPS).
+// уже умноженный на экспозицию (docs/light.md: яркости в кд/м², диск солнца ~10⁹ — f16 их не держит), тонмаппинг —
+// стиль, отдельным проходом. Заодно считает свою работу (STAT_PX_*, STAT_SURF_*, STAT_SHADOW_TAPS).
 // Земля (docs/gcache.md): поверхность — из кеша земли по текселю, который разбор плиток записал в gc_cells;
 // у земли поверхность — тексель, свет — раз на тексель. Плитка земли без разбора треугольников: если хоть
 // одного текселя нет в кеше (не хватило места), она уходит в «землю на пиксель». Та и смесь считают
@@ -29,6 +30,9 @@ ivec2 g_origin;  // начало отсчёта узоров: чанк каме�
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0, r32ui) uniform readonly uimage2D u_vis;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D u_hdr;
+
+// Цвет в HDR кадра: × экспозиция глаза этого кадра (sky_sum.comp), предел — запас до края f16
+vec3 pre_exposed(vec3 c) { return min(c * pc.frame.sky_out.v[SKY_OUT_EYE].x, vec3(60000.0)); }
 
 shared Hit s_hit[64];
 shared uint s_id[64];
@@ -112,7 +116,7 @@ void main() {
     bool inside = px.x < int(f.viewport.x) && px.y < int(f.viewport.y);
     if (TILE_KIND == TILE_SKY) {
         // Только небо: то же, что shade_hit() пустого пикселя
-        if (inside) imageStore(u_hdr, px, vec4(sky_radiance(normalize(pixel_ray(px))), 1.0));
+        if (inside) imageStore(u_hdr, px, vec4(pre_exposed(sky_radiance(normalize(pixel_ray(px)))), 1.0));
         if (t == 0u) {
             ivec2 n = min(ivec2(8), ivec2(f.viewport) - origin);
             atomicAdd(f.stats.v[STAT_PX_SKY], uint(n.x * n.y));
@@ -192,7 +196,7 @@ void main() {
         return;
     }
     if (t < nlead) {
-        s_color[t] = shade_hit(hl, phys);
+        s_color[t] = pre_exposed(shade_hit(hl, phys));
         if (g_steps != 0u) atomicAdd(s_work[5], g_steps);
     }
     barrier();

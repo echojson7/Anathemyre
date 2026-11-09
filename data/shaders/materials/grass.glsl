@@ -80,5 +80,7 @@ Surface surf_grass(SurfIn i) {
     s.ao = ao;
     s.emissive = vec3(0.0);
     s.height = height;
+    s.metal = 1.0;
+    s.nvar = 0.0;
     return s;
 }

@@ -48,8 +48,11 @@ Surface ground_layers(vec3 p, vec3 n, float cell, float foot, float wdepth) {
         Surface sb = surface(f.ground_layers[lb], p, n, cell, foot, SEED);
         if (w[b] + sb.height * 0.9 > w[a] + s.height * 0.9) s = sb;
     }
-    // Сырость у воды: земля темнее, трава гуще
-    s.albedo *= 1.0 - wet * 0.3 * (0.6 + 0.4 * fbm_n(p, 16.0, 2, 73u));
+    // Сырость у воды (docs/light.md, «Мокрое»): вода в порах темнит землю и сглаживает её — блик уже, ярче
+    // (Lagarde 2013: пористое темнеет, гладкое почти нет; шероховатость к ~0.4)
+    float dampw = wet * (0.6 + 0.4 * fbm_n(p, 16.0, 2, 73u));
+    s.albedo *= 1.0 - dampw * 0.3;
+    s.rough = mix(s.rough, min(s.rough, 0.4), clamp(dampw * 1.2 - 0.2, 0.0, 1.0));
     if (water) {
         // Гладь: свой узор и блик; на мелком сквозь неё видно дно
         Surface sw = surface(f.ground_layers[5], p, n, cell, foot, SEED);

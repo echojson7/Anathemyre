@@ -230,6 +230,10 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.cell_min = f.style.cell_min;
     g.cell_pixels = f.style.cell_pixels;
     g.pixel = f.style.pixel ? 1u : 0u;
+    g.dt = f.style.dt;
+    g.eye_snap = f.style.eye_snap ? 1u : 0u;
+    g.tonemap = f.style.tonemap < RENDER_TONEMAPS ? f.style.tonemap : RENDER_TONEMAP_AGX;
+    g.light_q = f.style.light_quality < RENDER_LIGHT_QUALITIES ? f.style.light_quality : RENDER_LIGHT_HIGH;
     g.viewport[0] = w;
     g.viewport[1] = h;
     g.ndc_per_pixel[0] = 2.0f / (w > 0 ? w : 1.0f);
