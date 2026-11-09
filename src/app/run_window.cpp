@@ -81,7 +81,7 @@ struct MouseOwner {
 // работает и вся земля считается на пиксель; vsync упирает к/с в частоту экрана; слои проверки и отладочная
 // сборка медленнее в разы. Пусто — замер честный
 static void unfair_modes(char *out, usize cap, bool pixel, bool nogcache, bool lights, bool heat, bool validation,
-                         bool vsync) {
+                         bool vsync, bool sm_pages) {
     out[0] = 0;
     usize n = 0;
     auto add = [&](bool on, const char *what) {
@@ -93,6 +93,7 @@ static void unfair_modes(char *out, usize cap, bool pixel, bool nogcache, bool l
     add(nogcache, "без кеша земли");
     add(lights, "тестовые огни");
     add(heat, "огни по клеткам");
+    add(sm_pages, "страницы теней");
     add(validation, "слои проверки");
 #ifdef ANA_DEBUG
     add(true, "отладочная сборка");
@@ -335,6 +336,12 @@ int run_window(const Args &a, AppMemory &m) {
                 di.work_gc[2] = work.gc_over;
                 di.work_gc[3] = work.gc_direct;
                 di.work_skin = work.skin_verts;
+                di.work_sm[0] = work.sm_used;
+                di.work_sm[1] = work.sm_new;
+                di.work_sm[2] = work.sm_over;
+                di.work_sm[3] = work.sm_miss;
+                di.work_sm[4] = work.sm_draws;
+                di.work_sm[5] = work.sm_taps;
                 di.gc_off = work.gc_off;
                 di.light = eye_have;
                 di.lux_key = eye_info.lux_key;
@@ -371,7 +378,8 @@ int run_window(const Args &a, AppMemory &m) {
         cam.settings = CameraSettings{set.mouse_sens, set.invert_y, set.fov_deg};
         bool pixel = set.pixel && !a.nopixel;
         unfair_modes(unfair, sizeof unfair, pixel, a.nogcache || ds.gcache_off, a.test_lights || ds.test_lights,
-                     a.froxel_heat || ds.froxel_heat, a.validation || a.gpu_validation, vsync_applied);
+                     a.froxel_heat || ds.froxel_heat, a.validation || a.gpu_validation, vsync_applied,
+                     a.shadow_pages || ds.shadow_pages);
         dbg.enabled = ds.lines;
 
         Input win = world_input(in, mouse_owner, hud_on && ui_wants_mouse(), menu.open);
@@ -464,6 +472,7 @@ int run_window(const Args &a, AppMemory &m) {
         vi.dt = a.frames ? 1.0f / 30.0f : (f32)dt;
         vi.eye_snap = frames < 2 || a.timelapse || a.shot;
         vi.tonemap = ds.tonemap;
+        vi.shadow_pages = a.shadow_pages ? a.shadow_pages : ds.shadow_pages;
         vi.light_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.light_quality;
         if (!ds.lines) vi.dbg = nullptr;
         RenderFrame rf;
@@ -576,10 +585,12 @@ int run_window(const Args &a, AppMemory &m) {
             if (work_have)
                 log_info("работа освещения: плитки небо %u земля %u сетки %u смесь %u земля на пиксель %u · пиксели небо %u земля %u "
                          "сетки %u · поверхности земли %u сеток %u · выборки тени %u · кеш земли: страниц %u запечено %u "
-                         "без места %u, мимо кеша %u · скинено вершин %u",
+                         "без места %u, мимо кеша %u · скинено вершин %u · тени: страниц %u нарисовано %u без места %u "
+                         "выборок %u без страницы %u, вызовов %u",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
-                         work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts);
+                         work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts, work.sm_used, work.sm_new,
+                         work.sm_over, work.sm_taps, work.sm_miss, work.sm_draws);
             if (eye_have)
                 log_info("глаз: светило %.4g лк, небо %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g", (double)eye_info.lux_key,
                          (double)eye_info.lux_sky, (double)eye_info.ev100, (double)eye_info.ev100_goal, (double)eye_info.exposure);
@@ -597,15 +608,17 @@ int run_window(const Args &a, AppMemory &m) {
     if (a.shot && !debug_write_shot(a.shot, m.load)) rc_exit = 1;
     if (a.work) {
         // Счётчики работы для сверки CI (tools/work_check.sh): «имя значение» по строке
-        char t[512];
+        char t[768];
         i32 n = snprintf(t, sizeof t,
                          "tiles_sky %u\ntiles_ground %u\ntiles_mesh %u\ntiles_mix %u\ntiles_ground_px %u\npx_sky %u\n"
                          "px_ground %u\n"
                          "px_mesh %u\nsurf_ground %u\nsurf_mesh %u\nshadow_taps %u\ngc_used %u\ngc_baked %u\n"
-                         "gc_over %u\ngc_direct %u\nskin_verts %u\n",
+                         "gc_over %u\ngc_direct %u\nskin_verts %u\nsm_used %u\nsm_new %u\nsm_over %u\nsm_miss %u\n"
+                         "sm_draws %u\nsm_taps %u\n",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
-                         work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts);
+                         work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts, work.sm_used, work.sm_new,
+                         work.sm_over, work.sm_miss, work.sm_draws, work.sm_taps);
         if (!work_have) log_error("--work: кадр мира не прочитан (мало кадров)");
         if (!work_have || n <= 0 || !platform_write_file(a.work, t, (usize)n)) rc_exit = 1;
     }

@@ -93,7 +93,7 @@ bool vk_world_init() {
         lights = lights && w.pipe_light[k];
     }
     return w.pipe_vis_mesh && w.pipe_vis_ground && w.pipe_style && w.pipe_cull_count && w.pipe_cull_scan &&
-           w.pipe_cull_write && lights && w.pipe_tiles && w.pipe_ground_bake && vk_gcache_init();
+           w.pipe_cull_write && lights && w.pipe_tiles && w.pipe_ground_bake && vk_gcache_init() && vk_shadow_init();
 }
 
 static void destroy_image(GpuImage &im) {
@@ -120,6 +120,7 @@ void vk_world_shutdown() {
     vk_destroy_buffer(w.tiles);
     for (FrameSlot &fs : g_vk.frames) vk_destroy_buffer(fs.inst_upload);
     vk_gcache_shutdown();
+    vk_shadow_shutdown();
     if (w.pool) vkDestroyDescriptorPool(g_vk.device, w.pool, nullptr);
     if (w.set_layout) vkDestroyDescriptorSetLayout(g_vk.device, w.set_layout, nullptr);
     w = WorldGpu{};
@@ -242,6 +243,7 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.tiles = w.tiles.address;
     g.tile_cap = w.tile_cap;
     vk_gcache_fill(g, f, images);
+    vk_shadow_fill(g, f, fs, images);
 }
 
 static void dispatch(VkCommandBuffer cmd, VkPipeline p, VkDeviceAddress frame, u32 gx, u32 gy) {
@@ -439,15 +441,21 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     // Разбор плиток заодно пишет пикселям земли их тексели кеша и заявляет недостающие страницы; страницы
     // запекаются до освещения (docs/gcache.md)
     vk_gcache_begin(g_wf.frame);
+    vk_shadow_begin(g_wf.frame);
     rg_pass("плитки: обнулить", "плитки", record_tiles_clear, nullptr);
     rg_use(w.rg_tiles, RG_COPY_WRITE);
     rg_pass("плитки: разбор", "плитки", record_tiles, nullptr);
     rg_use(w.rg_id, RG_IMG_CS_READ);
     rg_use(w.rg_tiles, RG_CS_WRITE);
     rg_use(w.rg_gverts, RG_CS_READ);
+    rg_use(w.rg_vis, RG_CS_READ);  // точки пикселей сеток — заявки страниц теней
+    rg_use(w.rg_inst, RG_CS_READ);
+    vk_skin_vertices_read(RG_CS_READ);
     rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
     vk_gcache_tiles_uses();
+    vk_shadow_tiles_uses();
     vk_gcache_bake_passes();
+    vk_shadow_passes();
     static const char *const light_names[TILE_KINDS] = {"освещение: небо", "освещение: земля", "освещение: сетки",
                                                         "освещение: смесь", "освещение: земля на пиксель"};
     for (u32 k = 0; k < TILE_KINDS; ++k) {
@@ -466,6 +474,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         vk_froxel_reads(RG_CS_READ);
         vk_gcache_reads();
         vk_horizon_reads(RG_CS_READ);
+        vk_shadow_reads();
     }
     // 5. Стиль, отрезки, точки
     rg_pass("стиль", "стиль", record_style, nullptr);

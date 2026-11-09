@@ -5,7 +5,7 @@
 #pragma once
 #include "vk_state.h"
 
-constexpr u32 RG_MAX_RES = 64, RG_MAX_PASSES = 48, RG_MAX_USES = 24;
+constexpr u32 RG_MAX_RES = 64, RG_MAX_PASSES = 56, RG_MAX_USES = 24;
 
 // Как проход трогает ресурс. Запись включает чтение тем же проходом (атомики, чтение-запись)
 enum RgUse : u8 {
@@ -23,6 +23,7 @@ enum RgUse : u8 {
     RG_DEPTH,          // картинка: глубина, тест и запись (storeOp DONT_CARE для слоёв — тоже запись)
     RG_IMG_COPY_READ,  // картинка: источник копии
     RG_PRESENT,        // картинка swapchain: к показу
+    RG_FS_WRITE,       // буфер: запись во фрагментном (атомики страниц теней)
     RG_USES
 };
 // Старое содержимое картинки не нужно: переход из UNDEFINED
@@ -76,6 +77,13 @@ void vk_gcache_begin(VkDeviceAddress frame);
 void vk_gcache_tiles_uses();
 void vk_gcache_bake_passes();
 void vk_gcache_reads();
+// Тени солнца (vk_shadow.cpp, docs/shadow.md): сброс, заявки с нуля и сброс страниц под изменившимися
+// экземплярами — до разбора плиток; что пишет разбор плиток (заявки); свободные, выдача, отбор и отрисовка
+// страниц — после него; что читает освещение
+void vk_shadow_begin(VkDeviceAddress frame);
+void vk_shadow_tiles_uses();
+void vk_shadow_passes();
+void vk_shadow_reads();
 // Скиннинг людей (vk_skin.cpp): вершины копий и сферы их кластеров — до отсечения; кто читает общие вершины
 // (u — стадия) и таблицу кластеров (отсечение)
 void vk_skin_passes(const VkDeviceAddress *frame);

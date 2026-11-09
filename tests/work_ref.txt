@@ -14,3 +14,9 @@ gc_baked 0
 gc_over 0
 gc_direct 4404
 skin_verts 185
+sm_used 98
+sm_new 0
+sm_over 0
+sm_miss 0
+sm_draws 0
+sm_taps 865124

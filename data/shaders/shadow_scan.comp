@@ -1,0 +1,23 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Тени солнца (docs/shadow.md): свободные страницы кадра, как у кеша земли (gcache_scan.comp). Поток на
+// физическую страницу: прочитанная этим кадром — занята; без чтения дольше SM_AGE кадров (или пустая) — в
+// «старые», иначе — в «недавние». Новые страницы берут сначала старые
+#include "shadow.glsl"
+layout(local_size_x = 64) in;
+
+void main() {
+    FrameData f = pc.frame;
+    uint p = gl_GlobalInvocationID.x;
+    if (p >= f.sm_pages_n) return;
+    uint used = f.sm_pages.v[p].used;
+    if (used == f.sm_frame) return;
+    uint base = 2u * f.sm_req_cap;
+    if (used == 0u || f.sm_frame - used >= SM_AGE) {
+        uint i = atomicAdd(f.sm_req.old_n, 1u);
+        f.sm_req.v[base + i] = p;
+    } else {
+        uint i = atomicAdd(f.sm_req.recent_n, 1u);
+        f.sm_req.v[base + f.sm_pages_n + i] = p;
+    }
+}
