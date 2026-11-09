@@ -8,9 +8,15 @@
 static constexpr f32 ROW = 36.0f;
 static constexpr f32 CTL = 230.0f;
 
-static bool hit(f32 x, f32 y, f32 w, f32 h) {
+static bool inside(f32 x, f32 y, f32 w, f32 h) {
     const UiState &u = g_ui_state;
     return u.mx >= x && u.mx < x + w && u.my >= y && u.my < y + h;
+}
+// Мышь над виджетом: за краем обрезки (уехал из области прокрутки) — нет
+static bool hit(f32 x, f32 y, f32 w, f32 h) {
+    const UiState &u = g_ui_state;
+    if (u.clip_on && !(u.mx >= u.clip.x0 && u.mx < u.clip.x1 && u.my >= u.clip.y0 && u.my < u.clip.y1)) return false;
+    return inside(x, y, w, h);
 }
 
 // Номер виджета: адрес его переменной (у кнопок — подпись и место)
@@ -178,4 +184,64 @@ void ui_key_row(UiForm &f, const char *key, const char *what) {
     ui_text(f.x + ui_px(6), y, UI_SMALL, ui_col::TEXT, key);
     ui_text(f.x + kw, floorf(f.y + (row - ui_line(UI_TEXT)) * 0.5f), UI_TEXT, ui_col::DIM, what);
     f.y += row;
+}
+
+// --- Прокрутка ---
+static constexpr f32 WHEEL_STEP = 72.0f;  // единицы ui_s на щелчок колеса (две-три строки)
+
+static f32 scroll_max(const UiScroll &s) { return s.content > s.h ? s.content - s.h : 0.0f; }
+
+f32 ui_scroll_begin(UiScroll &s, f32 x, f32 y, f32 w, f32 h) {
+    UiState &u = g_ui_state;
+    s.x = x;
+    s.y = y;
+    s.w = w;
+    s.h = h > 0 ? h : 0;
+    if (u.wheel != 0 && inside(x, y, w, s.h)) {
+        s.offset -= u.wheel * ui_px(WHEEL_STEP);
+        u.wheel = 0;  // одна область на щелчок
+    }
+    f32 m = scroll_max(s);
+    s.offset = s.offset < 0 ? 0 : (s.offset > m ? m : s.offset);
+    s.offset = floorf(s.offset + 0.5f);  // буквы в целых пикселях
+    ui_clip(x, y, w, s.h);
+    return y - s.offset;
+}
+
+f32 ui_scroll_end(UiScroll &s, f32 bottom) {
+    UiState &u = g_ui_state;
+    ui_clip_off();
+    s.content = bottom - (s.y - s.offset);
+    f32 m = scroll_max(s);
+    if (s.offset > m) s.offset = m;
+    if (m <= 0) return s.content < s.h ? s.content : s.h;
+    // Полоса у правого края области: тонкая дорожка, ползунок шире под мышью
+    f32 tw = ui_px(10), tx = s.x + s.w - tw;
+    f32 th = floorf(s.h * s.h / s.content);
+    if (th < ui_px(28)) th = ui_px(28);
+    f32 room = s.h - th;
+    f32 ty = s.y + floorf(room * s.offset / m + 0.5f);
+    u64 id = (u64)(usize)&s;
+    bool hov = inside(tx, s.y, tw, s.h);
+    if (hov && u.pressed) {
+        u.active = id;
+        if (u.my >= ty && u.my < ty + th) s.grab = u.my - ty;
+        else {
+            s.offset += u.my < ty ? -s.h : s.h;  // на страницу к мыши
+            s.offset = s.offset < 0 ? 0 : (s.offset > m ? m : s.offset);
+            s.grab = -1;
+        }
+    }
+    if (u.active == id && u.down && s.grab >= 0 && room > 0) {
+        f32 k = (u.my - s.grab - s.y) / room;
+        k = k < 0 ? 0 : (k > 1 ? 1 : k);
+        s.offset = floorf(k * m + 0.5f);
+    }
+    ty = s.y + floorf(room * s.offset / m + 0.5f);
+    bool on = hov || u.active == id;
+    f32 bw = on ? ui_px(5) : ui_px(3);
+    f32 bx = floorf(tx + (tw - bw) * 0.5f);
+    ui_rect(floorf(tx + (tw - ui_hair()) * 0.5f), s.y, ui_hair(), s.h, ui_col::LINE);
+    ui_rect(bx, ty, bw, th, u.active == id ? ui_col::TEXT : (on ? ui_col::ON : ui_col::DIM));
+    return s.h;
 }
