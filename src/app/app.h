@@ -38,6 +38,7 @@ struct Args {
     f32 pivot_above = -1.0f;          // --pivot м: опора камеры над землёй (крупные планы стенда)
     const char *video = nullptr;      // --video префикс: каждый кадр в префикс_NNNN.bmp (мир идёт как обычно)
     const char *terrain_map = nullptr;  // --terrain-map файл.bmp: карта земли сверху и выход
+    const char *walk_map = nullptr;     // --walk-map файл.bmp: сетка ходимости у руины и выход
 };
 
 // Память режима: всё выделяется один раз при старте
@@ -62,6 +63,7 @@ int run_window(const Args &a, AppMemory &m);
 int run_sim(const Args &a, AppMemory &m);
 int run_replay(const Args &a, AppMemory &m);
 int run_terrain_map(const Args &a, AppMemory &m);
+int run_walk_map(const Args &a, AppMemory &m);
 
 // Записать запись повтора в файл; false — ошибка с сообщением в журнале
 struct Recorder;

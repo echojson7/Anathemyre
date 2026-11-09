@@ -4,12 +4,15 @@
 #include "../core/dbgdraw.h"
 #include "../core/mem.h"
 #include "../core/rng.h"
+#include "collide.h"
+#include "people.h"
 #include "terrain.h"
+#include "walk.h"
 
 constexpr u32 SIM_HZ = 60;
 constexpr f32 SIM_DT = 1.0f / 60.0f;
 // Меняется при правке шага мира, после которой старые записи не повторяются
-constexpr u32 SIM_VERSION = 7;
+constexpr u32 SIM_VERSION = 8;
 
 // Номер сущности: место (младшие 16 бит) + поколение (старшие 16). Связи в мире — только номерами
 struct Id {
@@ -21,6 +24,16 @@ inline u16 id_gen(Id id) { return (u16)(id.v >> 16); }
 
 constexpr u32 DOTS_CAPACITY = 1024;
 constexpr u32 DOTS_TARGET = 1000;
+
+// Точка старта окна (строка start в data/scene.txt, docs/text.md): опора камеры и люди окна у неё.
+// Шаг мира её не читает и в хеш она не входит; --sim и --replay её не трогают
+struct SceneStart {
+    bool set = false;
+    f32 x = 0, z = 0;                       // метры от начала карты
+    f32 yaw = 0, pitch = 14, dist = 34;     // камера: градусы, метры (как --cam)
+    u32 people = 0;                         // сколько людей родить у точки в первом шаге окна
+    u32 radius = 4;                         // в каком круге, целые м (как у INTENT_PEOPLE_SPAWN)
+};
 
 // Таблица точек, SoA на DOTS_CAPACITY мест. Мёртвое место: alive = 0, его номер в free
 struct Dots {
@@ -96,6 +109,13 @@ struct World {
     Dots dots;
     Props props;
     Decals decals;
+    People people;
+    // Неизменное после создания мира (как земля): коллайдеры построек, сетка ходимости, длины шага клипов.
+    // В хеш шага не входят, их хеши — в хеше описаний записи повтора
+    Colliders coll;
+    WalkGrid walk;
+    GaitTable gait;
+    SceneStart start;  // из сцены, для окна
 };
 
 // Земля строится первой (объекты и точки ставятся на неё); scratch — временная память генерации
@@ -109,6 +129,11 @@ bool props_add(World &w, u64 mesh, u64 material, const WPos &at, f32 lift, u32 y
 bool props_add_at(World &w, u64 mesh, u64 material, const WPos &at, u32 yaw, f32 scale, u32 seed);
 // Декаль: at — середина коробки (с высотой), h — половины сторон. false — таблица полна
 bool decals_add(World &w, u64 kind, u64 material, const WPos &at, u32 yaw, const f32 h[3], u32 seed);
+// После сцены: коллайдеры построек (коробки COLL деталей — читает app) и сетка ходимости по ним.
+// false — коробок или чанков с ними больше предела
+bool world_build_static(World &w, const CollBoxIn *boxes, u32 n, const GaitTable &gait, Arena &arena, Arena &scratch);
+// Хеш неизменного: коллайдеры, сетка ходимости, длины шага (в хеш описаний и в эталон --sim)
+u64 world_static_hash(const World &w);
 
 // Столбцы мира для хеша и проверки повтора: имя, данные, байты. Порядок — порядок в хеше
 // Тип и число значений — только для показа (панель отладки «Мир»), в хеш не входят
@@ -134,7 +159,7 @@ template <typename T> Column column(const char *name, const T *p, u32 n) {
     ColType t = col_type<T>();
     return {name, p, n * sizeof(T), t, t == COL_RAW ? 0u : n};
 }
-constexpr u32 MAX_COLUMNS = 64;
+constexpr u32 MAX_COLUMNS = 128;
 u32 world_columns(const World &w, Column *out);
 void world_column_hashes(const World &w, u64 *out, u32 count);
 u64 world_hash(const World &w);

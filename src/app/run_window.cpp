@@ -184,7 +184,7 @@ int run_window(const Args &a, AppMemory &m) {
     dbg_init(dbg, m.world, 4096);
     Recorder rec;
     if (a.record) {
-        recorder_init(rec, m.record, w, a.seed, 600000, 1u << 16);
+        recorder_init(rec, m.record, w, a.seed, 280000, 1u << 16);  // 88 столбцов × 8 байт × 280 000 ≈ 200 МБ
         rec.desc_hash = desc;
     }
 
@@ -198,6 +198,15 @@ int run_window(const Args &a, AppMemory &m) {
         cam.dist = a.cam[2];
         cam.pivot.x = a.cam[3];
         cam.pivot.z = a.cam[4];
+        wpos_rebase(cam.pivot);
+    } else if (w.start.set) {
+        // Точка старта из сцены (строка start, docs/text.md): сейчас — у руины в пустыне
+        const f32 deg = PI_F / 180.0f;
+        cam.yaw = w.start.yaw * deg;
+        cam.pitch = w.start.pitch * deg;
+        cam.dist = w.start.dist;
+        cam.pivot.x = w.start.x;
+        cam.pivot.z = w.start.z;
         wpos_rebase(cam.pivot);
     } else {
         cam.pivot.z = 10.0f;  // сцена этапа 1 — к северу от начала карты
@@ -215,6 +224,14 @@ int run_window(const Args &a, AppMemory &m) {
     auto hour_turn = [](f64 h) { return (u64)(u32)(u64)(h / 24.0 * 4294967296.0); };
     if (a.hour_set) pending.push_back({0, INTENT_CLOCK_SET, WPos{}, hour_turn(a.hour)});
     if (a.timelapse) pending.push_back({0, INTENT_CLOCK_RATE, WPos{}, 0});
+    // Люди окна у точки старта: намерение первого шага, поэтому запись окна их повторяет, а --sim не трогает
+    if (w.start.set && w.start.people) {
+        WPos at;
+        at.x = w.start.x;
+        at.z = w.start.z;
+        wpos_rebase(at);
+        pending.push_back({0, INTENT_PEOPLE_SPAWN, at, (u64)w.start.people | ((u64)w.start.radius << 16)});
+    }
     ds.lines = set.lines;
     debug_stand_args(ds, a.stand);
     if (a.open && (!strcmp(a.open, "menu") || !strcmp(a.open, "keys"))) {
@@ -454,6 +471,7 @@ int run_window(const Args &a, AppMemory &m) {
         if (hud_on && set.debug && set.debug_panel && ds.tab == DEBUG_TAB_WORLD) debug_inspect_mark(w, *inspect, dbg);
         // Стенд: в видео и снимках время клипа идёт ровно 1/30 с на кадр
         if (set.debug) debug_stand_update(ds, *assets, w.terrain, a.frames ? 1.0 / 30.0 : dt, vi.dbg ? &dbg : nullptr);
+        if (set.debug && vi.dbg) debug_people(w, dbg);
         view_build(cam, *assets, vi, m.frame, rf);
         if (set.debug) debug_stand(ds, *assets, m.frame, rf);
         dbg.count = dbg_keep;

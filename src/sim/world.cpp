@@ -58,6 +58,19 @@ void world_init(World &w, Arena &arena, u64 seed, const TerrainDesc &terrain, Ar
     dc.hz = arena_push<f32>(arena, DECALS_CAPACITY);
     dc.seed = arena_push<u32>(arena, DECALS_CAPACITY);
     dc.count = 0;
+
+    people_init(w.people, arena);
+}
+
+bool world_build_static(World &w, const CollBoxIn *boxes, u32 n, const GaitTable &gait, Arena &arena, Arena &scratch) {
+    if (!colliders_build(w.coll, boxes, n, arena, scratch)) return false;
+    walk_build(w.walk, w.terrain, w.coll, arena);
+    w.gait = gait;
+    return true;
+}
+
+u64 world_static_hash(const World &w) {
+    return hash_combine(hash_combine(w.coll.hash, w.walk.hash), w.gait.hash);
 }
 
 bool props_add(World &w, u64 mesh, u64 material, const WPos &at, f32 lift, u32 yaw, f32 scale, u32 seed) {
@@ -205,6 +218,7 @@ u32 world_columns(const World &w, Column *out) {
     out[k++] = column("decals.half_z", dc.hz, nd);
     out[k++] = column("decals.seed", dc.seed, nd);
     out[k++] = column("decals.count", &dc.count, 1);
+    k += people_columns(w.people, out + k);
     ANA_CHECK(k <= MAX_COLUMNS);
     return k;
 }

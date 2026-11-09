@@ -40,12 +40,13 @@ static void usage() {
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
     log_info("           --replay файл.rec                                            проверка повтора");
     log_info("           --terrain-map файл.bmp                                       карта земли сверху");
+    log_info("           --walk-map файл.bmp                                          сетка ходимости у руины и путь");
 }
 
 void app_memory_init(AppMemory &m, bool with_record) {
     const usize MB = 1u << 20;
-    arena_init(m.world, platform_alloc(128 * MB), 128 * MB, "мир");  // земля ~80 МБ (карта дюн 2 м — 52 МБ)
-    arena_init(m.step, platform_alloc(1 * MB), 1 * MB, "шаг");
+    arena_init(m.world, platform_alloc(224 * MB), 224 * MB, "мир");  // земля ~80 МБ (карта дюн 2 м — 52 МБ), сетка ходимости ~29 МБ на область
+    arena_init(m.step, platform_alloc(16 * MB), 16 * MB, "шаг");  // поиск пути ~4 МБ
     arena_init(m.frame, platform_alloc(4 * MB), 4 * MB, "кадр");
     arena_init(m.load, platform_alloc(256 * MB), 256 * MB, "загрузка");
     if (with_record) arena_init(m.record, platform_alloc(256 * MB), 256 * MB, "запись");
@@ -146,6 +147,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--pivot")) { ok = next && parse_f32(Str{next, (u32)strlen(next)}, a.pivot_above); i++; }
         else if (!strcmp(s, "--video")) { a.video = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--terrain-map")) { a.terrain_map = next; ok = next != nullptr; i++; }
+        else if (!strcmp(s, "--walk-map")) { a.walk_map = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--novsync")) a.vsync = false;
         else if (!strcmp(s, "--validation")) a.validation = true;
         else if (!strcmp(s, "--gpuav")) a.gpu_validation = true;
@@ -164,7 +166,7 @@ int main(int argc, char **argv) {
 #endif
     AppMemory m;
     app_memory_init(m, a.record || a.replay);
-    int rc = a.terrain_map ? run_terrain_map(a, m) : a.replay ? run_replay(a, m) : a.sim_steps ? run_sim(a, m) : run_window(a, m);
+    int rc = a.terrain_map ? run_terrain_map(a, m) : a.walk_map ? run_walk_map(a, m) : a.replay ? run_replay(a, m) : a.sim_steps ? run_sim(a, m) : run_window(a, m);
     app_memory_free(m);
     if (rc != 0) log_error("выход с кодом %d", rc);
     platform_shutdown();  // дописать журнал и закрыть SDL до выхода

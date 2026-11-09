@@ -22,6 +22,14 @@ struct Extract {
     u32 *prop_yaw;
     f32 *prop_scale;
     u32 *prop_seed;
+    // Люди (этап 9): корень тела для вида — место, курс тела, скорость, фаза шага; gen 0 — места нет
+    u16 *person_gen;
+    i32 *person_cx, *person_cz;
+    f32 *person_x, *person_y, *person_z;
+    u32 *person_heading;
+    f32 *person_speed;
+    u32 *person_phase;
+    u32 *person_seed;
 };
 
 void extract_init(Extract &e, Arena &arena);

@@ -20,6 +20,17 @@ void extract_init(Extract &e, Arena &arena) {
     e.prop_yaw = arena_push<u32>(arena, n);
     e.prop_scale = arena_push<f32>(arena, n);
     e.prop_seed = arena_push<u32>(arena, n);
+    const u32 np = PEOPLE_CAPACITY;
+    e.person_gen = arena_push<u16>(arena, np);
+    e.person_cx = arena_push<i32>(arena, np);
+    e.person_cz = arena_push<i32>(arena, np);
+    e.person_x = arena_push<f32>(arena, np);
+    e.person_y = arena_push<f32>(arena, np);
+    e.person_z = arena_push<f32>(arena, np);
+    e.person_heading = arena_push<u32>(arena, np);
+    e.person_speed = arena_push<f32>(arena, np);
+    e.person_phase = arena_push<u32>(arena, np);
+    e.person_seed = arena_push<u32>(arena, np);
 }
 
 void sim_extract(const World &w, Extract &e) {
@@ -51,6 +62,19 @@ void sim_extract(const World &w, Extract &e) {
     memcpy(e.prop_yaw, p.yaw, n * sizeof *e.prop_yaw);
     memcpy(e.prop_scale, p.scale, n * sizeof *e.prop_scale);
     memcpy(e.prop_seed, p.seed, n * sizeof *e.prop_seed);
+
+    const People &q = w.people;
+    const u32 np = PEOPLE_CAPACITY;
+    for (u32 i = 0; i < np; ++i) e.person_gen[i] = q.alive[i] ? q.gen[i] : 0;
+    memcpy(e.person_cx, q.cx, np * sizeof *e.person_cx);
+    memcpy(e.person_cz, q.cz, np * sizeof *e.person_cz);
+    memcpy(e.person_x, q.x, np * sizeof *e.person_x);
+    memcpy(e.person_y, q.y, np * sizeof *e.person_y);
+    memcpy(e.person_z, q.z, np * sizeof *e.person_z);
+    memcpy(e.person_heading, q.heading, np * sizeof *e.person_heading);
+    memcpy(e.person_speed, q.speed, np * sizeof *e.person_speed);
+    memcpy(e.person_phase, q.phase, np * sizeof *e.person_phase);
+    memcpy(e.person_seed, q.seed, np * sizeof *e.person_seed);
 }
 
 void ring_init(ExtractRing &r, Arena &arena) {

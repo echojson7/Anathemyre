@@ -29,7 +29,7 @@ void recorder_step(Recorder &r, const World &w, Span<const Intent> step_intents)
 }
 
 usize recorder_bytes(const Recorder &r) {
-    return 8 + 4 * 16 + 64 + r.ncols * 64 + r.intents.count * 32 + r.steps * r.ncols * 8;
+    return 8 + 4 * 16 + 64 + r.ncols * 64 + r.intents.count * 48 + r.steps * r.ncols * 8;  // намерение — 40 байт
 }
 
 void recorder_save(const Recorder &r, Writer &w) {
