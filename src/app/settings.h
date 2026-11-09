@@ -17,6 +17,8 @@ struct Settings {
     f32 mouse_sens = 1.0f;
     bool invert_y = false;
     f32 fov_deg = 60.0f;
+    // Графика (docs/light.md, «Ступени»): RENDER_LIGHT_* — низко, средне, высоко, ультра
+    u32 light_quality = 2;
     // Отладка
     bool debug = true;        // отладочные клавиши и панель
     bool debug_panel = false; // панель отладки (F3)

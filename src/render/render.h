@@ -46,7 +46,8 @@ static_assert(sizeof(RenderPointLight) == 32, "RenderPointLight — 32 байт�
 
 struct RenderMaterial {
     u32 kind;
-    u32 pad[3];
+    f32 metal;  // 0 — диэлектрик, 1 — металл (docs/materials.md)
+    u32 pad[2];
     f32 p[12];  // смысл — asset/material.h
 };
 static_assert(sizeof(RenderMaterial) == 64, "RenderMaterial — 64 байта");
@@ -74,18 +75,27 @@ struct RenderView {
 
 // Правило ячейки (docs/render.md «Пиксельность»): узор и свет раз на мировую ячейку, ячейка не мельче
 // cell_min метров и растёт с глубиной степенями двойки, пока не станет пикселем кадра
+// Тонмаппинг (post.glsl) и ступени качества света (docs/light.md, «Ступени»): номера — как в common.glsl
+enum RenderTonemap : u32 { RENDER_TONEMAP_AGX, RENDER_TONEMAP_ACES, RENDER_TONEMAPS };
+enum RenderLightQuality : u32 { RENDER_LIGHT_LOW, RENDER_LIGHT_MEDIUM, RENDER_LIGHT_HIGH, RENDER_LIGHT_ULTRA, RENDER_LIGHT_QUALITIES };
+
 struct RenderStyle {
     bool pixel = true;     // выключается клавишей P
     bool froxel_heat = false;  // тепловая карта числа огней в клетке froxels поверх кадра (F3)
     bool gcache = true;        // кеш поверхности земли (docs/gcache.md); выкл — земля на пиксель (F3, --nogcache)
     f32 cell_min = 1.0f / 80.0f;
     f32 cell_pixels = 1.0f;  // ячейка — не меньше стольких пикселей кадра
+    // Свет (docs/light.md)
+    u32 tonemap = RENDER_TONEMAP_AGX;
+    u32 light_quality = RENDER_LIGHT_HIGH;
+    f32 dt = 0.0f;         // секунды кадра: привыкание глаза
+    bool eye_snap = true;  // глаз привыкает сразу (первый кадр, --timelapse: кадр — свой час)
 };
 
-// Временный свет до света пользователя (light.glsl): главный источник — солнце, ночью луна
+// Главный свет (light.glsl): солнце, ночью луна
 struct RenderLight {
     f32 sun_dir[3];    // к источнику
-    f32 sun_color[3];  // линейный, у камеры (после атмосферы)
+    f32 sun_color[3];  // освещённость перпендикулярной площадки у камеры (после атмосферы), лк по каналам
 };
 
 // Небо и атмосфера (docs/sky.md): светила из часов мира и слои воздуха из data/sky.txt. Раскладка — как хвост
@@ -103,8 +113,10 @@ struct RenderSky {
     f32 ozone[3], moon_albedo;
     f32 ground[3], night_glow;    // альбедо планеты; ночное свечение неба (доля освещённости солнца)
     f32 star[3][4];               // строки поворота «вид → небесная сфера», star[0][3] — яркость звёзд
-    f32 post[4];                  // экспозиция: множитель, степень привыкания, освещённость «нормы»; синева ночи
-    f32 sky_gain, pad[3];         // множитель рассеянного света неба (художественный, docs/sky.md)
+    f32 post[4];                  // глаз: поправка экспозиции, EV; степень привыкания; EV100 «нормы»; синева ночи
+    f32 sky_gain;                 // множитель рассеянного света неба (docs/sky.md)
+    f32 adapt_dark, adapt_light;  // время привыкания глаза к темноте и к свету, с (docs/light.md)
+    f32 pad;
 };
 static_assert(sizeof(RenderSky) == 16 * 16, "RenderSky — 16 vec4");
 
@@ -270,6 +282,13 @@ struct RenderWork {
     const char *gc_off;  // почему кеш земли выключен (nullptr — включён); в --work не пишется
 };
 bool render_work(RenderWork &out);
+// Глаз прочитанного кадра (docs/light.md, «Экспозиция»): освещённость горизонтальной земли и EV100. F3
+struct RenderLightInfo {
+    f32 lux, lux_sky, lux_key;  // всего, от неба, от главного светила (солнце или луна)
+    f32 ev100, ev100_goal;      // глаз сейчас и к чему привыкает
+    f32 exposure;               // множитель кадра
+};
+bool render_light(RenderLightInfo &out);
 // Процессорное время последнего render_frame по частям, мс (docs/frame_time.md). Ожидание — fence, acquire и
 // present: там процессор стоит, пока GPU доделывает кадр N−2, swapchain отдаёт картинку или ждёт vsync
 struct RenderCpuTimes {

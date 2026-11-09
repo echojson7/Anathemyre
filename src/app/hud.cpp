@@ -43,6 +43,7 @@ void hud_fps(const Settings &s, const HudStats &st) {
 
 static const char *const TABS[HUD_TABS] = {"ЭКРАН", "ИНТЕРФЕЙС", "УПРАВЛЕНИЕ", "ОТЛАДКА"};
 static const char *const FPS_NAMES[FPS_MODES] = {"выкл", "к/с", "подробно"};
+static const char *const QUALITY_NAMES[] = {"низко", "средне", "высоко", "ультра"};
 
 static void tab_screen(UiForm &f, Settings &s, bool &ch) {
     ui_section(f, "ОКНО");
@@ -50,6 +51,9 @@ static void tab_screen(UiForm &f, Settings &s, bool &ch) {
     ch |= ui_toggle(f, "Вертикальная синхронизация", s.vsync);
     ui_section(f, "КАМЕРА");
     ch |= ui_slider(f, "Поле зрения", s.fov_deg, 40.0f, 100.0f, 1.0f, "%.0f°");
+    // Ступени света (docs/light.md, «Ступени»): каждая — тот же облик, ниже — дешевле. Шаги этапа 6 добавляют свои
+    ui_section(f, "ГРАФИКА");
+    ch |= ui_choice(f, "Качество света", s.light_quality, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES));
 }
 
 static void tab_ui(UiForm &f, Settings &s, bool &ch) {

@@ -10,11 +10,13 @@ Surface surf_gravel(SurfIn i) {
     vec3 n = i.n;
     float height = 0.15 + value_noise(i.p, 0.5, 63u) * 0.15;
     float ao = 1.0;
+    float nvar = 0.0;  // погашенный наклон камешков (Токсвиг): по оси ~A²/3 на доле ячеек с камешком
     // Две решётки камешков в плоскости xz; ячейка — степень двойки, делит 256 м
     for (int k = 0; k < 2; ++k) {
         float sz = i.m.p2.x * (k == 0 ? 4.0 : 1.0);
         // Камешек мельче пикселя гаснет плавно (по пикселю кадра, не по ячейке со ступенями)
         float kf = 1.0 - smoothstep(sz * 0.12, sz * 0.35, i.foot);
+        nvar += i.m.p2.w * i.m.p2.w / 3.0 * i.m.p2.y * 0.4 * (1.0 - kf * kf);
         if (kf <= 0.0) continue;
         vec3 pc2 = vec3(i.p.x, 0.0, i.p.z);
         ivec3 cid = world_cell(pc2, sz);
@@ -51,5 +53,7 @@ Surface surf_gravel(SurfIn i) {
     s.ao = ao;
     s.emissive = vec3(0.0);
     s.height = height;
+    s.metal = 1.0;
+    s.nvar = nvar;
     return s;
 }

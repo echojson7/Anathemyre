@@ -167,6 +167,8 @@ int run_window(const Args &a, AppMemory &m) {
     // Работа освещения последнего прочитанного кадра мира (docs/tiles.md)
     RenderWork work{};
     bool work_have = false;
+    RenderLightInfo eye_info{};  // глаз последнего прочитанного кадра (docs/light.md): F3 и журнал
+    bool eye_have = false;
     WorldInspect *inspect = arena_push<WorldInspect>(m.world, 1);
     *inspect = WorldInspect{};
     MouseOwner mouse_owner;
@@ -205,6 +207,7 @@ int run_window(const Args &a, AppMemory &m) {
     }
     TimeCtl tc;
     DebugState ds;
+    if (a.tonemap >= 0) ds.tonemap = (u32)a.tonemap;
     u32 clock_speed = 0;  // номер в CLOCK_SPEEDS
     // Час дня → доля суток в оборотах (намерение часов)
     auto hour_turn = [](f64 h) { return (u64)(u32)(u64)(h / 24.0 * 4294967296.0); };
@@ -314,6 +317,11 @@ int run_window(const Args &a, AppMemory &m) {
                 di.work_gc[3] = work.gc_direct;
                 di.work_skin = work.skin_verts;
                 di.gc_off = work.gc_off;
+                di.light = eye_have;
+                di.lux_key = eye_info.lux_key;
+                di.lux_sky = eye_info.lux_sky;
+                di.ev100 = eye_info.ev100;
+                di.ev100_goal = eye_info.ev100_goal;
                 di.overflows = nover_last;
                 for (u32 i = 0; i < nover_last; ++i) {
                     di.over_what[i] = over_last[i].what;
@@ -432,6 +440,12 @@ int run_window(const Args &a, AppMemory &m) {
         ViewInput vi{&ring_prev(ring), &ring_cur(ring), tc.paused || a.timelapse ? 1.0f : (f32)(tc.acc / SIM_DT), &dbg, ww, wh, pixel,
                      a.test_lights || ds.test_lights, a.froxel_heat || ds.froxel_heat,
                      a.nogcache || ds.gcache_off, scatter};
+        // Глаз привыкает по времени кадра; в видео — ровно 1/30 с. Сразу — первые два кадра (час из --hour
+        // мир ставит после первого), снимок и --timelapse (кадр — свой час)
+        vi.dt = a.frames ? 1.0f / 30.0f : (f32)dt;
+        vi.eye_snap = frames < 2 || a.timelapse || a.shot;
+        vi.tonemap = ds.tonemap;
+        vi.light_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.light_quality;
         if (!ds.lines) vi.dbg = nullptr;
         RenderFrame rf;
         u32 dbg_keep = dbg.count;  // метка осмотра — только на этот кадр, шаг мира её не видит
@@ -481,6 +495,7 @@ int run_window(const Args &a, AppMemory &m) {
             }
             pass_frames++;
             work_have = render_work(work);
+            eye_have = render_light(eye_info);
             RenderOverflow ov[DEBUG_MAX_OVERFLOWS];
             u32 nov = render_overflows(ov, DEBUG_MAX_OVERFLOWS);
             for (u32 i = 0; i < nov; ++i) {
@@ -545,6 +560,9 @@ int run_window(const Args &a, AppMemory &m) {
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
                          work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts);
+            if (eye_have)
+                log_info("глаз: светило %.4g лк, небо %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g", (double)eye_info.lux_key,
+                         (double)eye_info.lux_sky, (double)eye_info.ev100, (double)eye_info.ev100_goal, (double)eye_info.exposure);
             frames_window = 0;
             window_t0 = now;
             prof_part(*prof, FP_LOG, platform_time_ns());
@@ -553,6 +571,9 @@ int run_window(const Args &a, AppMemory &m) {
     }
 
     if (save_settings) settings_save(set, settings_path());
+    if (a.frames && eye_have)
+        log_info("глаз: светило %.4g лк, небо %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g", (double)eye_info.lux_key,
+                 (double)eye_info.lux_sky, (double)eye_info.ev100, (double)eye_info.ev100_goal, (double)eye_info.exposure);
     if (a.shot && !debug_write_shot(a.shot, m.load)) rc_exit = 1;
     if (a.work) {
         // Счётчики работы для сверки CI (tools/work_check.sh): «имя значение» по строке

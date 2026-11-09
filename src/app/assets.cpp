@@ -370,6 +370,7 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
     RenderMaterial *rm = arena_push<RenderMaterial>(m.load, mats.count);
     for (u32 i = 0; i < mats.count; ++i) {
         rm[i].kind = mats.items[i].kind;
+        rm[i].metal = mats.items[i].metal;
         memcpy(rm[i].p, mats.items[i].p, sizeof rm[i].p);
     }
     bool ok = render_set_materials({rm, mats.count});

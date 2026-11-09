@@ -141,6 +141,16 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_toggle(f, "тестовые огни", d.test_lights);
     ui_toggle(f, "огни по клеткам", d.froxel_heat);
     ui_toggle(f, "без кеша земли", d.gcache_off);
+    // Свет (docs/light.md): тонмаппинг на выбор по кадрам; освещённость земли и глаз — «Единицы», «Экспозиция»
+    ui_section(f, "СВЕТ");
+    static const char *const TONEMAPS[] = {"AgX", "ACES"};
+    ui_choice(f, "тонмаппинг", d.tonemap, TONEMAPS, ANA_COUNTOF(TONEMAPS));
+    if (in.light) {
+        snprintf(t, sizeof t, "%.4g · %.4g лк", (double)in.lux_key, (double)in.lux_sky);
+        ui_value(f, "светило · небо", t);
+        snprintf(t, sizeof t, "%.2f → %.2f", (double)in.ev100, (double)in.ev100_goal);
+        ui_value(f, "EV100 глаза → цель", t);
+    }
 
     // Стенд людей (stand.cpp): человек у руины, проверка весов и морфов
     ui_section(f, "ЛЮДИ: СТЕНД");

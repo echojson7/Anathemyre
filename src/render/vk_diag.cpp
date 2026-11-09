@@ -228,6 +228,8 @@ static void record_stats_copy(VkCommandBuffer cmd, void *user) {
     vkCmdCopyBuffer(cmd, g_vk.diag.stats.buffer, fs.readback.buffer, 1, &c);
     VkBufferCopy d{0, 0, 4};  // число вызовов отсечения — видимых кластеров
     vkCmdCopyBuffer(cmd, g_vk.world.cull.buffer, fs.readback.buffer, 1, &d);
+    VkBufferCopy e{SKY_OUT_EYE * 16, READBACK_EYE, 32};  // глаз: экспозиция и освещённость (F3)
+    vkCmdCopyBuffer(cmd, g_vk.sky.out.buffer, fs.readback.buffer, 1, &e);
 }
 
 void vk_stats_clear_pass() {
@@ -239,6 +241,7 @@ void vk_stats_copy_pass(FrameSlot &fs) {
     rg_pass("счётчики: в процессор", nullptr, record_stats_copy, &fs);
     rg_use(g_vk.diag.rg_stats, RG_COPY_READ);
     rg_use(g_vk.world.rg_cull, RG_COPY_READ);
+    rg_use(g_vk.sky.rg_out, RG_COPY_READ);
     rg_use(fs.rg_readback, RG_COPY_WRITE);
 }
 
@@ -252,6 +255,7 @@ void vk_stats_read(FrameSlot &fs) {
     g_vk.world.vis_clusters = rb[0];
     if (st[STAT_VIS_WANT] > VIS_MAX_CLUSTERS) add_over(g_gpu_over, g_ngpu, "видимые кластеры", st[STAT_VIS_WANT], VIS_MAX_CLUSTERS);
     memcpy(g_vk.world.work, st, sizeof g_vk.world.work);
+    memcpy(g_vk.world.eye, rb + READBACK_EYE / 4, sizeof g_vk.world.eye);
     vk_gcache_read(st);
     g_vk.world.work_valid = true;
     if (st[STAT_FROXEL_LIGHTS]) add_over(g_gpu_over, g_ngpu, "froxels: клеток, где огни не влезли", st[STAT_FROXEL_LIGHTS], 0);
@@ -280,6 +284,19 @@ bool render_work(RenderWork &out) {
     out.gc_direct = w.work[STAT_GC_PX_DIRECT];
     out.skin_verts = w.work[STAT_SKIN_VERTS];
     out.gc_off = g_vk.gcache.off;
+    return true;
+}
+
+bool render_light(RenderLightInfo &out) {
+    const WorldGpu &w = g_vk.world;
+    out = RenderLightInfo{};
+    if (!w.work_valid) return false;
+    out.exposure = w.eye[0];
+    out.lux = w.eye[1];
+    out.ev100 = w.eye[2];
+    out.lux_sky = w.eye[3];
+    out.lux_key = w.eye[4];
+    out.ev100_goal = w.eye[5];
     return true;
 }
 

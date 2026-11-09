@@ -1,8 +1,9 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
 // Свет всего неба на плоскость (docs/sky.md): таблицы вида неба солнца и луны → сферические гармоники
-// первого порядка, плюс отсвет земли снизу и ночное свечение. И экспозиция кадра по этой освещённости.
-// sky_out: [0] — постоянная часть, [1..3] — по x, y, z (atmo_ambient), [4] — x экспозиция, y освещённость
+// первого порядка, плюс отсвет земли снизу и ночное свечение. И экспозиция кадра по этой освещённости
+// (docs/light.md, «Экспозиция»). sky_out: [0] — постоянная часть, [1..3] — по x, y, z (atmo_ambient),
+// [4], [5] — глаз (SKY_OUT_EYE в common.glsl). Буфер один на все кадры: [4] прошлого кадра — начало привыкания
 #include "atmosphere.glsl"
 layout(local_size_x = 256) in;
 
@@ -64,10 +65,25 @@ void main() {
     f.sky_out.v[1] = vec4(bx, 0.0);
     f.sky_out.v[2] = vec4(by, 0.0);
     f.sky_out.v[3] = vec4(bz, 0.0);
-    // Экспозиция: глаз привыкает к освещённости горизонтальной земли (небо + главный свет), не полностью —
-    // ночь остаётся тёмной. Не по гистограмме кадра: одинаково при любом взгляде камеры
-    vec3 e_up = (a + by) * A_PI + f.sun_color.rgb * max(f.sun_dir.y, 0.0);
-    float lum = max(dot(e_up, vec3(0.2126, 0.7152, 0.0722)), 1e-12);
-    float ex = f.a_post.x * pow(f.a_post.z / lum, f.a_post.y);
-    f.sky_out.v[4] = vec4(ex, lum, 0.0, 0.0);
+    // Экспозиция: глаз привыкает к освещённости горизонтальной земли E (небо + главный свет, лк), не полностью —
+    // ночь остаётся тёмной. Не по гистограмме кадра: одинаково при любом взгляде камеры. EV100 = log2(E / 2.5)
+    // (экспонометр падающего света, C = 250); глаз сдвигает EV от «нормы» на долю adapt; множитель — как у камеры
+    // с насыщением ISO 100: 2^поправка / (1.2 · 2^EV). Привыкание плавное: к темноте медленнее, к свету быстрее
+    const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
+    float e_sky = max(dot((a + by) * A_PI, Y), 0.0);
+    float e_key = max(dot(f.sun_color.rgb, Y), 0.0) * max(f.sun_dir.y, 0.0);
+    float e = max(e_sky + e_key, 1e-6);
+    float ev_scene = log2(e / 2.5);
+    float ev_ref = f.a_post.z;
+    float ev_goal = ev_ref + f.a_post.y * (ev_scene - ev_ref);
+    float ev = ev_goal;
+    float ev_prev = f.sky_out.v[SKY_OUT_EYE].z;
+    // Прошлое значение годно, если не первый кадр и оно в разумных пределах (буфер в начале — мусор)
+    if (f.eye_snap == 0u && ev_prev > -20.0 && ev_prev < 30.0) {
+        float tau = ev_goal < ev_prev ? f.a_misc.y : f.a_misc.z;
+        ev = ev_prev + (ev_goal - ev_prev) * (1.0 - exp(-max(f.dt, 0.0) / max(tau, 1e-3)));
+    }
+    float ex = exp2(f.a_post.x) / (1.2 * exp2(ev));
+    f.sky_out.v[SKY_OUT_EYE] = vec4(ex, e, ev, e_sky);
+    f.sky_out.v[SKY_OUT_EYE2] = vec4(e_key, ev_goal, 0.0, 0.0);
 }
