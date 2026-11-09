@@ -53,7 +53,7 @@ TC_STAMP := $(if $(TC_DIR),$(TC_DIR)/.ok)
 # --- флаги ---
 # Детерминизм float (docs/invariants.md): одна цель x86-64-v3, без сжатия в FMA, без -ffast-math
 ARCH := -march=x86-64-v3 -ffp-contract=off -fno-math-errno
-WARN := -Wall -Wextra -Wpedantic -Wshadow $(if $(filter 1,$(WERROR)),-Werror)
+WARN := -Wall -Wextra -Wpedantic -Wshadow -Wframe-larger-than=131072 $(if $(filter 1,$(WERROR)),-Werror)
 # Чужие заголовки — -isystem: их предупреждения не наши
 INC  := -isystem third_party -isystem third_party/vulkan/include -isystem $(SDL)/include
 DEFS := -DVK_NO_PROTOTYPES $(if $(filter 1,$(NODEBUG)),-DANA_NODEBUG)
@@ -71,8 +71,9 @@ else
 endif
 
 ifeq ($(TARGET),windows)
-  # Статически: без libc++.dll и libunwind.dll рядом; консоль — журнал виден в терминале WSL
-  LDFLAGS += -static
+  # Статически: без libc++.dll и libunwind.dll рядом; консоль — журнал виден в терминале WSL.
+  # Стек главного потока 8 МБ, как на Linux: иначе то, что работает на Linux, падает только на Windows (1 МБ)
+  LDFLAGS += -static -Wl,--stack,8388608
   LIBS += -lkernel32 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lversion -luuid -ladvapi32 \
           -lsetupapi -lshell32 -ldinput8
   ifeq ($(MODE),debug)
@@ -176,6 +177,8 @@ $(BIN): $(GAME_OBJS) $(TP_OBJS) $(SDL_STAMP)
 # Шейдеры: GLSL → SPIR-V для Vulkan 1.3, проверка spirv-val
 $(OUT)/shaders/%.spv: data/shaders/%
 	glslangValidator -s --target-env vulkan1.3 -I$(OUT)/shaders/gen -Idata/shaders --depfile $@.d -o $@ $<
+	@# Пустое правило на каждый заголовок (как -MP у компилятора): удалённый или переименованный .glsl не ломает сборку
+	@tr ' ' '\n' < $@.d | sed -n '2,$$s/$$/:/p' >> $@.d
 	spirv-val --target-env vulkan1.3 --scalar-block-layout $@
 
 -include $(GAME_OBJS:.o=.d) $(TP_OBJS:.o=.d) $(SHADER_SPV:=.d)

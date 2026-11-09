@@ -168,6 +168,7 @@ int main(int argc, char **argv) {
     app_memory_init(m, a.record || a.replay);
     int rc = a.terrain_map ? run_terrain_map(a, m) : a.walk_map ? run_walk_map(a, m) : a.replay ? run_replay(a, m) : a.sim_steps ? run_sim(a, m) : run_window(a, m);
     app_memory_free(m);
+    if (rc != 0) log_error("выход с кодом %d", rc);
     platform_shutdown();  // дописать журнал и закрыть SDL до выхода
     return rc;
 }

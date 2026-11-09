@@ -3,6 +3,7 @@
 #include "../core/log.h"
 #include "../platform/platform.h"
 #include "vk-bootstrap/VkBootstrap.h"
+#include <new>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -312,8 +313,12 @@ static bool create_frames() {
     return true;
 }
 
+// Сброс состояния на месте. Не `g_vk = VkState{}`: это временный объект на стеке, а VkState ~1 МБ — ровно
+// стек главного потока Windows (с 6а: переполнение стека при старте, на Linux стек 8 МБ и не видно)
+static void vk_state_reset() { ::new (&g_vk) VkState{}; }
+
 bool render_init(const RenderConfig &cfg) {
-    g_vk = VkState{};
+    vk_state_reset();
     g_vk.cfg = cfg;
     if (!create_device()) return false;
     if (!vk_create_swapchain()) return false;
@@ -359,7 +364,7 @@ void render_shutdown() {
     if (g_vk.surface) vkDestroySurfaceKHR(g_vk.instance, g_vk.surface, nullptr);
     if (g_vk.messenger) vkDestroyDebugUtilsMessengerEXT(g_vk.instance, g_vk.messenger, nullptr);
     vkDestroyInstance(g_vk.instance, nullptr);
-    g_vk = VkState{};
+    vk_state_reset();
     rg_clear();
 }
 
