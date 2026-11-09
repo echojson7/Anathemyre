@@ -1,4 +1,4 @@
-// Панель отладки (F3, docs/ui.md): справа сверху, две вкладки.
+// Панель отладки (F3, docs/ui.md): справа сверху, три вкладки; не выше окна, вкладка листается колесом и полосой.
 // «Общее» — числа кадра и мира, время, сутки, камера, вид; «Мир» — осмотр таблиц мира по столбцам (только чтение).
 // Мир панель не меняет: всё, что она просит, run_window превращает в намерения или настройки кадра
 #include "debug.h"
@@ -398,9 +398,12 @@ static void tab_world(UiForm &f, const World &w, WorldInspect &wi) {
     f.y += ui_px(6) + ui_line(UI_SMALL);
 }
 
+// Прокрутка вкладок: у каждой своя, держится между кадрами (только вид, в мир и настройки не уходит)
+static UiScroll g_scroll[DEBUG_TABS];
+
 void debug_panel(const DebugInfo &info, const World &w, DebugState &d, WorldInspect &wi) {
-    f32 pw = ui_px(WIDTH), pad = ui_px(PAD);
-    f32 x = ui_width() - ui_px(EDGE) - pw, y = ui_px(EDGE);
+    f32 pw = ui_px(WIDTH), pad = ui_px(PAD), edge = ui_px(EDGE);
+    f32 x = ui_width() - edge - pw, y = edge;
     u32 bg = ui_reserve();
     UiForm f = ui_form(x + pad, y + pad, pw - 2 * pad);
     f.row = ui_px(30);
@@ -412,10 +415,17 @@ void debug_panel(const DebugInfo &info, const World &w, DebugState &d, WorldInsp
     f.y += ui_line(UI_SMALL) + ui_px(10);
     ui_hline(f.x, f.y, f.w, ui_col::LINE);
     f.y += ui_px(2);
+    // Вкладка листается: панель не ниже окна, заголовок и вкладки стоят на месте. Область — во всю ширину
+    // панели (подсветка строк выходит за поля), полоса прокрутки — в правом поле
+    UiScroll &sc = g_scroll[d.tab < DEBUG_TABS ? d.tab : 0];
+    f32 top = f.y, bottom_pad = ui_px(8);
+    f32 room = ui_height() - edge - pad - top;
+    f.y = ui_scroll_begin(sc, x, top, pw - pad + ui_px(14), room);
     if (d.tab == DEBUG_TAB_WORLD) tab_world(f, w, wi);
     else if (d.tab == DEBUG_TAB_FRAME) tab_frame(f, info);
     else tab_main(f, info, d);
-    f32 ph = f.y + pad - y;
+    f32 shown = ui_scroll_end(sc, f.y + bottom_pad);
+    f32 ph = top + shown + pad - bottom_pad - y;
     ui_soft_at(bg, x, y, pw, ph, ui_col::PANEL, ui_px(10));
     ui_block(x, y, pw, ph);
 }

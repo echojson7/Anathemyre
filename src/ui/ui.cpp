@@ -95,6 +95,8 @@ void ui_begin(i32 win_w, i32 win_h, const UiConfig &cfg, const Input &in) {
     u.released = u.down && !in.mouse_down[MOUSE_LEFT];
     u.down = in.mouse_down[MOUSE_LEFT];
     if (!u.down && !u.pressed) u.active = 0;
+    u.wheel = in.wheel;
+    u.clip_on = false;
 }
 
 void ui_end() {
@@ -127,6 +129,15 @@ f32 ui_hair() { return g_ui_state.hair; }
 static void push(f32 x0, f32 y0, f32 x1, f32 y1, f32 u0, f32 v0, u32 rgba, f32 feather) {
     UiState &u = g_ui_state;
     if (u.count >= UI_MAX_QUADS_CPU) return;
+    if (u.clip_on) {
+        // Обрезка на CPU: у буквы атлас сдвигается вместе с краем (пиксель окна — пиксель атласа)
+        const UiRect &c = u.clip;
+        if (x0 < c.x0) { u0 += c.x0 - x0; x0 = c.x0; }
+        if (y0 < c.y0) { v0 += c.y0 - y0; y0 = c.y0; }
+        if (x1 > c.x1) x1 = c.x1;
+        if (y1 > c.y1) y1 = c.y1;
+        if (x1 <= x0 || y1 <= y0) return;
+    }
     RenderUiQuad &q = u.quads[u.count++];
     q = RenderUiQuad{};
     q.x0 = x0;
@@ -149,18 +160,30 @@ void ui_soft(f32 x, f32 y, f32 w, f32 h, u32 rgba, f32 feather) {
 }
 u32 ui_reserve() {
     UiState &u = g_ui_state;
-    u32 slot = u.count;
-    push(0, 0, 0, 0, -1, -1, 0, 0);  // пустой, пока не заполнен
+    if (u.count >= UI_MAX_QUADS_CPU) return UI_MAX_QUADS_CPU;
+    u32 slot = u.count++;
+    u.quads[slot] = RenderUiQuad{};  // пустой, пока не заполнен
+    u.quads[slot].u0 = u.quads[slot].v0 = -1;
     return slot;
 }
 void ui_soft_at(u32 slot, f32 x, f32 y, f32 w, f32 h, u32 rgba, f32 feather) {
     UiState &u = g_ui_state;
     if (slot >= u.count) return;
     u32 keep = u.count;
+    bool clip = u.clip_on;
     u.count = slot;
+    u.clip_on = false;
     push(x, y, x + w, y + h, -1, -1, rgba, feather);
     u.count = keep;
+    u.clip_on = clip;
 }
+
+void ui_clip(f32 x, f32 y, f32 w, f32 h) {
+    UiState &u = g_ui_state;
+    u.clip = {x, y, x + w, y + h};
+    u.clip_on = true;
+}
+void ui_clip_off() { g_ui_state.clip_on = false; }
 void ui_hline(f32 x, f32 y, f32 w, u32 rgba) { ui_rect(floorf(x), floorf(y), floorf(w), g_ui_state.hair, rgba); }
 void ui_vline(f32 x, f32 y, f32 h, u32 rgba) { ui_rect(floorf(x), floorf(y), g_ui_state.hair, floorf(h), rgba); }
 void ui_frame(f32 x, f32 y, f32 w, f32 h, u32 rgba) {
