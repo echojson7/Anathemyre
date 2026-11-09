@@ -108,15 +108,17 @@ struct RenderFrame;
 struct WorldInspect {
     u32 table = 1;            // выбранная таблица (номер в списке таблиц)
     i32 row = -1;             // выбранная строка, −1 — нет
-    u64 col_hash[64];         // хеши столбцов прошлого кадра
-    u32 col_changed[64];      // кадр последнего изменения столбца
+    u64 col_hash[128];         // хеши столбцов прошлого кадра
+    u32 col_changed[128];      // кадр последнего изменения столбца
     u32 frame = 0;
 };
 #ifndef ANA_NODEBUG
 // Клавиши отладки за кадр
 void debug_keys(const Input &in, DebugState &d);
 // Подставной игрок для --sim: намерения из своего RNG (не RNG мира) по номеру шага
-void autoplay_intents(u64 step, Rng &rng, FixedArray<Intent> &out);
+void autoplay_intents(const World &w, Rng &rng, FixedArray<Intent> &out);
+// Карта сетки ходимости у руины и путь с дюн на плиту (--walk-map файл.bmp)
+bool debug_write_walk_map(const World &w, const char *path, Arena &scratch);
 void debug_print_help();
 // Панель отладки (F3) справа сверху: числа кадра и мира, управление временем, сутками, камерой и видом;
 // вкладка «Мир» — осмотр таблиц. Пишет только просьбы в DebugState
@@ -140,7 +142,8 @@ const char *const *debug_stand_clip_names(u32 *count);
 void debug_stand_args(DebugState &d, const char *spec);
 #else
 inline void debug_keys(const Input &, DebugState &) {}
-inline void autoplay_intents(u64, Rng &, FixedArray<Intent> &) {}
+inline void autoplay_intents(const World &, Rng &, FixedArray<Intent> &) {}
+inline bool debug_write_walk_map(const World &, const char *, Arena &) { return false; }
 inline void debug_print_help() {}
 inline void debug_panel(const DebugInfo &, const World &, DebugState &, WorldInspect &) {}
 inline void debug_inspect_pick(const World &, WorldInspect &, const WPos &) {}

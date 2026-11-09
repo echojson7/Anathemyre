@@ -48,6 +48,25 @@ inline Turn turn_from_rad(f32 rad) {
     return (Turn)(u32)(i64)(t * 4294967296.0f);
 }
 
+// Курс направления (dx, dz): 0 — на +z, четверть оборота — на +x (как quat_yaw: вперёд = (sin, cos)).
+// atan — многочлен на [0, 1] (ошибка ~1e-5 рад), только + - * /: годится для шага мира
+inline Turn turn_of_dir(f32 dx, f32 dz) {
+    f32 ax = f_abs(dx), az = f_abs(dz);
+    if (ax == 0.0f && az == 0.0f) return 0;
+    bool swap = ax > az;
+    f32 t = swap ? az / ax : ax / az;
+    f32 t2 = t * t;
+    f32 a = t * (0.99997726f + t2 * (-0.33262347f + t2 * (0.19354346f + t2 * (-0.11643287f + t2 * (0.05265332f + t2 * -0.01172120f)))));
+    if (swap) a = PI_F * 0.5f - a;
+    if (dz < 0.0f) a = PI_F - a;
+    if (dx < 0.0f) a = -a;
+    return (Turn)(u32)(i64)(a * (4294967296.0f / TAU_F));
+}
+// Разность курсов b − a в радианах, [−π, π)
+inline f32 turn_diff_rad(Turn a, Turn b) { return (f32)(i32)(b - a) * (TAU_F / 4294967296.0f); }
+// Курс + угол в радианах (|rad| < π)
+inline Turn turn_add_rad(Turn a, f32 rad) { return a + (u32)(i32)(i64)(rad * (4294967296.0f / TAU_F)); }
+
 inline f32 sin_f(f32 rad) { f32 s, c; sincos_turn(turn_from_rad(rad), &s, &c); return s; }
 inline f32 cos_f(f32 rad) { f32 s, c; sincos_turn(turn_from_rad(rad), &s, &c); return c; }
 

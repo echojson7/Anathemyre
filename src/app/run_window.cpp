@@ -182,7 +182,7 @@ int run_window(const Args &a, AppMemory &m) {
     dbg_init(dbg, m.world, 4096);
     Recorder rec;
     if (a.record) {
-        recorder_init(rec, m.record, w, a.seed, 600000, 1u << 16);
+        recorder_init(rec, m.record, w, a.seed, 280000, 1u << 16);  // 88 столбцов × 8 байт × 280 000 ≈ 200 МБ
         rec.desc_hash = desc;
     }
 

@@ -3,10 +3,19 @@
 #include "intent.h"
 #include "world.h"
 
+// Счётчики работы шага для журнала и бенча (не мир: в хеш не входят)
+struct StepStats {
+    u32 paths = 0;      // поисков пути
+    u64 expanded = 0;   // раскрыто узлов A*
+    u64 (*now_ns)() = nullptr;  // часы для замера (бенч --sim); мир от них не зависит
+    u64 people_ns = 0;  // время систем людей
+};
+
 struct StepCtx {
     Span<const Intent> intents;  // намерения этого шага
     Arena *step_arena;           // сбрасывается в начале шага
     DebugDraw *dbg;              // может быть nullptr
+    StepStats *stats = nullptr;
 };
 
 void sim_step(World &w, StepCtx &ctx);

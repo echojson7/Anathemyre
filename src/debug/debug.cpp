@@ -2,6 +2,9 @@
 #include "../core/log.h"
 #include "../render/render.h"
 #include "../core/math3.h"
+#include "../sim/ground.h"
+#include "../sim/walk.h"
+#include "../sim/world.h"
 
 void debug_keys(const Input &in, DebugState &d) {
     // Просьбы копятся до debug_clear_frame: клавиши и панель за один кадр не затирают друг друга
@@ -14,7 +17,22 @@ void debug_keys(const Input &in, DebugState &d) {
     if (in.key_pressed[KEY_B]) d.stand_bend = !d.stand_bend;
 }
 
-void autoplay_intents(u64 step, Rng &rng, FixedArray<Intent> &out) {
+// Люди подставного игрока: 256 человек у руины (docs/ruin.md), приказы идти — в точки вокруг, внутрь руины и на
+// плиту второго этажа (через лестницу). Номер берётся из таблицы мира: --sim идёт без кадра
+static constexpr u32 AUTOPLAY_PEOPLE = 256;
+// Точка у руины: сдвиг от середины пятна, высота — над площадкой (земля под серединой)
+static WPos ruin_at(const World &w, f32 dx, f32 dz, f32 y) {
+    WPos c{45, -10, 11704.0f - 45.0f * 256.0f, 0.0f, -2336.0f + 10.0f * 256.0f};
+    WPos p = c;
+    p.x += dx;
+    p.z += dz;
+    p.y = ground_at(w.terrain, c).height + y;
+    wpos_rebase(p);
+    return p;
+}
+
+void autoplay_intents(const World &w, Rng &rng, FixedArray<Intent> &out) {
+    const u64 step = w.step;
     // Ритм нарочно неровный: намерения попадают на разные фазы шага
     auto at = [&rng]() {
         WPos p;
@@ -29,6 +47,26 @@ void autoplay_intents(u64 step, Rng &rng, FixedArray<Intent> &out) {
     // Часы: прыжок на случайный час и смена скорости суток — повтор проверяет и числа намерений
     if (step % 1201 == 600) out.push_back({step, INTENT_CLOCK_SET, WPos{}, rng_u32(rng)});
     if (step % 2003 == 1000) out.push_back({step, INTENT_CLOCK_RATE, WPos{}, rng_below(rng, 200)});
+    // Люди: толпа в дюнах к западу от руины в первом шаге
+    if (step == 0) out.push_back({step, INTENT_PEOPLE_SPAWN, ruin_at(w, -40.0f, 0.0f, 0.0f), AUTOPLAY_PEOPLE | (25ull << 16)});
+    // Приказы: каждые 13 шагов — двоим случайным (каждому раз в ~30 с); цели — дюны вокруг, пол руины,
+    // плита второго этажа над лестницей
+    if (step % 13 == 3 && w.people.live) {
+        for (u32 k = 0; k < 2; ++k) {
+            u32 s = rng_below(rng, AUTOPLAY_PEOPLE);
+            if (!w.people.alive[s]) continue;
+            u32 id = s | ((u32)w.people.gen[s] << 16);
+            u32 kind = rng_below(rng, 10);
+            // Аргументы — отдельными строками: порядок их вычисления у clang и gcc разный, а RNG один
+            f32 dx, dz, y;
+            if (kind < 4) { dx = rng_range(rng, -60.0f, 60.0f); dz = rng_range(rng, -60.0f, 60.0f); y = 0.0f; }
+            else if (kind < 8) { dx = rng_range(rng, -9.0f, 9.0f); dz = rng_range(rng, -9.0f, 9.0f); y = 0.5f; }
+            else { dx = rng_range(rng, 4.5f, 9.0f); dz = rng_range(rng, -9.0f, 9.0f); y = 4.5f; }
+            WPos t = ruin_at(w, dx, dz, y);
+            u64 gait = rng_below(rng, 3);
+            out.push_back({step, INTENT_GO, t, (u64)id | (gait << 32)});
+        }
+    }
 }
 
 void debug_print_help() {
@@ -134,5 +172,71 @@ bool debug_write_terrain_map(const Terrain &t, const char *path, Arena &scratch)
     arena_restore(scratch, mark);
     if (ok) log_info("карта земли: %s (%ux%u, пиксель 16 м)", path, w, h);
     else log_error("не записать %s", path);
+    return ok;
+}
+
+// Карта сетки ходимости у руины (--walk-map): 32 × 32 м, клетка 0.5 м — 14 пикселей, север сверху. Нет уровня —
+// тёмно-красный; земля — песочный; пол постройки — от синего (низ) к белому (верх плиты); две плиты над клеткой —
+// полоска. Поверх — путь подставного приказа: от дюн к западу на плиту второго этажа (A* + сглаживание)
+bool debug_write_walk_map(const World &w, const char *path, Arena &scratch) {
+    usize mark = arena_mark(scratch);
+    WPos c = ruin_at(w, 0.0f, 0.0f, 0.0f);
+    u32 ci, cj;
+    i32 ar = walk_area_of(w.walk, c.cx, c.cz, c.x, c.z, &ci, &cj);
+    if (ar < 0) { log_error("--walk-map: руина вне сетки ходимости"); return false; }
+    const WalkArea &a = w.walk.area[ar];
+    const u32 cells = 64, px = 14, size = cells * px;
+    u8 *rgba = arena_push<u8>(scratch, (usize)size * size * 4);
+    i32 i0 = (i32)ci - (i32)cells / 2, j0 = (i32)cj - (i32)cells / 2;
+    i32 base = (i32)(c.y * 100.0f) - a.base_cm;
+    for (u32 y = 0; y < size; ++y)
+        for (u32 x = 0; x < size; ++x) {
+            i32 i = i0 + (i32)(x / px), j = j0 + (i32)(cells - 1 - y / px);
+            u8 *o = rgba + ((usize)y * size + x) * 4;
+            o[0] = 90; o[1] = 20; o[2] = 20; o[3] = 255;
+            if (i < 0 || j < 0 || i >= (i32)WALK_N || j >= (i32)WALK_N) continue;
+            u32 cell = (u32)j * WALK_N + (u32)i;
+            u32 n = a.nlev[cell];
+            if (!n) continue;
+            // Две плиты над клеткой: верхняя половина пикселей клетки — верхний уровень
+            u32 l = (n > 1 && (y % px) < px / 2) ? n - 1 : 0;
+            if (a.box[cell * 4 + l]) {
+                f32 t = f_clamp((f32)(a.h[cell * 4 + l] - base) / 450.0f, 0.0f, 1.0f);
+                o[0] = (u8)(60 + 195 * t); o[1] = (u8)(90 + 165 * t); o[2] = (u8)(200 + 55 * t);
+            } else {
+                o[0] = 200; o[1] = 170; o[2] = 110;
+            }
+            if ((x % px) == 0 || (y % px) == 0) { o[0] = (u8)(o[0] * 7 / 8); o[1] = (u8)(o[1] * 7 / 8); o[2] = (u8)(o[2] * 7 / 8); }
+        }
+    // Путь: с дюн на плиту второго этажа
+    WPos from = ruin_at(w, -15.0f, -14.0f, 0.0f), to = ruin_at(w, 7.0f, 6.0f, 4.5f);
+    u32 fi, fj, ti, tj, nf, nt;
+    walk_area_of(w.walk, from.cx, from.cz, from.x, from.z, &fi, &fj);
+    walk_area_of(w.walk, to.cx, to.cz, to.x, to.z, &ti, &tj);
+    if (walk_node_near(a, fi, fj, from.y, 8, &nf) && walk_node_near(a, ti, tj, to.y, 8, &nt)) {
+        WalkSearch ws;
+        ws.max_expand = 400000;
+        u32 out[256];
+        u32 n = walk_find(a, nf, nt, scratch, ws, out, 256);
+        log_info("--walk-map: путь с дюн на плиту — %s, узлов после сглаживания %u, раскрыто %u", ws.reached ? "дошёл" : "НЕ дошёл", n, ws.expanded);
+        u32 prev = nf;
+        for (u32 k = 0; k < n; ++k) {
+            i32 ax = ((i32)walk_node_i(prev) - i0) * (i32)px + (i32)px / 2, ay = ((i32)cells - 1 - ((i32)walk_node_j(prev) - j0)) * (i32)px + (i32)px / 2;
+            i32 bx = ((i32)walk_node_i(out[k]) - i0) * (i32)px + (i32)px / 2, by = ((i32)cells - 1 - ((i32)walk_node_j(out[k]) - j0)) * (i32)px + (i32)px / 2;
+            i32 steps = (bx > ax ? bx - ax : ax - bx) + (by > ay ? by - ay : ay - by) + 1;
+            for (i32 t = 0; t <= steps; ++t) {
+                i32 x = ax + (bx - ax) * t / steps, y = ay + (by - ay) * t / steps;
+                for (i32 d = -1; d <= 1; ++d) {
+                    i32 xx = x + d, yy = y;
+                    if (xx < 0 || yy < 0 || xx >= (i32)size || yy >= (i32)size) continue;
+                    u8 *o = rgba + ((usize)yy * size + (usize)xx) * 4;
+                    o[0] = 30; o[1] = 200; o[2] = 60;
+                }
+            }
+            prev = out[k];
+        }
+    }
+    bool ok = write_bmp(path, rgba, size, size, scratch);
+    arena_restore(scratch, mark);
     return ok;
 }
