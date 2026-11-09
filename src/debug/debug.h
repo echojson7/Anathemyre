@@ -140,6 +140,8 @@ const char *const *debug_stand_clip_names(u32 *count);
 // --stand через запятую (снимки, видео, CI): off, elbow, knee, mixamo, morphN, both, move, nocaps, clip=имя,
 // blend=имя, w=доля %, speed=100|50|25|10, t=начало в сотых с (< 0 — выдержка), seq=a+b+… (очередь клипов); nullptr — как есть
 void debug_stand_args(DebugState &d, const char *spec);
+// Люди шага мира капсулами и курсом (stand.cpp): до тела в кадре (этап 9б)
+void debug_people(const World &w, DebugDraw &dbg);
 #else
 inline void debug_keys(const Input &, DebugState &) {}
 inline void autoplay_intents(const World &, Rng &, FixedArray<Intent> &) {}
@@ -153,4 +155,5 @@ inline bool debug_write_terrain_map(const Terrain &, const char *, Arena &) { re
 inline void debug_stand_update(DebugState &, const ViewAssets &, const Terrain &, f64, DebugDraw *) {}
 inline void debug_stand(const DebugState &, const ViewAssets &, Arena &, RenderFrame &) {}
 inline void debug_stand_args(DebugState &, const char *) {}
+inline void debug_people(const World &, DebugDraw &) {}
 #endif
