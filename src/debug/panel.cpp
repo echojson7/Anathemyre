@@ -420,7 +420,7 @@ void debug_panel(const DebugInfo &info, const World &w, DebugState &d, WorldInsp
     UiScroll &sc = g_scroll[d.tab < DEBUG_TABS ? d.tab : 0];
     f32 top = f.y, bottom_pad = ui_px(8);
     f32 room = ui_height() - edge - pad - top;
-    f.y = ui_scroll_begin(sc, x, top, pw - pad + ui_px(14), room);
+    f.y = ui_scroll_begin(sc, x, top, pw - pad + ui_px(12), room);
     if (d.tab == DEBUG_TAB_WORLD) tab_world(f, w, wi);
     else if (d.tab == DEBUG_TAB_FRAME) tab_frame(f, info);
     else tab_main(f, info, d);

@@ -239,7 +239,7 @@ f32 ui_scroll_end(UiScroll &s, f32 bottom) {
     }
     ty = s.y + floorf(room * s.offset / m + 0.5f);
     bool on = hov || u.active == id;
-    f32 bw = on ? ui_px(4) : 2 * ui_hair();
+    f32 bw = on ? ui_px(5) : ui_px(3);
     f32 bx = floorf(tx + (tw - bw) * 0.5f);
     ui_rect(floorf(tx + (tw - ui_hair()) * 0.5f), s.y, ui_hair(), s.h, ui_col::LINE);
     ui_rect(bx, ty, bw, th, u.active == id ? ui_col::TEXT : (on ? ui_col::ON : ui_col::DIM));
