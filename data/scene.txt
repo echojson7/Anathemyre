@@ -10,3 +10,6 @@ prop cube    1  14   lift 0.4 scale 0.5 yaw 45 material ochre_paint
 # prefab <имя> <x> <z> [yaw 0|90|180|270]: заготовка data/prefabs/<имя>.txt, высота — земля под серединой
 # Руина этапа 4 — на площадке в пустыне (pad в data/terrain.txt)
 prefab ruin 11704 -2336
+# start <x> <z> [yaw град] [pitch град] [dist м] [people n] [radius м]: точка старта окна — камера и люди окна
+# (docs/text.md). Основное место тестов и разработки — у руины в пустыне
+start 11694 -2344 yaw 315 pitch 16 dist 22 people 6 radius 3

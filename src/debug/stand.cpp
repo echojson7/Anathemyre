@@ -9,6 +9,7 @@
 #include "../core/text.h"
 #include "../render/render.h"
 #include "../sim/ground.h"
+#include "../sim/world.h"
 #include "../view/view.h"
 #include <stdio.h>
 #include <string.h>
@@ -140,6 +141,27 @@ static void capsule(DebugDraw &dbg, const WPos &a, const WPos &b, f32 r, u32 rgb
         dbg_line(dbg, pa[i], pa[(i + 1) % SEG], rgba);
         dbg_line(dbg, pb[i], pb[(i + 1) % SEG], rgba);
         if (i % 2 == 0) dbg_line(dbg, pa[i], pb[i], rgba);
+    }
+}
+
+// Люди шага мира капсулами (пока у них нет тела в кадре — этап 9б): капсула тела r 0.3 до 1.8 м и курс тела
+void debug_people(const World &w, DebugDraw &dbg) {
+    const People &p = w.people;
+    const u32 col = rgba8(90, 220, 255), head = rgba8(255, 230, 90);
+    for (u32 s = 0; s < PEOPLE_CAPACITY; ++s) {
+        if (!p.alive[s]) continue;
+        WPos feet{p.cx[s], p.cz[s], p.x[s], p.y[s], p.z[s]};
+        WPos a = feet, b = feet;
+        a.y += 0.3f;
+        b.y += 1.5f;
+        capsule(dbg, a, b, 0.3f, col);
+        f32 sn, cs;
+        sincos_turn(p.heading[s], &sn, &cs);
+        WPos c = b, d = b;
+        d.x += sn * 0.6f;
+        d.z += cs * 0.6f;
+        wpos_rebase(d);
+        dbg_line(dbg, c, d, head);
     }
 }
 

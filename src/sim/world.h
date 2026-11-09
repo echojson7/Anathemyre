@@ -25,6 +25,16 @@ inline u16 id_gen(Id id) { return (u16)(id.v >> 16); }
 constexpr u32 DOTS_CAPACITY = 1024;
 constexpr u32 DOTS_TARGET = 1000;
 
+// Точка старта окна (строка start в data/scene.txt, docs/text.md): опора камеры и люди окна у неё.
+// Шаг мира её не читает и в хеш она не входит; --sim и --replay её не трогают
+struct SceneStart {
+    bool set = false;
+    f32 x = 0, z = 0;                       // метры от начала карты
+    f32 yaw = 0, pitch = 14, dist = 34;     // камера: градусы, метры (как --cam)
+    u32 people = 0;                         // сколько людей родить у точки в первом шаге окна
+    u32 radius = 4;                         // в каком круге, целые м (как у INTENT_PEOPLE_SPAWN)
+};
+
 // Таблица точек, SoA на DOTS_CAPACITY мест. Мёртвое место: alive = 0, его номер в free
 struct Dots {
     u16 *gen;      // поколение места, растёт при каждом рождении
@@ -105,6 +115,7 @@ struct World {
     Colliders coll;
     WalkGrid walk;
     GaitTable gait;
+    SceneStart start;  // из сцены, для окна
 };
 
 // Земля строится первой (объекты и точки ставятся на неё); scratch — временная память генерации
