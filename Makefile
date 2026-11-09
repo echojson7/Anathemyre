@@ -176,6 +176,8 @@ $(BIN): $(GAME_OBJS) $(TP_OBJS) $(SDL_STAMP)
 # Шейдеры: GLSL → SPIR-V для Vulkan 1.3, проверка spirv-val
 $(OUT)/shaders/%.spv: data/shaders/%
 	glslangValidator -s --target-env vulkan1.3 -I$(OUT)/shaders/gen -Idata/shaders --depfile $@.d -o $@ $<
+	@# Пустое правило на каждый заголовок (как -MP у компилятора): удалённый или переименованный .glsl не ломает сборку
+	@tr ' ' '\n' < $@.d | sed -n '2,$$s/$$/:/p' >> $@.d
 	spirv-val --target-env vulkan1.3 --scalar-block-layout $@
 
 -include $(GAME_OBJS:.o=.d) $(TP_OBJS:.o=.d) $(SHADER_SPV:=.d)

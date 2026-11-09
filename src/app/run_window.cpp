@@ -133,6 +133,7 @@ int run_window(const Args &a, AppMemory &m) {
     snprintf(pipe_cache, sizeof pipe_cache, "%spipelines.cache", platform_exe_dir());
     rc.pipeline_cache_path = pipe_cache;
     if (!render_init(rc)) {
+        log_error("отрисовка не запустилась (причина — строкой выше; подробнее: --validation)");
         platform_window_close();
         return 1;
     }
@@ -144,6 +145,7 @@ int run_window(const Args &a, AppMemory &m) {
     ScatterCache *scatter = arena_push<ScatterCache>(m.world, 1);
     scatter_init(*scatter, m.world);
     if (!app_world_create(w, m, a.seed, &desc) || !app_assets_load(m, mats, *assets) || !app_terrain_upload(w)) {
+        log_error("мир или ассеты не загрузились (причина — строкой выше)");
         render_shutdown();
         platform_window_close();
         return 1;

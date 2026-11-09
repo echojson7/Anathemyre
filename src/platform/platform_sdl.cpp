@@ -4,20 +4,29 @@
 #include "../core/mem.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <execinfo.h>
+#include <unistd.h>
 #endif
 
 static SDL_Window *g_window = nullptr;
 static SDL_IOStream *g_log = nullptr;
 static bool g_video = false;
 
+static void crash_guard();
+
 void platform_preinit() {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
 #endif
+    crash_guard();
 }
 
 u64 platform_time_ns() { return SDL_GetTicksNS(); }
@@ -139,6 +148,159 @@ static void log_close() {
     if (g_log_mutex) SDL_DestroyMutex(g_log_mutex);
     g_log_idle = g_log_wake = nullptr;
     g_log_mutex = nullptr;
+}
+
+// Падение (docs/build.md, «Если игра не запускается»): процесс умирает, и строки, которые поток журнала не успел
+// записать, пропали бы — а с ними и то, на чём игра упала. Обработчик сам дописывает хвост кольца, строку
+// «падение: …» и адреса стека в stderr и anathemyre.log, на Windows ещё окно с сообщением. Без блокировок:
+// упасть могли и под мьютексом журнала; лучше редкая повторная строка, чем зависание при падении
+static SDL_AtomicInt g_crashing;  // второе падение (в самом обработчике) — сразу выход
+
+static void crash_out(const char *s, usize n) {
+    fwrite(s, 1, n, stderr);
+    fflush(stderr);
+    if (g_log) {
+        SDL_WriteIO(g_log, s, n);
+        SDL_FlushIO(g_log);
+    }
+}
+
+static void crash_line(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void crash_line(const char *fmt, ...) {
+    char line[512];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(line, sizeof line - 1, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    usize len = (usize)n < sizeof line - 2 ? (usize)n : sizeof line - 2;
+    line[len++] = '\n';
+    crash_out(line, len);
+}
+
+// Хвост кольца, который поток журнала ещё не забрал. Сначала даём потоку дописать самому (до 0.3 с), чтобы
+// строки не задвоились; не успел (упали под мьютексом журнала или в самом потоке) — пишем сами
+static void crash_flush_ring() {
+    auto pending = [] { return *(volatile usize *)&g_log_head != *(volatile usize *)&g_log_tail || *(volatile bool *)&g_log_busy; };
+    for (int i = 0; i < 300 && g_log_thread && pending(); ++i) SDL_Delay(1);
+    usize head = g_log_head, tail = g_log_tail;
+    if (head - tail > LOG_RING) tail = head - LOG_RING;
+    static char out[LOG_RING];
+    usize n = head - tail;
+    for (usize i = 0; i < n; ++i) out[i] = g_log_ring[(tail + i) % LOG_RING];
+    if (n) crash_out(out, n);
+}
+
+#ifdef _WIN32
+static const char *crash_code_name(DWORD c) {
+    switch (c) {
+    case EXCEPTION_ACCESS_VIOLATION: return "обращение к чужой памяти";
+    case EXCEPTION_STACK_OVERFLOW: return "переполнение стека";
+    case EXCEPTION_ILLEGAL_INSTRUCTION: return "недопустимая инструкция (процессор без AVX2?)";
+    case EXCEPTION_INT_DIVIDE_BY_ZERO: return "деление на ноль";
+    case EXCEPTION_IN_PAGE_ERROR: return "файл не прочитан с диска";
+    case EXCEPTION_PRIV_INSTRUCTION: return "привилегированная инструкция";
+    default: return "исключение";
+    }
+}
+
+// Адрес → «модуль+смещение»: смещение в anathemyre.exe находится по сборке того же коммита (llvm-addr2line)
+static void crash_where(DWORD64 pc, char *out, usize cap) {
+    HMODULE mod = nullptr;
+    char path[MAX_PATH] = "?";
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)(uintptr_t)pc, &mod) && mod)
+        GetModuleFileNameA(mod, path, sizeof path);
+    const char *name = path;
+    for (const char *c = path; *c; ++c)
+        if (*c == '\\' || *c == '/') name = c + 1;
+    snprintf(out, cap, "%s+0x%llx", name, mod ? (unsigned long long)(pc - (DWORD64)(uintptr_t)mod) : (unsigned long long)pc);
+}
+
+static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep) {
+    if (SDL_AddAtomicInt(&g_crashing, 1)) return EXCEPTION_CONTINUE_SEARCH;
+    crash_flush_ring();
+    const EXCEPTION_RECORD &er = *ep->ExceptionRecord;
+    char where[MAX_PATH + 32];
+    crash_where((DWORD64)(uintptr_t)er.ExceptionAddress, where, sizeof where);
+    char msg[1024];
+    int n = snprintf(msg, sizeof msg, "падение: %s, код 0x%08lx, адрес %s", crash_code_name(er.ExceptionCode),
+                     (unsigned long)er.ExceptionCode, where);
+    if (er.ExceptionCode == EXCEPTION_ACCESS_VIOLATION && er.NumberParameters >= 2)
+        snprintf(msg + n, sizeof msg - (usize)n, " (%s 0x%llx)", er.ExceptionInformation[0] == 1 ? "запись" : er.ExceptionInformation[0] == 8 ? "исполнение" : "чтение",
+                 (unsigned long long)er.ExceptionInformation[1]);
+    crash_line("%s", msg);
+    // Стек: раскрутка по таблицам исключений x64 (без dbghelp)
+    CONTEXT ctx = *ep->ContextRecord;
+    for (int i = 0; i < 24 && ctx.Rip; ++i) {
+        crash_where(ctx.Rip, where, sizeof where);
+        crash_line("  %2d %s", i, where);
+        DWORD64 base = 0;
+        RUNTIME_FUNCTION *fn = RtlLookupFunctionEntry(ctx.Rip, &base, nullptr);
+        if (!fn) {  // листовая функция: адрес возврата на вершине стека
+            ctx.Rip = *(DWORD64 *)(uintptr_t)ctx.Rsp;
+            ctx.Rsp += 8;
+            continue;
+        }
+        void *handler_data = nullptr;
+        DWORD64 frame = 0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, fn, &ctx, &handler_data, &frame, nullptr);
+    }
+    if (g_log) {
+        SDL_CloseIO(g_log);  // поток журнала уже не пишет: процесс сейчас закроется
+        g_log = nullptr;
+    }
+    // Окно: игру часто запускают не из терминала (и в WSL терминал прячется за окном игры). В CI окна нет:
+    // модальное окно повесило бы задачу до таймаута
+    char box[1400];
+    snprintf(box, sizeof box, "%s\n\nПодробности и стек — в anathemyre.log рядом с игрой.", msg);
+    wchar_t wbox[1400];
+    if (!GetEnvironmentVariableA("CI", nullptr, 0) && MultiByteToWideChar(CP_UTF8, 0, box, -1, wbox, 1400) > 0)
+        MessageBoxW(nullptr, wbox, L"Anathemyre упала", MB_OK | MB_ICONERROR | MB_TOPMOST);
+    return EXCEPTION_EXECUTE_HANDLER;  // выход с кодом исключения, без окна отчёта Windows
+}
+#endif
+
+// abort() из ana_fail и CRT: строка «проверка не прошла» уже в журнале, здесь только дописать кольцо
+static void crash_signal(int sig) {
+    if (SDL_AddAtomicInt(&g_crashing, 1)) _exit(128 + sig);
+    crash_flush_ring();
+    const char *what = sig == SIGSEGV ? "обращение к чужой памяти" : sig == SIGABRT ? "аварийный выход (abort)"
+                     : sig == SIGFPE ? "ошибка арифметики" : sig == SIGILL ? "недопустимая инструкция (процессор без AVX2?)" : "сигнал";
+    crash_line("падение: %s, сигнал %d", what, sig);
+#ifndef _WIN32
+    void *pcs[32];
+    int n = backtrace(pcs, 32);
+    char **names = n > 0 ? backtrace_symbols(pcs, n) : nullptr;  // malloc в умирающем процессе: худшее — без стека
+    for (int i = 0; names && i < n; ++i) crash_line("  %2d %s", i, names[i]);
+#endif
+    _exit(128 + sig);
+}
+
+static void crash_guard() {
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+    return;  // у ASan свой обработчик падений, и его отчёт подробнее
+#endif
+#endif
+#ifdef _WIN32
+    ULONG guarantee = 64u << 10;  // при переполнении стека обработчику нужен свой запас
+    SetThreadStackGuarantee(&guarantee);
+    SetUnhandledExceptionFilter(crash_filter);
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    signal(SIGABRT, crash_signal);
+#else
+    static char alt[64u << 10];  // свой стек обработчика: падение может быть от переполнения стека
+    stack_t ss{};
+    ss.ss_sp = alt;
+    ss.ss_size = sizeof alt;
+    sigaltstack(&ss, nullptr);
+    struct sigaction sa{};
+    sa.sa_handler = crash_signal;
+    sa.sa_flags = SA_ONSTACK | SA_RESETHAND;
+    const int sigs[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT};
+    for (int sig : sigs) sigaction(sig, &sa, nullptr);
+#endif
 }
 
 void platform_shutdown() {

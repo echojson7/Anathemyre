@@ -17,7 +17,13 @@ if [ -z "$TARGET" ]; then
 fi
 
 make -j"$(nproc 2>/dev/null || echo 4)" TARGET="$TARGET"
-if [ "$TARGET" = windows ]; then
-    exec ./build/windows-release/anathemyre.exe "$@"
+BIN=./build/linux-release/anathemyre
+[ "$TARGET" = windows ] && BIN=./build/windows-release/anathemyre.exe
+# Код выхода и журнал — на виду: игра, упавшая при старте, не должна выглядеть как «ничего не произошло»
+set +e
+"$BIN" "$@"
+rc=$?
+if [ $rc -ne 0 ]; then
+    echo "игра вышла с кодом $rc; журнал: $(dirname "$BIN")/anathemyre.log (docs/build.md, «Если игра не запускается»)" >&2
 fi
-exec ./build/linux-release/anathemyre "$@"
+exit $rc
