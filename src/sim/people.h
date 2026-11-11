@@ -13,6 +13,12 @@ constexpr u32 PATH_STEP_BUDGET = 12000;  // раскрытых узлов A* з�
 enum Gait : u8 { GAIT_WALK = 0, GAIT_JOG = 1, GAIT_RUN = 2, GAIT_COUNT = 3 };
 enum MoveState : u8 { MOVE_STAND = 0, MOVE_WAIT_PATH = 1, MOVE_FOLLOW = 2 };
 constexpr u8 PATH_DIRECT = 0xFF;      // path_area: вне сетки ходимости — прямо к цели
+// Место вокруг цели (people.place, намерение INTENT_PLACE): бит кольца, курс от цели к месту в 1/256 оборота,
+// отступ дальше обычной дистанции (ждёт очереди на удар) в 0.1 м
+constexpr u16 PLACE_RING = 0x8000;
+constexpr u16 PLACE_ANGLE = 0x00FF;
+constexpr u32 PLACE_BACK_SHIFT = 8;
+constexpr u16 PLACE_BACK = 0x3F00;
 
 // Длина цикла шага (два шага) из дорожек корня клипов ходьбы и бега: фаза растёт на v / длина за секунду
 struct GaitTable {
@@ -74,6 +80,11 @@ struct People {
     u8 *skill;
     u8 *want;
     u8 *last;
+    // Группа (этап 12, docs/people.md «Группа»): сторона (0 — ничья: целей сам не ищет; своих не трогает), место
+    // вокруг цели от ИИ (PLACE_*), шаг начала последнего удара или прихода к цели — очередь на удар по давности
+    u8 *side;
+    u16 *place;
+    u32 *struck;
     // Места и очередь поиска пути (кольцо, по порядку приказов)
     u16 *free;
     u32 free_count;
@@ -86,7 +97,7 @@ struct World;
 struct StepCtx;
 void people_init(People &p, Arena &arena);
 // Родить человека на ходимом месте у at (RNG мира); false — мест нет
-bool people_spawn(World &w, const WPos &at, f32 radius);
+bool people_spawn(World &w, const WPos &at, f32 radius, u32 side = 0);
 void people_kill(World &w, u32 slot);
 // Приказ идти: человек по номеру с поколением (чужое поколение — приказ пропадает). Приказ игрока снимает и
 // приказ «атаковать» (player)
@@ -96,6 +107,10 @@ void people_order_go(World &w, u32 id, const WPos &target, u32 gait, bool player
 void people_order_attack(World &w, u32 id, u32 target_id);
 // Намерение ИИ: желаемое действие (номер + 1; 0 — держать дистанцию). Исполнение решает, когда его начать
 void people_order_act(World &w, u32 id, u32 act);
+// Намерение ИИ: место вокруг цели (PLACE_*; 0 — без кольца, прямо к цели)
+void people_order_place(World &w, u32 id, u32 place);
+// Враги ли двое: своих одной стороны не бьют в ответ и не выбирают целью (ничьи — враги всем, кто их задел)
+inline bool people_foes(const People &p, u32 a, u32 b) { return !p.side[a] || p.side[a] != p.side[b]; }
 // Живой ли человек по номеру с поколением; место — в *slot
 bool people_valid(const People &p, u32 id, u32 *slot);
 

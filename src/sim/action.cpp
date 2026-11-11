@@ -17,7 +17,10 @@ static constexpr f32 ACT_STOP_DEC = 6.0f;    // торможение (как BRA
 static constexpr u16 ACT_REPATH = 15;        // подход: не чаще раза в 0.25 с новый путь к ушедшей цели
 static constexpr f32 ACT_REPATH_DIST = 0.7f; // цель ушла от точки приказа дальше — новый путь
 static constexpr f32 ACT_RUN_DIST = 8.0f;    // дальше — бегом, ближе — трусцой
-static constexpr f32 ACT_BLOCK_FACE = 1.2f;  // блок держит удар, если бьющий не дальше стольких рад от лица
+static constexpr f32 ACT_RING_OK = 0.5f;     // место на кольце: ближе по дуге, рад, — уже на месте
+static constexpr f32 ACT_RING_STEP = 0.9f;   // обход цели: точка не дальше стольких рад по дуге (не сквозь цель)
+static constexpr f32 ACT_RING_BACK = 0.8f;   // ждущий очереди ближе места на столько — отойти
+static constexpr f32 ACT_RING_IN = 0.3f;     // точка на кольце — ближе дистанции на столько
 static constexpr f32 ACT_BLOCK_MIN = 0.1f;   // доля отбитых — не меньше и не больше, какими бы ни были навыки
 static constexpr f32 ACT_BLOCK_MAX = 0.95f;
 
@@ -318,26 +321,54 @@ static void act_start(World &w, u32 s, u32 k, StepStats *stats, ActRetort *ret, 
         return;
     }
     p.last[s] = (u8)(k + 1);
+    p.struck[s] = (u32)w.step;
     if (stats) stats->strikes++;
     u32 t;
-    if (ret && *nret < PEOPLE_CAPACITY && people_valid(p, p.target[s], &t) && !p.target[t]) ret[(*nret)++] = {t, s};
+    if (ret && *nret < PEOPLE_CAPACITY && people_valid(p, p.target[s], &t) && !p.target[t] && people_foes(p, t, s))
+        ret[(*nret)++] = {t, s};
 }
 
 // Подойти к цели приказа «атаковать» на дистанцию до stop (+ путь торможения), трусцой, дальше 8 м — бегом.
-// true — уже на месте: стоит и разворачивается к цели (курс yaw_off от направления на неё)
+// Место вокруг цели (этап 12, place от ИИ): кольцом — встать с той стороны цели, куда указывает место, обходя её
+// дугой; отступ — встать дальше на столько (ждёт очереди на удар). true — уже на месте: стоит и разворачивается к
+// цели (курс yaw_off от направления на неё)
 static bool act_close_in(World &w, u32 s, u32 t, f32 stop_at, Turn yaw_off, f32 *dist_out) {
     People &p = w.people;
     Vec2 d = wpos_delta_xz(p.cx[s], p.cz[s], p.x[s], p.z[s], p.cx[t], p.cz[t], p.x[t], p.z[t]);
     f32 dist = length(d);
     *dist_out = dist;
     f32 v = p.speed[s];
-    if (dist > stop_at + v * v / (2.0f * ACT_STOP_DEC)) {
-        Vec2 g = wpos_delta_xz(p.gcx[s], p.gcz[s], p.gx[s], p.gz[s], p.cx[t], p.cz[t], p.x[t], p.z[t]);
+    const u16 pl = p.place[s];
+    const f32 back = (f32)((pl & PLACE_BACK) >> PLACE_BACK_SHIFT) * 0.1f;
+    const f32 stop = stop_at + back;
+    // Куда идти: к цели или к точке на кольце не дальше ACT_RING_STEP по дуге от нынешнего курса, чуть ближе
+    // stop (иначе по прибытии с допуском пути он встанет дальше stop и пойдёт заново). Ждущий очереди (отступ)
+    // и стоящий слишком близко — отходит
+    WPos to{p.cx[t], p.cz[t], p.x[t], p.y[t], p.z[t]};
+    bool placed = back <= 0.0f || dist > stop - ACT_RING_BACK;
+    if (pl & PLACE_RING) {
+        const Turn want = (Turn)(pl & PLACE_ANGLE) << 24;
+        const Turn cur = dist > 1e-3f ? turn_of_dir(-d.x, -d.y) : want;
+        const f32 arc = turn_diff_rad(cur, want);
+        placed = placed && f_abs(arc) < ACT_RING_OK;
+        const f32 r = f_max(stop - ACT_RING_IN, 0.5f);
+        f32 sn, cs;
+        sincos_turn(cur + turn_from_rad(f_clamp(arc, -ACT_RING_STEP, ACT_RING_STEP)), &sn, &cs);
+        to.x += sn * r;
+        to.z += cs * r;
+        wpos_rebase(to);
+    } else if (!placed) {
+        // Без кольца отступ — прямо от цели
+        f32 k = dist > 1e-3f ? f_max(stop - ACT_RING_IN, 0.5f) / dist : 0.0f;
+        to.x -= d.x * k;
+        to.z -= d.y * k;
+        wpos_rebase(to);
+    }
+    if (!placed || dist > stop + v * v / (2.0f * ACT_STOP_DEC)) {
+        Vec2 g = wpos_delta_xz(p.gcx[s], p.gcz[s], p.gx[s], p.gz[s], to.cx, to.cz, to.x, to.z);
         bool moved = dot(g, g) > ACT_REPATH_DIST * ACT_REPATH_DIST && (w.step + s) % ACT_REPATH == 0;
-        if (p.state[s] == MOVE_STAND || moved) {
-            WPos to{p.cx[t], p.cz[t], p.x[t], p.y[t], p.z[t]};
+        if (p.state[s] == MOVE_STAND || moved)
             people_order_go(w, make_id(s, p.gen[s]).v, to, dist > ACT_RUN_DIST ? GAIT_RUN : GAIT_JOG, false);
-        }
         return false;
     }
     p.state[s] = MOVE_STAND;
@@ -458,7 +489,11 @@ void people_act(World &w, StepCtx &ctx) {
         }
     }
     for (u32 i = 0; i < nret; ++i)
-        if (!p.target[ret[i].who]) p.target[ret[i].who] = make_id(ret[i].att, p.gen[ret[i].att]).v;
+        if (!p.target[ret[i].who]) {
+            p.target[ret[i].who] = make_id(ret[i].att, p.gen[ret[i].att]).v;
+            p.place[ret[i].who] = 0;
+            p.struck[ret[i].who] = (u32)w.step;
+        }
     // 3) Попадания по положению после ходов у всех; исход блока — RNG мира по порядку бьющих
     ActHit hits[64];
     u32 nh = 0;
@@ -500,9 +535,16 @@ void people_act(World &w, StepCtx &ctx) {
         p.react_part[d] = (u8)h.part;
         Vec2 o = wpos_delta_xz(p.cx[h.att], p.cz[h.att], p.x[h.att], p.z[h.att], p.cx[d], p.cz[d], p.x[d], p.z[d]);
         p.react_yaw[d] = dot(o, o) > 1e-6f ? turn_of_dir(o.x, o.y) : p.heading[h.att];
-        if (!p.target[d]) p.target[d] = make_id(h.att, p.gen[h.att]).v;
+        if (!p.target[d] && people_foes(p, d, h.att)) {
+            p.target[d] = make_id(h.att, p.gen[h.att]).v;
+            p.place[d] = 0;
+            p.struck[d] = (u32)w.step;
+        }
         if (p.hits[d] < 0xFFFF) p.hits[d]++;
-        if (ctx.stats) ctx.stats->hits++;
+        if (ctx.stats) {
+            ctx.stats->hits++;
+            if (!people_foes(p, d, h.att)) ctx.stats->friendly++;
+        }
     }
     if (ar) arena_restore(*ar, mark);
 }

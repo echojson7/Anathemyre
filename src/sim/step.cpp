@@ -26,11 +26,13 @@ static void step_intents(World &w, StepCtx &ctx) {
         case INTENT_PEOPLE_SPAWN: {
             u32 n = (u32)(it.arg & 0xFFFFu);
             f32 r = (f32)(u32)((it.arg >> 16) & 0xFFFFu);
-            for (u32 i = 0; i < n && people_spawn(w, it.target, r); ++i) {}
+            u32 side = (u32)((it.arg >> 32) & 0xFFu);
+            for (u32 i = 0; i < n && people_spawn(w, it.target, r, side); ++i) {}
         } break;
         case INTENT_GO: people_order_go(w, (u32)it.arg, it.target, (u32)(it.arg >> 32)); break;
         case INTENT_ATTACK: people_order_attack(w, (u32)it.arg, (u32)(it.arg >> 32)); break;
         case INTENT_ACT: people_order_act(w, (u32)it.arg, (u32)(it.arg >> 32)); break;
+        case INTENT_PLACE: people_order_place(w, (u32)it.arg, (u32)(it.arg >> 32)); break;
         case INTENT_BURST: {
             // Гибнут BURST_COUNT случайных живых, столько же рождается у цели
             u32 killed = 0;

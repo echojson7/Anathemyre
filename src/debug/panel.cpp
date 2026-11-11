@@ -173,6 +173,7 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     // Люди мира: капсулы шага поверх тел, путь выбранного, след касаний стоп (отрезки отладки, L)
     ui_section(f, "ЛЮДИ");
     ui_toggle(f, "капсулы, путь и след стоп", d.people_lines);
+    ui_toggle(f, "стороны боя и цели", d.people_sides);
     // Стенд людей (stand.cpp): человек у Остова, проверка весов и морфов
     ui_section(f, "ЛЮДИ: СТЕНД");
     ui_toggle(f, "человек у Остова", d.stand);

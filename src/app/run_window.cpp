@@ -188,7 +188,8 @@ int run_window(const Args &a, AppMemory &m) {
         return 1;
     }
     DuelDesc duel{};
-    if (!app_duel_load(duel, m)) {
+    GroupDesc group{};
+    if (!app_fight_load(duel, group, m)) {
         render_shutdown();
         platform_window_close();
         return 1;
@@ -273,16 +274,19 @@ int run_window(const Args &a, AppMemory &m) {
     if (a.hour_set) pending.push_back({0, INTENT_CLOCK_SET, WPos{}, hour_turn(a.hour)});
     if (a.timelapse) pending.push_back({0, INTENT_CLOCK_RATE, WPos{}, 0});
     // Люди окна у точки старта: намерение первого шага, поэтому запись окна их повторяет, а --sim не трогает
-    if (w.start.set && w.start.people) {
+    const bool brawl = a.brawl[0] && a.brawl[1];
+    if (w.start.set && w.start.people && !brawl) {
         WPos at;
         at.x = w.start.x;
         at.z = w.start.z;
         wpos_rebase(at);
         pending.push_back({0, INTENT_PEOPLE_SPAWN, at, (u64)w.start.people | ((u64)w.start.radius << 16)});
     }
+    if (brawl) brawl_intents(w, a.brawl, pending, 0.0f, -17.0f);  // стенка на стенку на площадке Остова (видео группы)
     ds.lines = set.lines;
     debug_stand_args(ds, a.stand);
     if (a.people_lines) ds.people_lines = true;
+    if (a.sides || (a.brawl[0] && a.brawl[1])) ds.people_sides = true;
     if (a.open && (!strcmp(a.open, "menu") || !strcmp(a.open, "keys"))) {
         menu.open = true;
         menu.tab = !strcmp(a.open, "keys") ? HUD_TAB_CONTROLS : HUD_TAB_SCREEN;
@@ -545,7 +549,7 @@ int run_window(const Args &a, AppMemory &m) {
         if (ds.reload_actions && !a.record) {
             if (app_actions_load(w, m)) pv->act_bound = false;
             else log_warn("описания действий не перечитаны (ошибка выше): старые остаются");
-            if (!app_duel_load(duel, m)) log_warn("data/duel.txt не перечитан (ошибка выше): старый остаётся");
+            if (!app_fight_load(duel, group, m)) log_warn("data/duel.txt и group.txt не перечитаны (ошибка выше): старые остаются");
         }
         if (slow_from >= 0 && frames == (u64)slow_from) tc.speed = 1;  // --slow: замедление ×0.25 с кадра
 
@@ -573,7 +577,7 @@ int run_window(const Args &a, AppMemory &m) {
                     pending.data[i].step = w.step;
                     step_its.push_back(pending.data[i]);
                 }
-            ai_duel(w, duel, step_its);
+            ai_fight(w, duel, group, step_its);
             Span<const Intent> its = step_its.span();
             StepCtx ctx{its, &m.step, &dbg};
             u64 ts = platform_time_ns();
@@ -619,6 +623,7 @@ int run_window(const Args &a, AppMemory &m) {
         // Стенд: в видео и снимках время клипа идёт ровно 1/30 с на кадр
         if (set.debug) debug_stand_update(ds, *assets, w.terrain, a.frames ? 1.0 / 30.0 : dt, vi.dbg ? &dbg : nullptr);
         if (set.debug && vi.dbg && ds.people_lines) debug_people(w, dbg, pv->sel);
+        if (set.debug && vi.dbg && ds.people_sides) debug_sides(w, dbg);
         // Камера за выбранным: опора — его голова на этот кадр
         if (cam.follow) {
             WPos head;
