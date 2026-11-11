@@ -54,6 +54,18 @@ const uint STAT_SM_USED = 19u, STAT_SM_NEW = 20u, STAT_SM_OVER = 21u, STAT_SM_MI
            STAT_SM_TAPS = 24u;
 const uint STAT_SM_WAIT = 25u;  // страниц нового шага светила, отложенных до следующих кадров (стройка в фоне)
 
+// Поле расстояний мира (docs/sdf.md): выборки поля светом, треугольники засыпки, кирпичи, собранные в кадре
+const uint STAT_SDF_TAPS = 26u, STAT_SDF_TRIS = 27u, STAT_SDF_BRICKS = 28u;
+// Кольца: SDF_LEVELS по SDF_N³ вокселей, слой уровня в картинке — SDF_SLAB по z; полоса засыпки — SDF_BAND
+// вокселей (дальше поле — «пусто», ровно SDF_BAND вокселей уровня)
+const int SDF_LEVELS = 5, SDF_N = 128, SDF_SLAB = 130;
+const float SDF_BAND = 4.0;
+const uint SDF_EMPTY = 0xFFFFFFFFu;  // засыпка: воксель без треугольника рядом
+const uint SDF_VIEW_FRAME = 0u, SDF_VIEW_SKY = 1u, SDF_VIEW_FIELD = 2u, SDF_VIEW_OFF = 3u;
+layout(buffer_reference, scalar) readonly buffer SdfJobs { uvec2 v[]; };    // экземпляр; кластер | уровень << 24
+layout(buffer_reference, scalar) readonly buffer SdfBricks { ivec4 v[]; };  // мировой номер кирпича, уровень
+layout(buffer_reference, scalar) buffer SdfScratch { uint v[]; };  // уровень · SDF_N³ + место: расстояние << 1 | внутри
+
 // Плитки 8×8 кадра мира по видам (docs/tiles.md, light_tiles.comp): небо — пусто; земля — земля из кеша
 // (docs/gcache.md) и, может быть, небо; сетки — сетки и, может быть, небо; смесь — земля и сетки; земля на
 // пиксель — земля, которой нет в кеше (крутые склоны), и, может быть, небо. На вид — косвенный dispatch и список
@@ -231,6 +243,16 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec4 sm_r[2], sm_u[2], sm_s[2];
     ivec2 sm_base[24];        // окно места уровня (набор · SM_LEVELS + уровень): первая страница на решётке уровня
     vec2 sm_off[24];          // камера от начала окна по r, u, м
+    // Поле расстояний мира (docs/sdf.md, sdf.glsl): засыпка кадра, кирпичи и их биты, общий буфер засыпки
+    SdfJobs sdf_jobs;
+    SdfBricks sdf_bricks;
+    Words sdf_bits;
+    SdfScratch sdf_scratch;
+    ivec2 sdf_anchor;         // чанк якоря поля
+    uint sdf_on, sdf_view;    // свет читает поле; режим F3 (SDF_VIEW_*)
+    uint sdf_jobs_n, sdf_bricks_n, sdf_pad0, sdf_pad1;
+    vec4 sdf_cam;             // камера от якоря, м; w — воксель уровня 0, м
+    ivec4 sdf_lo[8], sdf_hi[8];  // рамка грязных вокселей уровня этого кадра
 };
 
 layout(push_constant, scalar) uniform Push {
@@ -241,9 +263,9 @@ layout(push_constant, scalar) uniform Push {
 const float CHUNK_M = 256.0;
 const uint TONEMAP_AGX = 0u, TONEMAP_ACES = 1u;
 const uint LIGHT_Q_LOW = 0u, LIGHT_Q_MEDIUM = 1u, LIGHT_Q_HIGH = 2u, LIGHT_Q_ULTRA = 3u;
-// Свет неба и экспозиция (sky_sum.comp → sky_out): [4] — x множитель экспозиции (на него умножен HDR кадра),
-// y — освещённость горизонтальной земли, лк, z — EV100 глаза (с привыканием), w — от неба, лк; [5] — x от светила,
-// лк, y — EV100, к которому глаз привыкает
+// Свет неба и экспозиция (sky_sum.comp, eye.comp → sky_out): [4] — x множитель экспозиции (на него умножен HDR
+// кадра), y — освещённость открытой горизонтальной земли, лк, z — EV100 глаза (с привыканием), w — от неба, лк;
+// [5] — x от светила, лк, y — EV100, к которому глаз привыкает, z — освещённость у глаза с заслонкой полем, лк
 const int SKY_OUT_EYE = 4, SKY_OUT_EYE2 = 5;
 // Начало отсчёта узоров земли и материалов (world_cell, t_split…): по умолчанию чанк камеры. Запекание кеша
 // земли считает тексель от его собственного чанка (gcache.glsl), чтобы тексель зависел только от себя

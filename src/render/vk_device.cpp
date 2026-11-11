@@ -91,6 +91,8 @@ static bool create_device() {
     f10.geometryShader = VK_TRUE;
     // Страницы теней (docs/shadow.md): фрагмент пишет высоту заслонки в буфер атомарным максимумом
     f10.fragmentStoresAndAtomics = VK_TRUE;
+    // Поле расстояний мира (docs/sdf.md): сборка пишет R16F в картинку
+    f10.shaderStorageImageExtendedFormats = VK_TRUE;
 
     vkb::PhysicalDeviceSelector sel(vi);
     auto pick = sel.set_surface(g_vk.surface)

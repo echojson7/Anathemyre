@@ -291,6 +291,9 @@ bool render_work(RenderWork &out) {
     out.sm_draws = w.work[STAT_SM_DRAWS];
     out.sm_taps = w.work[STAT_SM_TAPS];
     out.sm_wait = w.work[STAT_SM_WAIT];
+    out.sdf_taps = w.work[STAT_SDF_TAPS];
+    out.sdf_tris = w.work[STAT_SDF_TRIS];
+    out.sdf_bricks = w.work[STAT_SDF_BRICKS];
     out.sm_blend = vk_shadow_blend();
     out.gc_off = g_vk.gcache.off;
     return true;
@@ -306,6 +309,7 @@ bool render_light(RenderLightInfo &out) {
     out.lux_sky = w.eye[3];
     out.lux_key = w.eye[4];
     out.ev100_goal = w.eye[5];
+    out.lux_eye = w.eye[6];
     return true;
 }
 

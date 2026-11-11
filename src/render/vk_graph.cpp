@@ -43,6 +43,7 @@ const UseInfo USES[RG_USES] = {
     {XFER, VK_ACCESS_2_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, false},       // RG_IMG_COPY_READ
     {VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, false},        // RG_PRESENT
     {VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, SR | SW, VK_IMAGE_LAYOUT_UNDEFINED, true},      // RG_FS_WRITE
+    {CS, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, false},                // RG_IMG_CS_SAMPLE
 };
 constexpr VkAccessFlags2 WRITE_BITS = SW | VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
                                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
@@ -78,7 +79,7 @@ Res g_res[RG_MAX_RES];
 u32 g_nres = 1;  // 0 — «нет ресурса»
 Pass g_pass[RG_MAX_PASSES];
 u32 g_npass = 0;
-Use g_use[RG_MAX_PASSES * 6];
+Use g_use[RG_MAX_PASSES * 8];
 u32 g_nuse = 0;
 u32 g_barriers = 0;
 bool g_overflow_logged = false;

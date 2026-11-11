@@ -2,7 +2,7 @@
 галерея с лестницей, тёмная комната, тамбур у входа. Свет внутрь — только через зазоры: дверь, щели в стенах,
 полоса просветов под крышей на западе, круглый световой колодец, шов между плитами крыши и пролом.
 
-Весь бетон — плиты с отверстиями `panel` из tools/meshgen_concrete.py (неровные рёбра, излом, арматура, доля неба).
+Весь бетон — плиты с отверстиями `panel` из tools/meshgen_concrete.py (неровные рёбра, излом, арматура).
 Здесь только раскладка: размеры, зазоры, части здания.
 
 Начало координат всех сеток Остова — середина пятна на высоте площадки (`prefab ostov` в data/scene.txt), детали
@@ -13,7 +13,7 @@ import math
 
 import meshgen_concrete as mc
 from meshgen_concrete import (
-    CircleHole, M_FLOOR, M_SOFFIT, M_WALL, NZ, PX, PY, PZ, Part, RaggedHole, RectHole, SkyField, SlantCut, add,
+    CircleHole, M_FLOOR, M_SOFFIT, M_WALL, NZ, PX, PY, PZ, Part, RaggedHole, RectHole, SlantCut, add,
     box, collar, hash3, panel, rot_x, rot_y, sc, sub, wall_x, wall_z,
 )
 
@@ -37,29 +37,6 @@ OCULUS = (7.5, 0.5, 1.25)                    # световой колодец: 
 RUPTURE = (-9.5, -4.0, 2.8, 3.2)             # пролом: середина x, z, полуоси
 DOOR = (1.8, 4.2, 3.2)                       # вход в южной стене: x от, до, высота над полом
 ROOM = (9.0, -4.0)                           # тёмная комната в юго-восточном углу: x запада, z севера
-
-
-def build_sky():
-    """Коробки всех частей (без затенения) → сетка занятости. Один раз на запуск генератора."""
-    if mc.SKY is not None:
-        return
-    boxes = []
-    for name, fn in PARTS.items():
-        m = fn()
-        for c, h, q in m.collider:
-            if q != (0.0, 0.0, 0.0, 1.0):
-                r = max(h)
-                h = (r, r, r)
-            boxes.append((c, h))
-    mc.FLOOR_Y = FY
-    mc.SKY = SkyField(boxes, (X0 - 3.0, -0.5, Z0 - 3.0), (X1 + 3.0, RY1 + 1.0, Z1 + 3.0))
-
-
-def with_sky(fn):
-    def make():
-        build_sky()
-        return fn()
-    return make
 
 
 # --- части здания ---
@@ -227,4 +204,5 @@ PARTS = {
     "ostov_rooms": rooms,
     "ostov_debris": debris,
 }
-MESHES = {name: with_sky(fn) for name, fn in PARTS.items()}
+mc.FLOOR_Y = FY  # стены у пола зала темнее (ao_of)
+MESHES = PARTS

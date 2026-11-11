@@ -96,6 +96,14 @@ struct FrameGpu {
                                              // камеры к светилу от якоря набора
     i32 sm_base[24][2];             // окно места уровня (набор · SM_LEVELS + уровень): первая страница на решётке
     f32 sm_off[24][2];              // камера от начала окна по r, u, м
+    // Поле расстояний мира (vk_sdf.cpp, docs/sdf.md): засыпка — кластеры экземпляров на уровнях, кирпичи кадра,
+    // их биты по месту в кольце; общий буфер засыпки (минимум расстояния и знак на воксель)
+    VkDeviceAddress sdf_jobs, sdf_bricks, sdf_bits, sdf_scratch;
+    i32 sdf_anchor[2];           // чанк якоря поля: воксели и экземпляры считаются от него
+    u32 sdf_on, sdf_view;        // поле есть и свет его читает; режим F3 (RENDER_SDF_*)
+    u32 sdf_jobs_n, sdf_bricks_n, sdf_pad0, sdf_pad1;
+    f32 sdf_cam[4];              // камера от якоря, м; w — воксель уровня 0, м
+    i32 sdf_lo[8][4], sdf_hi[8][4];  // рамка грязных вокселей уровня (засыпка пишет только в неё)
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -116,7 +124,9 @@ constexpr u32 STAT_SKIN_VERTS = 18;  // вершин скинено (skin.comp)
 constexpr u32 STAT_SM_USED = 19, STAT_SM_NEW = 20, STAT_SM_OVER = 21, STAT_SM_MISS = 22, STAT_SM_DRAWS = 23,
               STAT_SM_TAPS = 24;
 constexpr u32 STAT_SM_WAIT = 25;  // страниц нового шага светила, отложенных на следующие кадры (стройка в фоне)
-constexpr u32 STAT_COUNT = 26;
+// Поле расстояний мира (docs/sdf.md): выборки поля светом, треугольники засыпки, кирпичи, собранные в кадре
+constexpr u32 STAT_SDF_TAPS = 26, STAT_SDF_TRIS = 27, STAT_SDF_BRICKS = 28;
+constexpr u32 STAT_COUNT = 29;
 // Виды плиток кадра мира (TILE_* в common.glsl): небо, земля из кеша (и небо), сетки (и небо), смесь земли и
 // сеток, земля на пиксель (и небо)
 constexpr u32 TILE_KINDS = 5;
@@ -169,6 +179,7 @@ struct FrameSlot {
     GpuBuffer skin_jobs;    // работы скиннинга кадра (SkinJobGpu)
     GpuBuffer bones;        // палитры костей людей кадра (RenderBone)
     GpuBuffer sm_inval;     // сферы сброса страниц теней (vk_shadow.cpp)
+    GpuBuffer sdf_jobs, sdf_bricks, sdf_bits;  // засыпка, кирпичи и их биты поля расстояний (vk_sdf.cpp)
     u32 sm_frame = 0;       // кадр теней, чьи счётчики придут в readback (vk_shadow_read)
     u8 rg_readback = 0;     // он же в графе кадра
     bool stats_pending = false;  // readback заполнит отправленный кадр
@@ -265,6 +276,28 @@ struct ShadowGpu {
     u8 rg_table = 0, rg_pages = 0, rg_texels = 0, rg_req = 0, rg_draws = 0, rg_list = 0;
 };
 
+// Поле расстояний мира (vk_sdf.cpp, docs/sdf.md): SDF_LEVELS колец SDF_N³ вокселей вокруг камеры, воксель уровня
+// k — SDF_V0·2^k. Кольцо хранится тороидально (место — мировой номер по модулю SDF_N) в одной 3D-картинке R16F:
+// уровень — слой SDF_SLAB по z (SDF_N мест и по копии крайних с обеих сторон, чтобы трилинейная выборка
+// заворачивала по z так же, как по x и y). Кирпич — SDF_BRICK³ вокселей: единица пересборки
+constexpr u32 SDF_LEVELS = 5, SDF_N = 128, SDF_SLAB = SDF_N + 2, SDF_BRICK = 8, SDF_NB = SDF_N / SDF_BRICK;
+constexpr u32 SDF_LEVEL_BRICKS = SDF_NB * SDF_NB * SDF_NB;
+constexpr u32 SDF_JOB_CAP = 1u << 18;  // кластеров засыпки за кадр
+struct SdfGpu {
+    GpuImage field;           // R16F SDF_N × SDF_N × SDF_SLAB·SDF_LEVELS, расстояние в метрах
+    GpuBuffer scratch;        // засыпка: u32 на воксель уровня (расстояние и знак), между кадрами — «пусто»
+    VkSampler sampler = VK_NULL_HANDLE;
+    VkPipeline pipe_splat = VK_NULL_HANDLE, pipe_final = VK_NULL_HANDLE, pipe_eye = VK_NULL_HANDLE;
+    bool on = false;
+    bool reset = true;        // всё с нуля: якорь, окна, все кирпичи
+    bool clear = true;        // залить засыпку «пусто» перед первым кадром
+    i32 anchor[2] = {};
+    i32 win[SDF_LEVELS][3] = {};  // первый кирпич окна уровня (мировой номер кирпича от якоря)
+    u32 dirty[SDF_LEVELS][SDF_LEVEL_BRICKS / 32] = {};  // грязные кирпичи по месту в кольце
+    u32 jobs_n = 0, bricks_n = 0, groups_x = 0;
+    u32 seen_mesh = ~0u;
+    u8 rg_field = 0, rg_scratch = 0;
+};
 // Диагностика GPU (vk_diag.cpp): что умеет драйвер для разбора сбоя, буфер меток AMD, счётчики GPU
 struct DiagGpu {
     bool nv_checkpoints = false, amd_marker = false, device_fault = false;
@@ -404,6 +437,7 @@ struct VkState {
     GcacheGpu gcache;
     HorizonGpu horizon;
     ShadowGpu shadow;
+    SdfGpu sdf;
     // Froxels (vk_froxel.cpp): клетки 64×64 пикселя × FROXEL_Z слоёв глубины
     GpuBuffer froxels;     // списки на клетку, FROXEL_STRIDE u32
     GpuBuffer media;       // среда на клетку (туман и пыль, vec4) — место для света пользователя, пока нули
@@ -508,6 +542,12 @@ void vk_shadow_shutdown();
 void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool images);
 void vk_shadow_read(const u32 *stats, u32 frame);
 u32 vk_shadow_blend();
+// Поле расстояний мира (vk_sdf.cpp, docs/sdf.md): конвейеры, картинка, сэмплер и запись в набор кадра мира
+bool vk_sdf_init();
+void vk_sdf_shutdown();
+void vk_sdf_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool images);
+// Кластеры новой сетки (render_mesh_create): сферы — в копию процессора для отбора засыпки
+void vk_sdf_mesh_clusters(u32 first, const ClusterGpu *cls, u32 n);
 bool vk_gcache_init();
 void vk_gcache_shutdown();
 void vk_gcache_fill(FrameGpu &g, const RenderFrame &f, bool images);

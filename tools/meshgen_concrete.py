@@ -1,5 +1,5 @@
 """Неровный бетон для построек (docs/ostov.md, «Как строится бетон»): плита с отверстиями `panel` — сколы рёбер,
-волна опалубки, рваный излом с арматурой, выбоины низа — и запечённая доля неба в затенении вершин (`SkyField`).
+волна опалубки, рваный излом с арматурой, выбоины низа, затенение вершин у пола.
 
 Сдвиг узла — функция только точки: общее ребро двух граней сдвигается одинаково и щелей нет. Одно зерно — те же
 байты: целочисленный хеш и арифметика double; math.hypot и ** не берём (их алгоритм зависит от версии Python).
@@ -134,129 +134,19 @@ class Part(Mesh):
 # --- запечённое затенение (часть сетки, не свет: docs/ostov.md) ---
 
 def ao_of(p, n):
-    """Затенение вершины: у пола и у потолка темнее, плюс доля неба (sky_vis) — запечённая заслонка от самого
-    здания: непрямого света ещё нет (этап 6г), без неё закрытое здание изнутри светится ровно, как снаружи."""
+    """Затенение вершины: у пола и у потолка темнее. Заслонку неба самим зданием даёт поле расстояний мира
+    (docs/sdf.md), в сетку её не запекаем — иначе посчитается дважды."""
     y = p[1]
     a = 255.0
     if abs(n[1]) < 0.7:
         a *= 0.7 + 0.3 * smooth01((y - FLOOR_Y) / 1.6)
     elif n[1] < -0.7:
         a *= 0.92
-    if SKY is not None:
-        a *= 0.22 + 0.78 * SKY.vis(p, n)
     return a
 
 
-# --- доля неба: лучи из решётки 0.5 м по сетке занятости 0.25 м (коробки коллайдеров всех частей) ---
-
-SKY = None          # SkyField, пока строятся сетки с затенением; None — без него (сбор коробок)
 FLOOR_Y = 0.0       # высота пола здания: у него стены темнее
-SKY_CELL = 0.25     # клетка занятости
-SKY_LAT = 0.5       # шаг решётки, где считается доля неба
-SKY_RAYS = 40
 
-
-def ray_dirs(n):
-    """Направления по полусфере вокруг оси (n — одна из шести осей), по косинусу: золотая спираль, без случайности."""
-    out = []
-    ga = math.pi * (3 - math.sqrt(5))
-    ax = [abs(c) > 0.5 for c in n]
-    k = ax.index(True)
-    sgn = 1.0 if n[k] > 0 else -1.0
-    for i in range(SKY_RAYS):
-        r = math.sqrt((i + 0.5) / SKY_RAYS)
-        a = ga * i
-        x, y = r * math.cos(a), r * math.sin(a)
-        h = math.sqrt(max(0.0, 1 - r * r))
-        d = [0.0, 0.0, 0.0]
-        d[k] = h * sgn
-        o = [j for j in range(3) if j != k]
-        d[o[0]], d[o[1]] = x, y
-        out.append(tuple(d))
-    return out
-
-
-class SkyField:
-    """boxes — (центр, половины) по осям; lo, hi — углы сетки занятости (за ними препятствий нет)."""
-
-    def __init__(self, boxes, lo, hi):
-        self.lo, self.hi = lo, hi
-        self.n = tuple(int(math.ceil((self.hi[k] - self.lo[k]) / SKY_CELL)) for k in range(3))
-        nx, ny, nz = self.n
-        self.occ = bytearray(nx * ny * nz)
-        for c, h in boxes:
-            i0 = [max(0, int(math.ceil((c[k] - h[k] - self.lo[k]) / SKY_CELL - 0.5))) for k in range(3)]
-            i1 = [min(self.n[k] - 1, int(math.floor((c[k] + h[k] - self.lo[k]) / SKY_CELL - 0.5))) for k in range(3)]
-            for i in range(i0[0], i1[0] + 1):
-                for j in range(i0[1], i1[1] + 1):
-                    base = (i * ny + j) * nz
-                    for kk in range(i0[2], i1[2] + 1):
-                        self.occ[base + kk] = 1
-        self.dirs = {}
-        self.lat = {}
-
-    def solid(self, p):
-        i = int(math.floor((p[0] - self.lo[0]) / SKY_CELL))
-        j = int(math.floor((p[1] - self.lo[1]) / SKY_CELL))
-        k = int(math.floor((p[2] - self.lo[2]) / SKY_CELL))
-        if i < 0 or j < 0 or k < 0 or i >= self.n[0] or j >= self.n[1] or k >= self.n[2]:
-            return None  # вне сетки — свободно и дальше препятствий нет
-        return self.occ[(i * self.n[1] + j) * self.n[2] + k]
-
-    def point(self, key):
-        """Доля неба в узле решётки для оси нормали; None — узел внутри бетона."""
-        if key in self.lat:
-            return self.lat[key]
-        i, j, k, ax = key
-        p = (i * SKY_LAT, j * SKY_LAT, k * SKY_LAT)
-        if self.solid(p):
-            self.lat[key] = None
-            return None
-        if ax not in self.dirs:
-            self.dirs[ax] = ray_dirs(ax)
-        free = 0
-        step = SKY_CELL * 0.6
-        for d in self.dirs[ax]:
-            t = step
-            hit = False
-            while True:
-                q = (p[0] + d[0] * t, p[1] + d[1] * t, p[2] + d[2] * t)
-                s = self.solid(q)
-                if s is None:
-                    break
-                if s:
-                    hit = True
-                    break
-                t += step
-            if not hit:
-                free += 1
-        v = free / SKY_RAYS
-        self.lat[key] = v
-        return v
-
-    def vis(self, p, n):
-        """Доля неба для вершины: из точки на 0.3 м от поверхности, трилинейно по живым узлам решётки."""
-        k = max(range(3), key=lambda a: abs(n[a]))
-        ax = [0.0, 0.0, 0.0]
-        ax[k] = 1.0 if n[k] > 0 else -1.0
-        ax = tuple(ax)
-        q = (p[0] + n[0] * 0.3, p[1] + n[1] * 0.3, p[2] + n[2] * 0.3)
-        f = [c / SKY_LAT for c in q]
-        b = [int(math.floor(c)) for c in f]
-        t = [f[a] - b[a] for a in range(3)]
-        acc, wsum = 0.0, 0.0
-        for di in (0, 1):
-            for dj in (0, 1):
-                for dk in (0, 1):
-                    w = (t[0] if di else 1 - t[0]) * (t[1] if dj else 1 - t[1]) * (t[2] if dk else 1 - t[2])
-                    if w <= 0.0:
-                        continue
-                    v = self.point((b[0] + di, b[1] + dj, b[2] + dk, ax))
-                    if v is None:
-                        continue
-                    acc += w * v
-                    wsum += w
-        return acc / wsum if wsum > 1e-6 else 0.5
 
 # --- отверстия плиты ---
 

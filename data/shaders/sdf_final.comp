@@ -1,0 +1,26 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Сборка кирпичей поля расстояний мира (docs/sdf.md, vk_sdf.cpp): группа — кирпич 8³ из списка кадра, поток —
+// воксель. Засыпка → расстояние в метрах со знаком (внутри — минус) в картинку R16F, засыпка снова «пусто».
+// Воксель без треугольника ближе полосы — «пусто»: ровно SDF_BAND вокселей уровня (свет считает это свободой).
+// Слой уровня в картинке — SDF_N мест по z и по копии крайних с обеих сторон (заворот трилинейной выборки)
+#include "common.glsl"
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+layout(set = 0, binding = 3, r16f) uniform writeonly image3D u_sdf_w;
+
+void main() {
+    FrameData f = pc.frame;
+    ivec4 b = f.sdf_bricks.v[gl_WorkGroupID.x];
+    int L = b.w;
+    ivec3 sl = (b.xyz * 8 + ivec3(gl_LocalInvocationID)) & (SDF_N - 1);
+    uint at = uint(L) * uint(SDF_N * SDF_N * SDF_N) + uint(sl.x) + uint(SDF_N) * uint(sl.y) + uint(SDF_N * SDF_N) * uint(sl.z);
+    uint w = f.sdf_scratch.v[at];
+    f.sdf_scratch.v[at] = SDF_EMPTY;
+    float band = SDF_BAND * f.sdf_cam.w * float(1 << L);
+    float d = w == SDF_EMPTY ? band : float(w >> 1u) * (band / 1073741824.0) * ((w & 1u) != 0u ? -1.0 : 1.0);
+    int z0 = L * SDF_SLAB + 1;
+    imageStore(u_sdf_w, ivec3(sl.xy, z0 + sl.z), vec4(d));
+    if (sl.z == SDF_N - 1) imageStore(u_sdf_w, ivec3(sl.xy, z0 - 1), vec4(d));
+    if (sl.z == 0) imageStore(u_sdf_w, ivec3(sl.xy, z0 + SDF_N), vec4(d));
+    if (gl_LocalInvocationIndex == 0u) atomicAdd(f.stats.v[STAT_SDF_BRICKS], 1u);
+}
