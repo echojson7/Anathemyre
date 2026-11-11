@@ -135,6 +135,7 @@ static void list_action(const char *name, void *user) {
 
 bool app_actions_load(World &w, AppMemory &m) {
     ActionTable T{};
+    T.block = T.dodge = ACTION_NONE;
     u64 h = 0xAC7104ull;
     T.walk = world_track(m, "walk", &h);
     T.run = world_track(m, "run", &h);
@@ -167,31 +168,69 @@ bool app_actions_load(World &w, AppMemory &m) {
         A.name = hash_str(names.name[i]);
         snprintf(A.label, sizeof A.label, "%.23s", names.name[i]);
         A.track = world_track(m, A.clip_name, &h);
-        // Окно удара и отмена — метки клипа (ключи 30/с → тики 60/с)
+        // Окна удара, защиты и отмена — метки клипа (ключи 30/с → тики 60/с)
         AnimLabels lb{};
         snprintf(rel, sizeof rel, "anims/%s.txt", A.clip_name);
-        ok = A.track && A.track->weapon && read_data(rel, m.load, &data, &size) && anim_labels_parse(data, size, lb, err, sizeof err) &&
-             lb.hit_count > 0;
+        ok = A.track && read_data(rel, m.load, &data, &size) && anim_labels_parse(data, size, lb, err, sizeof err);
+        bool strike = A.kind == ACT_STRIKE;
+        if (ok && strike) ok = A.track->weapon && lb.hit_count > 0;
+        if (ok && !strike) ok = lb.block_count > 0;
         if (!ok) {
-            log_error("действие %s: у клипа %s нет дорожек с оружием или метки hit (data/%s)", names.name[i], A.clip_name, rel);
+            log_error("действие %s: у клипа %s нет дорожек%s или метки %s (data/%s)", names.name[i], A.clip_name,
+                      strike ? " с оружием" : "", strike ? "hit" : "block", rel);
             break;
         }
-        A.hit_a = (u16)(lb.hit[0].a * 2);
-        A.hit_b = (u16)(lb.hit[0].b * 2);
+        if (strike) {
+            A.hit_a = (u16)(lb.hit[0].a * 2);
+            A.hit_b = (u16)(lb.hit[0].b * 2);
+        } else {
+            A.guard_a = (u16)(lb.block[0].a * 2);
+            A.guard_b = (u16)(lb.block[0].b * 2);
+        }
         A.cancel = lb.cancel >= 0 ? (u16)(lb.cancel * 2) : 0xFFFF;
         if (A.end > A.track->ticks - 1) A.end = (u16)(A.track->ticks - 1);
+        if (A.start >= A.end) {
+            log_error("действие %s: start за концом клипа %s", names.name[i], A.clip_name);
+            ok = false;
+            break;
+        }
         A.aim = action_aim(A);
         h = hash_combine(h, action_hash(A));
-        if (A.name == hash_str("cut")) T.strike = T.count;
+        if (A.name == hash_str("cut")) T.strike = (u8)T.count;
+        if (A.kind == ACT_BLOCK && T.block == ACTION_NONE) T.block = (u8)T.count;
+        if (A.kind == ACT_DODGE && T.dodge == ACTION_NONE) T.dodge = (u8)T.count;
+        if (strike && A.reach_max + ACTION_GUARD_GAP > T.guard) T.guard = A.reach_max + ACTION_GUARD_GAP;
         T.count++;
     }
     arena_restore(m.load, mark);
     if (!ok) return false;
-    T.hash = h;
+    if (T.count && T.a[T.strike].kind != ACT_STRIKE) {
+        log_error("data/actions: нет удара cut (его делает приказ «атаковать»)");
+        return false;
+    }
+    T.hash = hash_combine(h, ((u64)T.strike << 16) | ((u64)T.block << 8) | T.dodge);
     w.actions = T;
-    log_info("действия: %u (удар по приказу — %s, клинок идёт на %.1f° от начального курса)", T.count,
-             T.count ? T.a[T.strike].label : "нет", T.count ? (f64)(i32)T.a[T.strike].aim * (360.0 / 4294967296.0) : 0.0);
+    log_info("действия: %u (удар по умолчанию — %s, блок — %s, уклон — %s; дистанция между ударами %.2f м)", T.count,
+             T.count ? T.a[T.strike].label : "нет", T.block != ACTION_NONE ? T.a[T.block].label : "нет",
+             T.dodge != ACTION_NONE ? T.a[T.dodge].label : "нет", (f64)T.guard);
+    for (u32 i = 0; i < T.count; ++i)
+        if (T.a[i].kind == ACT_STRIKE)
+            log_info("  удар %s: клинок идёт на %.1f° от начального курса, окно %u–%u тиков от начала", T.a[i].label,
+                     (f64)(i32)T.a[i].aim * (360.0 / 4294967296.0), T.a[i].hit_a - T.a[i].start, T.a[i].hit_b - T.a[i].start);
     return true;
+}
+
+bool app_duel_load(DuelDesc &d, AppMemory &m) {
+    usize mark = arena_mark(m.load);
+    u8 *data = nullptr;
+    usize size = 0;
+    char err[256];
+    DuelDesc n{};
+    bool ok = read_data("duel.txt", m.load, &data, &size);
+    if (ok && !(ok = duel_parse(data, size, n, err, sizeof err))) log_error("data/duel.txt: %s", err);
+    arena_restore(m.load, mark);
+    if (ok) d = n;
+    return ok;
 }
 
 static bool world_static_load(World &w, AppMemory &m) {

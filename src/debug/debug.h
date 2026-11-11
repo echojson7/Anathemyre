@@ -115,7 +115,7 @@ struct World;
 struct ViewAssets;
 struct RenderFrame;
 // Перемотка мира назад (rewind.cpp): кольцо снимков столбцов и журнал намерений
-constexpr u32 REWIND_SNAPS = 100, REWIND_EVERY = 6, REWIND_LOG = 4096;  // 10 с назад
+constexpr u32 REWIND_SNAPS = 100, REWIND_EVERY = 6, REWIND_LOG = 32768;  // 10 с назад (с намерениями ИИ всех бойцов)
 struct Rewind {
     u8 *buf = nullptr;
     usize snap_bytes = 0;
@@ -138,6 +138,10 @@ struct WorldInspect {
 void debug_keys(const Input &in, DebugState &d);
 // Подставной игрок для --sim: намерения из своего RNG (не RNG мира) по номеру шага
 void autoplay_intents(const World &w, Rng &rng, FixedArray<Intent> &out);
+// Бенч поединков для --sim --duel N (этап 11): N пар в дюнах у Остова, в шаге 1 первый из пары нападает на второго,
+// дальше их ведёт ИИ; в конце — счёт пар по навыку (debug_duel_report)
+void duel_intents(const World &w, u32 pairs, FixedArray<Intent> &out);
+void debug_duel_report(const World &w, u32 pairs);
 // Карта сетки ходимости у Остова и путь от входа на галерею (--walk-map файл.bmp)
 bool debug_write_walk_map(const World &w, const char *path, Arena &scratch);
 void debug_print_help();
@@ -172,6 +176,8 @@ bool rewind_to(Rewind &r, World &w, u64 target, Arena &step_arena);
 #else
 inline void debug_keys(const Input &, DebugState &) {}
 inline void autoplay_intents(const World &, Rng &, FixedArray<Intent> &) {}
+inline void duel_intents(const World &, u32, FixedArray<Intent> &) {}
+inline void debug_duel_report(const World &, u32) {}
 inline bool debug_write_walk_map(const World &, const char *, Arena &) { return false; }
 inline void debug_print_help() {}
 inline void debug_panel(const DebugInfo &, const World &, DebugState &, WorldInspect &) {}

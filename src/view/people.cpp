@@ -24,6 +24,7 @@ static_assert(B_COUNT == ANA_COUNTOF(BONE_NAMES), "кости вида");
 // Удар (этап 10, docs/people.md «Удар»): вход в клип действия и выход из него, реакция задетого
 constexpr f32 ACT_BLEND_IN = 0.15f;  // с
 constexpr f32 ACT_BLEND_OUT = 0.25f;
+constexpr f32 ACT_FADE = 0.2f;       // сорванное или сменённое действие гаснет за столько, с
 constexpr f32 FLINCH_RISE = 0.06f;   // реакция: наклон от удара нарастает, с
 constexpr f32 FLINCH_FALL = 0.25f;   // и спадает (половина за столько), с
 
@@ -238,20 +239,46 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
     const Extract &pe = *in.prev;
     bool same = pe.person_gen[i] == c.person_gen[i];
 
-    // Действие (этап 10): клип поверх ходьбы, вход 0.15 с, выход 0.25 с к концу действия
+    // Действие (этапы 10–11): клип поверх ходьбы, вход 0.15 с от тика start, выход 0.25 с к концу действия. Сорванное
+    // или сменённое действие (попадание, отбит, отмена в другое) гаснет за ACT_FADE с позы, где его оборвали
     f32 aw = 0.0f;
     u8 act = c.person_act[i];
-    if (act && c.actions && act <= c.actions->count && pv.act[act - 1].clip) {
-        const ActionDesc &A = c.actions->a[act - 1];
-        f32 t = tick_between(pe.person_act_t[i], c.person_act_t[i], same && pe.person_act[i] == act, in.alpha) / (f32)SIM_HZ;
-        f32 end = (f32)A.end / (f32)SIM_HZ;
-        aw = smooth01v(f_min(t / ACT_BLEND_IN, (end - t) / ACT_BLEND_OUT));
+    const ActionDesc *A = act && c.actions && act <= c.actions->count && pv.act[act - 1].clip ? &c.actions->a[act - 1] : nullptr;
+    f32 act_s = 0.0f;  // время клипа действия, с
+    if (A) act_s = tick_between(pe.person_act_t[i], c.person_act_t[i], same && pe.person_act[i] == act, in.alpha) / (f32)SIM_HZ;
+    if (L.last_act && (L.last_act != act || act_s + 1e-3f < L.last_t) && L.last_w > 0.02f && !fresh) {
+        L.fade_act = L.last_act;
+        L.fade_t = L.last_t;
+        L.fade_w = L.last_w;
+    }
+    if (fresh) L.fade_w = 0.0f;
+    L.fade_w = f_max(0.0f, L.fade_w - dt / ACT_FADE);
+    const ActionDesc *F = L.fade_w > 0.0f && c.actions && L.fade_act <= c.actions->count && pv.act[L.fade_act - 1].clip
+                              ? &c.actions->a[L.fade_act - 1] : nullptr;
+    f32 fw = F ? smooth01v(L.fade_w) : 0.0f;
+    if (F) {
         AnimPose g{rot, trans, 0, 0, 0}, ap{tmp, {}, 0, 0, 0};
-        anim_sample(*pv.act[act - 1].clip, pv.act[act - 1].map, nb, t, ap);
+        anim_sample(*pv.act[L.fade_act - 1].clip, pv.act[L.fade_act - 1].map, nb, L.fade_t, ap);
+        anim_blend(g, ap, nb, fw);
+        trans = g.trans;
+    }
+    if (A) {
+        f32 start = (f32)A->start / (f32)SIM_HZ, end = (f32)A->end / (f32)SIM_HZ;
+        aw = smooth01v(f_min((act_s - start) / ACT_BLEND_IN, (end - act_s) / ACT_BLEND_OUT));
+        AnimPose g{rot, trans, 0, 0, 0}, ap{tmp, {}, 0, 0, 0};
+        anim_sample(*pv.act[act - 1].clip, pv.act[act - 1].map, nb, act_s, ap);
         anim_blend(g, ap, nb, aw);
         trans = g.trans;
-        for (u32 f = 0; f < 2; ++f) contact[f] = contact[f] + (1.0f - contact[f]) * aw;
     }
+    L.last_act = A ? act : 0;
+    L.last_t = act_s;
+    L.last_w = aw;
+    // Вес клипов действий в позе: стопы из клипа, хват меча; у блока — меч клинком вверх
+    const f32 any = f_max(aw, fw * (1.0f - aw));
+    const bool aw_wpn = A && A->track && A->track->weapon, fw_wpn = F && F->track && F->track->weapon;
+    const f32 grip2 = f_max(aw_wpn ? aw : 0.0f, fw_wpn ? fw * (1.0f - aw) : 0.0f);
+    const f32 guard = f_max(A && A->kind == ACT_BLOCK ? aw : 0.0f, F && F->kind == ACT_BLOCK ? fw * (1.0f - aw) : 0.0f);
+    for (u32 f = 0; f < 2; ++f) contact[f] = contact[f] + (1.0f - contact[f]) * any;
 
     // Наклон: вперёд от ускорения (позвоночник), вбок к центру поворота (таз; стопы вернёт IK)
     pose_world(s, rot, tb, &trans, wr, wp);
@@ -300,19 +327,19 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
         f32 ankle_h[2], toe_dz[2];
         for (u32 f = 0; f < 2; ++f) {
             Vec3 a = wp[B[B_FOOT + f]];
-            f32 mv = f_max(m.move, aw);  // в действии стопы — из клипа
+            f32 mv = f_max(m.move, any);  // в действии стопы — из клипа
             if (mv < 1.0f) {  // покой: стопы — как в бинде под тазом
                 Vec3 rest = pv.rest_foot[f] + Vec3{0, 0, pz};
                 a = rest + (a - rest) * mv;
             }
-            f32 z = pz + (a.z - pz) * (k + (1.0f - k) * aw), wx, wz;
+            f32 z = pz + (a.z - pz) * (k + (1.0f - k) * any), wx, wz;
             body_to_world(r.yaw, a.x, z, &wx, &wz);
             want[f] = add(r.at, wx, 0, wz);
             ankle_h[f] = a.y;
             toe_dz[f] = wp[B[B_BALL + f]].z - a.z;
         }
         // Стоит: стопы держатся на месте и переставляются по одной, если тело ушло или повернулось
-        bool standing = m.move < 0.05f && aw < 0.02f;
+        bool standing = m.move < 0.05f && any < 0.02f;
         if (!standing) L.lock = false;
         else if (!L.lock || fresh) {
             L.lock = true;
@@ -413,8 +440,10 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
         // вперёд горизонтально
         Vec3 g1 = (wp[B[B_HAND_R]] + wp[B[B_MIDDLE_R]]) * 0.5f;
         Vec3 d1 = normalize(normalize(wp[B[B_INDEX_R]] - wp[B[B_PINKY_R]]) + Vec3{0, -0.85f, 0});
+        // Блок (клип бокса, хвата нет): клинок вверх и через тело влево, перед лицом
+        d1 = normalize(d1 + (Vec3{-0.45f, 0.85f, 0.3f} - d1) * guard);
         Vec3 g2 = wp[B[B_HAND_L]], d2 = normalize(wp[B[B_HAND_L]] - wp[B[B_HAND_R]]);
-        Vec3 g = g1 + (g2 - g1) * aw, d = normalize(d1 + (d2 - d1) * aw);
+        Vec3 g = g1 + (g2 - g1) * grip2, d = normalize(d1 + (d2 - d1) * grip2);
         Vec3 fa = wp[B[B_HAND_R]] - wp[B[B_FOREARM_R]];
         Vec3 e = fa - d * dot(fa, d);
         if (dot(e, e) < 1e-6f) e = Vec3{1, 0, 0} - d * d.x;

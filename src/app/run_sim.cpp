@@ -9,12 +9,14 @@
 #include <inttypes.h>
 #include <stdio.h>
 
-static constexpr u32 MAX_INTENTS_PER_STEP = 64;
+static constexpr u32 MAX_INTENTS_PER_STEP = 1024;  // подставной игрок и ИИ всех бойцов
 
 int run_sim(const Args &a, AppMemory &m) {
     World w;
     u64 desc = 0;
     if (!app_world_create(w, m, a.seed, &desc)) return 1;
+    DuelDesc duel{};
+    if (!app_duel_load(duel, m)) return 1;
     Recorder rec;
     if (a.record) {
         recorder_init(rec, m.record, w, a.seed, a.sim_steps, 1u << 20);
@@ -56,7 +58,9 @@ int run_sim(const Args &a, AppMemory &m) {
     u64 t0 = platform_time_ns();
     for (u64 s = 0; s < a.sim_steps; ++s) {
         intents.clear();
-        autoplay_intents(w, player, intents);
+        if (a.duel) duel_intents(w, a.duel, intents);
+        else autoplay_intents(w, player, intents);
+        ai_duel(w, duel, intents);
         StepCtx ctx{intents.span(), &m.step, nullptr, &stats};
         u64 ts = platform_time_ns();
         sim_step(w, ctx);
@@ -90,11 +94,13 @@ int run_sim(const Args &a, AppMemory &m) {
             going += p.state[s] != MOVE_STAND;
         }
         log_info("--sim люди: %u живых (на постройках %u, из них выше 3 м %u; в пути %u), шаг с людьми в среднем %.1f мкс, "
-                 "из них системы людей %.1f мкс; путей %u, раскрыто узлов %" PRIu64 " (%.0f на путь); ударов %u, попаданий %u",
+                 "из них системы людей %.1f мкс; путей %u, раскрыто узлов %" PRIu64 " (%.0f на путь); ударов %u, попаданий %u, "
+                 "отбито %u, защит %u",
                  p.live, on_box, high, going, people_us / (f64)people_steps, (f64)stats.people_ns / 1000.0 / (f64)people_steps,
                  stats.paths, stats.expanded,
-                 stats.paths ? (f64)stats.expanded / (f64)stats.paths : 0.0, stats.strikes, stats.hits);
+                 stats.paths ? (f64)stats.expanded / (f64)stats.paths : 0.0, stats.strikes, stats.hits, stats.blocks, stats.defends);
     }
+    if (a.duel) debug_duel_report(w, a.duel);
     int rc = 0;
     if (rw) {
         bool good = w.step > 600;
