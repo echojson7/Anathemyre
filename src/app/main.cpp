@@ -37,6 +37,7 @@ static void usage() {
     log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
     log_info("           --frames N --video префикс                                   каждый кадр → префикс_0000.bmp… (стенд: 1/30 с на кадр)");
+    log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines]  выбрать, камера за ним, приказы, отладка");
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
     log_info("           --replay файл.rec                                            проверка повтора");
     log_info("           --terrain-map файл.bmp                                       карта земли сверху");
@@ -146,6 +147,10 @@ int main(int argc, char **argv) {
         }
         else if (!strcmp(s, "--pivot")) { ok = next && parse_f32(Str{next, (u32)strlen(next)}, a.pivot_above); i++; }
         else if (!strcmp(s, "--video")) { a.video = next; ok = next != nullptr; i++; }
+        else if (!strcmp(s, "--select")) { u32 v = 0; ok = next && parse_u32(Str{next, (u32)strlen(next)}, v) && v < 1024; a.select = (i32)v; i++; }
+        else if (!strcmp(s, "--follow")) a.follow = true;
+        else if (!strcmp(s, "--people-lines")) a.people_lines = true;
+        else if (!strcmp(s, "--go")) { a.go = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--terrain-map")) { a.terrain_map = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--walk-map")) { a.walk_map = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--novsync")) a.vsync = false;

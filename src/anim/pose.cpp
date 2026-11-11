@@ -66,3 +66,53 @@ void pose_palette(const Skel &s, const Quat *rot, PoseMatrix *out, i32 trans_bon
         }
     }
 }
+
+Quat quat_between(Vec3 a, Vec3 b) {
+    f32 d = dot(a, b);
+    if (d < -0.9999f) {
+        Vec3 ax = cross(f_abs(a.x) < 0.9f ? Vec3{1, 0, 0} : Vec3{0, 1, 0}, a);
+        ax = normalize(ax);
+        return {ax.x, ax.y, ax.z, 0.0f};
+    }
+    Vec3 c = cross(a, b);
+    Quat q{c.x, c.y, c.z, 1.0f + d};
+    f32 n = f_sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    return {q.x / n, q.y / n, q.z / n, q.w / n};
+}
+
+void pose_world(const Skel &s, const Quat *rot, i32 trans_bone, const Vec3 *trans, Quat *wr, Vec3 *wp) {
+    // Как pose_palette: кость = поза родителя · местная бинд-поза · rot
+    for (usize i = 0; i < s.bones.count && i < SKEL_MAX_BONES; ++i) {
+        const SkelBone &b = s.bones.data[i];
+        Quat bind{b.rot[0], b.rot[1], b.rot[2], b.rot[3]};
+        Vec3 head{b.pos[0], b.pos[1], b.pos[2]};
+        Quat r = bind;
+        Vec3 p = head;
+        if (b.parent >= 0) {
+            const SkelBone &pb = s.bones.data[b.parent];
+            Quat pc = quat_conj(Quat{pb.rot[0], pb.rot[1], pb.rot[2], pb.rot[3]});
+            Quat lr = quat_mul(pc, bind);
+            Vec3 lp = quat_rotate(pc, head - Vec3{pb.pos[0], pb.pos[1], pb.pos[2]});
+            r = quat_mul(wr[b.parent], lr);
+            p = wp[b.parent] + quat_rotate(wr[b.parent], lp);
+        }
+        if (trans && (i32)i == trans_bone) p = *trans;
+        if (rot) r = quat_mul(r, rot[i]);
+        wr[i] = r;
+        wp[i] = p;
+    }
+}
+
+void pose_palette_world(const Skel &s, const Quat *wr, const Vec3 *wp, PoseMatrix *out) {
+    for (usize i = 0; i < s.bones.count && i < SKEL_MAX_BONES; ++i) {
+        const Quat &q = wr[i];
+        M33 r = quat_m33(q.x, q.y, q.z, q.w);
+        const f32 *v = s.bones.data[i].inv;
+        f32 *o = out[i].m;
+        for (u32 row = 0; row < 3; ++row) {
+            const f32 *a = &r.m[row * 3];
+            for (u32 col = 0; col < 4; ++col) o[row * 4 + col] = a[0] * v[col] + a[1] * v[4 + col] + a[2] * v[8 + col];
+            o[row * 4 + 3] += row == 0 ? wp[i].x : row == 1 ? wp[i].y : wp[i].z;
+        }
+    }
+}

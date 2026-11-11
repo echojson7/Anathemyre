@@ -36,7 +36,11 @@ struct Args {
     const char *timelapse = nullptr;  // --timelapse префикс H0 H1: каждый кадр — свой час, снимок в префикс_NNNN.bmp
     f32 timelapse_hours[2] = {};
     f32 pivot_above = -1.0f;          // --pivot м: опора камеры над землёй (крупные планы стенда)
-    const char *video = nullptr;      // --video префикс: каждый кадр в префикс_NNNN.bmp (мир идёт как обычно)
+    const char *video = nullptr;      // --video префикс: каждый кадр в префикс_NNNN.bmp, мир идёт ровно 1/30 с на кадр
+    i32 select = -1;                  // --select место: выбрать человека (и --follow — камера за ним)
+    bool follow = false;
+    bool people_lines = false;        // --people-lines: капсулы шага, путь выбранного и след стоп (отладка, при отрезках)
+    const char *go = nullptr;         // --go "кадр место x z y аллюр; …": приказы «идти» по кадрам (видео, проверка)
     const char *terrain_map = nullptr;  // --terrain-map файл.bmp: карта земли сверху и выход
     const char *walk_map = nullptr;     // --walk-map файл.bmp: сетка ходимости у руины и выход
 };

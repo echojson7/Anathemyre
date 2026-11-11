@@ -6,6 +6,8 @@
 struct Extract {
     const Terrain *terrain;  // земля не меняется после создания мира: кадр читает её напрямую
     const Decals *decals;    // декали карты — тоже
+    const Colliders *coll;   // коллайдеры построек — тоже (опора стоп у вида, support_at)
+    const GaitTable *gait;   // длины цикла шага — тоже (подгонка шага у вида)
     u64 step;
     Clock clock;
     u16 *gen;      // 0 — места нет или точка мертва
@@ -30,6 +32,7 @@ struct Extract {
     f32 *person_speed;
     u32 *person_phase;
     u32 *person_seed;
+    u8 *person_state;        // MoveState: стоит, ждёт путь, идёт
 };
 
 void extract_init(Extract &e, Arena &arena);

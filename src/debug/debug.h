@@ -17,7 +17,8 @@ struct DebugState {
     bool gcache_off = false;  // без кеша поверхности земли (сравнение, не сохраняется)
     u32 tonemap = 0;          // тонмаппинг: 0 — AgX, 1 — ACES (RENDER_TONEMAP_*; docs/light.md), выбор по кадрам
     // Стенд людей (stand.cpp): человек у руины, кость согнута (B), скелет, морф (0 — нет, k — морф k − 1)
-    bool stand = true;
+    bool people_lines = false; // люди мира: капсулы шага, путь выбранного, след касаний стоп (при отрезках L)
+    bool stand = false;       // выкл.: у людей мира есть тела (9б); включается в F3 и --stand
     bool stand_bend = false;
     u32 stand_bone = 0;       // 0 — локоть, 1 — колено
     u32 stand_skel = 0;       // 0 — game_engine, 1 — как у Mixamo
@@ -140,8 +141,8 @@ const char *const *debug_stand_clip_names(u32 *count);
 // --stand через запятую (снимки, видео, CI): off, elbow, knee, mixamo, morphN, both, move, nocaps, clip=имя,
 // blend=имя, w=доля %, speed=100|50|25|10, t=начало в сотых с (< 0 — выдержка), seq=a+b+… (очередь клипов); nullptr — как есть
 void debug_stand_args(DebugState &d, const char *spec);
-// Люди шага мира капсулами и курсом (stand.cpp): до тела в кадре (этап 9б)
-void debug_people(const World &w, DebugDraw &dbg);
+// Люди шага мира капсулами и курсом поверх тела (stand.cpp); у выбранного — путь узлами сетки и цель
+void debug_people(const World &w, DebugDraw &dbg, i32 selected);
 #else
 inline void debug_keys(const Input &, DebugState &) {}
 inline void autoplay_intents(const World &, Rng &, FixedArray<Intent> &) {}
@@ -155,5 +156,5 @@ inline bool debug_write_terrain_map(const Terrain &, const char *, Arena &) { re
 inline void debug_stand_update(DebugState &, const ViewAssets &, const Terrain &, f64, DebugDraw *) {}
 inline void debug_stand(const DebugState &, const ViewAssets &, Arena &, RenderFrame &) {}
 inline void debug_stand_args(DebugState &, const char *) {}
-inline void debug_people(const World &, DebugDraw &) {}
+inline void debug_people(const World &, DebugDraw &, i32) {}
 #endif
