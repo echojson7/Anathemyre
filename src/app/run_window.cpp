@@ -736,6 +736,7 @@ int run_window(const Args &a, AppMemory &m) {
         log_error("слой проверки Vulkan: %u ошибок", verr);
         rc_exit = 1;
     }
+    rewind_free(*rewind);
     render_shutdown();
     platform_window_close();
     return rc_exit;

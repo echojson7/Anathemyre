@@ -21,6 +21,12 @@ void rewind_init(Rewind &r, const World &w) {
                  REWIND_EVERY, (f64)(REWIND_SNAPS * REWIND_EVERY) / (f64)SIM_HZ);
 }
 
+void rewind_free(Rewind &r) {
+    if (r.buf) platform_free(r.buf);
+    if (r.log) platform_free(r.log);
+    r = Rewind{};
+}
+
 static void snap_save(Rewind &r, const World &w, u32 at) {
     Column cols[MAX_COLUMNS];
     u32 n = world_columns(w, cols);

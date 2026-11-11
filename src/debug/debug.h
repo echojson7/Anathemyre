@@ -161,6 +161,7 @@ void debug_people(const World &w, DebugDraw &dbg, i32 selected);
 // Перемотка: память под кольцо; после каждого шага окна — намерения шага и снимок раз в REWIND_EVERY шагов;
 // назад — к шагу target (снимок и повтор шагов). false — так далеко снимков нет
 void rewind_init(Rewind &r, const World &w);
+void rewind_free(Rewind &r);
 void rewind_after_step(Rewind &r, const World &w, Span<const Intent> its);
 bool rewind_to(Rewind &r, World &w, u64 target, Arena &step_arena);
 #else
@@ -178,6 +179,7 @@ inline void debug_stand(const DebugState &, const ViewAssets &, Arena &, RenderF
 inline void debug_stand_args(DebugState &, const char *) {}
 inline void debug_people(const World &, DebugDraw &, i32) {}
 inline void rewind_init(Rewind &, const World &) {}
+inline void rewind_free(Rewind &) {}
 inline void rewind_after_step(Rewind &, const World &, Span<const Intent>) {}
 inline bool rewind_to(Rewind &, World &, u64, Arena &) { return false; }
 #endif

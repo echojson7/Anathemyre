@@ -108,6 +108,7 @@ int run_sim(const Args &a, AppMemory &m) {
         }
         if (good) log_info("--rewind-check: перемотка совпала с прямым ходом (14 точек до 500 шагов назад)");
         else rc = 1;
+        rewind_free(*rw);
     }
     if (text && !platform_write_file(a.hashes, text, text_len)) { log_error("не записать %s", a.hashes); rc = 1; }
     if (a.record && !save_record(rec, a.record, m.load)) rc = 1;
