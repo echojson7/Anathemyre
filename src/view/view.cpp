@@ -369,6 +369,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.style.gcache = !in.gcache_off;
     out.style.shadow_pages = in.shadow_pages;
     out.style.sdf_view = in.sdf_view;
+    out.style.gi_view = in.gi_view;
     out.style.dt = in.dt;
     out.style.eye_snap = in.eye_snap;
     out.style.tonemap = in.tonemap;

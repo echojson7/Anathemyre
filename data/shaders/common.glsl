@@ -66,6 +66,14 @@ layout(buffer_reference, scalar) readonly buffer SdfJobs { uvec2 v[]; };    // �
 layout(buffer_reference, scalar) readonly buffer SdfBricks { ivec4 v[]; };  // мировой номер кирпича, уровень
 layout(buffer_reference, scalar) buffer SdfScratch { uint v[]; };  // уровень · SDF_N³ + место: расстояние << 1 | внутри
 
+// Зонды непрямого света (docs/gi.md, gi.glsl): зонд — место (м от якоря поля) после сдвига из стен, состояние,
+// мировой номер и уровень. Лучи работ кадра — яркость и расстояние до попадания половинками (−1 — небо)
+const uint STAT_GI_PROBES = 29u, STAT_GI_RAYS = 30u, STAT_GI_TAPS = 31u;
+struct GiProbe { vec3 pos; uint state; ivec3 home; int level; };
+layout(buffer_reference, scalar) buffer GiProbes { GiProbe v[]; };
+layout(buffer_reference, scalar) buffer GiRays { uvec2 v[]; };
+layout(buffer_reference, scalar) buffer GiJobs { uint v[]; };
+
 // Плитки 8×8 кадра мира по видам (docs/tiles.md, light_tiles.comp): небо — пусто; земля — земля из кеша
 // (docs/gcache.md) и, может быть, небо; сетки — сетки и, может быть, небо; смесь — земля и сетки; земля на
 // пиксель — земля, которой нет в кеше (крутые склоны), и, может быть, небо. На вид — косвенный dispatch и список
@@ -253,6 +261,15 @@ layout(buffer_reference, scalar) buffer FrameData {
     uint sdf_jobs_n, sdf_bricks_n, sdf_pad0, sdf_pad1;
     vec4 sdf_cam;             // камера от якоря, м; w — воксель уровня 0, м
     ivec4 sdf_lo[8], sdf_hi[8];  // рамка грязных вокселей уровня этого кадра
+    // Зонды непрямого света (docs/gi.md, gi.glsl): таблица зондов, работы кадра (место | GI_FRESH), лучи работ,
+    // место и состояние зонда работы (пишут лучи, переносит в таблицу смешение)
+    GiProbes gi_probes;
+    GiJobs gi_jobs;
+    GiRays gi_rays;
+    Vec4s gi_pos;
+    ivec4 gi_lo[4];           // первый зонд окна уровня: мировой номер от якоря поля
+    uint gi_on, gi_view, gi_rays_n, gi_pad0;  // зонды читаются; режим F3 (GI_VIEW_*); лучей на зонд
+    float gi_hyst, gi_pad1, gi_pad2, gi_pad3;  // доля старого значения при смешении
 };
 
 layout(push_constant, scalar) uniform Push {
@@ -265,7 +282,8 @@ const uint TONEMAP_AGX = 0u, TONEMAP_ACES = 1u;
 const uint LIGHT_Q_LOW = 0u, LIGHT_Q_MEDIUM = 1u, LIGHT_Q_HIGH = 2u, LIGHT_Q_ULTRA = 3u;
 // Свет неба и экспозиция (sky_sum.comp, eye.comp → sky_out): [4] — x множитель экспозиции (на него умножен HDR
 // кадра), y — освещённость открытой горизонтальной земли, лк, z — EV100 глаза (с привыканием), w — от неба, лк;
-// [5] — x от светила, лк, y — EV100, к которому глаз привыкает, z — освещённость у глаза с заслонкой полем, лк
+// [5] — x от светила, лк, y — EV100, к которому глаз привыкает, z — освещённость у глаза с заслонкой полем, лк,
+// w — рассеянный свет у глаза против открытого неба (дымка ближних отрезков, light.glsl)
 const int SKY_OUT_EYE = 4, SKY_OUT_EYE2 = 5;
 // Начало отсчёта узоров земли и материалов (world_cell, t_split…): по умолчанию чанк камеры. Запекание кеша
 // земли считает тексель от его собственного чанка (gcache.glsl), чтобы тексель зависел только от себя

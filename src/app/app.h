@@ -31,6 +31,7 @@ struct Args {
     bool nogcache = false;          // --nogcache: без кеша поверхности земли (сравнение)
     u32 shadow_pages = 0;           // --smpages: страницы теней поверх кадра, --smonly: только тень (docs/shadow.md)
     u32 sdf_view = 0;               // --sdfsky, --sdffield, --nosdf: поле расстояний мира (docs/sdf.md, RENDER_SDF_*)
+    u32 gi_view = 0;                // --gionly, --nogi: зонды непрямого света (docs/gi.md, RENDER_GI_*)
     i32 tonemap = -1;               // --tonemap agx|aces: тонмаппинг (снимки для сравнения); −1 — как в F3
     i32 light_quality = -1;         // --light low|medium|high|ultra: качество света; −1 — из настроек
     bool nohud = false;             // --nohud: без интерфейса (видео и снимки мира)

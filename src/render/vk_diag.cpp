@@ -294,6 +294,9 @@ bool render_work(RenderWork &out) {
     out.sdf_taps = w.work[STAT_SDF_TAPS];
     out.sdf_tris = w.work[STAT_SDF_TRIS];
     out.sdf_bricks = w.work[STAT_SDF_BRICKS];
+    out.gi_probes = w.work[STAT_GI_PROBES];
+    out.gi_rays = w.work[STAT_GI_RAYS];
+    out.gi_taps = w.work[STAT_GI_TAPS];
     out.sm_blend = vk_shadow_blend();
     out.gc_off = g_vk.gcache.off;
     return true;

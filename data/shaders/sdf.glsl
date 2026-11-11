@@ -40,7 +40,7 @@ float sdf_dist(vec3 pa, int L) {
 
 // Видимость по конусу из o по dir (тангенс полуугла th) до tmax: наименьшее d / ширина конуса, шаг — не меньше
 // половины ширины. Уровень выборки — тот, чья полоса не уже конуса (у широкого конуса — грубее, как мип).
-// x — до tmax, y — только ближе SDF_NEAR (затенение отражённого света, sdf_sky_light)
+// x — до tmax, y — только ближе SDF_NEAR
 const float SDF_NEAR = 2.0;
 vec2 sdf_cone(vec3 o, vec3 dir, float th, float t0, float tmax, uint steps) {
     float v0 = pc.frame.sdf_cam.w;
@@ -59,9 +59,10 @@ vec2 sdf_cone(vec3 o, vec3 dir, float th, float t0, float tmax, uint steps) {
     return s * s * (3.0 - 2.0 * s);
 }
 
-// Видимость неба точки pos (м от камеры) с нормалью n, 0..1 (x — неба, y — ближней заслонки). Конусы: один по нормали и кольцо вокруг под углом
-// к нормали, вес — косинус к нормали. Ступень q «Качества света» — число конусов, их ширина, шаги, дальность
-vec2 sdf_sky_q(vec3 pos, vec3 n, uint q) {
+// Видимость неба точки pos (м от камеры) с нормалью n, 0..1 (x — до tmax, y — ближней заслонки). Конусы: один
+// по нормали и кольцо вокруг под углом к нормали, вес — косинус к нормали. Ступень q «Качества света» — число
+// конусов и их ширина; шаги и дальность — у вызывающего
+vec2 sdf_cones(vec3 pos, vec3 n, uint q, float tmax, uint steps) {
     FrameData f = pc.frame;
     if (f.sdf_on == 0u) return vec2(1.0);
     float far = smoothstep(SDF_FAR0, SDF_FAR1, length(pos));
@@ -73,8 +74,6 @@ vec2 sdf_sky_q(vec3 pos, vec3 n, uint q) {
     vec3 o = pa + n * (0.5 * vs);
     int ring = q == LIGHT_Q_LOW ? 3 : q == LIGHT_Q_MEDIUM ? 4 : q == LIGHT_Q_HIGH ? 5 : 8;
     float th = q == LIGHT_Q_LOW ? 0.70 : q == LIGHT_Q_MEDIUM ? 0.62 : q == LIGHT_Q_HIGH ? 0.58 : 0.45;
-    uint steps = q == LIGHT_Q_LOW ? 8u : q == LIGHT_Q_MEDIUM ? 10u : q == LIGHT_Q_HIGH ? 12u : 14u;
-    float tmax = q == LIGHT_Q_LOW ? 16.0 : q == LIGHT_Q_MEDIUM ? 20.0 : q == LIGHT_Q_HIGH ? 24.0 : 32.0;
     float ca = q == LIGHT_Q_ULTRA ? 0.616 : 0.574;  // косинус угла кольца к нормали: 52° / 55°
     float sa = sqrt(1.0 - ca * ca);
     // Базис у нормали без ветвлений (Duff и др. 2017): зависит только от n
@@ -93,13 +92,21 @@ vec2 sdf_sky_q(vec3 pos, vec3 n, uint q) {
     return mix(sum / wsum, vec2(1.0), far);
 }
 
+// Видимость неба на всю дальность ступени: запасной путь света вне окон зондов (docs/gi.md), F3 «только небо», глаз
+vec2 sdf_sky_q(vec3 pos, vec3 n, uint q) {
+    uint steps = q == LIGHT_Q_LOW ? 8u : q == LIGHT_Q_MEDIUM ? 10u : q == LIGHT_Q_HIGH ? 12u : 14u;
+    float tmax = q == LIGHT_Q_LOW ? 16.0 : q == LIGHT_Q_MEDIUM ? 20.0 : q == LIGHT_Q_HIGH ? 24.0 : 32.0;
+    return sdf_cones(pos, n, q, tmax, steps);
+}
 vec2 sdf_sky(vec3 pos, vec3 n) { return sdf_sky_q(pos, n, pc.frame.light_q); }
 
-// Временный отражённый свет до зондов 6г: в полной заслонке свет неба не уходит ниже доли SDF_BOUNCE — зал под
-// крышей читается, а не чернеет (раньше ту же роль играла запечённая доля неба Остова). Эта доля сама гаснет у
-// ближних заслонок (углы, низ колонн, под балкой — y). 6г её снимает: отражённое придёт лучами зондов
-const float SDF_BOUNCE = 0.2;
-float sdf_sky_light(vec2 vis) { return mix(SDF_BOUNCE * vis.y, 1.0, vis.x); }
+// Ближнее затенение под светом зондов (6г, docs/gi.md): те же конусы, но не дальше SDF_NEAR — углы, низ колонн,
+// под балкой. Дальнюю заслонку зонды уже знают (их шаг 1–4 м)
+float sdf_ao(vec3 pos, vec3 n) {
+    uint q = pc.frame.light_q;
+    uint steps = q == LIGHT_Q_LOW ? 4u : q == LIGHT_Q_MEDIUM ? 5u : q == LIGHT_Q_HIGH ? 6u : 7u;
+    return sdf_cones(pos, n, q, SDF_NEAR, steps).x;
+}
 
 // F3 «поле»: расстояние у точки (на полвокселя над поверхностью) изолиниями через 25 см, синее — у заслонки,
 // оранжевое — дальше полосы; яркость — как серая карта под небом

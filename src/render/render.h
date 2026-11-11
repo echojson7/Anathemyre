@@ -79,6 +79,8 @@ struct RenderView {
 enum RenderTonemap : u32 { RENDER_TONEMAP_AGX, RENDER_TONEMAP_ACES, RENDER_TONEMAPS };
 // Поле расстояний мира (docs/sdf.md), режим F3: кадр, только видимость неба, поле изолиниями, свет без поля
 enum RenderSdfView : u32 { RENDER_SDF_FRAME, RENDER_SDF_SKY, RENDER_SDF_FIELD, RENDER_SDF_OFF, RENDER_SDF_VIEWS };
+// Зонды непрямого света (docs/gi.md), режим F3: кадр, только непрямой свет, без зондов
+enum RenderGiView : u32 { RENDER_GI_FRAME, RENDER_GI_ONLY, RENDER_GI_OFF, RENDER_GI_VIEWS };
 enum RenderLightQuality : u32 { RENDER_LIGHT_LOW, RENDER_LIGHT_MEDIUM, RENDER_LIGHT_HIGH, RENDER_LIGHT_ULTRA, RENDER_LIGHT_QUALITIES };
 
 struct RenderStyle {
@@ -87,6 +89,7 @@ struct RenderStyle {
     bool gcache = true;        // кеш поверхности земли (docs/gcache.md); выкл — земля на пиксель (F3, --nogcache)
     u32 shadow_pages = 0;      // F3 (docs/shadow.md): 1 — страницы теней поверх кадра, 2 — только тень светила
     u32 sdf_view = RENDER_SDF_FRAME;  // F3 (docs/sdf.md): поле расстояний мира
+    u32 gi_view = RENDER_GI_FRAME;    // F3 (docs/gi.md): зонды непрямого света
     f32 cell_min = 1.0f / 80.0f;
     f32 cell_pixels = 1.0f;  // ячейка — не меньше стольких пикселей кадра
     // Свет (docs/light.md)
@@ -158,7 +161,7 @@ struct RenderConfig {
 };
 
 constexpr u32 RENDER_MAX_POINTS = 4096;
-constexpr u32 RENDER_MAX_PASSES = 17;  // строк времени проходов GPU (F3)
+constexpr u32 RENDER_MAX_PASSES = 24;  // строк времени проходов GPU (F3)
 constexpr u32 RENDER_MAX_LINE_VERTICES = 32768;
 constexpr u32 RENDER_MAX_INSTANCES = 65536;
 constexpr u32 RENDER_MAX_MESHES = 4096;
@@ -291,6 +294,8 @@ struct RenderWork {
     u32 sm_wait;   // страниц нового шага светила, отложенных на следующие кадры (стройка в фоне)
     // Поле расстояний мира (docs/sdf.md): выборки поля светом, треугольники засыпки, собранные кирпичи
     u32 sdf_taps, sdf_tris, sdf_bricks;
+    // Зонды непрямого света (docs/gi.md): зондов с лучами, лучей, выборок поля лучами
+    u32 gi_probes, gi_rays, gi_taps;
     u32 sm_blend;  // перетекание шага светила: % нового набора, 100 — один набор (в --work не пишется)
     const char *gc_off;  // почему кеш земли выключен (nullptr — включён); в --work не пишется
 };

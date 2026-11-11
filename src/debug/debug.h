@@ -17,6 +17,7 @@ struct DebugState {
     bool gcache_off = false;  // без кеша поверхности земли (сравнение, не сохраняется)
     u32 shadow_pages = 0;     // тени (docs/shadow.md): 0 — кадр, 1 — страницы поверх, 2 — только тень (не сохраняется)
     u32 sdf_view = 0;         // поле расстояний (docs/sdf.md): кадр, только небо, поле, выкл (RENDER_SDF_*, не сохраняется)
+    u32 gi_view = 0;          // непрямой свет (docs/gi.md): кадр, только он, без зондов (RENDER_GI_*, не сохраняется)
     u32 tonemap = 0;          // тонмаппинг: 0 — AgX, 1 — ACES (RENDER_TONEMAP_*; docs/light.md), выбор по кадрам
     // Стенд людей (stand.cpp): человек у Остова, кость согнута (B), скелет, морф (0 — нет, k — морф k − 1)
     bool people_lines = false; // люди мира: капсулы шага, путь выбранного, след касаний стоп (при отрезках L)
@@ -68,7 +69,7 @@ constexpr f32 STAND_SPEEDS[] = {1.0f, 0.5f, 0.25f, 0.1f};
 enum DebugTab : u32 { DEBUG_TAB_MAIN, DEBUG_TAB_FRAME, DEBUG_TAB_WORLD, DEBUG_TABS };
 
 // Строк проходов GPU и переполнений в панели
-constexpr u32 DEBUG_MAX_PASSES = 20, DEBUG_MAX_OVERFLOWS = 8, DEBUG_MAX_FRAME_PARTS = PROF_MAX_PARTS;
+constexpr u32 DEBUG_MAX_PASSES = 24, DEBUG_MAX_OVERFLOWS = 8, DEBUG_MAX_FRAME_PARTS = PROF_MAX_PARTS;
 // Что панель показывает: числа кадра (раз в секунду) и состояние, которое знает run_window
 struct DebugInfo {
     f64 fps, frame_ms, frame_max_ms, cpu_ms, gpu_ms, step_ms;
@@ -101,6 +102,7 @@ struct DebugInfo {
     u32 work_sm[8];           // тени: страниц кадра, нарисовано, без места, выборок без страницы, вызовов, выборок,
                               // отложено стройкой нового шага светила, перетекание на него (%)
     u32 work_sdf[3];          // поле расстояний: выборок светом, треугольников засыпки, собрано кирпичей
+    u32 work_gi[3];           // зонды: посчитано, лучей, выборок поля лучами
     const char *gc_off;       // почему кеш земли выключен (nullptr — включён)
     // Глаз прочитанного кадра (render_light, docs/light.md): освещённость земли, лк, и EV100; light = false — нет
     bool light;

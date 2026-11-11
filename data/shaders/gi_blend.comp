@@ -1,0 +1,123 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Смешение лучей зондов (6г, docs/gi.md): группа — работа (зонд). Тексель октаэдра освещённости — среднее яркости
+// лучей с весом косинуса к его направлению (E/π) и доля неба; оно копится средним за круг из GI_K поворотов лучей
+// (атлас среднего круга) и показывается в конце круга (у молодого зонда — каждый счёт), мешаясь с прошлым
+// показанным долей gi_hyst. Тексель расстояний — среднее расстояния и его квадрата с весом cos^50 (DDGI), не дальше
+// gi_dmax, только по первому повороту круга: в покое не меняется. Рамка плитки — копия краёв октаэдра
+// (билинейная выборка у края не выходит за плитку).
+// Переносит место и состояние зонда в таблицу (лучи их только посчитали)
+#include "gi.glsl"
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 6, rgba16f) uniform image2DArray u_irr_w;
+layout(set = 0, binding = 7, rg16f) uniform image2DArray u_dep_w;
+layout(set = 0, binding = 8, rgba16f) uniform image2DArray u_acc_w;
+
+shared vec3 s_dir[GI_RAYS_MAX];
+shared vec4 s_ray[GI_RAYS_MAX];   // rgb, расстояние (−1 — небо)
+shared vec4 s_irr[36];
+shared vec2 s_dep[64];
+
+// Рамка плитки n×n с краем в тексель: b-й тексель рамки (0..4n+3) и тексель внутри, чью копию он держит.
+// Край октаэдра складывается зеркально, углы — с противоположных углов
+void gi_border(int b, int n, out ivec2 dst, out ivec2 src) {
+    if (b < n) { dst = ivec2(1 + b, 0); src = ivec2(n - b, 1); }
+    else if (b < 2 * n) { int i = b - n; dst = ivec2(1 + i, n + 1); src = ivec2(n - i, n); }
+    else if (b < 3 * n) { int i = b - 2 * n; dst = ivec2(0, 1 + i); src = ivec2(1, n - i); }
+    else if (b < 4 * n) { int i = b - 3 * n; dst = ivec2(n + 1, 1 + i); src = ivec2(n, n - i); }
+    else if (b == 4 * n) { dst = ivec2(0, 0); src = ivec2(n, n); }
+    else if (b == 4 * n + 1) { dst = ivec2(n + 1, 0); src = ivec2(1, n); }
+    else if (b == 4 * n + 2) { dst = ivec2(0, n + 1); src = ivec2(n, 1); }
+    else { dst = ivec2(n + 1, n + 1); src = ivec2(1, 1); }
+}
+
+void main() {
+    FrameData f = pc.frame;
+    int t = int(gl_LocalInvocationIndex);
+    uint job = pc.a + gl_WorkGroupID.x;
+    uint word = f.gi_jobs.v[job];
+    uint slot = word & 0xFFFFu;
+    int L;
+    ivec3 ip = gi_home(slot, L);
+    vec4 pr = f.gi_pos.v[gl_WorkGroupID.x];
+    uint state = uint(pr.w);
+    if (t == 0) {
+        GiProbe p;
+        p.pos = pr.xyz;
+        p.state = state;
+        p.home = ip;
+        p.level = L;
+        f.gi_probes.v[slot] = p;
+    }
+    if (state != GI_ACTIVE) return;  // зонд в стене: атлас не нужен, его не читают
+    uint n = f.gi_rays_n;
+    uint k = (word >> 17) & 3u;
+    bool fresh = (word & GI_FRESH) != 0u, show = (word & GI_SHOW) != 0u;
+    vec4 q = gi_rot(ip, L, k);
+    for (uint r = uint(t); r < n; r += 64u) {
+        s_dir[r] = quat_rotate(q, gi_fib(r, n));
+        uvec2 w = f.gi_rays.v[gl_WorkGroupID.x * GI_RAYS_MAX + r];
+        s_ray[r] = vec4(unpackHalf2x16(w.x), unpackHalf2x16(w.y));
+    }
+    barrier();
+    float h = fresh ? 0.0 : f.gi_hyst;
+    float dmax = gi_dmax(L);
+    // Освещённость: 6×6 внутри плитки 8×8
+    ivec3 ti = gi_tile(slot, GI_IRR);
+    if (t < 36) {
+        ivec2 xy = ivec2(t % 6, t / 6);
+        vec3 dir = gi_unoct((vec2(xy) + 0.5) / 3.0 - 1.0);
+        vec4 sum = vec4(0.0);
+        float ws = 0.0;
+        for (uint r = 0u; r < n; ++r) {
+            float w = max(dot(dir, s_dir[r]), 0.0);
+            vec4 ray = s_ray[r];
+            sum += w * vec4(ray.rgb, ray.w < 0.0 ? 1.0 : 0.0);
+            ws += w;
+        }
+        vec4 v = ws > 0.0 ? sum / ws : vec4(0.0);
+        ivec3 at = ivec3(ti.xy + 1 + xy, ti.z);
+        // Среднее круга: поворот 0 начинает его, дальше — бегущее среднее
+        if (k > 0u) v = mix(imageLoad(u_acc_w, at), v, 1.0 / float(k + 1u));
+        imageStore(u_acc_w, at, v);
+        if (show) {
+            // Молодой зонд показывает среднее как есть (оно ещё растёт), старый — мешает с прошлым показанным
+            bool young = fresh || k < GI_K - 1u;
+            if (!young && h > 0.0) v = mix(v, imageLoad(u_irr_w, at), h);
+            imageStore(u_irr_w, at, v);
+        }
+        s_irr[t] = v;
+    }
+    // Расстояния: 8×8 внутри плитки 10×10, только поворот 0
+    ivec3 td = gi_tile(slot, GI_DEP);
+    bool dep = k == 0u;
+    if (dep) {
+        ivec2 xy = ivec2(t % 8, t / 8);
+        vec3 dir = gi_unoct((vec2(xy) + 0.5) / 4.0 - 1.0);
+        vec2 sum = vec2(0.0);
+        float ws = 0.0;
+        for (uint r = 0u; r < n; ++r) {
+            float c = max(dot(dir, s_dir[r]), 0.0);
+            float w = pow(c, 50.0);
+            float d = s_ray[r].w < 0.0 ? dmax : min(s_ray[r].w, dmax);
+            sum += w * vec2(d, d * d);
+            ws += w;
+        }
+        vec2 v = ws > 1e-6 ? sum / ws : vec2(dmax, dmax * dmax);
+        ivec3 at = ivec3(td.xy + 1 + xy, td.z);
+        if (h > 0.0) v = mix(v, imageLoad(u_dep_w, at).rg, h);
+        imageStore(u_dep_w, at, vec4(v, 0.0, 0.0));
+        s_dep[t] = v;
+    }
+    barrier();
+    if (t < 28 && show) {
+        ivec2 dst, src;
+        gi_border(t, 6, dst, src);
+        imageStore(u_irr_w, ivec3(ti.xy + dst, ti.z), s_irr[(src.x - 1) + (src.y - 1) * 6]);
+    }
+    if (t < 36 && dep) {
+        ivec2 dst, src;
+        gi_border(t, 8, dst, src);
+        imageStore(u_dep_w, ivec3(td.xy + dst, td.z), vec4(s_dep[(src.x - 1) + (src.y - 1) * 8], 0.0, 0.0));
+    }
+}

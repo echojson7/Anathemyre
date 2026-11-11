@@ -25,20 +25,27 @@ bool vk_world_layout() {
     si.addressModeU = si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     if (!vk_check(vkCreateSampler(g_vk.device, &si, nullptr, &g_vk.sdf.sampler), "vkCreateSampler")) return false;
-    VkDescriptorSetLayoutBinding b[4] = {};
-    for (u32 i = 0; i < 4; ++i) {
+    // 4, 5 — атласы зондов непрямого света для выборки (трилинейно по плитке с рамкой, docs/gi.md), 6, 7 — они же
+    // для записи смешением, 8 — среднее круга поворотов лучей (только смешение)
+    si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    if (!vk_check(vkCreateSampler(g_vk.device, &si, nullptr, &g_vk.gi.sampler), "vkCreateSampler")) return false;
+    constexpr u32 NB = 9;
+    VkDescriptorSetLayoutBinding b[NB] = {};
+    for (u32 i = 0; i < NB; ++i) {
+        bool sampled = i == 2 || i == 4 || i == 5;
         b[i].binding = i;
-        b[i].descriptorType = i == 2 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        b[i].descriptorType = sampled ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = 1;
         b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | (i < 2 ? VK_SHADER_STAGE_FRAGMENT_BIT : 0);
     }
     b[2].pImmutableSamplers = &g_vk.sdf.sampler;
+    b[4].pImmutableSamplers = b[5].pImmutableSamplers = &g_vk.gi.sampler;
     auto li = vk_info<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
-    li.bindingCount = 4;
+    li.bindingCount = NB;
     li.pBindings = b;
     if (!vk_check(vkCreateDescriptorSetLayout(g_vk.device, &li, nullptr, &w.set_layout), "vkCreateDescriptorSetLayout"))
         return false;
-    VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}};
+    VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 6}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3}};
     auto pi = vk_info<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
     pi.maxSets = 1;
     pi.poolSizeCount = 2;
@@ -102,7 +109,8 @@ bool vk_world_init() {
         lights = lights && w.pipe_light[k];
     }
     return w.pipe_vis_mesh && w.pipe_vis_ground && w.pipe_style && w.pipe_cull_count && w.pipe_cull_scan &&
-           w.pipe_cull_write && lights && w.pipe_tiles && w.pipe_ground_bake && vk_gcache_init() && vk_shadow_init() && vk_sdf_init();
+           w.pipe_cull_write && lights && w.pipe_tiles && w.pipe_ground_bake && vk_gcache_init() && vk_shadow_init() && vk_sdf_init() &&
+           vk_gi_init();
 }
 
 static void destroy_image(GpuImage &im) {
@@ -131,10 +139,12 @@ void vk_world_shutdown() {
     vk_gcache_shutdown();
     vk_shadow_shutdown();
     vk_sdf_shutdown();
+    vk_gi_shutdown();
     if (w.pool) vkDestroyDescriptorPool(g_vk.device, w.pool, nullptr);
     if (w.set_layout) vkDestroyDescriptorSetLayout(g_vk.device, w.set_layout, nullptr);
     if (g_vk.sdf.sampler) vkDestroySampler(g_vk.device, g_vk.sdf.sampler, nullptr);
-    g_vk.sdf.sampler = VK_NULL_HANDLE;
+    if (g_vk.gi.sampler) vkDestroySampler(g_vk.device, g_vk.gi.sampler, nullptr);
+    g_vk.sdf.sampler = g_vk.gi.sampler = VK_NULL_HANDLE;
     w = WorldGpu{};
 }
 
@@ -257,6 +267,7 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     vk_gcache_fill(g, f, images);
     vk_shadow_fill(g, f, fs, images);
     vk_sdf_fill(g, f, fs, images);
+    vk_gi_fill(g, f, fs);
 }
 
 static void dispatch(VkCommandBuffer cmd, VkPipeline p, VkDeviceAddress frame, u32 gx, u32 gy) {
@@ -448,8 +459,11 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     rg_use(w.rg_inst, RG_VS_READ);
     rg_use(w.rg_gverts, RG_VS_READ);
     vk_skin_vertices_read(RG_VS_READ);
-    // Поле расстояний мира (docs/sdf.md): засыпка и сборка грязных кирпичей, экземпляры уже на GPU
+    // Поле расстояний мира (docs/sdf.md): засыпка и сборка грязных кирпичей, экземпляры уже на GPU; по нему —
+    // лучи зондов непрямого света (docs/gi.md) и глаз
     vk_sdf_passes();
+    vk_gi_passes();
+    vk_sdf_eye_pass();
     // 4. Плитки по видам и освещение: вид — свой конвейер и своя строка F3. Виды пишут разные пиксели HDR, но
     // барьер между ними граф ставит (запись после записи): без него слой проверки синхронизации видел бы гонку,
     // а цена — хвост одного dispatch, пока следующий не начался (docs/tiles.md)
@@ -491,6 +505,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         vk_horizon_reads(RG_CS_READ);
         vk_shadow_reads();
         vk_sdf_reads();
+        vk_gi_reads();
     }
     // 5. Стиль, отрезки, точки
     rg_pass("стиль", "стиль", record_style, nullptr);

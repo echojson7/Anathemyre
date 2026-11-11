@@ -104,6 +104,12 @@ struct FrameGpu {
     u32 sdf_jobs_n, sdf_bricks_n, sdf_pad0, sdf_pad1;
     f32 sdf_cam[4];              // камера от якоря, м; w — воксель уровня 0, м
     i32 sdf_lo[8][4], sdf_hi[8][4];  // рамка грязных вокселей уровня (засыпка пишет только в неё)
+    // Зонды непрямого света (vk_gi.cpp, docs/gi.md): таблица зондов, работы кадра, лучи работ, место и состояние
+    // зонда работы; окна уровней; режим F3, лучей на зонд, доля старого при смешении
+    VkDeviceAddress gi_probes, gi_jobs, gi_rays, gi_pos;
+    i32 gi_lo[4][4];
+    u32 gi_on, gi_view, gi_rays_n, gi_pad0;
+    f32 gi_hyst, gi_pad1, gi_pad2, gi_pad3;
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -126,7 +132,9 @@ constexpr u32 STAT_SM_USED = 19, STAT_SM_NEW = 20, STAT_SM_OVER = 21, STAT_SM_MI
 constexpr u32 STAT_SM_WAIT = 25;  // страниц нового шага светила, отложенных на следующие кадры (стройка в фоне)
 // Поле расстояний мира (docs/sdf.md): выборки поля светом, треугольники засыпки, кирпичи, собранные в кадре
 constexpr u32 STAT_SDF_TAPS = 26, STAT_SDF_TRIS = 27, STAT_SDF_BRICKS = 28;
-constexpr u32 STAT_COUNT = 29;
+// Зонды непрямого света (docs/gi.md): зондов с лучами, лучей, выборок поля лучами и сдвигом зондов
+constexpr u32 STAT_GI_PROBES = 29, STAT_GI_RAYS = 30, STAT_GI_TAPS = 31;
+constexpr u32 STAT_COUNT = 32;
 // Виды плиток кадра мира (TILE_* в common.glsl): небо, земля из кеша (и небо), сетки (и небо), смесь земли и
 // сеток, земля на пиксель (и небо)
 constexpr u32 TILE_KINDS = 5;
@@ -180,6 +188,7 @@ struct FrameSlot {
     GpuBuffer bones;        // палитры костей людей кадра (RenderBone)
     GpuBuffer sm_inval;     // сферы сброса страниц теней (vk_shadow.cpp)
     GpuBuffer sdf_jobs, sdf_bricks, sdf_bits;  // засыпка, кирпичи и их биты поля расстояний (vk_sdf.cpp)
+    GpuBuffer gi_jobs;      // работы зондов кадра (vk_gi.cpp)
     u32 sm_frame = 0;       // кадр теней, чьи счётчики придут в readback (vk_shadow_read)
     u8 rg_readback = 0;     // он же в графе кадра
     bool stats_pending = false;  // readback заполнит отправленный кадр
@@ -297,6 +306,42 @@ struct SdfGpu {
     u32 jobs_n = 0, bricks_n = 0, groups_x = 0;
     u32 seen_mesh = ~0u;
     u8 rg_field = 0, rg_scratch = 0;
+};
+
+// Зонды непрямого света (vk_gi.cpp, docs/gi.md): GI_LEVELS окон GI_NX × GI_NY × GI_NZ зондов вокруг камеры с шагом
+// GI_S0·2^уровень, место — мировой номер по модулю окна (как у поля). Атласы — 2D-массивы: слой — уровень и высота
+// зонда, плитка — x, z. Освещённость — октаэдр 6×6 RGBA16F (rgb — E/π, a — доля неба), расстояния — 8×8 RG16F,
+// у обоих рамка в тексель. Лучи зонда поворачиваются по кругу из GI_K поворотов: освещённость копится средним за
+// круг в третьем атласе и показывается в конце круга (в покое — одно и то же среднее GI_K · лучей)
+constexpr u32 GI_LEVELS = 3, GI_NX = 32, GI_NY = 16, GI_NZ = 32;
+constexpr u32 GI_LEVEL_PROBES = GI_NX * GI_NY * GI_NZ, GI_PROBES = GI_LEVELS * GI_LEVEL_PROBES;
+constexpr i32 GI_CAM_Y = 5;          // камера — в зонде 5 окна по высоте
+constexpr u32 GI_IRR = 8, GI_DEP = 10;
+constexpr u32 GI_RAYS_MAX = 256;
+constexpr u32 GI_CHUNK = 12288;      // работ на проход лучей (буфер лучей), снимок — по частям
+constexpr u32 GI_MAX_CHUNKS = 16;    // проходов лучей и смешения в кадре
+constexpr u32 GI_K = 4;              // поворотов лучей в круге
+// Работа: место | GI_FRESH (новый: без старого) | поворот << 17 | GI_SHOW (показать среднее: конец круга, молодой)
+constexpr u32 GI_FRESH = 0x10000, GI_SHOW = 0x80000;
+struct GiGpu {
+    GpuImage irr, dep, acc;  // показанная освещённость, расстояния, среднее круга
+    GpuBuffer probes;   // GiProbe (common.glsl), 32 байта на место
+    GpuBuffer rays;     // лучи работ части: две u32 (половинки) на луч
+    GpuBuffer pos;      // место и состояние зонда работы части, vec4
+    VkSampler sampler = VK_NULL_HANDLE;
+    VkPipeline pipe_trace = VK_NULL_HANDLE, pipe_blend = VK_NULL_HANDLE;
+    bool on = false;
+    bool reset = true;  // всё с нуля: таблица зондов пуста, все зонды новые
+    bool clear = true;  // залить таблицу нулями перед первым чтением
+    i32 anchor[2] = {};
+    i32 lo[GI_LEVELS][3] = {};
+    u8 fresh[GI_PROBES] = {};  // место вошло в окно и ещё не посчитано
+    u8 turn[GI_PROBES] = {};   // поворот следующего счёта (0..GI_K−1)
+    u8 age[GI_PROBES] = {};    // счётов с нового, до GI_K: молодой показывает среднее каждый счёт
+    u32 cursor = 0;            // следующее место очереди обновления
+    f32 snap_sun[3] = {};      // светило последнего снимка
+    u32 jobs_n = 0, rays_n = 0, chunks = 0;  // работ кадра, лучей на зонд, частей (лучи и смешение)
+    u8 rg_irr = 0, rg_dep = 0, rg_acc = 0, rg_probes = 0, rg_rays = 0, rg_pos = 0;
 };
 // Диагностика GPU (vk_diag.cpp): что умеет драйвер для разбора сбоя, буфер меток AMD, счётчики GPU
 struct DiagGpu {
@@ -438,6 +483,7 @@ struct VkState {
     HorizonGpu horizon;
     ShadowGpu shadow;
     SdfGpu sdf;
+    GiGpu gi;
     // Froxels (vk_froxel.cpp): клетки 64×64 пикселя × FROXEL_Z слоёв глубины
     GpuBuffer froxels;     // списки на клетку, FROXEL_STRIDE u32
     GpuBuffer media;       // среда на клетку (туман и пыль, vec4) — место для света пользователя, пока нули
@@ -548,6 +594,11 @@ void vk_sdf_shutdown();
 void vk_sdf_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool images);
 // Кластеры новой сетки (render_mesh_create): сферы — в копию процессора для отбора засыпки
 void vk_sdf_mesh_clusters(u32 first, const ClusterGpu *cls, u32 n);
+// Зонды непрямого света (vk_gi.cpp, docs/gi.md): атласы, буферы и запись в набор кадра мира; работы кадра
+// (после vk_sdf_fill: окна и якорь — поля)
+bool vk_gi_init();
+void vk_gi_shutdown();
+void vk_gi_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
 bool vk_gcache_init();
 void vk_gcache_shutdown();
 void vk_gcache_fill(FrameGpu &g, const RenderFrame &f, bool images);
