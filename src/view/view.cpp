@@ -269,7 +269,7 @@ static u32 pack_snorm2(f32 a, f32 b) {
     return q(a) | (q(b) << 16);
 }
 
-// Декали карты (docs/ruin.md): вид по имени, материал по имени, коробка относительно камеры. Дальше
+// Декали карты (docs/ostov.md): вид по имени, материал по имени, коробка относительно камеры. Дальше
 // DECAL_FAR м не нужны: узор декали мельче пикселя
 constexpr f32 DECAL_FAR = 250.0f;
 static void build_decals(const Decals &d, const ViewAssets &assets, const WPos &eye, Arena &frame, RenderFrame &out) {

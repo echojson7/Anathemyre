@@ -3,7 +3,7 @@
 
     make meshes      (python3 tools/meshgen.py data/meshes build/tools/meshpack)
 
-Здесь заглушки этапов 1–2 (кубы, столб, плита, камни), детали руины этапа 4 — в meshgen_ruin.py. Генератор
+Здесь заглушки этапов 1–2 (кубы, столб, плита, камни), здание Остов — в meshgen_ostov.py. Генератор
 пишет сетку одним LOD, а meshpack (tools/meshpack, meshoptimizer) склеивает вершины и строит LOD и кластеры.
 Байты результата зависят только от этих файлов и версии meshoptimizer: CI пересобирает и сравнивает с data/meshes.
 Детали без UV (узор шейдер проецирует по миру). Начало координат сетки — середина низа: экземпляр с высотой
@@ -214,9 +214,9 @@ def main():
         sys.exit("использование: meshgen.py <папка> <meshpack>")
     out_dir, meshpack = sys.argv[1], sys.argv[2]
     os.makedirs(out_dir, exist_ok=True)
-    import meshgen_ruin  # детали руины берут Mesh отсюда
+    import meshgen_ostov  # Остов берёт Mesh отсюда
     meshes = dict(MESHES)
-    meshes.update(meshgen_ruin.MESHES)
+    meshes.update(meshgen_ostov.MESHES)
     with tempfile.TemporaryDirectory() as tmp:
         for name, make in meshes.items():
             raw = os.path.join(tmp, name + ".mesh")

@@ -164,7 +164,7 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec4 a_star[3];    // строки поворота «вид → небесная сфера»; w у [0] — яркость звёзд
     vec4 a_post;       // x — поправка экспозиции, EV; y — степень привыкания глаза; z — EV100 «нормы»; w — синева ночи
     vec4 a_misc;       // x — множитель рассеянного света неба; y, z — время привыкания к темноте и к свету, с
-    Decals decals;     // декали (docs/ruin.md), decal_count подряд
+    Decals decals;     // декали (docs/ostov.md), decal_count подряд
     uint decal_count, decal_pad;
     // Кадр мира (этап 5): сетки, кластеры, постоянные экземпляры на GPU, видимые кластеры, вызовы, индексы
     MeshInfos meshes;

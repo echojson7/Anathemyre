@@ -43,7 +43,7 @@ struct Args {
     bool people_lines = false;        // --people-lines: капсулы шага, путь выбранного и след стоп (отладка, при отрезках)
     const char *go = nullptr;         // --go "кадр место x z y аллюр; …": приказы «идти» по кадрам (видео, проверка)
     const char *terrain_map = nullptr;  // --terrain-map файл.bmp: карта земли сверху и выход
-    const char *walk_map = nullptr;     // --walk-map файл.bmp: сетка ходимости у руины и выход
+    const char *walk_map = nullptr;     // --walk-map файл.bmp: сетка ходимости у Остова и выход
 };
 
 // Память режима: всё выделяется один раз при старте

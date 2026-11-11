@@ -6,7 +6,7 @@
 `docs/decisions.md`, облик игры `docs/vision.md`, склад беты `docs/legacy.md`, новый компьютер `docs/setup-new-pc.md`,
 сборка и CI `docs/build.md`, хребет симуляции и повтор `docs/sim.md`, швы кадра `docs/frame.md`, формат сеток
 `docs/mesh.md`, материалы `docs/materials.md`, текстовый формат и сцена `docs/text.md`, камера `docs/camera.md`,
-земля `docs/terrain.md`, небо и сутки `docs/sky.md`, интерфейс и настройки `docs/ui.md`, здание `docs/ruin.md`,
+земля `docs/terrain.md`, небо и сутки `docs/sky.md`, интерфейс и настройки `docs/ui.md`, здание (Остов) `docs/ostov.md`,
 граф кадра, сбой GPU и проверки `docs/graph.md`, время кадра по частям, журнал и кеш конвейеров
 `docs/frame_time.md`, плитки кадра по видам и счётчики работы `docs/tiles.md`, кеш поверхности земли
 `docs/gcache.md`, люди, шаг мира и путь `docs/people.md`, клипы захвата
