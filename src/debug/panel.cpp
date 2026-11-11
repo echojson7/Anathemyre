@@ -165,9 +165,9 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     // Люди мира: капсулы шага поверх тел, путь выбранного, след касаний стоп (отрезки отладки, L)
     ui_section(f, "ЛЮДИ");
     ui_toggle(f, "капсулы, путь и след стоп", d.people_lines);
-    // Стенд людей (stand.cpp): человек у руины, проверка весов и морфов
+    // Стенд людей (stand.cpp): человек у Остова, проверка весов и морфов
     ui_section(f, "ЛЮДИ: СТЕНД");
-    ui_toggle(f, "человек у руины", d.stand);
+    ui_toggle(f, "человек у Остова", d.stand);
     ui_toggle(f, "согнуть кость (B)", d.stand_bend);
     static const char *const BONES[] = {"локоть", "колено"};
     ui_choice(f, "кость", d.stand_bone, BONES, ANA_COUNTOF(BONES));

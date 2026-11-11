@@ -44,7 +44,7 @@ static void usage() {
     log_info("           --sim N --duel P                                             P пар бьются друг с другом (бенч ИИ поединка)");
     log_info("           --replay файл.rec                                            проверка повтора");
     log_info("           --terrain-map файл.bmp                                       карта земли сверху");
-    log_info("           --walk-map файл.bmp                                          сетка ходимости у руины и путь");
+    log_info("           --walk-map файл.bmp                                          сетка ходимости у Остова и путь");
 }
 
 void app_memory_init(AppMemory &m, bool with_record) {

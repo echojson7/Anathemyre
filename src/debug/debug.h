@@ -17,7 +17,7 @@ struct DebugState {
     bool gcache_off = false;  // без кеша поверхности земли (сравнение, не сохраняется)
     u32 shadow_pages = 0;     // тени (docs/shadow.md): 0 — кадр, 1 — страницы поверх, 2 — только тень (не сохраняется)
     u32 tonemap = 0;          // тонмаппинг: 0 — AgX, 1 — ACES (RENDER_TONEMAP_*; docs/light.md), выбор по кадрам
-    // Стенд людей (stand.cpp): человек у руины, кость согнута (B), скелет, морф (0 — нет, k — морф k − 1)
+    // Стенд людей (stand.cpp): человек у Остова, кость согнута (B), скелет, морф (0 — нет, k — морф k − 1)
     bool people_lines = false; // люди мира: капсулы шага, путь выбранного, след касаний стоп (при отрезках L)
     bool stand = false;       // выкл.: у людей мира есть тела (9б); включается в F3 и --stand
     bool stand_bend = false;
@@ -136,11 +136,11 @@ struct WorldInspect {
 void debug_keys(const Input &in, DebugState &d);
 // Подставной игрок для --sim: намерения из своего RNG (не RNG мира) по номеру шага
 void autoplay_intents(const World &w, Rng &rng, FixedArray<Intent> &out);
-// Бенч поединков для --sim --duel N (этап 11): N пар в дюнах у руины, в шаге 1 первый из пары нападает на второго,
+// Бенч поединков для --sim --duel N (этап 11): N пар в дюнах у Остова, в шаге 1 первый из пары нападает на второго,
 // дальше их ведёт ИИ; в конце — счёт пар по навыку (debug_duel_report)
 void duel_intents(const World &w, u32 pairs, FixedArray<Intent> &out);
 void debug_duel_report(const World &w, u32 pairs);
-// Карта сетки ходимости у руины и путь с дюн на плиту (--walk-map файл.bmp)
+// Карта сетки ходимости у Остова и путь от входа на галерею (--walk-map файл.bmp)
 bool debug_write_walk_map(const World &w, const char *path, Arena &scratch);
 void debug_print_help();
 // Панель отладки (F3) справа сверху: числа кадра и мира, управление временем, сутками, камерой и видом;

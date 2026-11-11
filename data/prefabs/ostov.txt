@@ -1,0 +1,59 @@
+# Остов — закрытое бетонное здание для проверки света (docs/ostov.md). Сетки — tools/meshgen_ostov.py, у всех
+# начало координат — середина пятна на высоте площадки, поэтому каждая стоит в 0 0 0.
+#   part <сетка> <x> <y> <z> [yaw градусы] [material имя] [seed n]
+#   decal <вид> <материал> <x> <y> <z> <sx> <sy> <sz> [yaw градусы] [seed n]   вид: streak grime dust stain
+
+part ostov_floor 0 0 0
+part ostov_walls 0 0 0
+part ostov_roof 0 0 0
+part ostov_frame 0 0 0
+part ostov_gallery 0 0 0
+part ostov_rooms 0 0 0
+part ostov_debris 0 0 0
+
+# Потёки снаружи: от края крыши вниз
+decal streak decal_water -13 5.5 -10 3.6 3 0.4 seed 7
+decal streak decal_water -13 5.5 12 3.6 3 0.4 seed 8
+decal streak decal_water -9 5.5 -10 3.6 3 0.4 seed 9
+decal streak decal_water -9 5.5 12 3.6 3 0.4 seed 10
+decal streak decal_water -5 5.5 -10 3.6 3 0.4 seed 11
+decal streak decal_water -5 5.5 12 3.6 3 0.4 seed 12
+decal streak decal_water -1 5.5 -10 3.6 3 0.4 seed 13
+decal streak decal_water -1 5.5 12 3.6 3 0.4 seed 14
+decal streak decal_water 3 5.5 -10 3.6 3 0.4 seed 15
+decal streak decal_water 3 5.5 12 3.6 3 0.4 seed 16
+decal streak decal_water 7 5.5 -10 3.6 3 0.4 seed 17
+decal streak decal_water 7 5.5 12 3.6 3 0.4 seed 18
+decal streak decal_water 11 5.5 -10 3.6 3 0.4 seed 19
+decal streak decal_water 11 5.5 12 3.6 3 0.4 seed 20
+decal streak decal_water -15 5.5 -8 0.4 3 3.6 seed 21
+decal streak decal_water 15 5.5 -8 0.4 3 3.6 seed 22
+decal streak decal_water -15 5.5 -4 0.4 3 3.6 seed 23
+decal streak decal_water 15 5.5 -4 0.4 3 3.6 seed 24
+decal streak decal_water -15 5.5 0 0.4 3 3.6 seed 25
+decal streak decal_water 15 5.5 0 0.4 3 3.6 seed 26
+decal streak decal_water -15 5.5 4 0.4 3 3.6 seed 27
+decal streak decal_water 15 5.5 4 0.4 3 3.6 seed 28
+decal streak decal_water -15 5.5 8 0.4 3 3.6 seed 29
+decal streak decal_water 15 5.5 8 0.4 3 3.6 seed 30
+# Потёки внутри: под просветами запада, под швом крыши и вокруг колодца
+decal streak decal_water -14.4 4.3 1 0.4 2.2 20 seed 60
+decal streak decal_water 2.5 5.5 -9.4 1.2 3 0.4 seed 61
+decal streak decal_water 2.5 5.5 11.4 1.2 3 0.4 seed 62
+# Грязь у пола: снаружи по периметру и внутри вдоль стен
+decal grime decal_grime 0 0.9 -10 30 1.3 0.5 seed 70
+decal grime decal_grime 0 0.9 12 30 1.3 0.5 seed 71
+decal grime decal_grime -15 0.9 1 0.5 1.3 22 seed 72
+decal grime decal_grime 15 0.9 1 0.5 1.3 22 seed 73
+decal grime decal_grime 0 0.9 -9.4 28.8 1.2 0.4 seed 74
+decal grime decal_grime -6 0.9 11.4 17 1.2 0.4 seed 75
+decal grime decal_grime -14.4 0.9 1 0.4 1.2 20.8 seed 76
+decal grime decal_grime 14.4 0.9 -2.5 0.4 1.2 4 seed 77
+decal grime decal_grime 3 0.9 -6.85 5.2 1.2 0.6 seed 78
+# Песок: нанесло в дверь, под пролом и под просветы
+decal dust decal_dust 3 0.3 -8.2 4.5 0.3 3 seed 80
+decal dust decal_dust 3 0.3 -11.5 6 0.3 3.5 seed 81
+decal dust decal_dust -9.5 0.3 -4 7 0.3 7.5 seed 82
+decal dust decal_dust -13.2 0.3 1 2.6 0.3 19 seed 83
+decal dust decal_dust 7.5 0.3 0.5 3 0.3 3 seed 84
+decal dust decal_dust -6 4.1 10 6 0.3 2.6 seed 85
