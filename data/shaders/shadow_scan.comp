@@ -12,7 +12,7 @@ void main() {
     if (p >= f.sm_pages_n) return;
     uint used = f.sm_pages.v[p].used;
     if (used == f.sm_frame) return;
-    uint base = 2u * f.sm_req_cap;
+    uint base = 4u * f.sm_req_cap;  // после заявок показанных и фона
     if (used == 0u || f.sm_frame - used >= SM_AGE) {
         uint i = atomicAdd(f.sm_req.old_n, 1u);
         f.sm_req.v[base + i] = p;
