@@ -15,6 +15,7 @@ struct DebugState {
     bool test_lights = false; // тестовые огни вокруг камеры (froxels)
     bool froxel_heat = false; // тепловая карта огней по клеткам froxels
     bool gcache_off = false;  // без кеша поверхности земли (сравнение, не сохраняется)
+    u32 shadow_pages = 0;     // тени (docs/shadow.md): 0 — кадр, 1 — страницы поверх, 2 — только тень (не сохраняется)
     u32 tonemap = 0;          // тонмаппинг: 0 — AgX, 1 — ACES (RENDER_TONEMAP_*; docs/light.md), выбор по кадрам
     // Стенд людей (stand.cpp): человек у руины, кость согнута (B), скелет, морф (0 — нет, k — морф k − 1)
     bool people_lines = false; // люди мира: капсулы шага, путь выбранного, след касаний стоп (при отрезках L)
@@ -62,7 +63,7 @@ constexpr f32 STAND_SPEEDS[] = {1.0f, 0.5f, 0.25f, 0.1f};
 enum DebugTab : u32 { DEBUG_TAB_MAIN, DEBUG_TAB_FRAME, DEBUG_TAB_WORLD, DEBUG_TABS };
 
 // Строк проходов GPU и переполнений в панели
-constexpr u32 DEBUG_MAX_PASSES = 16, DEBUG_MAX_OVERFLOWS = 8, DEBUG_MAX_FRAME_PARTS = PROF_MAX_PARTS;
+constexpr u32 DEBUG_MAX_PASSES = 20, DEBUG_MAX_OVERFLOWS = 8, DEBUG_MAX_FRAME_PARTS = PROF_MAX_PARTS;
 // Что панель показывает: числа кадра (раз в секунду) и состояние, которое знает run_window
 struct DebugInfo {
     f64 fps, frame_ms, frame_max_ms, cpu_ms, gpu_ms, step_ms;
@@ -92,6 +93,7 @@ struct DebugInfo {
     u32 work_shadow;           // выборки карты горизонта (тень земли, docs/horizon.md)
     u32 work_gc[4];           // кеш земли: страницы кадра, запечено, без места, поверхности мимо кеша
     u32 work_skin;            // вершин скинено (люди)
+    u32 work_sm[6];           // тени: страниц кадра, нарисовано, без места, выборок без страницы, вызовов, выборок
     const char *gc_off;       // почему кеш земли выключен (nullptr — включён)
     // Глаз прочитанного кадра (render_light, docs/light.md): освещённость земли, лк, и EV100; light = false — нет
     bool light;

@@ -48,6 +48,10 @@ const uint STAT_SHADOW_TAPS = 13u;
 // пиксели земли мимо кеша (крутые склоны, правило пиксельности выключено)
 const uint STAT_GC_USED = 14u, STAT_GC_BAKED = 15u, STAT_GC_OVER = 16u, STAT_GC_PX_DIRECT = 17u;
 const uint STAT_SKIN_VERTS = 18u;  // вершин скинено (skin.comp)
+// Тени солнца страницами (docs/shadow.md): страницы, прочитанные кадром; нарисованные в нём; заявки без места;
+// выборки без страницы; вызовы кластеров в страницы; выборки текселей карты
+const uint STAT_SM_USED = 19u, STAT_SM_NEW = 20u, STAT_SM_OVER = 21u, STAT_SM_MISS = 22u, STAT_SM_DRAWS = 23u,
+           STAT_SM_TAPS = 24u;
 
 // Плитки 8×8 кадра мира по видам (docs/tiles.md, light_tiles.comp): небо — пусто; земля — земля из кеша
 // (docs/gcache.md) и, может быть, небо; сетки — сетки и, может быть, небо; смесь — земля и сетки; земля на
@@ -68,9 +72,24 @@ layout(buffer_reference, scalar) buffer GcReq { uint req_n, old_n, recent_n, pad
 struct GcCell { uint kt; int tz; float depth; };  // ячейка земли пикселя: уровень << 24 | x, z; глубина
 layout(buffer_reference, scalar) buffer GcCells { GcCell v[]; };
 
+// Тени солнца страницами (docs/shadow.md, shadow.glsl): страница — SM_PAGE² текселей одного уровня; тексель —
+// высота ближайшей к светилу заслонки (sm_enc), 0 — заслонки нет
+struct SmPage { uint key0, key1, used, made; };  // ключ (уровень << 24 | x, z), кадр чтения, кадр отрисовки
+layout(buffer_reference, scalar) buffer SmTable { uint v[]; };
+layout(buffer_reference, scalar) buffer SmPages { SmPage v[]; };
+layout(buffer_reference, scalar) buffer SmTexels { uint v[]; };
+// Заявки и свободные страницы: счёт заявок, старых и недавних свободных, dispatch выдачи; на уровень — есть ли
+// новые страницы и их биты по месту в окне; дальше заявки (ключи), старые и недавние
+layout(buffer_reference, scalar) buffer SmReq { uint req_n, old_n, recent_n, pad; uvec4 alloc; uint fresh[16];
+                                                 uint bits[16 * 32]; uint v[]; };
+struct SmDrawCmd { uint index_count, instance_count, first_index; int vertex_offset; uint first_instance; };
+layout(buffer_reference, scalar) buffer SmDraws { uint count, pad0, pad1, pad2; SmDrawCmd v[]; };
+layout(buffer_reference, scalar) buffer SmList { uvec2 v[]; };  // экземпляр; кластер | уровень << 28
+
 // Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы сеток и кластеров (MeshGpu, ClusterGpu в
 // src/render/vk_state.h), видимые кластеры кадра и косвенные вызовы, которые пишет отсечение (cull_*.comp)
-struct MeshInfo { uint first_vertex, first_index, lod_count, pad; vec4 sphere; uvec4 lods[8]; };  // lods: первый кластер, число, ошибка (биты f32), 0
+struct MeshInfo { uint first_vertex, first_index, lod_count, flags; vec4 sphere; uvec4 lods[8]; };  // lods: первый кластер, число, ошибка (биты f32), 0
+const uint MESH_DYNAMIC = 1u;  // MeshInfo.flags: вершины пишет скиннинг каждый кадр (в страницы теней не идёт)
 struct Cluster { uint first_index, tri_count; vec4 sphere; uint pad0, pad1; };  // first_index — от начала индексов сетки
 struct DrawCmd { uint index_count, instance_count, first_index; int vertex_offset; uint first_instance; };
 layout(buffer_reference, scalar) readonly buffer MeshInfos { MeshInfo v[]; };
@@ -192,6 +211,21 @@ layout(buffer_reference, scalar) buffer FrameData {
     // тонмаппинг (TONEMAP_*), качество света (LIGHT_Q_*)
     float dt;
     uint eye_snap, tonemap, light_q;
+    // Тени солнца страницами (docs/shadow.md, shadow.glsl): окна страниц уровней, страницы, тексели, заявки,
+    // вызовы и список отрисовки страниц, сферы сброса кадра
+    SmTable sm_table;
+    SmPages sm_pages;
+    SmTexels sm_texels;
+    SmReq sm_req;
+    SmDraws sm_draws;
+    SmList sm_list;
+    Vec4s sm_inval;
+    uint sm_on, sm_frame, sm_pages_n, sm_req_cap;
+    uint sm_draw_cap, sm_inval_n, sm_debug, sm_pad;
+    vec4 sm_r, sm_u, sm_s;    // оси: r, u — плоскость карты, s — к светилу; r.w — тексель уровня 0, u.w — высота
+                              // камеры к светилу от якоря, s.w — дальность теней, м
+    ivec2 sm_base[16];        // окно уровня: первая страница на мировой решётке уровня
+    vec2 sm_off[16];          // камера от начала окна уровня по r, u, м
 };
 
 layout(push_constant, scalar) uniform Push {

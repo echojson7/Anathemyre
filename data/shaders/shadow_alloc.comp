@@ -1,0 +1,38 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Тени солнца (docs/shadow.md): выдача страниц заявкам кадра. Группа — страница: первый поток берёт физическую
+// (сначала старые, потом недавние), снимает её с прежнего места в окне, ставит на новое и отмечает место в битах
+// новых страниц уровня (по ним отбор решает, что рисовать); все потоки очищают тексели — «заслонки нет»
+#include "shadow.glsl"
+layout(local_size_x = 256) in;
+
+shared uint s_phys;
+
+void main() {
+    FrameData f = pc.frame;
+    uint i = gl_WorkGroupID.x;
+    if (gl_LocalInvocationIndex == 0u) {
+        uvec2 key = uvec2(f.sm_req.v[2u * i], f.sm_req.v[2u * i + 1u]);
+        int k = sm_key_level(key);
+        ivec2 page = sm_key_page(key);
+        uint base = 2u * f.sm_req_cap;
+        uint old_n = f.sm_req.old_n;
+        uint p = i < old_n ? f.sm_req.v[base + i] : f.sm_req.v[base + f.sm_pages_n + (i - old_n)];
+        SmPage pg = f.sm_pages.v[p];
+        // Прежняя страница теряет место в окне, если оно ещё её (его могла занять заявка этого кадра)
+        if (pg.used != 0u) {
+            uvec2 pk = uvec2(pg.key0, pg.key1);
+            atomicCompSwap(f.sm_table.v[sm_slot(sm_key_level(pk), sm_key_page(pk))], p + 1u, 0u);
+        }
+        f.sm_pages.v[p] = SmPage(key.x, key.y, f.sm_frame, f.sm_frame);
+        uint slot = sm_slot(k, page);
+        f.sm_table.v[slot] = p + 1u;
+        uint local = slot - uint(k) * uint(SM_WIN * SM_WIN);
+        atomicOr(f.sm_req.bits[k * 32 + int(local >> 5)], 1u << (local & 31u));
+        f.sm_req.fresh[k] = 1u;
+        s_phys = p;
+    }
+    barrier();
+    uint first = s_phys * uint(SM_PAGE * SM_PAGE);
+    for (uint t = gl_LocalInvocationIndex; t < uint(SM_PAGE * SM_PAGE); t += 256u) f.sm_texels.v[first + t] = 0u;
+}

@@ -89,6 +89,8 @@ static bool create_device() {
     // gl_PrimitiveID во фрагменте visibility buffer требует возможности геометрического шейдера
     VkPhysicalDeviceFeatures f10{};
     f10.geometryShader = VK_TRUE;
+    // Страницы теней (docs/shadow.md): фрагмент пишет высоту заслонки в буфер атомарным максимумом
+    f10.fragmentStoresAndAtomics = VK_TRUE;
 
     vkb::PhysicalDeviceSelector sel(vi);
     auto pick = sel.set_surface(g_vk.surface)

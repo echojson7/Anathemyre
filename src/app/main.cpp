@@ -28,6 +28,7 @@ static void usage() {
     log_info("           [--gpuav-skip a.comp,b.frag]                                 шейдеры без проверки на GPU");
     log_info("           [--lights] [--heat]                                          тестовые огни, огни по клеткам froxels");
     log_info("           [--nogcache]                                                 без кеша поверхности земли (сравнение)");
+    log_info("           [--smpages] [--smonly]                                       страницы теней поверх кадра, только тень (docs/shadow.md)");
     log_info("           [--tonemap agx|aces] [--light low|medium|high|ultra]         тонмаппинг, качество света (docs/light.md)");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z] [--pivot м]   снимок (градусы, метры; опора над землёй)");
@@ -111,6 +112,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--lights")) a.test_lights = true;
         else if (!strcmp(s, "--heat")) a.froxel_heat = true;
         else if (!strcmp(s, "--nogcache")) a.nogcache = true;
+        else if (!strcmp(s, "--smpages")) a.shadow_pages = 1;
+        else if (!strcmp(s, "--smonly")) a.shadow_pages = 2;
         else if (!strcmp(s, "--tonemap")) {
             a.tonemap = next && !strcmp(next, "agx") ? (i32)RENDER_TONEMAP_AGX : next && !strcmp(next, "aces") ? (i32)RENDER_TONEMAP_ACES : -1;
             ok = a.tonemap >= 0;

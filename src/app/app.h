@@ -26,6 +26,7 @@ struct Args {
     bool test_lights = false;       // --lights: тестовые огни вокруг камеры
     bool froxel_heat = false;       // --heat: тепловая карта огней по клеткам froxels
     bool nogcache = false;          // --nogcache: без кеша поверхности земли (сравнение)
+    u32 shadow_pages = 0;           // --smpages: страницы теней поверх кадра, --smonly: только тень (docs/shadow.md)
     i32 tonemap = -1;               // --tonemap agx|aces: тонмаппинг (снимки для сравнения); −1 — как в F3
     i32 light_quality = -1;         // --light low|medium|high|ultra: качество света; −1 — из настроек
     bool nohud = false;             // --nohud: без интерфейса (видео и снимки мира)

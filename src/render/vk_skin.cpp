@@ -175,6 +175,7 @@ u32 render_skinned_create(u32 skin) {
     mg = ((const MeshGpu *)g_vk.mesh_table.mapped)[s.mesh];
     mg.first_vertex = d.first_vertex;
     mg.sphere[3] *= SKIN_SPHERE_GROW;
+    mg.pad = MESH_DYNAMIC;  // вершины меняются каждый кадр: в страницы теней не идёт (docs/shadow.md)
     for (u32 i = 0; i < src.lod_count; ++i) mg.lods[i].first_cluster += d.first_cluster - src.first_cluster;
     return id;
 }

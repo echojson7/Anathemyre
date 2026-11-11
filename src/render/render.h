@@ -83,6 +83,7 @@ struct RenderStyle {
     bool pixel = true;     // выключается клавишей P
     bool froxel_heat = false;  // тепловая карта числа огней в клетке froxels поверх кадра (F3)
     bool gcache = true;        // кеш поверхности земли (docs/gcache.md); выкл — земля на пиксель (F3, --nogcache)
+    u32 shadow_pages = 0;      // F3 (docs/shadow.md): 1 — страницы теней поверх кадра, 2 — только тень светила
     f32 cell_min = 1.0f / 80.0f;
     f32 cell_pixels = 1.0f;  // ячейка — не меньше стольких пикселей кадра
     // Свет (docs/light.md)
@@ -279,6 +280,9 @@ struct RenderWork {
     // земли, посчитанные освещением мимо кеша (крутые склоны, нет места)
     u32 gc_used, gc_baked, gc_over, gc_direct;
     u32 skin_verts;                  // вершин скинено (люди, docs/people.md)
+    // Тени солнца страницами (docs/shadow.md): страницы, прочитанные кадром; нарисованные в нём; заявки без
+    // места; выборки без страницы; вызовы кластеров в страницы; выборки текселей карты
+    u32 sm_used, sm_new, sm_over, sm_miss, sm_draws, sm_taps;
     const char *gc_off;  // почему кеш земли выключен (nullptr — включён); в --work не пишется
 };
 bool render_work(RenderWork &out);

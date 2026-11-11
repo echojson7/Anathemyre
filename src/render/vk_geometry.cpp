@@ -37,6 +37,7 @@ static void free_slot(u32 id) {
     if (s.vtx) vmaVirtualFree(g_vk.vtx_block, s.vtx);
     if (s.idx) vmaVirtualFree(g_vk.idx_block, s.idx);
     if (s.cls) vmaVirtualFree(g_vk.cls_block, s.cls);
+    if (!s.skin) g_vk.shadow.mesh_gen++;  // страницы теней нарисованы и из этой сетки (копии людей в них не входят)
     s = MeshSlot{};
     memset((MeshGpu *)g_vk.mesh_table.mapped + id, 0, sizeof(MeshGpu));  // lod_count 0: отсечение её пропускает
 }
@@ -223,6 +224,7 @@ u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices,
     mg.first_index = s.first_index;
     mg.lod_count = nlods;
     bound_sphere(vertices.data, nullptr, (u32)vertices.count, mg.sphere);
+    g_vk.shadow.mesh_gen++;  // номер сетки мог достаться новой: страницы теней — с нуля
     u32 nc = (u32)clusters_in.count;
     for (u32 i = 0; i < nlods; ++i) {
         RenderLod &l = lods[i];

@@ -41,7 +41,8 @@ shared uint s_lead[64];    // поток ведущего пикселя той 
 shared uint s_rank[64];    // у ведущего — его место среди ведущих
 shared uint s_list[64];    // ведущие по порядку
 shared vec3 s_color[64];
-shared uint s_work[7];     // пиксели неба, земли, сеток; поверхности земли, сеток; выборки тени; земля на пиксель
+shared uint s_work[9];     // пиксели неба, земли, сеток; поверхности земли, сеток; выборки тени; земля на пиксель;
+                           // выборки карты теней и без страницы
 shared uint s_bail;        // плитка земли уходит в «землю на пиксель»: текселя нет в кеше
 const uint HIT_GCACHE = 3u;  // земля из кеша: rel — точка пикселя, level — уровень, m0, m1 — номер текселя
 
@@ -95,14 +96,17 @@ vec3 shade_hit(Hit h, int phys) {
         s.pos = h.rel;
     }
     vec3 c = light_surface(s);
+    // F3: страницы теней поверх кадра; «только тень» — серая карта 50 % под светилом с его видимостью
+    if (pc.frame.sm_debug == 1u) c = sm_debug_tint(c, s.pos);
+    if (pc.frame.sm_debug == 2u) c = pc.frame.sun_color.rgb * (0.5 / A_PI * sun_visibility(s, normalize(pc.frame.sun_dir.xyz)));
     return pc.frame.froxel_heat != 0u ? froxel_heat(c, s.pos) : c;
 }
 
 // Работа группы — в счётчики кадра: одна атомарная операция на счётчик и плитку
 void work_flush() {
-    const uint at[7] = uint[7](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
-                               STAT_SHADOW_TAPS, STAT_GC_PX_DIRECT);
-    for (uint k = 0u; k < 7u; ++k)
+    const uint at[9] = uint[9](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
+                               STAT_SHADOW_TAPS, STAT_GC_PX_DIRECT, STAT_SM_TAPS, STAT_SM_MISS);
+    for (uint k = 0u; k < 9u; ++k)
         if (s_work[k] != 0u) atomicAdd(pc.frame.stats.v[at[k]], s_work[k]);
 }
 
@@ -123,7 +127,7 @@ void main() {
         }
         return;
     }
-    if (t < 7u) s_work[t] = 0u;
+    if (t < 9u) s_work[t] = 0u;
     if (t == 0u) s_bail = 0u;
     uint id = inside ? imageLoad(u_vis, px).r : 0xFFFFFFFFu;
     bool ground = inside && id != 0u && (id & VIS_GROUND) != 0u;
@@ -198,6 +202,8 @@ void main() {
     if (t < nlead) {
         s_color[t] = pre_exposed(shade_hit(hl, phys));
         if (g_steps != 0u) atomicAdd(s_work[5], g_steps);
+        if (g_sm_taps != 0u) atomicAdd(s_work[7], g_sm_taps);
+        if (g_sm_miss != 0u) atomicAdd(s_work[8], g_sm_miss);
     }
     barrier();
     if (inside) imageStore(u_hdr, px, vec4(s_color[s_rank[s_lead[t]]], 1.0));

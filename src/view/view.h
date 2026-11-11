@@ -98,6 +98,7 @@ struct ViewInput {
     bool eye_snap = true;
     u32 tonemap = RENDER_TONEMAP_AGX;
     u32 light_quality = RENDER_LIGHT_HIGH;
+    u32 shadow_pages = 0;  // F3 (docs/shadow.md): 1 — страницы теней поверх кадра, 2 — только тень
 };
 
 // Память под экземпляры, точки и отрезки — из арены кадра
