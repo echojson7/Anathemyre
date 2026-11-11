@@ -39,34 +39,38 @@ float sdf_dist(vec3 pa, int L) {
 }
 
 // Видимость по конусу из o по dir (тангенс полуугла th) до tmax: наименьшее d / ширина конуса, шаг — не меньше
-// половины ширины. Уровень выборки — тот, чья полоса не уже конуса (у широкого конуса — грубее, как мип)
-float sdf_cone(vec3 o, vec3 dir, float th, float t0, float tmax, uint steps) {
+// половины ширины. Уровень выборки — тот, чья полоса не уже конуса (у широкого конуса — грубее, как мип).
+// x — до tmax, y — только ближе SDF_NEAR (затенение отражённого света, sdf_sky_light)
+const float SDF_NEAR = 2.0;
+vec2 sdf_cone(vec3 o, vec3 dir, float th, float t0, float tmax, uint steps) {
     float v0 = pc.frame.sdf_cam.w;
-    float vis = 1.0, t = t0;
+    float vis = 1.0, near = 1.0, t = t0;
     for (uint i = 0u; i < steps; ++i) {
         float r = max(t * th, 0.5 * v0);
         int L = clamp(int(ceil(log2(r / (SDF_BAND * v0)))), 0, SDF_LEVELS - 1);
         float d = sdf_dist(o + dir * t, L);
-        vis = min(vis, clamp(d / r, 0.0, 1.0));
+        float v = clamp(d / r, 0.0, 1.0);
+        vis = min(vis, v);
+        if (t < SDF_NEAR) near = min(near, v);
         t += max(d, 0.5 * r);
-        if (vis < 0.02 || t > tmax) break;
+        if ((vis < 0.02 && (near < 0.02 || t >= SDF_NEAR)) || t > tmax) break;
     }
-    return vis * vis * (3.0 - 2.0 * vis);
+    vec2 s = vec2(vis, near);
+    return s * s * (3.0 - 2.0 * s);
 }
 
-// Видимость неба точки pos (м от камеры) с нормалью n, 0..1. Конусы: один по нормали и кольцо вокруг под углом
-// SDF_RING к нормали, вес — косинус к нормали. Ступени «Качества света» — число конусов, их ширина, шаги, дальность
-float sdf_sky(vec3 pos, vec3 n) {
+// Видимость неба точки pos (м от камеры) с нормалью n, 0..1 (x — неба, y — ближней заслонки). Конусы: один по нормали и кольцо вокруг под углом
+// к нормали, вес — косинус к нормали. Ступень q «Качества света» — число конусов, их ширина, шаги, дальность
+vec2 sdf_sky_q(vec3 pos, vec3 n, uint q) {
     FrameData f = pc.frame;
-    if (f.sdf_on == 0u) return 1.0;
+    if (f.sdf_on == 0u) return vec2(1.0);
     float far = smoothstep(SDF_FAR0, SDF_FAR1, length(pos));
-    if (far >= 1.0) return 1.0;
+    if (far >= 1.0) return vec2(1.0);
     vec3 pa = pos + f.sdf_cam.xyz;
     // Старт — над поверхностью на полвокселя того уровня, что у точки (непрерывно по расстоянию до камеры)
     vec3 dc = abs(pa - f.sdf_cam.xyz);
     float vs = f.sdf_cam.w * max(1.0, max(dc.x, max(dc.y, dc.z)) / f.sdf_cam.w / SDF_FADE0);
     vec3 o = pa + n * (0.5 * vs);
-    uint q = f.light_q;
     int ring = q == LIGHT_Q_LOW ? 3 : q == LIGHT_Q_MEDIUM ? 4 : q == LIGHT_Q_HIGH ? 5 : 8;
     float th = q == LIGHT_Q_LOW ? 0.70 : q == LIGHT_Q_MEDIUM ? 0.62 : q == LIGHT_Q_HIGH ? 0.58 : 0.45;
     uint steps = q == LIGHT_Q_LOW ? 8u : q == LIGHT_Q_MEDIUM ? 10u : q == LIGHT_Q_HIGH ? 12u : 14u;
@@ -78,7 +82,7 @@ float sdf_sky(vec3 pos, vec3 n) {
     float ka = -1.0 / (sg + n.z), kb = n.x * n.y * ka;
     vec3 t1 = vec3(1.0 + sg * n.x * n.x * ka, sg * kb, -sg * n.x);
     vec3 t2 = vec3(kb, sg + n.y * n.y * ka, -n.y);
-    float sum = sdf_cone(o, n, th, vs, tmax, steps);
+    vec2 sum = sdf_cone(o, n, th, vs, tmax, steps);
     float wsum = 1.0;
     for (int k = 0; k < ring; ++k) {
         float ph = 6.2831853 * float(k) / float(ring);
@@ -86,8 +90,16 @@ float sdf_sky(vec3 pos, vec3 n) {
         sum += ca * sdf_cone(o, d, th, vs, tmax, steps);
         wsum += ca;
     }
-    return mix(sum / wsum, 1.0, far);
+    return mix(sum / wsum, vec2(1.0), far);
 }
+
+vec2 sdf_sky(vec3 pos, vec3 n) { return sdf_sky_q(pos, n, pc.frame.light_q); }
+
+// Временный отражённый свет до зондов 6г: в полной заслонке свет неба не уходит ниже доли SDF_BOUNCE — зал под
+// крышей читается, а не чернеет (раньше ту же роль играла запечённая доля неба Остова). Эта доля сама гаснет у
+// ближних заслонок (углы, низ колонн, под балкой — y). 6г её снимает: отражённое придёт лучами зондов
+const float SDF_BOUNCE = 0.2;
+float sdf_sky_light(vec2 vis) { return mix(SDF_BOUNCE * vis.y, 1.0, vis.x); }
 
 // F3 «поле»: расстояние у точки (на полвокселя над поверхностью) изолиниями через 25 см, синее — у заслонки,
 // оранжевое — дальше полосы; яркость — как серая карта под небом

@@ -93,7 +93,7 @@ vec3 light_surface(Surface s) {
     if (blur < 1.0 && f.light_q >= LIGHT_Q_MEDIUM) env = mix(atmo_sky(vec3(rd.x, max(rd.y, 0.0), rd.z)), env, blur);
     // Видимость неба по полю расстояний мира (6в, docs/sdf.md): здание и камни закрывают небо — интерьер темнеет
     // (свет, отражённый от стен, — зонды 6г). Свет неба и его отражение гаснут вместе с ao материала
-    float ao = s.ao * sdf_sky(s.pos, n);
+    float ao = s.ao * sdf_sky_light(sdf_sky(s.pos, n));
     float so = spec_occlusion(nv, ao, a);
     c += kd * irr * ao + (fss_ess * env + fms * ems * irr) * so;
     c += s.emissive;

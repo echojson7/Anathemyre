@@ -1,0 +1,44 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Глаз (docs/light.md, «Экспозиция»): экспонометр падающего света в точке камеры. Небо и главный свет на
+// горизонтальную плоскость (sky_sum.comp) — с заслонкой полем расстояний мира (docs/sdf.md, «Глаз»): в зале под
+// крышей глаз привыкает к темноте, как зрачок, а не к солнцу снаружи. Не по гистограмме кадра: одинаково при любом
+// взгляде камеры. EV100 = log2(E / 2.5) (C = 250); глаз сдвигает EV от «нормы» на долю adapt; множитель — как у
+// камеры с насыщением ISO 100: 2^поправка / (1.2 · 2^EV). Привыкание плавное: к темноте медленнее, к свету быстрее.
+// Один поток: после sky_sum (sky_out [0..3]) и сборки поля, до освещения
+#include "sdf.glsl"
+layout(local_size_x = 1) in;
+
+const float A_PI = 3.14159265;
+
+void main() {
+    FrameData f = pc.frame;
+    const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
+    // Плоскость вверх: E = π·(a + by) — как у sky_sum.comp
+    float e_sky = max(dot((f.sky_out.v[0].rgb + f.sky_out.v[2].rgb) * A_PI, Y), 0.0);
+    float e_key = max(dot(f.sun_color.rgb, Y), 0.0) * max(f.sun_dir.y, 0.0);
+    // Заслонка у камеры: небо — конусами «Ультра» (не зависит от ступени), светило — узкий конус к нему
+    vec2 vis_sky = sdf_sky_q(vec3(0.0), vec3(0.0, 1.0, 0.0), LIGHT_Q_ULTRA);
+    float vis_key = 1.0;
+    if (f.sdf_on != 0u && f.sun_dir.y > 0.0) {
+        float v0 = f.sdf_cam.w;
+        vis_key = sdf_cone(f.sdf_cam.xyz + vec3(0.0, 0.5 * v0, 0.0), f.sun_dir.xyz, 0.12, v0, 40.0, 24u).x;
+    }
+    float e_open = max(e_sky + e_key, 1e-6);
+    // Ближняя заслонка (y) глазу не мешает: камера у балки не слепнет к темноте
+    float e = max(e_sky * sdf_sky_light(vec2(vis_sky.x, 1.0)) + e_key * vis_key, 1e-6);
+    float ev_scene = log2(e / 2.5);
+    float ev_ref = f.a_post.z;
+    float ev_goal = ev_ref + f.a_post.y * (ev_scene - ev_ref);
+    float ev = ev_goal;
+    float ev_prev = f.sky_out.v[SKY_OUT_EYE].z;
+    // Прошлое значение годно, если не первый кадр и оно в разумных пределах (буфер в начале — мусор)
+    if (f.eye_snap == 0u && ev_prev > -20.0 && ev_prev < 30.0) {
+        float tau = ev_goal < ev_prev ? f.a_misc.y : f.a_misc.z;
+        ev = ev_prev + (ev_goal - ev_prev) * (1.0 - exp(-max(f.dt, 0.0) / max(tau, 1e-3)));
+    }
+    float ex = exp2(f.a_post.x) / (1.2 * exp2(ev));
+    // [4].y — освещённость открытой земли: по ней ночная синева (post.glsl), заслонка её не трогает
+    f.sky_out.v[SKY_OUT_EYE] = vec4(ex, e_open, ev, e_sky);
+    f.sky_out.v[SKY_OUT_EYE2] = vec4(e_key, ev_goal, e, 0.0);
+}

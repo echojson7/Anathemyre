@@ -309,6 +309,7 @@ bool render_light(RenderLightInfo &out) {
     out.lux_sky = w.eye[3];
     out.lux_key = w.eye[4];
     out.ev100_goal = w.eye[5];
+    out.lux_eye = w.eye[6];
     return true;
 }
 

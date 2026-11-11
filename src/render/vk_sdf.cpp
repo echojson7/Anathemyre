@@ -68,6 +68,7 @@ bool vk_sdf_init() {
     }
     s.pipe_splat = vk_make_compute("sdf_splat.comp");
     s.pipe_final = vk_make_compute("sdf_final.comp");
+    s.pipe_eye = vk_make_compute("eye.comp");
     s.rg_field = rg_image("поле расстояний", VK_IMAGE_ASPECT_COLOR_BIT);
     rg_bind_image(s.rg_field, s.field.image);
     s.rg_scratch = rg_buffer("поле расстояний: засыпка");
@@ -87,12 +88,12 @@ bool vk_sdf_init() {
     s.reset = s.clear = true;
     log_info("поле расстояний: %u колец по %u³ вокселей от %.2f м, %.0f МБ", SDF_LEVELS, SDF_N, (f64)SDF_V0,
              (f64)(scratch + (VkDeviceSize)SDF_N * SDF_N * SDF_SLAB * SDF_LEVELS * 2) / (1 << 20));
-    return s.pipe_splat && s.pipe_final;
+    return s.pipe_splat && s.pipe_final && s.pipe_eye;
 }
 
 void vk_sdf_shutdown() {
     SdfGpu &s = g_vk.sdf;
-    VkPipeline ps[] = {s.pipe_splat, s.pipe_final};
+    VkPipeline ps[] = {s.pipe_splat, s.pipe_final, s.pipe_eye};
     for (VkPipeline p : ps)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
     if (s.field.view) vkDestroyImageView(g_vk.device, s.field.view, nullptr);
@@ -408,6 +409,14 @@ static void sdf_record_final(VkCommandBuffer cmd, void *) {
     vkCmdDispatch(cmd, s.bricks_n, 1, 1);
 }
 
+static void sdf_record_eye(VkCommandBuffer cmd, void *) {
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.sdf.pipe_eye);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.layout, 0, 1, &g_vk.world.set, 0, nullptr);
+    PushConsts pc{g_sdf_frame, 0, 0};
+    vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
+    vkCmdDispatch(cmd, 1, 1, 1);
+}
+
 void vk_sdf_passes() {
     SdfGpu &s = g_vk.sdf;
     if (!s.on) return;
@@ -430,6 +439,10 @@ void vk_sdf_passes() {
         rg_use(s.rg_field, RG_IMG_CS_WRITE);
         rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
     }
+    // Глаз (eye.comp): экспозиция по свету у камеры с заслонкой полем — после сборки, до освещения
+    rg_pass("глаз: экспозиция", "небо", sdf_record_eye, nullptr);
+    rg_use(s.rg_field, RG_IMG_CS_SAMPLE);
+    rg_use(g_vk.sky.rg_out, RG_CS_WRITE);
 }
 
 void vk_sdf_reads() {

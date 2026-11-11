@@ -164,6 +164,8 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     if (in.light) {
         snprintf(t, sizeof t, "%.4g · %.4g лк", (double)in.lux_key, (double)in.lux_sky);
         ui_value(f, "светило · небо", t);
+        snprintf(t, sizeof t, "%.4g лк", (double)in.lux_eye);
+        ui_value(f, "у глаза (с заслонкой)", t);
         snprintf(t, sizeof t, "%.2f → %.2f", (double)in.ev100, (double)in.ev100_goal);
         ui_value(f, "EV100 глаза → цель", t);
     }
@@ -171,9 +173,9 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     // Люди мира: капсулы шага поверх тел, путь выбранного, след касаний стоп (отрезки отладки, L)
     ui_section(f, "ЛЮДИ");
     ui_toggle(f, "капсулы, путь и след стоп", d.people_lines);
-    // Стенд людей (stand.cpp): человек у руины, проверка весов и морфов
+    // Стенд людей (stand.cpp): человек у Остова, проверка весов и морфов
     ui_section(f, "ЛЮДИ: СТЕНД");
-    ui_toggle(f, "человек у руины", d.stand);
+    ui_toggle(f, "человек у Остова", d.stand);
     ui_toggle(f, "согнуть кость (B)", d.stand_bend);
     static const char *const BONES[] = {"локоть", "колено"};
     ui_choice(f, "кость", d.stand_bone, BONES, ANA_COUNTOF(BONES));

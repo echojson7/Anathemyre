@@ -287,7 +287,7 @@ struct SdfGpu {
     GpuImage field;           // R16F SDF_N × SDF_N × SDF_SLAB·SDF_LEVELS, расстояние в метрах
     GpuBuffer scratch;        // засыпка: u32 на воксель уровня (расстояние и знак), между кадрами — «пусто»
     VkSampler sampler = VK_NULL_HANDLE;
-    VkPipeline pipe_splat = VK_NULL_HANDLE, pipe_final = VK_NULL_HANDLE;
+    VkPipeline pipe_splat = VK_NULL_HANDLE, pipe_final = VK_NULL_HANDLE, pipe_eye = VK_NULL_HANDLE;
     bool on = false;
     bool reset = true;        // всё с нуля: якорь, окна, все кирпичи
     bool clear = true;        // залить засыпку «пусто» перед первым кадром

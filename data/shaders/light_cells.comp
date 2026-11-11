@@ -101,7 +101,7 @@ vec3 shade_hit(Hit h, int phys) {
     if (pc.frame.sm_debug == 2u) c = pc.frame.sun_color.rgb * (0.5 / A_PI * sun_visibility(s, normalize(pc.frame.sun_dir.xyz)));
     // F3 «поле расстояний»: только видимость неба (серая карта 50 % под небом) или само поле изолиниями
     float lux_sky = pc.frame.sky_out.v[SKY_OUT_EYE].w;
-    if (pc.frame.sdf_view == SDF_VIEW_SKY) c = vec3(0.5 / A_PI * lux_sky * sdf_sky(s.pos, s.normal));
+    if (pc.frame.sdf_view == SDF_VIEW_SKY) c = vec3(0.5 / A_PI * lux_sky * sdf_sky(s.pos, s.normal).x);
     if (pc.frame.sdf_view == SDF_VIEW_FIELD) c = sdf_field_view(s.pos, s.normal, lux_sky);
     return pc.frame.froxel_heat != 0u ? froxel_heat(c, s.pos) : c;
 }

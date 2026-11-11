@@ -240,7 +240,7 @@ int run_window(const Args &a, AppMemory &m) {
         cam.pivot.z = a.cam[4];
         wpos_rebase(cam.pivot);
     } else if (w.start.set) {
-        // Точка старта из сцены (строка start, docs/text.md): сейчас — у руины в пустыне
+        // Точка старта из сцены (строка start, docs/text.md): сейчас — у входа в Остов в пустыне
         const f32 deg = PI_F / 180.0f;
         cam.yaw = w.start.yaw * deg;
         cam.pitch = w.start.pitch * deg;
@@ -392,6 +392,7 @@ int run_window(const Args &a, AppMemory &m) {
                 di.light = eye_have;
                 di.lux_key = eye_info.lux_key;
                 di.lux_sky = eye_info.lux_sky;
+                di.lux_eye = eye_info.lux_eye;
                 di.ev100 = eye_info.ev100;
                 di.ev100_goal = eye_info.ev100_goal;
                 di.overflows = nover_last;
@@ -720,8 +721,9 @@ int run_window(const Args &a, AppMemory &m) {
                          work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts, work.sm_used, work.sm_new,
                          work.sm_over, work.sm_taps, work.sm_miss, work.sm_draws);
             if (eye_have)
-                log_info("глаз: светило %.4g лк, небо %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g", (double)eye_info.lux_key,
-                         (double)eye_info.lux_sky, (double)eye_info.ev100, (double)eye_info.ev100_goal, (double)eye_info.exposure);
+                log_info("глаз: светило %.4g лк, небо %.4g лк, у глаза %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g",
+                         (double)eye_info.lux_key, (double)eye_info.lux_sky, (double)eye_info.lux_eye, (double)eye_info.ev100,
+                         (double)eye_info.ev100_goal, (double)eye_info.exposure);
             frames_window = 0;
             window_t0 = now;
             prof_part(*prof, FP_LOG, platform_time_ns());
@@ -731,8 +733,9 @@ int run_window(const Args &a, AppMemory &m) {
 
     if (save_settings) settings_save(set, settings_path());
     if (a.frames && eye_have)
-        log_info("глаз: светило %.4g лк, небо %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g", (double)eye_info.lux_key,
-                 (double)eye_info.lux_sky, (double)eye_info.ev100, (double)eye_info.ev100_goal, (double)eye_info.exposure);
+        log_info("глаз: светило %.4g лк, небо %.4g лк, у глаза %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g",
+                 (double)eye_info.lux_key, (double)eye_info.lux_sky, (double)eye_info.lux_eye, (double)eye_info.ev100,
+                 (double)eye_info.ev100_goal, (double)eye_info.exposure);
     if (a.shot && !debug_write_shot(a.shot, m.load)) rc_exit = 1;
     if (a.work) {
         // Счётчики работы для сверки CI (tools/work_check.sh): «имя значение» по строке

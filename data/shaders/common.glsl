@@ -179,7 +179,7 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec4 a_star[3];    // строки поворота «вид → небесная сфера»; w у [0] — яркость звёзд
     vec4 a_post;       // x — поправка экспозиции, EV; y — степень привыкания глаза; z — EV100 «нормы»; w — синева ночи
     vec4 a_misc;       // x — множитель рассеянного света неба; y, z — время привыкания к темноте и к свету, с
-    Decals decals;     // декали (docs/ruin.md), decal_count подряд
+    Decals decals;     // декали (docs/ostov.md), decal_count подряд
     uint decal_count, decal_pad;
     // Кадр мира (этап 5): сетки, кластеры, постоянные экземпляры на GPU, видимые кластеры, вызовы, индексы
     MeshInfos meshes;
@@ -263,9 +263,9 @@ layout(push_constant, scalar) uniform Push {
 const float CHUNK_M = 256.0;
 const uint TONEMAP_AGX = 0u, TONEMAP_ACES = 1u;
 const uint LIGHT_Q_LOW = 0u, LIGHT_Q_MEDIUM = 1u, LIGHT_Q_HIGH = 2u, LIGHT_Q_ULTRA = 3u;
-// Свет неба и экспозиция (sky_sum.comp → sky_out): [4] — x множитель экспозиции (на него умножен HDR кадра),
-// y — освещённость горизонтальной земли, лк, z — EV100 глаза (с привыканием), w — от неба, лк; [5] — x от светила,
-// лк, y — EV100, к которому глаз привыкает
+// Свет неба и экспозиция (sky_sum.comp, eye.comp → sky_out): [4] — x множитель экспозиции (на него умножен HDR
+// кадра), y — освещённость открытой горизонтальной земли, лк, z — EV100 глаза (с привыканием), w — от неба, лк;
+// [5] — x от светила, лк, y — EV100, к которому глаз привыкает, z — освещённость у глаза с заслонкой полем, лк
 const int SKY_OUT_EYE = 4, SKY_OUT_EYE2 = 5;
 // Начало отсчёта узоров земли и материалов (world_cell, t_split…): по умолчанию чанк камеры. Запекание кеша
 // земли считает тексель от его собственного чанка (gcache.glsl), чтобы тексель зависел только от себя

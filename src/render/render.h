@@ -20,7 +20,7 @@ struct RenderInstance {
 static_assert(sizeof(RenderInstance) == 48, "RenderInstance — 48 байт");
 constexpr u32 RENDER_NO_MATERIAL = 0xFFFFFFFFu;
 
-// Декаль (docs/ruin.md, «Декали»): коробка проекции относительно камеры, вид узора, материал, зерно. 48 байт,
+// Декаль (docs/ostov.md, «Декали»): коробка проекции относительно камеры, вид узора, материал, зерно. 48 байт,
 // как Decal в data/shaders/common.glsl
 enum RenderDecalKind : u32 { DECAL_STREAK = 0, DECAL_GRIME = 1, DECAL_DUST = 2, DECAL_STAIN = 3, DECAL_KINDS = 4 };
 struct RenderDecal {
@@ -297,7 +297,8 @@ struct RenderWork {
 bool render_work(RenderWork &out);
 // Глаз прочитанного кадра (docs/light.md, «Экспозиция»): освещённость горизонтальной земли и EV100. F3
 struct RenderLightInfo {
-    f32 lux, lux_sky, lux_key;  // всего, от неба, от главного светила (солнце или луна)
+    f32 lux, lux_sky, lux_key;  // всего, от неба, от главного светила (солнце или луна) — на открытой земле
+    f32 lux_eye;                // у глаза: с заслонкой полем расстояний (eye.comp), к нему привыкает глаз
     f32 ev100, ev100_goal;      // глаз сейчас и к чему привыкает
     f32 exposure;               // множитель кадра
 };

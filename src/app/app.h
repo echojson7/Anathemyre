@@ -47,7 +47,7 @@ struct Args {
     i64 slow_from = -1;               // --slow кадр: с этого кадра мир ×0.25 (замедленное видео)
     const char *attack = nullptr;     // --attack "кадр место цель; …": приказы «атаковать» по кадрам (видео удара)
     const char *terrain_map = nullptr;  // --terrain-map файл.bmp: карта земли сверху и выход
-    const char *walk_map = nullptr;     // --walk-map файл.bmp: сетка ходимости у руины и выход
+    const char *walk_map = nullptr;     // --walk-map файл.bmp: сетка ходимости у Остова и выход
 };
 
 // Память режима: всё выделяется один раз при старте
