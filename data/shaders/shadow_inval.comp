@@ -1,0 +1,29 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Тени солнца (docs/shadow.md): сброс страниц под изменившимися экземплярами (прежнее и новое место; список —
+// vk_shadow.cpp). Поток на сферу и уровень: страницы под её следом в плоскости карты теряют место в окне и
+// освобождаются — разбор плиток этого же кадра заявит их снова, и они нарисуются заново до света
+#include "shadow.glsl"
+layout(local_size_x = 64) in;
+
+void main() {
+    FrameData f = pc.frame;
+    uint i = gl_GlobalInvocationID.x;
+    int k = int(gl_GlobalInvocationID.y);
+    if (i >= f.sm_inval_n) return;
+    vec4 sp = f.sm_inval.v[i];  // центр относительно камеры, радиус
+    float t = sm_texel(k);
+    if (sp.w < SM_MIN_TEXELS * t) return;  // в этот уровень такая заслонка не рисуется (shadow_cull.comp)
+    vec2 w = sm_window(sp.xyz, k);
+    float r = sp.w / t + 1.0;
+    ivec2 lo, hi;
+    if (!sm_rect(w, r, lo, hi)) return;
+    for (int y = lo.y; y <= hi.y; ++y)
+        for (int x = lo.x; x <= hi.x; ++x) {
+            ivec2 page = f.sm_base[k] + ivec2(x, y);
+            int phys = sm_find(k, page);
+            if (phys < 0) continue;
+            f.sm_table.v[sm_slot(k, page)] = 0u;
+            f.sm_pages.v[phys].used = 0u;
+        }
+}

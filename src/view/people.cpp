@@ -100,6 +100,7 @@ static bool bind(PeopleView &pv, const ViewAssets &a) {
     for (u32 i = 0; i < a.mesh_count; ++i)
         if (a.meshes[i].name == hash_str("sword")) pv.sword = a.meshes[i].id;
     if (!pv.sword) log_warn("люди: нет сетки sword — меча в руках не будет");
+    else render_mesh_moving(pv.sword);  // ходит с рукой каждый кадр: иначе страницы теней под ним рисуются заново
     pv.body = 0;
     pv.skin = k;
     pv.failed = false;

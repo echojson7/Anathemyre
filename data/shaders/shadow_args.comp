@@ -1,0 +1,16 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Тени солнца (docs/shadow.md): сколько заявок кадра получат страницу — dispatch выдачи (группа на страницу);
+// остальные — в счётчик «без места», свет там идёт без тени сеток, а пул растёт перед следующим кадром
+#include "shadow.glsl"
+layout(local_size_x = 1) in;
+
+void main() {
+    FrameData f = pc.frame;
+    uint want = f.sm_req.req_n;
+    uint r = min(want, f.sm_req_cap);
+    uint n = min(r, f.sm_req.old_n + f.sm_req.recent_n);
+    f.sm_req.alloc = uvec4(n, 1u, 1u, 0u);
+    f.stats.v[STAT_SM_NEW] = n;
+    f.stats.v[STAT_SM_OVER] = want - n;
+}

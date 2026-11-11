@@ -5,11 +5,15 @@
 // (солнце, ночью луна) с тенью земли по карте горизонта (sun_visibility, дальше — карта теней 6б); свет неба
 // по нормали (atmo_ambient) и отражение неба (atmo_sky) по шероховатости; дымка atmo_fog() (atmosphere.glsl)
 #include "horizon.glsl"
+#include "shadow.glsl"
 #include "atmosphere.glsl"
 
-// Видимость главного светила: 1 — свет, 0 — тень, всегда мягко (docs/light.md, правило 5). Шаг 6б заменит
-// только эту функцию: карта теней страницами и стык с картой горизонта
-float sun_visibility(Surface s, vec3 l) { return h_sun_shadow(s.pos, l); }
+// Видимость главного светила: 1 — свет, 0 — тень, всегда мягко (docs/light.md, правило 5). Земля — карта
+// горизонта (docs/horizon.md), сетки — карта теней страницами (docs/shadow.md, 6б-1)
+float sun_visibility(Surface s, vec3 l) {
+    float v = h_sun_shadow(s.pos, l);
+    return v > 0.0 ? v * sm_visibility(s.pos, s.normal) : 0.0;
+}
 
 // GGX (Trowbridge–Reitz), a2 = α²
 float brdf_d(float nh, float a2) {

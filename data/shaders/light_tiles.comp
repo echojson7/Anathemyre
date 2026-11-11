@@ -6,11 +6,14 @@
 // зависит от потоков GPU, картинка — нет: плитка считается одинаково, где бы ни лежала в списке.
 // Заодно — ячейки земли (docs/gcache.md): пиксель земли разбирается, его тексель кеша пишется в gc_cells,
 // страница текселя отмечается прочитанной или заявляется на запекание. Пиксель земли мимо кеша (крутой склон)
-// уводит плитку в «землю на пиксель», а если в ней есть и сетки — в «смесь»
+// уводит плитку в «землю на пиксель», а если в ней есть и сетки — в «смесь».
+// И заявки страниц теней солнца (docs/shadow.md): точка каждого пикселя земли и сеток заявляет страницы,
+// которые прочтёт свет его ячейки
 #define RESOLVE_GROUND true
-#define RESOLVE_MESH false
+#define RESOLVE_MESH true
 #include "resolve.glsl"
 #include "gcache.glsl"
+#include "shadow.glsl"
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0, r32ui) uniform readonly uimage2D u_vis;
 
@@ -46,6 +49,69 @@ void gc_touch(int k, ivec2 t) {
     }
 }
 
+// Страница теней нужна кадру: прочитана — отметка кадра, нет — заявка (как gc_touch)
+void sm_touch(int k, ivec2 page) {
+    FrameData f = pc.frame;
+    uvec2 key = sm_page_key(k, page);
+    uint slot = sm_slot(k, page);
+    uint req = SM_REQ | (f.sm_frame & 0x7FFFFFFFu);
+    uint e = f.sm_table.v[slot];
+    if (e == req) return;
+    if (e != 0u && (e & SM_REQ) == 0u) {
+        uint phys = e - 1u;
+        SmPage pg = f.sm_pages.v[phys];
+        if (uvec2(pg.key0, pg.key1) == key) {
+            if (pg.used != f.sm_frame && atomicExchange(f.sm_pages.v[phys].used, f.sm_frame) != f.sm_frame)
+                atomicAdd(f.stats.v[STAT_SM_USED], 1u);
+            return;
+        }
+    }
+    if (atomicCompSwap(f.sm_table.v[slot], e, req) != e) return;  // заявил другой пиксель
+    uint i = atomicAdd(f.sm_req.req_n, 1u);
+    if (i < f.sm_req_cap) {
+        f.sm_req.v[2u * i] = key.x;
+        f.sm_req.v[2u * i + 1u] = key.y;
+    } else {
+        f.sm_table.v[slot] = 0u;  // список заявок полон: страница без места (свет там — без тени)
+    }
+}
+
+// Страницы уровня k под квадратом разброса центра ячейки (m — его полуширина, м) с запасом на смещение по
+// нормали и четыре текселя выборки: квадрат много меньше страницы и задевает не больше 2×2
+void sm_request_level(vec3 rel, float m, int k) {
+    FrameData f = pc.frame;
+    if (k >= SM_LEVELS) return;
+    float t = sm_texel(k);
+    float r = (m + 1.8 * t) / t + 1.5;
+    ivec2 lo, hi;
+    if (!sm_rect(sm_window(rel, k), r, lo, hi)) return;
+    ivec2 b = f.sm_base[k];
+    sm_touch(k, b + lo);
+    if (hi.x > lo.x) sm_touch(k, b + ivec2(lo.x + 1, lo.y));
+    if (hi.y > lo.y) sm_touch(k, b + ivec2(lo.x, lo.y + 1));
+    if (hi.x > lo.x && hi.y > lo.y) sm_touch(k, b + lo + 1);
+}
+
+// Страницы, которые прочтёт свет ячейки этого пикселя. Свет считается в центре ячейки, а он дальше от точки
+// пикселя не больше чем на ячейку: заявляются уровни обоих краёв этого разброса и страницы под квадратом
+// разброса с запасом на смещение по нормали и четыре текселя выборки (sm_visibility)
+void sm_request(vec3 rel) {
+    FrameData f = pc.frame;
+    if (f.sm_on == 0u) return;
+    float depth = dot(rel, f.forward.xyz);
+    float m = (f.pixel != 0u ? cell_size(depth) : f.cell_min) * 0.9 + 0.004;
+    if (depth - m > f.sm_s.w) return;
+    vec2 ru = vec2(dot(rel, f.sm_r.xyz), dot(rel, f.sm_u.xyz));
+    float far = max(abs(ru.x), abs(ru.y));
+    int k0 = sm_level(depth - m, max(far - m, 0.0));
+    int k1 = min(sm_level(depth + m, far + m), k0 + 2);
+    // Без циклов: lavapipe под GPU-AV падает на доступе к буферу в цикле шейдера с barrier() (docs/shadow.md,
+    // «Проверки»), а уровней не больше трёх и страниц на уровень не больше 2×2
+    sm_request_level(rel, m, k0);
+    if (k0 + 1 <= k1) sm_request_level(rel, m, k0 + 1);
+    if (k0 + 2 <= k1) sm_request_level(rel, m, k0 + 2);
+}
+
 void main() {
     FrameData f = pc.frame;
     if (gl_LocalInvocationIndex == 0u) s_has = 0u;
@@ -54,12 +120,15 @@ void main() {
     if (px.x < int(f.viewport.x) && px.y < int(f.viewport.y)) {
         uint id = imageLoad(u_vis, px).r;
         uint has = id == 0u ? 1u : (id & VIS_GROUND) != 0u ? 2u : 4u;
-        if (has == 2u) {
+        if (has != 1u) {
             Hit h = resolve(px, id);
-            GcCell c = gc_cell_of(h.rel, h.ng);
-            if (f.gc_on != 0u) f.gc_cells.v[px.y * int(f.viewport.x) + px.x] = c;
-            if (c.kt == GC_NONE) has |= 8u;
-            else gc_touch(gc_cell_level(c), gc_cell_texel(c));
+            if (has == 2u) {
+                GcCell c = gc_cell_of(h.rel, h.ng);
+                if (f.gc_on != 0u) f.gc_cells.v[px.y * int(f.viewport.x) + px.x] = c;
+                if (c.kt == GC_NONE) has |= 8u;
+                else gc_touch(gc_cell_level(c), gc_cell_texel(c));
+            }
+            sm_request(h.rel);
         }
         atomicOr(s_has, has);
     }

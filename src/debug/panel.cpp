@@ -81,6 +81,11 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
             pair_value(f, "кеш земли: страниц · запечено", in.work_gc[0], in.work_gc[1]);
         }
         pair_value(f, "земля мимо кеша · без места", in.work_gc[3], in.work_gc[2]);
+        // Тени солнца страницами (docs/shadow.md): страниц в кадре и нарисовано в нём; без места и выборок без
+        // страницы (оба должны быть 0); вызовы кластеров в новые страницы
+        pair_value(f, "тени: страниц · нарисовано", in.work_sm[0], in.work_sm[1]);
+        pair_value(f, "тени: без места · без страницы", in.work_sm[2], in.work_sm[3]);
+        pair_value(f, "тени: вызовов · выборок", in.work_sm[4], in.work_sm[5]);
     }
     // Переполнения (docs/graph.md «Переполнения»): что-то не нарисовано или считается медленным путём
     for (u32 i = 0; i < in.overflows && i < DEBUG_MAX_OVERFLOWS; ++i) {
@@ -141,6 +146,8 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_toggle(f, "тестовые огни", d.test_lights);
     ui_toggle(f, "огни по клеткам", d.froxel_heat);
     ui_toggle(f, "без кеша земли", d.gcache_off);
+    static const char *const SM_VIEWS[] = {"кадр", "страницы", "только тень"};
+    ui_choice(f, "тени солнца", d.shadow_pages, SM_VIEWS, ANA_COUNTOF(SM_VIEWS));
     // Свет (docs/light.md): тонмаппинг на выбор по кадрам; освещённость земли и глаз — «Единицы», «Экспозиция»
     ui_section(f, "СВЕТ");
     static const char *const TONEMAPS[] = {"AgX", "ACES"};
