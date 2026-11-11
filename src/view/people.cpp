@@ -11,9 +11,21 @@
 // прямой), стопы ставит IK на ширину бинда (ноги из этого ключа — на полушаге)
 static const char *const IDLE_CLIP = "walk";
 constexpr f32 IDLE_T = 1.0f;
-static const char *const BONE_NAMES[] = {"pelvis", "spine_01", "thigh_l", "thigh_r", "calf_l", "calf_r",
-                                         "foot_l", "foot_r", "ball_l", "ball_r"};
-enum { B_PELVIS, B_SPINE, B_THIGH, B_CALF = 4, B_FOOT = 6, B_BALL = 8, B_COUNT = 10 };
+static const char *const BONE_NAMES[] = {"pelvis",  "spine_01",    "thigh_l",     "thigh_r",     "calf_l",
+                                         "calf_r",  "foot_l",      "foot_r",      "ball_l",      "ball_r",
+                                         "hand_l",  "hand_r",      "middle_01_r", "index_01_r",  "pinky_01_r",
+                                         "lowerarm_r", "spine_03", "neck_01",     "head"};
+enum {
+    B_PELVIS, B_SPINE, B_THIGH, B_CALF = 4, B_FOOT = 6, B_BALL = 8,
+    B_HAND_L = 10, B_HAND_R, B_MIDDLE_R, B_INDEX_R, B_PINKY_R, B_FOREARM_R, B_SPINE3, B_NECK, B_HEAD, B_COUNT
+};
+static_assert(B_COUNT == ANA_COUNTOF(BONE_NAMES), "кости вида");
+
+// Удар (этап 10, docs/people.md «Удар»): вход в клип действия и выход из него, реакция задетого
+constexpr f32 ACT_BLEND_IN = 0.15f;  // с
+constexpr f32 ACT_BLEND_OUT = 0.25f;
+constexpr f32 FLINCH_RISE = 0.06f;   // реакция: наклон от удара нарастает, с
+constexpr f32 FLINCH_FALL = 0.25f;   // и спадает (половина за столько), с
 
 constexpr f32 HEAD_ABOVE_M = 1.62f;  // опора камеры за человеком над его корнем
 constexpr f32 STEP_TIME = 0.3f;      // перестановка стопы на месте, с
@@ -85,10 +97,30 @@ static bool bind(PeopleView &pv, const ViewAssets &a) {
         const SkelBone &fb = s.bones.data[pv.bones[B_FOOT + f]];
         pv.rest_foot[f] = Vec3{fb.pos[0], fb.pos[1], fb.pos[2] - pel.pos[2]};
     }
+    for (u32 i = 0; i < a.mesh_count; ++i)
+        if (a.meshes[i].name == hash_str("sword")) pv.sword = a.meshes[i].id;
+    if (!pv.sword) log_warn("люди: нет сетки sword — меча в руках не будет");
     pv.body = 0;
     pv.skin = k;
     pv.failed = false;
     return true;
+}
+
+// Клипы действий шага мира (по номеру действия): привязка к скелету тела, раз
+static void bind_actions(PeopleView &pv, const ViewAssets &a, const ActionTable *T) {
+    if (pv.act_bound || !T) return;
+    pv.act_bound = true;
+    const Skel &s = a.bodies[pv.body].skel[pv.skin];
+    u64 ge = hash_str("game_engine");
+    for (u32 k = 0; k < T->count; ++k) {
+        pv.act[k].clip = nullptr;
+        const ViewClip *vc = nullptr;
+        for (u32 i = 0; i < a.clip_count && !vc; ++i)
+            if (a.clips[i].name == T->a[k].clip && a.clips[i].clip.skel == ge) vc = &a.clips[i];
+        i32 tb;
+        if (vc && anim_bind(vc->clip, s, pv.act[k].map, &tb)) pv.act[k].clip = &vc->clip;
+        else log_warn("люди: нет клипа %s для действия %s", T->a[k].clip_name, T->a[k].label);
+    }
 }
 
 // Корень человека i в кадре: место, курс, скорость, фаза — между двумя выписками; ускорение и поворот — за шаг
@@ -164,7 +196,18 @@ static u32 body_snorm2(f32 a, f32 b) {
 // Поза одного человека: повороты костей → палитра, корень экземпляра. Возвращает высоту корня экземпляра
 struct PoseOut {
     WPos base;  // корень экземпляра (с опусканием таза)
+    bool sword; // меч в руках: место хвата и поворот в мире
+    WPos sword_at;
+    Quat sword_q;
 };
+
+static f32 smooth01v(f32 x) {
+    x = f_clamp(x, 0.0f, 1.0f);
+    return x * x * (3.0f - 2.0f * x);
+}
+
+// Тик действия или реакции на этот кадр: между двумя выписками (на стопе тик стоит — поза замирает)
+static f32 tick_between(u16 p, u16 c, bool same, f32 a) { return same && p <= c ? (f32)p + (f32)(c - p) * a : (f32)c; }
 
 static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewInput &in, u32 i, const Root &r, f32 dist,
                            PoseMatrix *palette, bool debug) {
@@ -191,6 +234,23 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
     GaitMix m = gait_mix(r.v);
     gait_pose(pv.gait, nb, m, r.phase, rot, &trans, tmp, contact);
     const i32 tb = pv.gait.trans_bone;
+    const Extract &pe = *in.prev;
+    bool same = pe.person_gen[i] == c.person_gen[i];
+
+    // Действие (этап 10): клип поверх ходьбы, вход 0.15 с, выход 0.25 с к концу действия
+    f32 aw = 0.0f;
+    u8 act = c.person_act[i];
+    if (act && c.actions && act <= c.actions->count && pv.act[act - 1].clip) {
+        const ActionDesc &A = c.actions->a[act - 1];
+        f32 t = tick_between(pe.person_act_t[i], c.person_act_t[i], same && pe.person_act[i] == act, in.alpha) / (f32)SIM_HZ;
+        f32 end = (f32)A.end / (f32)SIM_HZ;
+        aw = smooth01v(f_min(t / ACT_BLEND_IN, (end - t) / ACT_BLEND_OUT));
+        AnimPose g{rot, trans, 0, 0, 0}, ap{tmp, {}, 0, 0, 0};
+        anim_sample(*pv.act[act - 1].clip, pv.act[act - 1].map, nb, t, ap);
+        anim_blend(g, ap, nb, aw);
+        trans = g.trans;
+        for (u32 f = 0; f < 2; ++f) contact[f] = contact[f] + (1.0f - contact[f]) * aw;
+    }
 
     // Наклон: вперёд от ускорения (позвоночник), вбок к центру поворота (таз; стопы вернёт IK)
     pose_world(s, rot, tb, &trans, wr, wp);
@@ -198,6 +258,30 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
     pose_turn_world(rot, wr, (u32)B[B_SPINE], quat_axis_angle(Vec3{1, 0, 0}, lean_f));
     pose_turn_world(rot, wr, (u32)B[B_PELVIS], quat_axis_angle(Vec3{0, 0, 1}, -lean_s));
     pose_world(s, rot, tb, &trans, wr, wp);
+
+    // Реакция задетого: верх тела откидывается от удара (резко, потом спадает); стопы вернёт IK. Клипа реакции
+    // пока нет (ждёт Mixamo), это добавка поверх позы, а не поза формулой
+    if (c.person_react_t[i]) {
+        f32 k = tick_between(pe.person_react_t[i], c.person_react_t[i], same && pe.person_react_t[i], in.alpha) / (f32)SIM_HZ;
+        k += 0.05f;  // на стопе попадания удар уже виден
+        f32 f = k < FLINCH_RISE ? k / FLINCH_RISE : 1.0f / (1.0f + (k - FLINCH_RISE) * (k - FLINCH_RISE) / (FLINCH_FALL * FLINCH_FALL));
+        f32 sn, cs, bx, bz;
+        sincos_turn(c.person_react_yaw[i], &sn, &cs);
+        world_to_body(r.yaw, sn, cs, &bx, &bz);
+        Vec3 axis = normalize(cross(Vec3{0, 1, 0}, Vec3{bx, 0, bz}));  // верх уходит туда, куда толкнули
+        u8 part = c.person_react_part[i];
+        // Доли наклона по костям (рад): голова — шея и голова, грудь и руки — грудь, таз и ноги — таз
+        f32 sp1 = 0.12f, sp3 = 0.20f, nk = 0.12f, hd = 0.10f, pel = 0.0f;
+        if (part == 0) { sp1 = 0.06f; sp3 = 0.14f; nk = 0.25f; hd = 0.30f; }
+        else if (part == 2 || part >= 7) { sp1 = 0.14f; sp3 = 0.08f; nk = 0.04f; hd = 0.04f; pel = 0.12f; }
+        const u32 bones[5] = {(u32)B[B_PELVIS], (u32)B[B_SPINE], (u32)B[B_SPINE3], (u32)B[B_NECK], (u32)B[B_HEAD]};
+        const f32 ang[5] = {pel, sp1, sp3, nk, hd};
+        for (u32 q = 0; q < 5; ++q) {
+            if (ang[q] <= 0.0f) continue;
+            pose_turn_world(rot, wr, bones[q], quat_axis_angle(axis, ang[q] * f));
+            pose_world(s, rot, tb, &trans, wr, wp);
+        }
+    }
 
     PoseOut out;
     bool ik = dist < VIEW_IK_FAR_M && c.coll && c.terrain;
@@ -215,18 +299,19 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
         f32 ankle_h[2], toe_dz[2];
         for (u32 f = 0; f < 2; ++f) {
             Vec3 a = wp[B[B_FOOT + f]];
-            if (m.move < 1.0f) {  // покой: стопы — как в бинде под тазом
+            f32 mv = f_max(m.move, aw);  // в действии стопы — из клипа
+            if (mv < 1.0f) {  // покой: стопы — как в бинде под тазом
                 Vec3 rest = pv.rest_foot[f] + Vec3{0, 0, pz};
-                a = rest + (a - rest) * m.move;
+                a = rest + (a - rest) * mv;
             }
-            f32 z = pz + (a.z - pz) * k, wx, wz;
+            f32 z = pz + (a.z - pz) * (k + (1.0f - k) * aw), wx, wz;
             body_to_world(r.yaw, a.x, z, &wx, &wz);
             want[f] = add(r.at, wx, 0, wz);
             ankle_h[f] = a.y;
             toe_dz[f] = wp[B[B_BALL + f]].z - a.z;
         }
         // Стоит: стопы держатся на месте и переставляются по одной, если тело ушло или повернулось
-        bool standing = m.move < 0.05f;
+        bool standing = m.move < 0.05f && aw < 0.02f;
         if (!standing) L.lock = false;
         else if (!L.lock || fresh) {
             L.lock = true;
@@ -319,6 +404,27 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
         pose_world(s, rot, tb, &trans, wr, wp);
     }
     pose_palette_world(s, wr, wp, palette);
+    // Меч: в действии — двуручный хват как в дорожках (от левой кисти у гарды, по линии кистей), иначе — в правой
+    // кисти (середина кисти, от мизинца к указательному); ребро клинка — вдоль предплечья
+    out.sword = pv.sword != 0;
+    if (out.sword) {
+        // Вне удара клинок опущен вперёд-вниз (~40°): кисть открыта (хвата нет), по одной оси пальцев он торчал бы
+        // вперёд горизонтально
+        Vec3 g1 = (wp[B[B_HAND_R]] + wp[B[B_MIDDLE_R]]) * 0.5f;
+        Vec3 d1 = normalize(normalize(wp[B[B_INDEX_R]] - wp[B[B_PINKY_R]]) + Vec3{0, -0.85f, 0});
+        Vec3 g2 = wp[B[B_HAND_L]], d2 = normalize(wp[B[B_HAND_L]] - wp[B[B_HAND_R]]);
+        Vec3 g = g1 + (g2 - g1) * aw, d = normalize(d1 + (d2 - d1) * aw);
+        Vec3 fa = wp[B[B_HAND_R]] - wp[B[B_FOREARM_R]];
+        Vec3 e = fa - d * dot(fa, d);
+        if (dot(e, e) < 1e-6f) e = Vec3{1, 0, 0} - d * d.x;
+        e = normalize(e);
+        Quat q1 = quat_between(Vec3{0, 1, 0}, d);
+        Quat q2 = quat_between(quat_rotate(q1, Vec3{1, 0, 0}), e);
+        out.sword_q = quat_mul(quat_yaw(r.yaw), quat_mul(q2, q1));
+        f32 wx, wz;
+        body_to_world(r.yaw, g.x, g.z, &wx, &wz);
+        out.sword_at = add(out.base, wx, g.y, wz);
+    }
     L.root = out.base;
     L.yaw = r.yaw;
     return out;
@@ -329,6 +435,7 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
     const Extract &c = *in.cur;
     if (!c.person_gen || !bind(pv, assets)) return;
     const ViewBody &body = assets.bodies[pv.body];
+    bind_actions(pv, assets, c.actions);
     // Ближние к глазу — с телом
     u32 pick[VIEW_BODIES_MAX];
     f32 pick_d[VIEW_BODIES_MAX];
@@ -428,6 +535,21 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
             if (morph_at[q2] >= 0 && morph_at[q2] < (i32)RENDER_MAX_MORPHS) o.morph[morph_at[q2]] = w[q2];
         ni++;
         nbo += nb;
+        if (po.sword && ni < RENDER_MAX_INSTANCES) {
+            RenderInstance &sw = inst[ni++];
+            sw = RenderInstance{};
+            sw.cx = po.sword_at.cx;
+            sw.cz = po.sword_at.cz;
+            sw.x = po.sword_at.x;
+            sw.y = po.sword_at.y;
+            sw.z = po.sword_at.z;
+            sw.rot_xy = body_snorm2(po.sword_q.x, po.sword_q.y);
+            sw.rot_zw = body_snorm2(po.sword_q.z, po.sword_q.w);
+            sw.scale = 1.0f;
+            sw.mesh = pv.sword;
+            sw.material = RENDER_NO_MATERIAL;
+            sw.seed = c.person_seed[i];
+        }
     }
     out.bones = {bones, nbo};
     out.skinned = {sk, nso};

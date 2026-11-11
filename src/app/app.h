@@ -12,6 +12,7 @@ struct Args {
     const char *record = nullptr;   // --record файл.rec
     const char *replay = nullptr;   // --replay файл.rec
     const char *hashes = nullptr;   // --hashes файл.txt: хеш каждые 1000 шагов
+    bool rewind_check = false;      // --rewind-check: с --sim проверить перемотку окна против прямого хода
     u64 frames = 0;             // --frames N: окно закрывается после N кадров (CI)
     u64 win_w = 1600, win_h = 900;  // --window W H: размер окна (CI берёт меньше: lavapipe считает пиксели)
     bool vsync = true;
@@ -41,6 +42,8 @@ struct Args {
     bool follow = false;
     bool people_lines = false;        // --people-lines: капсулы шага, путь выбранного и след стоп (отладка, при отрезках)
     const char *go = nullptr;         // --go "кадр место x z y аллюр; …": приказы «идти» по кадрам (видео, проверка)
+    i64 slow_from = -1;               // --slow кадр: с этого кадра мир ×0.25 (замедленное видео)
+    const char *attack = nullptr;     // --attack "кадр место цель; …": приказы «атаковать» по кадрам (видео удара)
     const char *terrain_map = nullptr;  // --terrain-map файл.bmp: карта земли сверху и выход
     const char *walk_map = nullptr;     // --walk-map файл.bmp: сетка ходимости у руины и выход
 };
@@ -58,6 +61,9 @@ void app_memory_free(AppMemory &m);
 
 // Мир из зерна и описаний (data/scene.txt); desc_hash — хеш описаний для записи повтора
 bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash);
+// Действия людей (data/actions/*.txt, этап 10) и дорожки тел — в w.actions. Зовёт app_world_create; повторно —
+// горячая перезагрузка описаний в окне (отладка: запись повтора после неё не сходится с описаниями)
+bool app_actions_load(World &w, AppMemory &m);
 // Материалы и сетки для кадра (после render_init)
 bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view);
 // Земля мира — в видеопамять (после render_init)

@@ -9,6 +9,8 @@ struct StepStats {
     u64 expanded = 0;   // раскрыто узлов A*
     u64 (*now_ns)() = nullptr;  // часы для замера (бенч --sim); мир от них не зависит
     u64 people_ns = 0;  // время систем людей
+    u32 strikes = 0;    // начатых ударов (этап 10)
+    u32 hits = 0;       // попаданий
 };
 
 struct StepCtx {

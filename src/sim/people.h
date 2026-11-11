@@ -1,6 +1,6 @@
 // Люди в шаге мира (docs/people.md): таблица SoA на 1024 места, номер с поколением. Шаг ведёт корень тела —
-// опору, место, курс, скорость, фазу шага и путь; позу костей считает вид. Сейчас (этап 9а) группы «место»,
-// «движение», «путь» и зерно внешности; действие, тело и бой добавят этапы 10–12
+// опору, место, курс, скорость, фазу шага и путь; позу костей считает вид. Группы «место», «движение», «путь»,
+// зерно внешности (этап 9а) и «действие» с ударом (этап 10, action.h); тело (раны) и бой — этапы 11–12
 #pragma once
 #include "../core/mem.h"
 #include "../core/wpos.h"
@@ -55,6 +55,18 @@ struct People {
     u8 *queued;      // стоит в очереди поиска пути
     // Внешность
     u32 *seed;
+    // Действие (этап 10, action.h): номер действия + 1 (0 — нет), тик от начала, курс тела в начале, попал ли
+    // (часть + 1); стоп на попадании — тиков замереть; реакция задетого — тик, откуда пришёл удар, часть
+    u32 *target;     // цель приказа «атаковать» (номер с поколением, 0 — нет)
+    u8 *act;
+    u16 *act_t;
+    u32 *act_yaw;
+    u8 *act_hit;
+    u8 *freeze;
+    u16 *react_t;    // 0 — нет реакции; k — k-й тик реакции
+    u32 *react_yaw;  // куда отбрасывает (от бьющего к задетому)
+    u8 *react_part;
+    u16 *hits;       // сколько раз задет (отладка, бенч)
     // Места и очередь поиска пути (кольцо, по порядку приказов)
     u16 *free;
     u32 free_count;
@@ -69,14 +81,25 @@ void people_init(People &p, Arena &arena);
 // Родить человека на ходимом месте у at (RNG мира); false — мест нет
 bool people_spawn(World &w, const WPos &at, f32 radius);
 void people_kill(World &w, u32 slot);
-// Приказ идти: человек по номеру с поколением (чужое поколение — приказ пропадает)
-void people_order_go(World &w, u32 id, const WPos &target, u32 gait);
+// Приказ идти: человек по номеру с поколением (чужое поколение — приказ пропадает). Приказ игрока снимает и
+// приказ «атаковать» (player)
+void people_order_go(World &w, u32 id, const WPos &target, u32 gait, bool player = true);
+// Приказ атаковать: подойти к цели и ударить один раз (действие ActionTable::strike)
+void people_order_attack(World &w, u32 id, u32 target_id);
+// Живой ли человек по номеру с поколением; место — в *slot
+bool people_valid(const People &p, u32 id, u32 *slot);
 
-// Системы шага (порядок — в sim_step): пути из очереди → руление и ход → расталкивание → опора и фаза
+// Системы шага (порядок — в sim_step): действия и удар (action.cpp) → пути из очереди → руление и ход →
+// расталкивание → опора и фаза
+void people_act(World &w, StepCtx &ctx);
 void people_paths(World &w, StepCtx &ctx);
 void people_steer(World &w, StepCtx &ctx);
 void people_separate(World &w, StepCtx &ctx);
 void people_settle(World &w, StepCtx &ctx);
+// Капсула против коробок построек (руление, отброс)
+void people_push_capsule(World &w, u32 s);
+// Занят ли человек действием, стопом или реакцией (не рулит сам)
+inline bool people_busy(const People &p, u32 s) { return p.act[s] || p.react_t[s] || p.freeze[s]; }
 
 struct Column;
 u32 people_columns(const People &p, Column *out);

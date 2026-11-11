@@ -155,6 +155,21 @@ int run_window(const Args &a, AppMemory &m) {
     };
     GoOrder go[32];
     u32 ngo = 0;
+    // Удары по кадрам (--attack): «кадр место цель», через «;»
+    struct AttackOrder {
+        u64 frame;
+        u32 slot, foe;
+    };
+    AttackOrder atk[32];
+    u32 natk = 0;
+    for (const char *q = a.attack; q && *q && natk < 32;) {
+        unsigned long long f = 0;
+        unsigned sl = 0, fo = 0;
+        if (sscanf(q, " %llu %u %u", &f, &sl, &fo) == 3) atk[natk++] = {(u64)f, sl, fo};
+        else log_warn("--attack: непонятный приказ %s", q);
+        const char *e = strchr(q, ';');
+        q = e ? e + 1 : nullptr;
+    }
     for (const char *q = a.go; q && *q && ngo < 32;) {
         unsigned long long f = 0;
         unsigned sl = 0, g = 0;
@@ -170,6 +185,9 @@ int run_window(const Args &a, AppMemory &m) {
         platform_window_close();
         return 1;
     }
+    Rewind *rewind = arena_push<Rewind>(m.world, 1);
+    if (!a.record) rewind_init(*rewind, w);
+    const i64 slow_from = a.slow_from;
     // Интерфейс: без шрифта игра идёт дальше, только без HUD
     char data_dir[1024];
     snprintf(data_dir, sizeof data_dir, "%sdata/", platform_exe_dir());
@@ -432,8 +450,15 @@ int run_window(const Args &a, AppMemory &m) {
                 pv->mark_step = w.step;
             }
         };
-        if (win.mouse_pressed[MOUSE_RIGHT] && !win.key_down[KEY_ALT] && pv->sel >= 0 &&
-            view_screen_to_support(cam, ww, wh, in.mouse_x, in.mouse_y, w.terrain, &w.coll, at))
+        // Правая по другому человеку — «атаковать» (этап 10: подойти и ударить раз)
+        i32 foe = -1;
+        if (win.mouse_pressed[MOUSE_RIGHT] && !win.key_down[KEY_ALT] && pv->sel >= 0)
+            foe = people_view_pick(*pv, seen, cam, ww, wh, in.mouse_x, in.mouse_y);
+        if (foe >= 0 && foe != pv->sel) {
+            pending.push_back({0, INTENT_ATTACK, WPos{}, ((u64)pv->sel | ((u64)pv->sel_gen << 16)) |
+                                                             ((u64)((u32)foe | ((u32)seen.person_gen[foe] << 16)) << 32)});
+        } else if (win.mouse_pressed[MOUSE_RIGHT] && !win.key_down[KEY_ALT] && pv->sel >= 0 &&
+                   view_screen_to_support(cam, ww, wh, in.mouse_x, in.mouse_y, w.terrain, &w.coll, at))
             order_go((u32)pv->sel, pv->sel_gen, at, win.key_down[KEY_SHIFT] ? GAIT_RUN : win.key_down[KEY_CTRL] ? GAIT_JOG : GAIT_WALK);
         if (win.key_pressed[KEY_C] && pv->sel >= 0) cam.follow = !cam.follow;
         // Выбор и приказы из командной строки (видео, проверка повтора)
@@ -450,6 +475,14 @@ int run_window(const Args &a, AppMemory &m) {
             wpos_rebase(to);
             to.y = ground_at(w.terrain, to).height + go[i].y;  // y — над землёй (плита, пол руины)
             order_go(go[i].slot, seen.person_gen[go[i].slot], to, go[i].gait);
+        }
+        for (u32 i = 0; i < natk; ++i) {
+            const AttackOrder &o = atk[i];
+            if (o.frame != frames || o.slot >= PEOPLE_CAPACITY || o.foe >= PEOPLE_CAPACITY || !seen.person_gen[o.slot] ||
+                !seen.person_gen[o.foe])
+                continue;
+            pending.push_back({0, INTENT_ATTACK, WPos{}, ((u64)o.slot | ((u64)seen.person_gen[o.slot] << 16)) |
+                                                             ((u64)(o.foe | ((u32)seen.person_gen[o.foe] << 16)) << 32)});
         }
         if (win.key_pressed[KEY_R]) pending.push_back({0, INTENT_RELEASE, WPos{}, 0});
         // Часы (отладка): [ ] и ползунок — час, T и выбор — скорость суток; через намерения, запись повтора их помнит
@@ -474,6 +507,23 @@ int run_window(const Args &a, AppMemory &m) {
             h -= 24.0 * (f64)(i64)(h / 24.0);
             pending.push_back({0, INTENT_CLOCK_SET, WPos{}, hour_turn(h)});
         }
+
+        // Перемотка и перечитывание описаний (отладка). С записью повтора — нет: запись не знает ни того, ни другого
+        if (ds.step_back && tc.paused && !a.record && w.step > 0) {
+            if (rewind_to(*rewind, w, w.step - 1, m.step)) {
+                sim_extract(w, ring_next(ring));
+                ring_commit(ring);
+                sim_extract(w, ring_next(ring));
+                ring_commit(ring);
+            } else {
+                log_warn("перемотка: дальше снимков нет");
+            }
+        }
+        if (ds.reload_actions && !a.record) {
+            if (app_actions_load(w, m)) pv->act_bound = false;
+            else log_warn("описания действий не перечитаны (ошибка выше): старые остаются");
+        }
+        if (slow_from >= 0 && frames == (u64)slow_from) tc.speed = 1;  // --slow: замедление ×0.25 с кадра
 
         u32 nsteps = 0;
         if (a.timelapse) {
@@ -500,6 +550,7 @@ int run_window(const Args &a, AppMemory &m) {
             sim_step(w, ctx);
             stat_add(st_step, (f64)(platform_time_ns() - ts) / 1e6);
             if (a.record) recorder_step(rec, w, its);
+            else rewind_after_step(*rewind, w, its);
             sim_extract(w, ring_next(ring));
             ring_commit(ring);
             if (k == 0) pending.clear();
