@@ -115,10 +115,11 @@ jobs:
           # ASan + слои проверки: ошибки Vulkan видны с первых кадров, малое окно — lavapipe считает пиксели
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation --window 640 360 2>&1 | tail -40
           # проверка на GPU (GPU-AV, docs/graph.md «Проверки»): чтение и запись мимо буферов по адресам, кадр мира.
-          # Четыре шейдера lavapipe под GPU-AV не тянет (падает, съедает ~14 ГБ или считает минуты) — без проверки.
+          # Пять шейдеров lavapipe под GPU-AV не тянет (падает, съедает ~14 ГБ или считает минуты) — без проверки;
+          # лучи зондов (gi_trace) — снимок 4 × 49 152 зонда под GPU-AV идёт дольше 10 мин
           # Камера у стенда людей с согнутой костью и морфом: скиннинг и сферы кластеров тоже под проверкой
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 4 --window 640 360 --gpuav \
-            --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp \
+            --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp \
             --cam 45 5 6 11698 -2348.5 --stand elbow,morph1 2>&1 | tail -5
           # снимок в полный размер для глаза
           xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 10 --validation --shot frame.bmp | tail -5

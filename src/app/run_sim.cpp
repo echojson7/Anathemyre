@@ -16,7 +16,11 @@ int run_sim(const Args &a, AppMemory &m) {
     u64 desc = 0;
     if (!app_world_create(w, m, a.seed, &desc)) return 1;
     DuelDesc duel{};
-    if (!app_duel_load(duel, m)) return 1;
+    GroupDesc group{};
+    if (!app_fight_load(duel, group, m)) return 1;
+    const bool brawl = a.brawl[0] && a.brawl[1];
+    BrawlStats *bs = brawl ? arena_push<BrawlStats>(m.load, 1) : nullptr;
+    if (bs) *bs = BrawlStats{};
     Recorder rec;
     if (a.record) {
         recorder_init(rec, m.record, w, a.seed, a.sim_steps, 1u << 20);
@@ -52,21 +56,25 @@ int run_sim(const Args &a, AppMemory &m) {
     }
     f64 max_us = 0, people_us = 0;
     u64 max_at = 0;
-    u64 people_steps = 0;
+    u64 people_steps = 0, ai_ns = 0;
     StepStats stats;
     stats.now_ns = platform_time_ns;
     u64 t0 = platform_time_ns();
     for (u64 s = 0; s < a.sim_steps; ++s) {
         intents.clear();
-        if (a.duel) duel_intents(w, a.duel, intents);
+        if (brawl) brawl_intents(w, a.brawl, intents);
+        else if (a.duel) duel_intents(w, a.duel, intents);
         else autoplay_intents(w, player, intents);
-        ai_duel(w, duel, intents);
+        u64 ta = platform_time_ns();
+        ai_fight(w, duel, group, intents);
+        ai_ns += platform_time_ns() - ta;
         StepCtx ctx{intents.span(), &m.step, nullptr, &stats};
         u64 ts = platform_time_ns();
         sim_step(w, ctx);
         f64 us = (f64)(platform_time_ns() - ts) / 1000.0;
         if (w.people.live) { people_steps++; people_us += us; }
         if (us > max_us) { max_us = us; max_at = w.step; }
+        if (bs) debug_brawl_step(w, *bs);
         if (a.record) recorder_step(rec, w, intents.span());
         if (rw) {
             rewind_after_step(*rw, w, intents.span());
@@ -94,13 +102,15 @@ int run_sim(const Args &a, AppMemory &m) {
             going += p.state[s] != MOVE_STAND;
         }
         log_info("--sim люди: %u живых (на постройках %u, из них выше 3 м %u; в пути %u), шаг с людьми в среднем %.1f мкс, "
-                 "из них системы людей %.1f мкс; путей %u, раскрыто узлов %" PRIu64 " (%.0f на путь); ударов %u, попаданий %u, "
-                 "отбито %u, защит %u",
+                 "из них системы людей %.1f мкс; ИИ боя %.1f мкс; путей %u, раскрыто узлов %" PRIu64 " (%.0f на путь); ударов %u, попаданий %u, "
+                 "отбито %u, защит %u, по своим %u",
                  p.live, on_box, high, going, people_us / (f64)people_steps, (f64)stats.people_ns / 1000.0 / (f64)people_steps,
+                 (f64)ai_ns / 1000.0 / (f64)people_steps,
                  stats.paths, stats.expanded,
-                 stats.paths ? (f64)stats.expanded / (f64)stats.paths : 0.0, stats.strikes, stats.hits, stats.blocks, stats.defends);
+                 stats.paths ? (f64)stats.expanded / (f64)stats.paths : 0.0, stats.strikes, stats.hits, stats.blocks, stats.defends, stats.friendly);
     }
-    if (a.duel) debug_duel_report(w, a.duel);
+    if (a.duel && !brawl) debug_duel_report(w, a.duel);
+    if (bs) debug_brawl_report(w, *bs, a.brawl);
     int rc = 0;
     if (rw) {
         bool good = w.step > 600;

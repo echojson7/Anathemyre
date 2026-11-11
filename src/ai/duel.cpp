@@ -1,7 +1,8 @@
 // ИИ поединка (этап 11, docs/people.md «Обмен ударами»). Каждый боец думает в свой тик и решает по состоянию до
 // шага, пишет только своё намерение: номер места не даёт форы (урок беты). Случайность — хеш шага и номера, а не
-// RNG мира: решение одного не сдвигает числа другого
+// RNG мира: решение одного не сдвигает числа другого. В группе (этап 12) угроза — замах любого, а удар ждёт жетона
 #include "duel.h"
+#include "group.h"
 #include "../core/hash.h"
 #include "../core/text.h"
 #include "../sim/world.h"
@@ -48,76 +49,91 @@ bool duel_parse(const u8 *data, usize size, DuelDesc &out, char *err, usize err_
 }
 
 static f32 lerp2(const f32 v[2], f32 k) { return v[0] + (v[1] - v[0]) * k; }
-// Число [0, 1) из хеша шага, бойца и вопроса
-static f32 roll(u64 step, u32 id, u32 q) { return (f32)(hash_combine(hash_combine(step, id), q) >> 40) * (1.0f / 16777216.0f); }
 
-static const ActionDesc *desc_of(const World &w, u8 act) { return act && act <= w.actions.count ? &w.actions.a[act - 1] : nullptr; }
 
-void ai_duel(const World &w, const DuelDesc &D, FixedArray<Intent> &out) {
+// Свой (не цель, не враг) впереди-сбоку ближе 1.8 м: широкий удар задел бы его
+static bool duel_ally_near(const World &w, u32 s, u32 t) {
+    const People &p = w.people;
+    for (u32 a = 0; a < PEOPLE_CAPACITY; ++a) {
+        if (!p.alive[a] || a == s || a == t || people_foes(p, s, a)) continue;
+        Vec2 d = wpos_delta_xz(p.cx[s], p.cz[s], p.x[s], p.z[s], p.cx[a], p.cz[a], p.x[a], p.z[a]);
+        if (dot(d, d) > 1.8f * 1.8f || dot(d, d) < 1e-6f) continue;
+        if (f_abs(turn_diff_rad(p.heading[s], turn_of_dir(d.x, d.y))) < 1.6f) return true;
+    }
+    return false;
+}
+
+void duel_think(const World &w, const DuelDesc &D, const GroupDesc &G, const FightView &v, u32 s, FixedArray<Intent> &out) {
     const People &p = w.people;
     const ActionTable &T = w.actions;
-    if (!T.count || !p.live || !D.think) return;
-    for (u32 s = 0; s < PEOPLE_CAPACITY; ++s) {
-        if (!p.alive[s] || !p.target[s]) continue;
-        const u32 id = make_id(s, p.gen[s]).v;
-        if ((w.step + (hash_mix(id) & 0xFFFF)) % D.think) continue;
-        u32 t;
-        if (!people_valid(p, p.target[s], &t) || p.react_t[s] || p.freeze[s]) continue;
-        const ActionDesc *mine = desc_of(w, p.act[s]);
-        if (mine && p.act_t[s] < mine->cancel) continue;  // своё действие ещё не отменить
-        const f32 sk = (f32)p.skill[s] * 0.01f;
-        const f32 amp = lerp2(D.noise, sk);
-        u32 q = 0;
-        auto noise = [&]() { return (roll(w.step, id, q++) * 2.0f - 1.0f) * amp; };
-        Vec2 d = wpos_delta_xz(p.cx[s], p.cz[s], p.x[s], p.z[s], p.cx[t], p.cz[t], p.x[t], p.z[t]);
-        const f32 dist = length(d);
-        const f32 face = dist > 1e-3f ? f_abs(turn_diff_rad(p.heading[s], turn_of_dir(d.x, d.y))) : 0.0f;
-        u32 want = p.want[s];
+    const u32 id = make_id(s, p.gen[s]).v;
+    u32 t;
+    if (!people_valid(p, p.target[s], &t) || p.react_t[s] || p.freeze[s]) return;
+    const ActionDesc *mine = ai_act(w, p.act[s]);
+    if (mine && p.act_t[s] < mine->cancel) return;  // своё действие ещё не отменить
+    const f32 sk = (f32)p.skill[s] * 0.01f;
+    const f32 amp = lerp2(D.noise, sk);
+    u32 q = 0;
+    auto noise = [&]() { return (ai_roll(w.step, id, q++) * 2.0f - 1.0f) * amp; };
+    Vec2 d = wpos_delta_xz(p.cx[s], p.cz[s], p.x[s], p.z[s], p.cx[t], p.cz[t], p.x[t], p.z[t]);
+    const f32 dist = length(d);
+    const f32 face = dist > 1e-3f ? f_abs(turn_diff_rad(p.heading[s], turn_of_dir(d.x, d.y))) : 0.0f;
+    u32 want = p.want[s];
 
-        // Замах противника на меня, который я уже заметил
-        const ActionDesc *their = desc_of(w, p.act[t]);
-        bool threat = their && their->kind == ACT_STRIKE && !p.act_hit[t] && p.act_t[t] <= their->hit_b &&
-                      p.target[t] == id && dist <= their->reach_max + 0.6f &&
-                      (f32)(p.act_t[t] - their->start) >= lerp2(D.notice, sk);
-        if (threat) {
-            const i32 until = (i32)their->hit_a - (i32)p.act_t[t];
-            f32 best = D.none + noise();
-            u32 pick = 0;
-            if (T.block != ACTION_NONE) {
-                const ActionDesc &B = T.a[T.block];
-                if ((their->line & B.line) && (i32)(B.guard_a - B.start) <= until) {
-                    f32 c = f_clamp(B.chance + B.chance_skill * ((f32)p.skill[s] - (f32)p.skill[t]), 0.0f, 1.0f) + noise();
-                    if (c > best) { best = c; pick = T.block + 1u; }
-                }
-            }
-            if (T.dodge != ACTION_NONE) {
-                const ActionDesc &G = T.a[T.dodge];
-                f32 c = D.dodge + noise();
-                if ((their->line & G.line) && (i32)(G.guard_a - G.start) <= until && c > best) { best = c; pick = T.dodge + 1u; }
-            }
-            for (u32 k = 0; k < T.count; ++k) {
-                const ActionDesc &C = T.a[k];
-                if (C.kind != ACT_STRIKE || dist < C.reach_min - 0.2f || dist > C.reach_max || face > 0.6f) continue;
-                f32 c = D.counter + noise();
-                if ((i32)(C.hit_a - C.start + D.margin) <= until && c > best) { best = c; pick = k + 1u; }
-            }
-            if (pick) want = pick;
-        } else if (!(want && T.a[want - 1].kind == ACT_STRIKE)) {
-            // Своего удара не ждёт: бить ли сейчас и каким. Открыт противник — почти всегда
-            bool open = p.react_t[t] || (their && p.act_t[t] > (their->kind == ACT_STRIKE ? their->hit_b : their->guard_b));
-            f32 chance = open ? D.open : lerp2(D.attack, sk);
-            want = 0;
-            if (roll(w.step, id, 1000) < chance) {
-                f32 best = -1e9f;
-                for (u32 k = 0; k < T.count; ++k) {
-                    const ActionDesc &C = T.a[k];
-                    if (C.kind != ACT_STRIKE) continue;
-                    f32 fit = dist >= C.reach_min - 0.2f && dist <= C.reach_max + 0.3f ? 1.0f : 0.4f;
-                    f32 c = fit * (p.last[s] == k + 1 ? 0.5f : 1.0f) + noise();
-                    if (c > best) { best = c; want = k + 1; }
-                }
+    // Замах на меня, который я уже заметил: того, чей удар ближе всех к окну (в группе — не обязательно цели)
+    const u32 u = v.urgent[s] != 0xFFFF ? v.urgent[s] : t;
+    const ActionDesc *their = ai_act(w, p.act[u]);
+    Vec2 du = u == t ? d : wpos_delta_xz(p.cx[s], p.cz[s], p.x[s], p.z[s], p.cx[u], p.cz[u], p.x[u], p.z[u]);
+    const f32 dist_u = u == t ? dist : length(du);
+    const f32 face_u = u == t ? face : dist_u > 1e-3f ? f_abs(turn_diff_rad(p.heading[s], turn_of_dir(du.x, du.y))) : 0.0f;
+    bool threat = their && their->kind == ACT_STRIKE && !p.act_hit[u] && p.act_t[u] <= their->hit_b &&
+                  p.target[u] == id && dist_u <= their->reach_max + 0.6f &&
+                  (f32)(p.act_t[u] - their->start) >= lerp2(D.notice, sk);
+    if (threat) {
+        const i32 until = (i32)their->hit_a - (i32)p.act_t[u];
+        f32 best = D.none + noise();
+        u32 pick = 0;
+        // Блок держит только удар спереди: со спины (нападающий сбоку кольца) не закрыться
+        if (T.block != ACTION_NONE && face_u <= ACT_BLOCK_FACE) {
+            const ActionDesc &B = T.a[T.block];
+            if ((their->line & B.line) && (i32)(B.guard_a - B.start) <= until) {
+                f32 c = f_clamp(B.chance + B.chance_skill * ((f32)p.skill[s] - (f32)p.skill[u]), 0.0f, 1.0f) + noise();
+                if (c > best) { best = c; pick = T.block + 1u; }
             }
         }
-        if (want != p.want[s]) out.push_back({w.step, INTENT_ACT, WPos{}, (u64)id | ((u64)want << 32)});
+        if (T.dodge != ACTION_NONE) {
+            const ActionDesc &Gd = T.a[T.dodge];
+            f32 c = D.dodge + noise();
+            if ((their->line & Gd.line) && (i32)(Gd.guard_a - Gd.start) <= until && c > best) { best = c; pick = T.dodge + 1u; }
+        }
+        // Ответный удар — только по своей цели (удар идёт в неё)
+        for (u32 k = 0; u == t && k < T.count; ++k) {
+            const ActionDesc &C = T.a[k];
+            if (C.kind != ACT_STRIKE || dist < C.reach_min - 0.2f || dist > C.reach_max || face > 0.6f) continue;
+            f32 c = D.counter + noise();
+            if ((i32)(C.hit_a - C.start + D.margin) <= until && c > best) { best = c; pick = k + 1u; }
+        }
+        if (pick) want = pick;
+    } else if (!(want && T.a[want - 1].kind == ACT_STRIKE)) {
+        // Своего удара не ждёт: бить ли сейчас и каким. Открыт противник — почти всегда. Жетон на цель занят или
+        // очередь не дошла — ждать (держать дистанцию на своём месте)
+        const ActionDesc *tgt = ai_act(w, p.act[t]);
+        bool open = p.react_t[t] || (tgt && p.act_t[t] > (tgt->kind == ACT_STRIKE ? tgt->hit_b : tgt->guard_b));
+        f32 chance = open ? D.open : lerp2(D.attack, sk);
+        want = 0;
+        if (ai_roll(w.step, id, 1000) < chance && fight_may_strike(w, G, v, s, t)) {
+            // Свой рядом под клинком (впереди-сбоку ближе досягаемости) — не мести сбоку и по ногам, бить сверху
+            const bool ally = duel_ally_near(w, s, t);
+            f32 best = -1e9f;
+            for (u32 k = 0; k < T.count; ++k) {
+                const ActionDesc &C = T.a[k];
+                if (C.kind != ACT_STRIKE) continue;
+                f32 fit = dist >= C.reach_min - 0.2f && dist <= C.reach_max + 0.3f ? 1.0f : 0.4f;
+                f32 c = fit * (p.last[s] == k + 1 ? 0.5f : 1.0f) + noise();
+                if (ally && C.line != LINE_OVER) c -= 2.0f;
+                if (c > best) { best = c; want = k + 1; }
+            }
+        }
     }
+    if (want != p.want[s]) out.push_back({w.step, INTENT_ACT, WPos{}, (u64)id | ((u64)want << 32)});
 }

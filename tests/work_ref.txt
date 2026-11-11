@@ -21,5 +21,8 @@ sm_miss 0
 sm_draws 0
 sm_taps 2272512
 sm_wait 0
-sdf_taps 7714647
+sdf_taps 2758575
 sdf_bricks 0
+gi_probes 1536
+gi_rays 393216
+gi_taps 9124374

@@ -3,9 +3,13 @@
 // docs/invariants.md). Таймеры, позы и попадания — у исполнения (sim/action.cpp). Числа — data/duel.txt
 #pragma once
 #include "../core/mem.h"
+#include "../core/hash.h"
 #include "../sim/intent.h"
+#include "../sim/world.h"
 
 struct World;
+struct GroupDesc;
+struct FightView;
 
 struct DuelDesc {
     u32 think;          // тиков между раздумьями одного бойца (свой сдвиг у каждого — по хешу номера)
@@ -20,7 +24,13 @@ struct DuelDesc {
     u64 hash;
 };
 
+// Число [0, 1) из хеша шага, бойца и вопроса: случайность ИИ без RNG мира
+inline f32 ai_roll(u64 step, u32 id, u32 q) { return (f32)(hash_combine(hash_combine(step, id), q) >> 40) * (1.0f / 16777216.0f); }
+// Описание действия по номеру + 1 (0 и чужие номера — нет)
+inline const ActionDesc *ai_act(const World &w, u8 act) { return act && act <= w.actions.count ? &w.actions.a[act - 1] : nullptr; }
+
 // Разобрать data/duel.txt (формат docs/text.md, все поля обязательны). false — ошибка в err
 bool duel_parse(const u8 *data, usize size, DuelDesc &out, char *err, usize err_size);
-// Намерения ИИ на шаг w.step (читает только мир; порядок бойцов на исход не влияет)
-void ai_duel(const World &w, const DuelDesc &d, FixedArray<Intent> &out);
+// Раздумье бойца s (у него есть цель) на шаг w.step: какое действие желать. Зовёт ai_fight (group.h) в тик
+// раздумий бойца; угроза — замах любого, кто бьётся с ним, удар — только при свободном жетоне на цель
+void duel_think(const World &w, const DuelDesc &d, const GroupDesc &g, const FightView &v, u32 s, FixedArray<Intent> &out);
