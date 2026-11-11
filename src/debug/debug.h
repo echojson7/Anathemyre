@@ -19,6 +19,7 @@ struct DebugState {
     u32 tonemap = 0;          // тонмаппинг: 0 — AgX, 1 — ACES (RENDER_TONEMAP_*; docs/light.md), выбор по кадрам
     // Стенд людей (stand.cpp): человек у Остова, кость согнута (B), скелет, морф (0 — нет, k — морф k − 1)
     bool people_lines = false; // люди мира: капсулы шага, путь выбранного, след касаний стоп (при отрезках L)
+    bool people_sides = false; // группа (этап 12): круг стороны под ногами, линия к цели, место вокруг цели
     bool stand = false;       // выкл.: у людей мира есть тела (9б); включается в F3 и --stand
     bool stand_bend = false;
     u32 stand_bone = 0;       // 0 — локоть, 1 — колено
@@ -131,7 +132,27 @@ struct WorldInspect {
     u32 col_changed[128];      // кадр последнего изменения столбца
     u32 frame = 0;
 };
+// Бенч группы (--brawl, этап 12): счёт по шагам — толпятся ли нападающие и ждут ли хором
+struct BrawlStats {
+    u64 ticks = 0;
+    u64 crowd_ticks = 0;    // шаго-целей с двумя и больше нападающими рядом (ближе 4.5 м)
+    u64 idle_ticks = 0;     // из них никто не бьёт, не идёт бить, не защищается и не в реакции (все ждут хором)
+    u64 over_ticks = 0;     // из них бьющих разом больше жетонов
+    u64 close_ticks = 0;    // из них двое нападающих ближе 0.9 м друг к другу (толпятся)
+    u32 strikers_max = 0;   // наибольшее число бьющих одного разом
+    f64 gap_sum = 0;        // наименьший угол между соседями-нападающими, град (среднее — gap_sum / gap_n)
+    u64 gap_n = 0;
+    u32 switches = 0;       // смен цели
+    u32 prev[1024] = {};    // цели прошлого шага (PEOPLE_CAPACITY)
+};
+struct GroupDesc;
+
 #ifndef ANA_NODEBUG
+// Стенка на стенку (--brawl AxB): в шаге 0 две стороны рядами с шагом 2.5 м, 12 м друг от друга, с серединой в
+// (x0, z0) м от середины Остова (по умолчанию — дюны к западу). Целей не дают — бойцы со стороной находят врагов сами
+void brawl_intents(const World &w, const u32 n[2], FixedArray<Intent> &out, f32 x0 = -40.0f, f32 z0 = -30.0f);
+void debug_brawl_step(const World &w, BrawlStats &b);
+void debug_brawl_report(const World &w, const BrawlStats &b, const u32 n[2]);
 // Клавиши отладки за кадр
 void debug_keys(const Input &in, DebugState &d);
 // Подставной игрок для --sim: намерения из своего RNG (не RNG мира) по номеру шага
@@ -165,6 +186,9 @@ const char *const *debug_stand_clip_names(u32 *count);
 void debug_stand_args(DebugState &d, const char *spec);
 // Люди шага мира капсулами и курсом поверх тела (stand.cpp); у выбранного — путь узлами сетки и цель
 void debug_people(const World &w, DebugDraw &dbg, i32 selected);
+// Стороны боя (stand.cpp): круг под ногами цветом стороны (1 — красный, 2 — синий, ничьи — серый), линия к цели,
+// у ждущего очереди — круг меньше
+void debug_sides(const World &w, DebugDraw &dbg);
 // Перемотка: память под кольцо; после каждого шага окна — намерения шага и снимок раз в REWIND_EVERY шагов;
 // назад — к шагу target (снимок и повтор шагов). false — так далеко снимков нет
 void rewind_init(Rewind &r, const World &w);
@@ -176,6 +200,10 @@ inline void debug_keys(const Input &, DebugState &) {}
 inline void autoplay_intents(const World &, Rng &, FixedArray<Intent> &) {}
 inline void duel_intents(const World &, u32, FixedArray<Intent> &) {}
 inline void debug_duel_report(const World &, u32) {}
+inline void brawl_intents(const World &, const u32[2], FixedArray<Intent> &, f32 = 0.0f, f32 = 0.0f) {}
+inline void debug_brawl_step(const World &, BrawlStats &) {}
+inline void debug_sides(const World &, DebugDraw &) {}
+inline void debug_brawl_report(const World &, const BrawlStats &, const u32[2]) {}
 inline bool debug_write_walk_map(const World &, const char *, Arena &) { return false; }
 inline void debug_print_help() {}
 inline void debug_panel(const DebugInfo &, const World &, DebugState &, WorldInspect &) {}

@@ -2,6 +2,7 @@
 #pragma once
 #include "../core/mem.h"
 #include "../ai/duel.h"
+#include "../ai/group.h"
 
 struct World;
 struct MaterialTable;
@@ -14,6 +15,7 @@ struct Args {
     const char *replay = nullptr;   // --replay файл.rec
     const char *hashes = nullptr;   // --hashes файл.txt: хеш каждые 1000 шагов
     u32 duel = 0;                   // --duel N: с --sim вместо подставного игрока N пар бьются друг с другом (этап 11)
+    u32 brawl[2] = {0, 0};          // --brawl AxB: стенка на стенку, A против B (этап 12; с --sim — бенч, в окне — видео)
     bool rewind_check = false;      // --rewind-check: с --sim проверить перемотку окна против прямого хода
     u64 frames = 0;             // --frames N: окно закрывается после N кадров (CI)
     u64 win_w = 1600, win_h = 900;  // --window W H: размер окна (CI берёт меньше: lavapipe считает пиксели)
@@ -44,6 +46,7 @@ struct Args {
     i32 select = -1;                  // --select место: выбрать человека (и --follow — камера за ним)
     bool follow = false;
     bool people_lines = false;        // --people-lines: капсулы шага, путь выбранного и след стоп (отладка, при отрезках)
+    bool sides = false;               // --sides: стороны боя и цели (отладка, при отрезках; с --brawl — сами)
     const char *go = nullptr;         // --go "кадр место x z y аллюр; …": приказы «идти» по кадрам (видео, проверка)
     i64 slow_from = -1;               // --slow кадр: с этого кадра мир ×0.25 (замедленное видео)
     const char *attack = nullptr;     // --attack "кадр место цель; …": приказы «атаковать» по кадрам (видео удара)
@@ -67,8 +70,9 @@ bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash);
 // Действия людей (data/actions/*.txt, этап 10) и дорожки тел — в w.actions. Зовёт app_world_create; повторно —
 // горячая перезагрузка описаний в окне (отладка: запись повтора после неё не сходится с описаниями)
 bool app_actions_load(World &w, AppMemory &m);
-// ИИ поединка (data/duel.txt, этап 11); повторно — горячая перезагрузка (F5, вместе с действиями)
-bool app_duel_load(DuelDesc &d, AppMemory &m);
+// ИИ боя: поединок (data/duel.txt, этап 11) и группа (data/group.txt, этап 12); повторно — горячая перезагрузка
+// (F5, вместе с действиями). Ошибка в любом — оба старые
+bool app_fight_load(DuelDesc &d, GroupDesc &g, AppMemory &m);
 // Материалы и сетки для кадра (после render_init)
 bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view);
 // Земля мира — в видеопамять (после render_init)

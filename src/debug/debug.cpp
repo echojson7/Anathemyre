@@ -5,6 +5,8 @@
 #include "../sim/ground.h"
 #include "../sim/walk.h"
 #include "../sim/world.h"
+#include "../ai/duel.h"
+#include "../ai/group.h"
 
 void debug_keys(const Input &in, DebugState &d) {
     // Просьбы копятся до debug_clear_frame: клавиши и панель за один кадр не затирают друг друга
@@ -51,6 +53,9 @@ void autoplay_intents(const World &w, Rng &rng, FixedArray<Intent> &out) {
     if (step % 2003 == 1000) out.push_back({step, INTENT_CLOCK_RATE, WPos{}, rng_below(rng, 200)});
     // Люди: толпа в дюнах к западу от Остова в первом шаге
     if (step == 0) out.push_back({step, INTENT_PEOPLE_SPAWN, ostov_at(w, -40.0f, 0.0f, 0.0f), AUTOPLAY_PEOPLE | (25ull << 16)});
+    // Группа (этап 12): схватка 5 на 4 южнее толпы — хеши CI проверяют и выбор цели, места и очередь на удар
+    const u32 brawl[2] = {5, 4};
+    brawl_intents(w, brawl, out, -40.0f, -75.0f);
     // Приказы: каждые 13 шагов — двоим случайным (каждому раз в ~30 с); цели — дюны вокруг, пол Остова,
     // галерея над маршем
     if (step % 13 == 3 && w.people.live) {
@@ -117,6 +122,82 @@ void debug_duel_report(const World &w, u32 pairs) {
     log_info("--duel: %u пар, сильнее по навыку взял %u из %u; слабых задели %u раз, сильных — %u", pairs, skilled_won, decided,
              h_lo, h_hi);
     (void)even;
+}
+
+void brawl_intents(const World &w, const u32 n[2], FixedArray<Intent> &out, f32 x0, f32 z0) {
+    if (w.step != 0) return;
+    // Ряды с шагом 2.5 м поперёк, стороны 1 и 2; первые с краю ряда — номера по порядку рождения
+    for (u32 side = 0; side < 2; ++side)
+        for (u32 k = 0; k < n[side]; ++k) {
+            f32 dz = ((f32)k - 0.5f * (f32)(n[side] - 1)) * 2.5f;
+            out.push_back({0, INTENT_PEOPLE_SPAWN, ostov_at(w, x0 - 6.0f + 12.0f * (f32)side, z0 + dz, 0.0f),
+                           1ull | ((u64)(side + 1) << 32)});
+        }
+}
+
+void debug_brawl_step(const World &w, BrawlStats &b) {
+    const People &p = w.people;
+    FightView v;
+    fight_view(w, v);
+    b.ticks++;
+    for (u32 s = 0; s < PEOPLE_CAPACITY; ++s) {
+        if (p.alive[s] && b.prev[s] && p.target[s] && p.target[s] != b.prev[s]) b.switches++;
+        b.prev[s] = p.alive[s] ? p.target[s] : 0;
+    }
+    for (u32 t = 0; t < PEOPLE_CAPACITY; ++t) {
+        if (!p.alive[t]) continue;
+        // Нападающие рядом: курс от цели и положение
+        u32 near[64], n = 0, strikers = 0, busy = 0;
+        for (u32 i = v.first[t]; i < v.first[t + 1] && n < 64; ++i) {
+            u32 a = v.list[i];
+            Vec2 d = wpos_delta_xz(p.cx[t], p.cz[t], p.x[t], p.z[t], p.cx[a], p.cz[a], p.x[a], p.z[a]);
+            if (dot(d, d) > 4.5f * 4.5f) continue;
+            near[n++] = a;
+            const ActionDesc *A = ai_act(w, p.act[a]);
+            if (A && A->kind == ACT_STRIKE && p.act_t[a] <= A->hit_b) strikers++;
+            if (fight_holds(w, a) || people_busy(p, a)) busy++;
+        }
+        if (strikers > b.strikers_max) b.strikers_max = strikers;
+        if (n < 2) continue;
+        b.crowd_ticks++;
+        if (!busy) b.idle_ticks++;  // никто не бьёт, не защищается и не в реакции — стоят и ждут
+        if (strikers > 2) b.over_ticks++;
+        f32 gap = 360.0f;
+        bool close = false;
+        for (u32 i = 0; i < n; ++i)
+            for (u32 j = i + 1; j < n; ++j) {
+                u32 a = near[i], c = near[j];
+                Vec2 da = wpos_delta_xz(p.cx[t], p.cz[t], p.x[t], p.z[t], p.cx[a], p.cz[a], p.x[a], p.z[a]);
+                Vec2 dc = wpos_delta_xz(p.cx[t], p.cz[t], p.x[t], p.z[t], p.cx[c], p.cz[c], p.x[c], p.z[c]);
+                Vec2 ac = dc - da;
+                if (dot(ac, ac) < 0.9f * 0.9f) close = true;
+                f32 g = f_abs(turn_diff_rad(turn_of_dir(da.x, da.y), turn_of_dir(dc.x, dc.y))) * (180.0f / 3.14159265f);
+                if (g < gap) gap = g;
+            }
+        if (close) b.close_ticks++;
+        b.gap_sum += gap;
+        b.gap_n++;
+    }
+}
+
+void debug_brawl_report(const World &w, const BrawlStats &b, const u32 n[2]) {
+    const People &p = w.people;
+    u32 hits[3] = {}, skill[3] = {}, count[3] = {};
+    for (u32 s = 0; s < PEOPLE_CAPACITY; ++s) {
+        if (!p.alive[s] || p.side[s] > 2) continue;
+        hits[p.side[s]] += p.hits[s];
+        skill[p.side[s]] += p.skill[s];
+        count[p.side[s]]++;
+    }
+    for (u32 k = 1; k <= 2; ++k)
+        log_info("--brawl сторона %u: %u бойцов (задано %u), навык в среднем %u, задеты %u раз", k, count[k], n[k - 1],
+                 count[k] ? skill[k] / count[k] : 0, hits[k]);
+    const f64 c = b.crowd_ticks ? 100.0 / (f64)b.crowd_ticks : 0.0;
+    log_info("--brawl: целей с 2+ нападающими рядом — %.1f%% шагов на бойца; из них все ждут хором %.1f%%, бьющих "
+             "больше жетонов %.1f%%, двое ближе 0.9 м %.1f%%; наименьший угол между нападающими %.0f° (0 — не было); "
+             "бьющих одного разом не больше %u; смен цели %u",
+             b.ticks && p.live ? 100.0 * (f64)b.crowd_ticks / (f64)b.ticks / (f64)p.live : 0.0, (f64)b.idle_ticks * c,
+             (f64)b.over_ticks * c, (f64)b.close_ticks * c, b.gap_n ? b.gap_sum / (f64)b.gap_n : 0.0, b.strikers_max, b.switches);
 }
 
 void debug_print_help() {

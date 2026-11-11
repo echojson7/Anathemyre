@@ -80,6 +80,9 @@ void people_init(People &p, Arena &arena) {
     p.skill = arena_push<u8>(arena, n);
     p.want = arena_push<u8>(arena, n);
     p.last = arena_push<u8>(arena, n);
+    p.side = arena_push<u8>(arena, n);
+    p.place = arena_push<u16>(arena, n);
+    p.struck = arena_push<u32>(arena, n);
     p.free = arena_push<u16>(arena, n);
     p.queue = arena_push<u16>(arena, n);
     p.free_count = n;
@@ -88,7 +91,7 @@ void people_init(People &p, Arena &arena) {
     p.q_head = p.q_count = 0;
 }
 
-bool people_spawn(World &w, const WPos &at, f32 radius) {
+bool people_spawn(World &w, const WPos &at, f32 radius, u32 side) {
     People &p = w.people;
     if (p.free_count == 0) return false;
     // Место: точка в круге; в сетке ходимости — ближайшая ходимая клетка (уровень — самый нижний)
@@ -142,6 +145,9 @@ bool people_spawn(World &w, const WPos &at, f32 radius) {
     u64 h = hash_mix(p.seed[s] ^ 0x5ce11ull);
     p.skill[s] = (u8)(20 + (h & 31) + ((h >> 8) & 31));
     p.want[s] = p.last[s] = 0;
+    p.side[s] = (u8)side;
+    p.place[s] = 0;
+    p.struck[s] = (u32)w.step;
     p.live++;
     return true;
 }
@@ -173,7 +179,18 @@ void people_order_attack(World &w, u32 id, u32 target_id) {
     People &p = w.people;
     u32 s, t;
     if (!people_valid(p, id, &s) || !people_valid(p, target_id, &t) || s == t) return;
+    if (p.target[s] == target_id) return;
+    // Новая цель: место вокруг прежней не годится, в очередь на удар — с конца
     p.target[s] = target_id;
+    p.place[s] = 0;
+    p.struck[s] = (u32)w.step;
+}
+
+void people_order_place(World &w, u32 id, u32 place) {
+    People &p = w.people;
+    u32 s;
+    if (!people_valid(p, id, &s) || !p.target[s]) return;
+    p.place[s] = (u16)(place & (PLACE_RING | PLACE_ANGLE | PLACE_BACK));
 }
 
 void people_order_act(World &w, u32 id, u32 act) {
@@ -190,6 +207,7 @@ void people_order_go(World &w, u32 id, const WPos &target, u32 gait, bool player
     if (player) {
         p.target[s] = 0;
         p.want[s] = 0;
+        p.place[s] = 0;
     }
     WPos t = target;
     wpos_rebase(t);
@@ -217,6 +235,8 @@ static u32 plan(World &w, u32 s, StepCtx &ctx) {
     if (ctx.stats) { ctx.stats->paths++; ctx.stats->expanded += ws.expanded; }
     p.path_n[s] = (u8)n;
     p.path_area[s] = (u8)a0;
+    // Узел под ногами без выходов (отброс или толпа задвинули на крутое) — прямо к цели, иначе стоял бы там вечно
+    if (!n && !ws.reached && ws.expanded <= 1) { p.path_area[s] = PATH_DIRECT; return ws.expanded; }
     if (!n && !ws.reached) { p.state[s] = MOVE_STAND; return ws.expanded; }  // идти некуда: стоит
     // Не дошёл до цели (обрезан или предел поиска) — у последнего узла ищет дальше
     p.path_more[s] = (u8)(!ws.reached || (n == PATH_MAX && p.path[s * PATH_MAX + n - 1] != to));
@@ -441,6 +461,9 @@ u32 people_columns(const People &p, Column *out) {
     out[k++] = column("people.skill", p.skill, n);
     out[k++] = column("people.want", p.want, n);
     out[k++] = column("people.last", p.last, n);
+    out[k++] = column("people.side", p.side, n);
+    out[k++] = column("people.place", p.place, n);
+    out[k++] = column("people.struck", p.struck, n);
     out[k++] = column("people.free", p.free, n);
     out[k++] = column("people.free_count", &p.free_count, 1);
     out[k++] = column("people.live", &p.live, 1);

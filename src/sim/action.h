@@ -12,6 +12,7 @@ constexpr u32 BODY_PARTS = 11;   // как PARTS в tools/retarget/bake.py
 constexpr u32 PART_CHEST = 1;
 constexpr u8 ACTION_NONE = 0xFF;
 constexpr f32 ACTION_GUARD_GAP = 0.4f;  // м: зазор дистанции между ударами сверх наибольшей досягаемости
+constexpr f32 ACT_BLOCK_FACE = 1.2f;    // блок держит удар, если бьющий не дальше стольких рад от лица (и ИИ так судит)
 
 // Вид действия (этап 11): удар, блок, уклон. Удар бьёт клинком в окне hit; блок и уклон защищают в окне block клипа
 enum ActionKind : u8 { ACT_STRIKE = 0, ACT_BLOCK = 1, ACT_DODGE = 2 };

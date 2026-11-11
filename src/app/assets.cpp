@@ -220,17 +220,23 @@ bool app_actions_load(World &w, AppMemory &m) {
     return true;
 }
 
-bool app_duel_load(DuelDesc &d, AppMemory &m) {
+bool app_fight_load(DuelDesc &d, GroupDesc &g, AppMemory &m) {
     usize mark = arena_mark(m.load);
     u8 *data = nullptr;
     usize size = 0;
     char err[256];
     DuelDesc n{};
+    GroupDesc ng{};
     bool ok = read_data("duel.txt", m.load, &data, &size);
     if (ok && !(ok = duel_parse(data, size, n, err, sizeof err))) log_error("data/duel.txt: %s", err);
+    bool okg = read_data("group.txt", m.load, &data, &size);
+    if (okg && !(okg = group_parse(data, size, ng, err, sizeof err))) log_error("data/group.txt: %s", err);
     arena_restore(m.load, mark);
-    if (ok) d = n;
-    return ok;
+    if (ok && okg) {
+        d = n;
+        g = ng;
+    }
+    return ok && okg;
 }
 
 static bool world_static_load(World &w, AppMemory &m) {

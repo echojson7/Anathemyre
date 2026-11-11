@@ -202,6 +202,32 @@ void debug_people(const World &w, DebugDraw &dbg, i32 selected) {
     }
 }
 
+void debug_sides(const World &w, DebugDraw &dbg) {
+    const People &p = w.people;
+    static const u32 SEG = 20;
+    for (u32 s = 0; s < PEOPLE_CAPACITY; ++s) {
+        if (!p.alive[s] || (!p.side[s] && !p.target[s])) continue;
+        const u32 col = p.side[s] == 1 ? rgba8(235, 70, 55) : p.side[s] == 2 ? rgba8(70, 150, 255) : rgba8(200, 200, 200);
+        WPos feet{p.cx[s], p.cz[s], p.x[s], p.y[s] + 0.04f, p.z[s]};
+        const f32 r = (p.place[s] & PLACE_BACK) ? 0.3f : 0.45f;
+        WPos prev = feet;
+        for (u32 i = 0; i <= SEG; ++i) {
+            f32 sn, cs;
+            sincos_turn((Turn)(i * (0xFFFFFFFFu / SEG)), &sn, &cs);
+            WPos q = feet;
+            q.x += sn * r;
+            q.z += cs * r;
+            wpos_rebase(q);
+            if (i) dbg_line(dbg, prev, q, col);
+            prev = q;
+        }
+        u32 t;
+        if (!p.target[s] || !people_valid(p, p.target[s], &t)) continue;
+        WPos to{p.cx[t], p.cz[t], p.x[t], p.y[t] + 0.04f, p.z[t]};
+        dbg_line(dbg, feet, to, col);
+    }
+}
+
 static void bend_pose(const DebugState &d, const Skel &s, u32 k, Quat *rot) {
     if (!d.stand_bend) return;
     u32 bone = d.stand_bone < 2 ? d.stand_bone : 0;

@@ -38,10 +38,11 @@ static void usage() {
     log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
     log_info("           --frames N --video префикс                                   каждый кадр → префикс_0000.bmp… (стенд: 1/30 с на кадр)");
-    log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines]  выбрать, камера за ним, приказы, отладка");
+    log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines] [--sides]  выбрать, камера за ним, приказы, отладка");
     log_info("           [--attack \"кадр место цель; …\"] [--slow кадр]  приказы «атаковать» по кадрам, замедление ×0.25 (видео удара)");
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
     log_info("           --sim N --duel P                                             P пар бьются друг с другом (бенч ИИ поединка)");
+    log_info("           [--sim N] --brawl AxB                                        стенка на стенку A против B (бенч и видео группы)");
     log_info("           --replay файл.rec                                            проверка повтора");
     log_info("           --terrain-map файл.bmp                                       карта земли сверху");
     log_info("           --walk-map файл.bmp                                          сетка ходимости у Остова и путь");
@@ -92,6 +93,18 @@ int main(int argc, char **argv) {
         if (!strcmp(s, "--sim")) { ok = parse_u64(next, a.sim_steps) && a.sim_steps > 0; i++; }
         else if (!strcmp(s, "--seed")) { ok = parse_u64(next, a.seed); i++; }
         else if (!strcmp(s, "--rewind-check")) a.rewind_check = true;
+        else if (!strcmp(s, "--brawl")) {
+            // AxB: числа через x, у каждой стороны 1–256
+            u64 n0 = 0, n1 = 0;
+            const char *x = next ? strchr(next, 'x') : nullptr;
+            char left[16] = {};
+            ok = x && x - next > 0 && x - next < 15;
+            if (ok) memcpy(left, next, (usize)(x - next));
+            ok = ok && parse_u64(left, n0) && parse_u64(x + 1, n1) && n0 && n1 && n0 <= 256 && n1 <= 256;
+            a.brawl[0] = (u32)n0;
+            a.brawl[1] = (u32)n1;
+            i++;
+        }
         else if (!strcmp(s, "--duel")) { u64 n = 0; ok = parse_u64(next, n) && n > 0 && n <= 256; a.duel = (u32)n; i++; }
         else if (!strcmp(s, "--frames")) { ok = parse_u64(next, a.frames); i++; }
         else if (!strcmp(s, "--window")) {
@@ -157,6 +170,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--select")) { u32 v = 0; ok = next && parse_u32(Str{next, (u32)strlen(next)}, v) && v < 1024; a.select = (i32)v; i++; }
         else if (!strcmp(s, "--follow")) a.follow = true;
         else if (!strcmp(s, "--people-lines")) a.people_lines = true;
+        else if (!strcmp(s, "--sides")) a.sides = true;
         else if (!strcmp(s, "--go")) { a.go = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--attack")) { a.attack = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--slow")) { u64 f = 0; ok = parse_u64(next, f); a.slow_from = (i64)f; i++; }

@@ -117,7 +117,7 @@ $(shell ./tools/matgen.sh $(OUT))
 DATA_SRC := data/materials.txt data/scene.txt data/sky.txt data/terrain.txt data/ui/plex.font $(sort $(wildcard data/meshes/*.mesh)) \
             $(sort $(wildcard data/dunes/*.dun)) $(sort $(wildcard data/prefabs/*.txt)) $(sort $(wildcard data/people/*.skel)) \
             $(sort $(wildcard data/anims/*.anim data/anims/*.trk data/anims/*.txt)) \
-            $(sort $(wildcard data/actions/*.txt)) data/duel.txt
+            $(sort $(wildcard data/actions/*.txt)) data/duel.txt data/group.txt
 DATA_OUT := $(patsubst data/%,$(OUT)/data/%,$(DATA_SRC))
 
 .PHONY: all clean check sim-check sim-ref compdb toolchain third_party meshes anims retarget
