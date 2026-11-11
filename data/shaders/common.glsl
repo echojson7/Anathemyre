@@ -52,6 +52,7 @@ const uint STAT_SKIN_VERTS = 18u;  // вершин скинено (skin.comp)
 // выборки без страницы; вызовы кластеров в страницы; выборки текселей карты
 const uint STAT_SM_USED = 19u, STAT_SM_NEW = 20u, STAT_SM_OVER = 21u, STAT_SM_MISS = 22u, STAT_SM_DRAWS = 23u,
            STAT_SM_TAPS = 24u;
+const uint STAT_SM_WAIT = 25u;  // страниц нового шага светила, отложенных до следующих кадров (стройка в фоне)
 
 // Плитки 8×8 кадра мира по видам (docs/tiles.md, light_tiles.comp): небо — пусто; земля — земля из кеша
 // (docs/gcache.md) и, может быть, небо; сетки — сетки и, может быть, небо; смесь — земля и сетки; земля на
@@ -74,17 +75,19 @@ layout(buffer_reference, scalar) buffer GcCells { GcCell v[]; };
 
 // Тени солнца страницами (docs/shadow.md, shadow.glsl): страница — SM_PAGE² текселей одного уровня; тексель —
 // высота ближайшей к светилу заслонки (sm_enc), 0 — заслонки нет
-struct SmPage { uint key0, key1, used, made; };  // ключ (уровень << 24 | x, z), кадр чтения, кадр отрисовки
+struct SmPage { uint key0, key1, used, made; };  // ключ (место уровня << 24 | x, z), кадр чтения, кадр отрисовки
 layout(buffer_reference, scalar) buffer SmTable { uint v[]; };
 layout(buffer_reference, scalar) buffer SmPages { SmPage v[]; };
 layout(buffer_reference, scalar) buffer SmTexels { uint v[]; };
-// Заявки и свободные страницы: счёт заявок, старых и недавних свободных, dispatch выдачи; на уровень — есть ли
-// новые страницы и их биты по месту в окне; дальше заявки (ключи), старые и недавние
-layout(buffer_reference, scalar) buffer SmReq { uint req_n, old_n, recent_n, pad; uvec4 alloc; uint fresh[16];
-                                                 uint bits[16 * 32]; uint v[]; };
+// Заявки и свободные страницы: счёт заявок (показанных наборов), старых и недавних свободных, заявок набора, что
+// строится в фоне; dispatch выдачи (w — сколько из них заявки показанных); на место уровня (оба набора) — есть ли
+// новые страницы и их биты по месту в окне; дальше заявки показанных, заявки фона (по req_cap), старые и недавние
+// свободные (по pages_n)
+layout(buffer_reference, scalar) buffer SmReq { uint req_n, old_n, recent_n, bg_n; uvec4 alloc; uint fresh[32];
+                                                 uint bits[32 * 32]; uint v[]; };
 struct SmDrawCmd { uint index_count, instance_count, first_index; int vertex_offset; uint first_instance; };
 layout(buffer_reference, scalar) buffer SmDraws { uint count, pad0, pad1, pad2; SmDrawCmd v[]; };
-layout(buffer_reference, scalar) buffer SmList { uvec2 v[]; };  // экземпляр; кластер | уровень << 28
+layout(buffer_reference, scalar) buffer SmList { uvec2 v[]; };  // экземпляр; кластер | место уровня << 27
 
 // Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы сеток и кластеров (MeshGpu, ClusterGpu в
 // src/render/vk_state.h), видимые кластеры кадра и косвенные вызовы, которые пишет отсечение (cull_*.comp)
@@ -221,11 +224,13 @@ layout(buffer_reference, scalar) buffer FrameData {
     SmList sm_list;
     Vec4s sm_inval;
     uint sm_on, sm_frame, sm_pages_n, sm_req_cap;
-    uint sm_draw_cap, sm_inval_n, sm_debug, sm_pad;
-    vec4 sm_r, sm_u, sm_s;    // оси: r, u — плоскость карты, s — к светилу; r.w — тексель уровня 0, u.w — высота
-                              // камеры к светилу от якоря, s.w — дальность теней, м
-    ivec2 sm_base[16];        // окно уровня: первая страница на мировой решётке уровня
-    vec2 sm_off[16];          // камера от начала окна уровня по r, u, м
+    uint sm_draw_cap, sm_inval_n, sm_debug, sm_cur;  // sm_cur — набор нового шага светила
+    uint sm_read, sm_bg, sm_build_cap, sm_pad;        // читаемые наборы (биты); набор в фоне + 1 (0 — нет); его страниц за кадр
+    float sm_mix, sm_disc, sm_far, sm_t0;  // вес нового набора; тангенс углового радиуса светила; дальность, м; тексель уровня 0
+    // Набор (шаг светила): оси r, u — плоскость карты, s — к светилу; u.w — высота камеры к светилу от якоря набора
+    vec4 sm_r[2], sm_u[2], sm_s[2];
+    ivec2 sm_base[24];        // окно места уровня (набор · SM_LEVELS + уровень): первая страница на решётке уровня
+    vec2 sm_off[24];          // камера от начала окна по r, u, м
 };
 
 layout(push_constant, scalar) uniform Push {

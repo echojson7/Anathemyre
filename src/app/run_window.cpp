@@ -364,6 +364,8 @@ int run_window(const Args &a, AppMemory &m) {
                 di.work_sm[3] = work.sm_miss;
                 di.work_sm[4] = work.sm_draws;
                 di.work_sm[5] = work.sm_taps;
+                di.work_sm[6] = work.sm_wait;
+                di.work_sm[7] = work.sm_blend;
                 di.gc_off = work.gc_off;
                 di.light = eye_have;
                 di.lux_key = eye_info.lux_key;
@@ -684,11 +686,11 @@ int run_window(const Args &a, AppMemory &m) {
                          "px_ground %u\n"
                          "px_mesh %u\nsurf_ground %u\nsurf_mesh %u\nshadow_taps %u\ngc_used %u\ngc_baked %u\n"
                          "gc_over %u\ngc_direct %u\nskin_verts %u\nsm_used %u\nsm_new %u\nsm_over %u\nsm_miss %u\n"
-                         "sm_draws %u\nsm_taps %u\n",
+                         "sm_draws %u\nsm_taps %u\nsm_wait %u\n",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
                          work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts, work.sm_used, work.sm_new,
-                         work.sm_over, work.sm_miss, work.sm_draws, work.sm_taps);
+                         work.sm_over, work.sm_miss, work.sm_draws, work.sm_taps, work.sm_wait);
         if (!work_have) log_error("--work: кадр мира не прочитан (мало кадров)");
         if (!work_have || n <= 0 || !platform_write_file(a.work, t, (usize)n)) rc_exit = 1;
     }

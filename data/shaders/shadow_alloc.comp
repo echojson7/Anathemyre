@@ -1,6 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
-// Тени солнца (docs/shadow.md): выдача страниц заявкам кадра. Группа — страница: первый поток берёт физическую
+// Тени солнца (docs/shadow.md): выдача страниц заявкам кадра (сначала показанных наборов, потом набора в фоне,
+// shadow_args.comp). Группа — страница: первый поток берёт физическую
 // (сначала старые, потом недавние), снимает её с прежнего места в окне, ставит на новое и отмечает место в битах
 // новых страниц уровня (по ним отбор решает, что рисовать); все потоки очищают тексели — «заслонки нет»
 #include "shadow.glsl"
@@ -12,10 +13,12 @@ void main() {
     FrameData f = pc.frame;
     uint i = gl_WorkGroupID.x;
     if (gl_LocalInvocationIndex == 0u) {
-        uvec2 key = uvec2(f.sm_req.v[2u * i], f.sm_req.v[2u * i + 1u]);
+        uint n = f.sm_req.alloc.w;  // первые n — заявки показанных наборов, дальше — набора в фоне
+        uint at = i < n ? 2u * i : 2u * (f.sm_req_cap + i - n);
+        uvec2 key = uvec2(f.sm_req.v[at], f.sm_req.v[at + 1u]);
         int k = sm_key_level(key);
         ivec2 page = sm_key_page(key);
-        uint base = 2u * f.sm_req_cap;
+        uint base = 4u * f.sm_req_cap;
         uint old_n = f.sm_req.old_n;
         uint p = i < old_n ? f.sm_req.v[base + i] : f.sm_req.v[base + f.sm_pages_n + (i - old_n)];
         SmPage pg = f.sm_pages.v[p];
