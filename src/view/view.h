@@ -99,6 +99,7 @@ struct ViewInput {
     u32 tonemap = RENDER_TONEMAP_AGX;
     u32 light_quality = RENDER_LIGHT_HIGH;
     u32 shadow_pages = 0;  // F3 (docs/shadow.md): 1 — страницы теней поверх кадра, 2 — только тень
+    u32 sdf_view = RENDER_SDF_FRAME;  // F3 (docs/sdf.md): поле расстояний мира — кадр, только небо, поле, выкл
 };
 
 // Память под экземпляры, точки и отрезки — из арены кадра

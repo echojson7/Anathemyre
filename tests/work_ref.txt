@@ -21,3 +21,5 @@ sm_miss 0
 sm_draws 0
 sm_taps 2272512
 sm_wait 0
+sdf_taps 7714647
+sdf_bricks 0

@@ -1,0 +1,84 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Засыпка поля расстояний мира (docs/sdf.md, vk_sdf.cpp): группа — кластер экземпляра на уровне кольца, поток —
+// треугольник. Треугольник в осях поля (от якоря) пишет в воксели уровня не дальше полосы SDF_BAND вокселей
+// расстояние до себя атомарным минимумом, младший бит — точка с обратной стороны грани (внутри). Минимум не
+// зависит от порядка: воксель одинаков, когда бы и с какими соседями кирпич ни собирался. Пишет только в кирпичи,
+// грязные в этом кадре (биты), и только в их рамку (sdf_lo, sdf_hi). Один цикл без barrier() (docs/shadow.md,
+// «Lavapipe и GPU-AV»)
+#include "common.glsl"
+layout(local_size_x = 128) in;
+
+// Ближайшая к p точка треугольника abc (Ericson, «Real-Time Collision Detection», 5.1.5)
+vec3 closest_on_tri(vec3 p, vec3 a, vec3 b, vec3 c) {
+    vec3 ab = b - a, ac = c - a, ap = p - a;
+    float d1 = dot(ab, ap), d2 = dot(ac, ap);
+    if (d1 <= 0.0 && d2 <= 0.0) return a;
+    vec3 bp = p - b;
+    float d3 = dot(ab, bp), d4 = dot(ac, bp);
+    if (d3 >= 0.0 && d4 <= d3) return b;
+    float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) return a + ab * (d1 / (d1 - d3));
+    vec3 cp = p - c;
+    float d5 = dot(ab, cp), d6 = dot(ac, cp);
+    if (d6 >= 0.0 && d5 <= d6) return c;
+    float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) return a + ac * (d2 / (d2 - d6));
+    float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0) return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    float dn = 1.0 / (va + vb + vc);
+    return a + ab * (vb * dn) + ac * (vc * dn);
+}
+
+vec3 vertex_at(MeshInfo m, uint i) {
+    Vertex v = pc.frame.vertices.v[m.first_vertex + pc.frame.indices.v[i]];
+    return vec3(v.px, v.py, v.pz);
+}
+
+void main() {
+    FrameData f = pc.frame;
+    uint j = gl_WorkGroupID.x + gl_WorkGroupID.y * pc.a;
+    if (j >= f.sdf_jobs_n) return;
+    uvec2 e = f.sdf_jobs.v[j];
+    int L = int(e.y >> 24u);
+    Cluster cl = f.clusters.v[e.y & 0xFFFFFFu];
+    uint t = gl_LocalInvocationIndex;
+    if (t == 0u) atomicAdd(f.stats.v[STAT_SDF_TRIS], cl.tri_count);
+    if (t >= cl.tri_count) return;
+    Instance it = f.vis_instances.v[e.x];
+    MeshInfo m = f.meshes.v[it.mesh];
+    vec4 q = inst_quat(it);
+    vec2 oc = vec2(ivec2(it.cx, it.cz) - f.sdf_anchor) * CHUNK_M;
+    vec3 o = vec3(oc.x + it.x, it.y, oc.y + it.z);
+    uint i0 = m.first_index + cl.first_index + 3u * t;
+    vec3 a = o + quat_rotate(q, vertex_at(m, i0) * it.scale);
+    vec3 b = o + quat_rotate(q, vertex_at(m, i0 + 1u) * it.scale);
+    vec3 c = o + quat_rotate(q, vertex_at(m, i0 + 2u) * it.scale);
+    vec3 nrm = cross(b - a, c - a);  // наружу у граней против часовой (как у visibility buffer)
+    if (dot(nrm, nrm) < 1e-14) return;
+
+    // Воксели уровня, чей центр (i + 0.5)·v ближе полосы к коробке треугольника, внутри рамки грязного
+    float v = f.sdf_cam.w * float(1 << L);
+    float band = SDF_BAND * v;
+    ivec3 lo = ivec3(ceil((min(a, min(b, c)) - band) / v - 0.5));
+    ivec3 hi = ivec3(floor((max(a, max(b, c)) + band) / v - 0.5));
+    lo = max(lo, f.sdf_lo[L].xyz);
+    hi = min(hi, f.sdf_hi[L].xyz);
+    ivec3 n = hi - lo + 1;
+    if (n.x <= 0 || n.y <= 0 || n.z <= 0) return;
+    uint total = uint(n.x) * uint(n.y) * uint(n.z);
+    uint base = uint(L) * uint(SDF_N * SDF_N * SDF_N);
+    uint bits = uint(L) * uint(SDF_N * SDF_N * SDF_N / 512 / 32);
+    for (uint k = 0u; k < total; ++k) {
+        ivec3 i = lo + ivec3(int(k % uint(n.x)), int((k / uint(n.x)) % uint(n.y)), int(k / uint(n.x * n.y)));
+        ivec3 sl = i & (SDF_N - 1);
+        uint bs = uint(sl.x >> 3) + 16u * uint(sl.y >> 3) + 256u * uint(sl.z >> 3);
+        if ((f.sdf_bits.v[bits + (bs >> 5u)] & (1u << (bs & 31u))) == 0u) continue;
+        vec3 p = (vec3(i) + 0.5) * v;
+        vec3 dv = p - closest_on_tri(p, a, b, c);
+        float d = length(dv);
+        if (d >= band) continue;
+        uint w = uint(d / band * 1073741824.0) << 1u | (dot(dv, nrm) < 0.0 ? 1u : 0u);
+        atomicMin(f.sdf_scratch.v[base + uint(sl.x) + uint(SDF_N) * uint(sl.y) + uint(SDF_N * SDF_N) * uint(sl.z)], w);
+    }
+}
