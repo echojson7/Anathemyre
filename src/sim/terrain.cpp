@@ -711,20 +711,6 @@ void terrain_generate(Terrain &t, const TerrainDesc &d, Arena &world, Arena &scr
 
 // --- описание ---
 
-static void terrain_err(char *err, usize cap, u32 line, const char *what) {
-    if (!cap) return;
-    usize k = 0;
-    char num[12];
-    u32 nd = 0;
-    do { num[nd++] = (char)('0' + line % 10); line /= 10; } while (line && nd < sizeof num);
-    const char *pre = "строка ";
-    for (const char *p = pre; *p && k + 1 < cap; ++p) err[k++] = *p;
-    while (nd && k + 1 < cap) err[k++] = num[--nd];
-    if (k + 2 < cap) { err[k++] = ':'; err[k++] = ' '; }
-    for (const char *p = what; *p && k + 1 < cap; ++p) err[k++] = *p;
-    err[k] = 0;
-}
-
 // seed <n> · chunks <n, чётное> · ring <м> · locations <valley|desert>… (с запада на восток) ·
 // dunes <номер локации> <файл .dun в data/> · pad <x> <z> <w> <d> [<переход м>]
 bool terrain_desc_parse(const u8 *text, usize size, TerrainDesc &out, char *err, usize err_cap) {
@@ -733,19 +719,19 @@ bool terrain_desc_parse(const u8 *text, usize size, TerrainDesc &out, char *err,
     TextLine l;
     while (text_next(r, l)) {
         if (l.count >= 2 && str_eq(l.w[0], "locations")) {
-            if (l.count - 1 > TERRAIN_MAX_LOCATIONS) { terrain_err(err, err_cap, l.line, "слишком много локаций"); return false; }
+            if (l.count - 1 > TERRAIN_MAX_LOCATIONS) { text_err(err, err_cap, l.line, "слишком много локаций"); return false; }
             out.locations = l.count - 1;
             for (u32 k = 1; k < l.count; ++k) {
                 if (str_eq(l.w[k], "valley")) out.biome[k - 1] = BIOME_VALLEY;
                 else if (str_eq(l.w[k], "desert")) out.biome[k - 1] = BIOME_DESERT;
-                else { terrain_err(err, err_cap, l.line, "локация: valley или desert"); return false; }
+                else { text_err(err, err_cap, l.line, "локация: valley или desert"); return false; }
             }
             continue;
         }
         if (l.count == 3 && str_eq(l.w[0], "dunes")) {
             u32 loc = 0;
             if (!parse_u32(l.w[1], loc) || loc >= TERRAIN_MAX_LOCATIONS || l.w[2].n >= sizeof out.dune_path[0]) {
-                terrain_err(err, err_cap, l.line, "dunes <локация> <файл>");
+                text_err(err, err_cap, l.line, "dunes <локация> <файл>");
                 return false;
             }
             memcpy(out.dune_path[loc], l.w[2].p, l.w[2].n);
@@ -753,24 +739,24 @@ bool terrain_desc_parse(const u8 *text, usize size, TerrainDesc &out, char *err,
             continue;
         }
         if ((l.count == 5 || l.count == 6) && str_eq(l.w[0], "pad")) {
-            if (out.pad_count >= TERRAIN_MAX_PADS) { terrain_err(err, err_cap, l.line, "слишком много площадок"); return false; }
+            if (out.pad_count >= TERRAIN_MAX_PADS) { text_err(err, err_cap, l.line, "слишком много площадок"); return false; }
             TerrainPad &p = out.pad[out.pad_count++];
             p.margin = 16;
             if (!parse_i32(l.w[1], p.x) || !parse_i32(l.w[2], p.z) || !parse_i32(l.w[3], p.w) || !parse_i32(l.w[4], p.d) ||
                 (l.count == 6 && !parse_i32(l.w[5], p.margin)) || p.w < 1 || p.d < 1 || p.w > 512 || p.d > 512 ||
                 p.margin < 1 || p.margin > 256) {
-                terrain_err(err, err_cap, l.line, "pad <x> <z> <ширина 1..512> <глубина 1..512> [<переход 1..256 м>]");
+                text_err(err, err_cap, l.line, "pad <x> <z> <ширина 1..512> <глубина 1..512> [<переход 1..256 м>]");
                 return false;
             }
             continue;
         }
-        if (l.count != 2) { terrain_err(err, err_cap, l.line, "ожидается <ключ> <значение>"); return false; }
+        if (l.count != 2) { text_err(err, err_cap, l.line, "ожидается <ключ> <значение>"); return false; }
         bool ok = true;
         if (str_eq(l.w[0], "seed")) ok = parse_u32(l.w[1], out.seed);
         else if (str_eq(l.w[0], "chunks")) ok = parse_i32(l.w[1], out.chunks) && out.chunks >= 4 && out.chunks <= 200 && out.chunks % 2 == 0;
         else if (str_eq(l.w[0], "ring")) ok = parse_f32(l.w[1], out.ring) && out.ring >= 256;
-        else { terrain_err(err, err_cap, l.line, "неизвестный ключ"); return false; }
-        if (!ok) { terrain_err(err, err_cap, l.line, "плохое значение"); return false; }
+        else { text_err(err, err_cap, l.line, "неизвестный ключ"); return false; }
+        if (!ok) { text_err(err, err_cap, l.line, "плохое значение"); return false; }
     }
     return true;
 }

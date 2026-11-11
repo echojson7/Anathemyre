@@ -5,6 +5,7 @@
 #include "action.h"
 #include "../core/hash.h"
 #include "../core/text.h"
+#include "people_grid.h"
 #include "step.h"
 #include <string.h>
 
@@ -27,22 +28,6 @@ static constexpr f32 ACT_BLOCK_MAX = 0.95f;
 static const char *const PART_NAMES[BODY_PARTS] = {"голова", "грудь", "таз", "плечо л", "плечо п", "предплечье л",
                                                     "предплечье п", "бедро л", "бедро п", "голень л", "голень п"};
 const char *body_part_name(u32 part) { return part < BODY_PARTS ? PART_NAMES[part] : "?"; }
-
-static void act_err(char *err, usize n, u32 line, const char *what) {
-    char num[12];
-    u32 k = 0, v = line;
-    char tmp[12];
-    do { tmp[k++] = (char)('0' + v % 10); v /= 10; } while (v && k < 11);
-    for (u32 i = 0; i < k; ++i) num[i] = tmp[k - 1 - i];
-    num[k] = 0;
-    usize o = 0;
-    const char *pre = "строка ";
-    for (const char *q = pre; *q && o + 1 < n; ++q) err[o++] = *q;
-    for (const char *q = num; *q && o + 1 < n; ++q) err[o++] = *q;
-    for (const char *q = ": "; *q && o + 1 < n; ++q) err[o++] = *q;
-    for (const char *q = what; *q && o + 1 < n; ++q) err[o++] = *q;
-    if (n) err[o] = 0;
-}
 
 // Линии: over side low (через пробел, не меньше одной)
 static bool parse_lines(const TextLine &l, u8 &out) {
@@ -98,7 +83,7 @@ bool action_parse(const u8 *data, usize size, ActionDesc &out, char *err, usize 
             out.chance_skill = b;
             have |= H_CHANCE;
         } else {
-            act_err(err, err_size, l.line, "непонятная строка (kind, clip, start, end, reach, hitstop, push, react, line, chance, recoil)");
+            text_err(err, err_size, l.line, "непонятная строка (kind, clip, start, end, reach, hitstop, push, react, line, chance, recoil)");
             return false;
         }
     }
@@ -109,11 +94,11 @@ bool action_parse(const u8 *data, usize size, ActionDesc &out, char *err, usize 
     else if (out.kind == ACT_BLOCK) { need |= H_LINE | H_CHANCE | H_STOP | H_PUSH | H_RECOIL; what = "блок: kind, clip, start, end, lines, chance, hitstop, push, recoil"; }
     else { need |= H_LINE; what = "уклон: kind, clip, start, end, lines"; }
     if (have != need) {
-        act_err(err, err_size, 0, what);
+        text_err(err, err_size, 0, what);
         return false;
     }
     if (out.end <= out.start) {
-        act_err(err, err_size, 0, "end должен быть позже start");
+        text_err(err, err_size, 0, "end должен быть позже start");
         return false;
     }
     return true;
@@ -279,6 +264,16 @@ static void act_react(World &w, u32 s) {
     p.react_t[s] = k >= p.react_len[s] ? 0 : (u16)(k + 1);
 }
 
+// Начать реакцию s от удара или блока from: отброс от from к s (совпали — по курсу from)
+static void act_react_begin(People &p, u32 s, u32 from, u16 len, f32 push, u32 part) {
+    p.react_t[s] = 1;
+    p.react_len[s] = len;
+    p.react_push[s] = push;
+    p.react_part[s] = (u8)part;
+    Vec2 o = wpos_delta_xz(p.cx[from], p.cz[from], p.x[from], p.z[from], p.cx[s], p.cz[s], p.x[s], p.z[s]);
+    p.react_yaw[s] = dot(o, o) > 1e-6f ? turn_of_dir(o.x, o.y) : p.heading[from];
+}
+
 // Ход действия на тик: корень по дорожке (сдвиг и поворот от тика start), конец — человек свободен (приказ
 // «атаковать» остаётся: бой идёт, пока его не снимут)
 static void act_advance(World &w, u32 s) {
@@ -386,26 +381,35 @@ static void act_approach(World &w, u32 s, u32 t, u32 k, StepStats *stats, ActRet
     if (p.speed[s] < 0.5f && face < ACT_FACE && A.track) act_start(w, s, k, stats, ret, nret);
 }
 
+// Клинок s в окне удара и ещё не попал
+static bool act_striking(const World &w, u32 s) {
+    const People &p = w.people;
+    const ActionDesc *A = act_desc(w, s);
+    return A && A->kind == ACT_STRIKE && !p.act_hit[s] && p.act_t[s] >= A->hit_a && p.act_t[s] <= A->hit_b &&
+           p.act_t[s] > A->start;
+}
+
 struct ActHit {
     u32 att, def, part;
     u32 act;  // удар бьющего (номер): к применению его действие могли сорвать (взаимный удар — размен)
 };
 
-// Клинок s в окне удара против капсул всех рядом: первое касание на пути клинка от прошлого тика к этому
-static bool act_find_hit(const World &w, u32 s, ActHit &out) {
+// Клинок s (act_striking) против капсул всех рядом (сетка людей; без неё — все живые): первое касание на пути
+// клинка от прошлого тика к этому
+static bool act_find_hit(const World &w, const PeopleGrid *g, u32 s, ActHit &out) {
     const People &p = w.people;
-    const ActionDesc *A = act_desc(w, s);
-    if (!A || A->kind != ACT_STRIKE || p.act_hit[s] || p.act_t[s] < A->hit_a || p.act_t[s] > A->hit_b || p.act_t[s] <= A->start)
-        return false;
     WPos ref{p.cx[s], p.cz[s], p.x[s], p.y[s], p.z[s]};
     f32 a0[3], b0[3], a1[3], b1[3];
     if (!people_blade(w, s, (u32)p.act_t[s] - 1, ref, a0, b0) || !people_blade(w, s, p.act_t[s], ref, a1, b1)) return false;
     u32 best_k = ACT_SWEEP + 1, best_d = 0, best_part = 0;
     f32 best_pen = 0.0f;
-    for (u32 d = 0; d < PEOPLE_CAPACITY; ++d) {
-        if (!p.alive[d] || d == s) continue;
+    PeopleSet near;
+    if (g) people_grid_near(*g, ref.cx, ref.cz, ref.x, ref.z, ACT_NEAR, near);
+    else people_set_alive(p, near);
+    people_set_each(near, [&](u32 d) {
+        if (d == s) return;
         Vec2 o = wpos_delta_xz(ref.cx, ref.cz, ref.x, ref.z, p.cx[d], p.cz[d], p.x[d], p.z[d]);
-        if (dot(o, o) > ACT_NEAR * ACT_NEAR) continue;
+        if (dot(o, o) > ACT_NEAR * ACT_NEAR) return;
         BodyCaps bc;
         people_body(w, d, ref, bc);
         for (u32 k = 1; k <= ACT_SWEEP && k <= best_k; ++k) {
@@ -431,7 +435,7 @@ static bool act_find_hit(const World &w, u32 s, ActHit &out) {
             }
             if (any) break;
         }
-    }
+    });
     if (best_k > ACT_SWEEP) return false;
     out = {s, best_d, best_part, p.act[s] - 1u};
     return true;
@@ -489,16 +493,20 @@ void people_act(World &w, StepCtx &ctx) {
         }
     }
     for (u32 i = 0; i < nret; ++i)
-        if (!p.target[ret[i].who]) {
-            p.target[ret[i].who] = make_id(ret[i].att, p.gen[ret[i].att]).v;
-            p.place[ret[i].who] = 0;
-            p.struck[ret[i].who] = (u32)w.step;
-        }
-    // 3) Попадания по положению после ходов у всех; исход блока — RNG мира по порядку бьющих
+        if (!p.target[ret[i].who]) people_set_target(w, ret[i].who, make_id(ret[i].att, p.gen[ret[i].att]).v);
+    // 3) Попадания по положению после ходов у всех (сетка людей — по нему же); исход блока — RNG мира по порядку
+    // бьющих
+    PeopleGrid *g = nullptr;  // строится, когда первый клинок в окне удара
     ActHit hits[64];
     u32 nh = 0;
-    for (u32 s = 0; s < PEOPLE_CAPACITY && nh < 64; ++s)
-        if (p.alive[s] && p.act[s] && !(held && held[s]) && act_find_hit(w, s, hits[nh])) nh++;
+    for (u32 s = 0; s < PEOPLE_CAPACITY && nh < 64; ++s) {
+        if (!p.alive[s] || !p.act[s] || (held && held[s]) || !act_striking(w, s)) continue;
+        if (ar && !g) {
+            g = arena_push<PeopleGrid>(*ar, 1);
+            people_grid_build(p, PEOPLE_GRID_FINE, *g, arena_push<PeopleGridEntry>(*ar, PEOPLE_CAPACITY));
+        }
+        if (act_find_hit(w, g, s, hits[nh])) nh++;
+    }
     for (u32 i = 0; i < nh; ++i) {
         const ActHit &h = hits[i];
         const ActionDesc &A = T.a[h.act];
@@ -511,12 +519,7 @@ void people_act(World &w, StepCtx &ctx) {
                 act_end(p, h.att);
                 p.want[h.att] = 0;
                 p.freeze[h.att] = p.freeze[d] = B->hitstop;
-                p.react_t[h.att] = 1;
-                p.react_len[h.att] = B->react;
-                p.react_push[h.att] = B->push;
-                p.react_part[h.att] = (u8)PART_CHEST;
-                Vec2 o = wpos_delta_xz(p.cx[d], p.cz[d], p.x[d], p.z[d], p.cx[h.att], p.cz[h.att], p.x[h.att], p.z[h.att]);
-                p.react_yaw[h.att] = dot(o, o) > 1e-6f ? turn_of_dir(o.x, o.y) : p.heading[d];
+                act_react_begin(p, h.att, d, B->react, B->push, PART_CHEST);
                 if (ctx.stats) ctx.stats->blocks++;
                 continue;
             }
@@ -529,17 +532,8 @@ void people_act(World &w, StepCtx &ctx) {
         p.state[d] = MOVE_STAND;
         p.speed[d] = 0.0f;
         p.freeze[d] = A.hitstop;
-        p.react_t[d] = 1;
-        p.react_len[d] = A.react;
-        p.react_push[d] = A.push;
-        p.react_part[d] = (u8)h.part;
-        Vec2 o = wpos_delta_xz(p.cx[h.att], p.cz[h.att], p.x[h.att], p.z[h.att], p.cx[d], p.cz[d], p.x[d], p.z[d]);
-        p.react_yaw[d] = dot(o, o) > 1e-6f ? turn_of_dir(o.x, o.y) : p.heading[h.att];
-        if (!p.target[d] && people_foes(p, d, h.att)) {
-            p.target[d] = make_id(h.att, p.gen[h.att]).v;
-            p.place[d] = 0;
-            p.struck[d] = (u32)w.step;
-        }
+        act_react_begin(p, d, h.att, A.react, A.push, h.part);
+        if (!p.target[d] && people_foes(p, d, h.att)) people_set_target(w, d, make_id(h.att, p.gen[h.att]).v);
         if (p.hits[d] < 0xFFFF) p.hits[d]++;
         if (ctx.stats) {
             ctx.stats->hits++;
