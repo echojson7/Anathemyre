@@ -165,7 +165,7 @@ bool app_actions_load(World &w, AppMemory &m) {
         if (ok && !(ok = action_parse(data, size, A, err, sizeof err))) log_error("data/%s: %s", rel, err);
         if (!ok) break;
         A.name = hash_str(names.name[i]);
-        snprintf(A.label, sizeof A.label, "%s", names.name[i]);
+        snprintf(A.label, sizeof A.label, "%.23s", names.name[i]);
         A.track = world_track(m, A.clip_name, &h);
         // Окно удара и отмена — метки клипа (ключи 30/с → тики 60/с)
         AnimLabels lb{};
