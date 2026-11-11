@@ -103,6 +103,8 @@ vec3 shade_hit(Hit h, int phys) {
     float lux_sky = pc.frame.sky_out.v[SKY_OUT_EYE].w;
     if (pc.frame.sdf_view == SDF_VIEW_SKY) c = vec3(0.5 / A_PI * lux_sky * sdf_sky(s.pos, s.normal).x);
     if (pc.frame.sdf_view == SDF_VIEW_FIELD) c = sdf_field_view(s.pos, s.normal, lux_sky);
+    // F3 «непрямой свет»: только он — серая карта 50 % под светом зондов (docs/gi.md)
+    if (pc.frame.gi_view == GI_VIEW_ONLY) c = light_indirect_view(s);
     return pc.frame.froxel_heat != 0u ? froxel_heat(c, s.pos) : c;
 }
 

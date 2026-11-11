@@ -1,0 +1,142 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Лучи зондов непрямого света (6г, docs/gi.md): группа — работа (зонд), поток — лучи через 64. Сначала зонд
+// отходит от стен по полю (сдвиг не больше 0.45 шага, как у DDGI); зонд, оставшийся в стене, лучей не пускает.
+// Луч идёт по полю расстояний и карте высот земли конусом ширины GI_SPREAD на метр (уровень поля — по ширине,
+// как мип). Попал — яркость точки: цвет × (солнце с тенью по полю и карте горизонта + свет зондов прошлого
+// смешения в точке: так копятся отскоки); не попал — небо. Пишет лучи и место зонда, таблицу зондов и атлас
+// не трогает (их читают другие группы этого же прохода) — переносит смешение (gi_blend.comp)
+#include "gi.glsl"
+#include "horizon.glsl"
+#include "atmosphere.glsl"
+layout(local_size_x = 64) in;
+
+shared vec4 s_probe;   // место от якоря, w — состояние
+shared uint s_back;    // лучей, попавших в обратную сторону грани (зонд внутри заслонки)
+shared uint s_taps;
+
+// Видимость светила из точки попадания: карта горизонта земли и узкий конус по полю к светилу
+float gi_sun_vis(vec3 pa, vec3 n, vec3 l, float vox) {
+    FrameData f = pc.frame;
+    float v = h_sun_shadow(pa - f.sdf_cam.xyz, l);
+    if (v <= 0.0) return 0.0;
+    v *= sdf_cone(pa + n * vox, l, 0.03, vox, GI_TMAX, 24u).x;
+    return v;
+}
+
+// Яркость луча из o по d: rgb, w — расстояние до попадания (−1 — небо). back — попал в обратную сторону грани
+vec4 gi_ray(vec3 o, vec3 d, out bool back) {
+    FrameData f = pc.frame;
+    back = false;
+    float v0 = f.sdf_cam.w;
+    float t = 0.5 * v0;
+    bool hit = false, gnd = false;
+    int L = 0;
+    for (uint i = 0u; i < GI_STEPS; ++i) {
+        vec3 p = o + d * t;
+        float r = max(t * GI_SPREAD, 0.5 * v0);
+        L = clamp(int(ceil(log2(r / (SDF_BAND * v0)))), 0, SDF_LEVELS - 1);
+        float ds = sdf_dist(p, L);
+        float dg = gi_ground_dist(p);
+        float dd = min(ds, dg);
+        if (dd < 0.25 * r) {
+            hit = true;
+            gnd = dg <= ds;
+            break;
+        }
+        t += max(dd, 0.5 * r);
+        if (t > GI_TMAX) break;
+        if (i + 1u == GI_STEPS) {
+            hit = true;  // шаги кончились у заслонок (луч вдоль стены): тёмное, а не небо
+            gnd = dg <= ds;
+        }
+    }
+    if (!hit) return vec4(atmo_sky(vec3(d.x, max(d.y, 0.0), d.z)), -1.0);
+    vec3 p = o + d * t;
+    float vox = v0 * float(1 << L);
+    vec3 n;
+    vec3 alb;
+    if (gnd) {
+        float e = 2.0;
+        float hx = gi_ground_h(p + vec3(e, 0, 0)) - gi_ground_h(p - vec3(e, 0, 0));
+        float hz = gi_ground_h(p + vec3(0, 0, e)) - gi_ground_h(p - vec3(0, 0, e));
+        n = normalize(vec3(-hx, 2.0 * e, -hz));
+        alb = gi_ground_albedo(p);
+    } else {
+        vec3 gr = gi_grad(p, L);
+        float gl = length(gr);
+        n = gl > 1e-6 ? gr / gl : -d;
+        alb = GI_WALL_ALBEDO;
+    }
+    if (dot(n, d) > 0.0) {
+        back = true;
+        return vec4(0.0, 0.0, 0.0, t);
+    }
+    vec3 l = normalize(f.sun_dir.xyz);
+    float nl = dot(n, l);
+    vec3 e_sun = vec3(0.0);
+    if (nl > 0.0 && dot(f.sun_color.rgb, vec3(1.0)) > 0.0) e_sun = f.sun_color.rgb * (nl * gi_sun_vis(p, n, l, vox));
+    // Свет зондов в точке (прошлое смешение): второй и следующие отскоки. Вне окон — свет неба без заслонки
+    GiSample g = gi_sample(p - f.sdf_cam.xyz, n, n, false);
+    vec3 amb = mix(atmo_ambient(n), g.irr, g.cov);
+    return vec4(alb * (e_sun / A_PI + amb), t);
+}
+
+// Сдвиг зонда из заслонок: по наклону поля, пока до мира ближе 0.3 шага (не дальше 0.45 шага от узла).
+// Остался ближе 0.05 шага или внутри — зонд в стене
+vec4 gi_place(vec3 h, int L) {
+    float s = gi_step(L);
+    vec3 p = h;
+    float d = gi_dist(p, L);
+    for (int k = 0; k < 4 && d < 0.3 * s; ++k) {
+        vec3 g = gi_grad(p, L);
+        float gl = length(g);
+        if (gl < 1e-6) break;
+        p = clamp(p + g / gl * (0.3 * s - d), h - 0.45 * s, h + 0.45 * s);
+        d = gi_dist(p, L);
+    }
+    return vec4(p, d > 0.05 * s ? float(GI_ACTIVE) : float(GI_INACTIVE));
+}
+
+void main() {
+    FrameData f = pc.frame;
+    uint t = gl_LocalInvocationIndex;
+    uint job = pc.a + gl_WorkGroupID.x;
+    uint word = f.gi_jobs.v[job];
+    uint slot = word & 0xFFFFu;
+    int L;
+    ivec3 ip = gi_home(slot, L);
+    if (t == 0u) {
+        s_probe = gi_place(vec3(ip) * gi_step(L), L);
+        s_back = 0u;
+        s_taps = g_sdf_taps;
+        g_sdf_taps = 0u;
+    }
+    barrier();
+    vec4 pr = s_probe;
+    uint n = f.gi_rays_n;
+    if (uint(pr.w) == GI_ACTIVE) {
+        vec4 q = gi_rot(ip, L, (word >> 17) & 3u);
+        uint back = 0u;
+        for (uint r = t; r < n; r += 64u) {
+            bool b;
+            vec4 v = gi_ray(pr.xyz, quat_rotate(q, gi_fib(r, n)), b);
+            if (b) ++back;
+            v.rgb = min(v.rgb, vec3(60000.0));  // запас до края f16
+            f.gi_rays.v[gl_WorkGroupID.x * GI_RAYS_MAX + r] = uvec2(packHalf2x16(v.rg), packHalf2x16(v.ba));
+        }
+        if (back != 0u) atomicAdd(s_back, back);
+    }
+    atomicAdd(s_taps, g_sdf_taps);
+    barrier();
+    if (t == 0u) {
+        // Больше четверти лучей — в обратную сторону граней: зонд внутри заслонки (DDGI)
+        bool inside = uint(pr.w) == GI_ACTIVE && s_back * 4u > n;
+        f.gi_pos.v[gl_WorkGroupID.x] = vec4(pr.xyz, inside ? float(GI_INACTIVE) : pr.w);
+        if (uint(pr.w) == GI_ACTIVE) {
+            atomicAdd(f.stats.v[STAT_GI_PROBES], 1u);
+            atomicAdd(f.stats.v[STAT_GI_RAYS], n);
+        }
+        atomicAdd(f.stats.v[STAT_GI_TAPS], s_taps);
+    }
+}
