@@ -1,6 +1,7 @@
 // Приложение: режимы запуска (окно, --sim, --replay) и общее для них
 #pragma once
 #include "../core/mem.h"
+#include "../ai/duel.h"
 
 struct World;
 struct MaterialTable;
@@ -12,6 +13,7 @@ struct Args {
     const char *record = nullptr;   // --record файл.rec
     const char *replay = nullptr;   // --replay файл.rec
     const char *hashes = nullptr;   // --hashes файл.txt: хеш каждые 1000 шагов
+    u32 duel = 0;                   // --duel N: с --sim вместо подставного игрока N пар бьются друг с другом (этап 11)
     bool rewind_check = false;      // --rewind-check: с --sim проверить перемотку окна против прямого хода
     u64 frames = 0;             // --frames N: окно закрывается после N кадров (CI)
     u64 win_w = 1600, win_h = 900;  // --window W H: размер окна (CI берёт меньше: lavapipe считает пиксели)
@@ -65,6 +67,8 @@ bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash);
 // Действия людей (data/actions/*.txt, этап 10) и дорожки тел — в w.actions. Зовёт app_world_create; повторно —
 // горячая перезагрузка описаний в окне (отладка: запись повтора после неё не сходится с описаниями)
 bool app_actions_load(World &w, AppMemory &m);
+// ИИ поединка (data/duel.txt, этап 11); повторно — горячая перезагрузка (F5, вместе с действиями)
+bool app_duel_load(DuelDesc &d, AppMemory &m);
 // Материалы и сетки для кадра (после render_init)
 bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view);
 // Земля мира — в видеопамять (после render_init)

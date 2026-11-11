@@ -1,16 +1,16 @@
 # anathemyre --sim: хеш земли, сетки ходимости, неизменного (коллайдеры, сетка, длины шага) и хеш мира каждые 1000 шагов
-sim_version 10
+sim_version 11
 seed 1
 terrain 0211c1059a49b777
 walk e49e8d3affc3a32a
-static e670e218f57a7aec
-step 1000 9ab027567eeeea73
-step 2000 f1499cc5e3cdbc35
-step 3000 07dad3c956fc9cf4
-step 4000 c119cf96d808fa0c
-step 5000 d1a9c0137aa91068
-step 6000 8773ea8c47a161e7
-step 7000 7f6c00f689ea62c1
-step 8000 2086187bf24073d6
-step 9000 2c2fd3a1e8fcfdce
-step 10000 0109d26d17da716c
+static 77bb2d77e5bfc610
+step 1000 4b0646171346df77
+step 2000 bacd5a204aaeef1f
+step 3000 97a5482bcbb15ea6
+step 4000 7bc2321f5f9b3fe2
+step 5000 ac53018fd9239946
+step 6000 ef843fb118a00ad9
+step 7000 cf5e69714cbd03ba
+step 8000 c1d85b7033ff6d2a
+step 9000 6a8d53111a4b48bc
+step 10000 c063543c17850ffe

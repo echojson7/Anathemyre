@@ -11,6 +11,8 @@ struct StepStats {
     u64 people_ns = 0;  // время систем людей
     u32 strikes = 0;    // начатых ударов (этап 10)
     u32 hits = 0;       // попаданий
+    u32 blocks = 0;     // отбитых блоком (этап 11)
+    u32 defends = 0;    // начатых защит: блоков и уклонов
 };
 
 struct StepCtx {

@@ -186,6 +186,12 @@ int run_window(const Args &a, AppMemory &m) {
         platform_window_close();
         return 1;
     }
+    DuelDesc duel{};
+    if (!app_duel_load(duel, m)) {
+        render_shutdown();
+        platform_window_close();
+        return 1;
+    }
     Rewind *rewind = arena_push<Rewind>(m.world, 1);
     if (!a.record) rewind_init(*rewind, w);
     const i64 slow_from = a.slow_from;
@@ -223,12 +229,14 @@ int run_window(const Args &a, AppMemory &m) {
     dbg_init(dbg, m.world, 4096);
     Recorder rec;
     if (a.record) {
-        recorder_init(rec, m.record, w, a.seed, 280000, 1u << 16);  // 88 столбцов × 8 байт × 280 000 ≈ 200 МБ
+        recorder_init(rec, m.record, w, a.seed, 280000, 1u << 18);  // 93 столбца × 8 байт × 280 000 ≈ 208 МБ + намерения 10 МБ
         rec.desc_hash = desc;
     }
 
     FixedArray<Intent> pending;  // намерения игрока до ближайшего шага
     pending.init(m.world, 64);
+    FixedArray<Intent> step_its;  // намерения шага: игрока (в первом шаге кадра) и ИИ бойцов
+    step_its.init(m.world, 1024);
     Camera cam;
     if (a.cam_set) {
         const f32 deg = PI_F / 180.0f;
@@ -532,6 +540,7 @@ int run_window(const Args &a, AppMemory &m) {
         if (ds.reload_actions && !a.record) {
             if (app_actions_load(w, m)) pv->act_bound = false;
             else log_warn("описания действий не перечитаны (ошибка выше): старые остаются");
+            if (!app_duel_load(duel, m)) log_warn("data/duel.txt не перечитан (ошибка выше): старый остаётся");
         }
         if (slow_from >= 0 && frames == (u64)slow_from) tc.speed = 1;  // --slow: замедление ×0.25 с кадра
 
@@ -553,8 +562,14 @@ int run_window(const Args &a, AppMemory &m) {
 
         prof_mark(*prof, platform_time_ns());
         for (u32 k = 0; k < nsteps; ++k) {
-            for (usize i = 0; i < pending.count; ++i) pending.data[i].step = w.step;
-            Span<const Intent> its = k == 0 ? pending.span() : Span<const Intent>{};
+            step_its.clear();
+            if (k == 0)
+                for (usize i = 0; i < pending.count; ++i) {
+                    pending.data[i].step = w.step;
+                    step_its.push_back(pending.data[i]);
+                }
+            ai_duel(w, duel, step_its);
+            Span<const Intent> its = step_its.span();
             StepCtx ctx{its, &m.step, &dbg};
             u64 ts = platform_time_ns();
             sim_step(w, ctx);
