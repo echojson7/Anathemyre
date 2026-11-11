@@ -1,7 +1,9 @@
 #include "view.h"
 #include "../core/hash.h"
 #include "../core/math3.h"
+#include "../sim/collide.h"
 #include "../sim/ground.h"
+#include "people.h"
 
 static constexpr f32 NEAR_M = 0.1f;
 static constexpr f32 PITCH_MIN = -1.45f, PITCH_MAX = 1.45f;
@@ -56,18 +58,27 @@ static Basis basis(const Camera &cam) {
     return b;
 }
 
-static bool eye_clear(const Terrain &ground, const WPos &p) {
-    return p.y >= ground_at(ground, p).height + EYE_ABOVE_GROUND;
+// Глаз не ниже EYE_ABOVE_GROUND над землёй и не ближе EYE_WALL_M к коробкам построек (coll может быть nullptr)
+static constexpr f32 EYE_WALL_M = 0.3f;
+static constexpr f32 FOLLOW_ARM_MIN = 1.2f;  // штанга за человеком не короче, м
+static bool eye_clear(const Terrain &ground, const WPos &p, const Colliders *coll = nullptr) {
+    if (p.y < ground_at(ground, p).height + EYE_ABOVE_GROUND) return false;
+    if (coll)
+        for (u16 k : colliders_near(*coll, p.cx, p.cz, p.x, p.z))
+            if (p.y > coll->y0[k] - EYE_WALL_M && p.y < coll->y1[k] + EYE_WALL_M &&
+                coll_touches(*coll, k, p.cx, p.cz, p.x, p.z, EYE_WALL_M))
+                return false;
+    return true;
 }
 
-// Сколько штанги помещается до земли: шагами от опоры наружу, последний свободный шаг
-static f32 arm_room(const Camera &cam, const Terrain &ground) {
+// Сколько штанги помещается до земли (и построек, если coll): шагами от опоры наружу, последний свободный шаг
+static f32 arm_room(const Camera &cam, const Terrain &ground, const Colliders *coll = nullptr) {
     if (cam.dist <= 0.0f) return 0.0f;
     Vec3 d = back_dir(cam);
-    f32 step = f_max(0.25f, cam.dist / 64.0f), ok = 0.0f;
+    f32 step = coll ? 0.1f : f_max(0.25f, cam.dist / 64.0f), ok = 0.0f;
     for (f32 t = step;; t += step) {
         f32 tt = f_min(t, cam.dist);
-        if (!eye_clear(ground, offset(cam.pivot, d * tt))) return ok;
+        if (!eye_clear(ground, offset(cam.pivot, d * tt), coll)) return ok;
         ok = tt;
         if (tt >= cam.dist) return ok;
     }
@@ -93,8 +104,10 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &gr
             cam.free = false;
         }
     }
-    // Вращение взгляда: правая кнопка, одинаково на орбите и в полёте (мышь вверх — взгляд вверх)
-    if (in.mouse_down[MOUSE_RIGHT]) {
+    // Вращение взгляда: средняя кнопка или Alt + правая (правая — приказ), одинаково на орбите и в полёте
+    // (мышь вверх — взгляд вверх). Shift + средняя — двигать опору
+    bool rotate = (in.mouse_down[MOUSE_MIDDLE] && !in.key_down[KEY_SHIFT]) || (in.mouse_down[MOUSE_RIGHT] && in.key_down[KEY_ALT]);
+    if (rotate) {
         f32 k = MOUSE_RAD_PER_PX * f_clamp(cam.settings.mouse_sens, 0.05f, 20.0f);
         cam.yaw += in.mouse_dx * k;
         cam.pitch += (cam.settings.invert_y ? -1.0f : 1.0f) * in.mouse_dy * k;
@@ -125,19 +138,24 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &gr
         if (cam.pivot.y < floor_y) cam.pivot.y = floor_y;
         return;
     }
-    // Орбита: WASD и средняя кнопка двигают опору над землёй, колесо — длина штанги (до вида от глаз)
+    // Орбита: WASD и Shift + средняя кнопка двигают опору над землёй (и снимают слежение за человеком), колесо —
+    // длина штанги (до вида от глаз). За человеком опору ставит view_camera_follow
     f32 reach = f_max(cam.dist, 5.0f);
     move.y = 0.0f;
+    bool pan = in.mouse_down[MOUSE_MIDDLE] && in.key_down[KEY_SHIFT];
+    if (cam.follow && (length(move) > 0.0f || pan)) cam.follow = false;
     cam.pivot = offset(cam.pivot, move * (reach * 0.9f * fast * dt));
-    if (in.mouse_down[MOUSE_MIDDLE]) {
+    if (pan) {
         f32 k = reach * 0.0018f;
         cam.pivot = offset(cam.pivot, flat_right * (-in.mouse_dx * k) + flat_fwd * (in.mouse_dy * k));
     }
     for (f32 w = in.wheel; w > 0.5f; w -= 1.0f) cam.dist = cam.dist * 0.85f < DIST_SNAP ? 0.0f : cam.dist * 0.85f;
     for (f32 w = in.wheel; w < -0.5f; w += 1.0f) cam.dist = cam.dist < DIST_SNAP ? DIST_SNAP : cam.dist / 0.85f;
     cam.dist = f_clamp(cam.dist, DIST_MIN, DIST_MAX);
-    cam.pivot = view_pivot_at(ground, cam.pivot);
-    if (cam.pivot_above >= 0) cam.pivot.y = ground_at(ground, cam.pivot).height + cam.pivot_above;
+    if (!cam.follow) {
+        cam.pivot = view_pivot_at(ground, cam.pivot);
+        if (cam.pivot_above >= 0) cam.pivot.y = ground_at(ground, cam.pivot).height + cam.pivot_above;
+    }
     // Штанга: земля укорачивает её сразу (глаз не уходит под склон), назад — плавно, чтобы на кочках
     // не дёргалась. Взгляд при этом не меняется
     f32 room = arm_room(cam, ground);
@@ -145,7 +163,17 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &gr
     else cam.arm += (room - cam.arm) * f_min(1.0f, dt * ARM_GROW);
 }
 
-bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32 py, const Terrain &ground, WPos &out) {
+void view_camera_follow(Camera &cam, const WPos &head, f32 dt, const Terrain &ground, const Colliders *coll) {
+    cam.free = false;
+    cam.follow = true;
+    cam.pivot = head;
+    // Не ближе FOLLOW_ARM_MIN к голове: спиной к стене глаз лучше уйдёт за стену (её не видно изнутри), чем в голову
+    f32 room = f_max(arm_room(cam, ground, coll), f_min(cam.dist, FOLLOW_ARM_MIN));
+    if (cam.arm < 0.0f || room < cam.arm) cam.arm = room;
+    else cam.arm += (room - cam.arm) * f_min(1.0f, dt * ARM_GROW);
+}
+
+bool view_screen_ray(const Camera &cam, i32 width, i32 height, f32 px, f32 py, WPos &eye, Vec3 &dir) {
     if (width <= 0 || height <= 0) return false;
     Basis b = basis(cam);
     f32 s, c;
@@ -153,8 +181,57 @@ bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32
     f32 t = s / c, aspect = (f32)width / (f32)height;
     f32 nx = (px / (f32)width) * 2.0f - 1.0f;
     f32 ny = 1.0f - (py / (f32)height) * 2.0f;
-    Vec3 dir = normalize(b.forward + b.right * (nx * t * aspect) + b.up * (ny * t));
-    WPos eye = view_eye(cam);
+    dir = normalize(b.forward + b.right * (nx * t * aspect) + b.up * (ny * t));
+    eye = view_eye(cam);
+    return true;
+}
+
+// Точка внутри коробки постройки или под землёй
+static bool solid_at(const Terrain &ground, const Colliders *coll, const WPos &p, f32 *top) {
+    if (coll) {
+        for (u16 k : colliders_near(*coll, p.cx, p.cz, p.x, p.z)) {
+            if (p.y < coll->y0[k] || p.y > coll->y1[k] || !coll_covers(*coll, k, p.cx, p.cz, p.x, p.z)) continue;
+            *top = coll->y1[k];
+            return true;
+        }
+    }
+    if (p.y <= ground_at(ground, p).height) {
+        *top = -1e9f;
+        return true;
+    }
+    return false;
+}
+
+bool view_screen_to_support(const Camera &cam, i32 width, i32 height, f32 px, f32 py, const Terrain &ground,
+                            const Colliders *coll, WPos &out) {
+    WPos eye;
+    Vec3 dir;
+    if (!view_screen_ray(cam, width, height, px, py, eye, dir)) return false;
+    f32 k0 = 0.0f, k = 0.1f, top = 0.0f;
+    for (u32 i = 0; i < 4000 && k < 30000.0f; ++i) {
+        if (solid_at(ground, k < 2000.0f ? coll : nullptr, offset(eye, dir * k), &top)) {
+            for (u32 j = 0; j < 20; ++j) {
+                f32 m = (k0 + k) * 0.5f;
+                if (solid_at(ground, coll, offset(eye, dir * m), &top)) k = m;
+                else k0 = m;
+            }
+            solid_at(ground, coll, offset(eye, dir * k), &top);
+            out = offset(eye, dir * k);
+            // В коробку попал сверху (почти у верха) — точка на её верху; в бок — как есть, путь найдёт ближний пол
+            if (top > -1e8f && top - out.y < 0.15f) out.y = top;
+            else if (top <= -1e8f) out.y = ground_at(ground, out).height;
+            return true;
+        }
+        k0 = k;
+        k += k < 60.0f ? 0.1f : f_max(0.5f, k * 0.02f);
+    }
+    return false;
+}
+
+bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32 py, const Terrain &ground, WPos &out) {
+    WPos eye;
+    Vec3 dir;
+    if (!view_screen_ray(cam, width, height, px, py, eye, dir)) return false;
     // Шаги растут с расстоянием, на пересечении — деление пополам
     f32 k0 = 0.0f, k = 0.5f;
     for (u32 i = 0; i < 400 && k < 30000.0f; ++i) {
@@ -316,7 +393,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     u32 n = cur.props_count;
     if (in.scatter && cur.terrain) scatter_update(*in.scatter, *cur.terrain, eye, assets.rocks);
     u32 nscat = in.scatter ? in.scatter->count : 0;
-    RenderInstance *inst = arena_push<RenderInstance>(frame, n + nscat + 1);
+    RenderInstance *inst = arena_push<RenderInstance>(frame, n + nscat + 1 + (in.people ? VIEW_BODIES_MAX : 0));
     u32 ni = 0;
     for (u32 i = 0; i < n && ni < RENDER_MAX_INSTANCES; ++i) {
         if (!cur.prop_gen[i]) continue;
@@ -343,6 +420,13 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     // Рассыпка камней: экземпляры — все (кадр мира отсекает и выбирает LOD сам, а постоянный список на GPU не
     // должен сдвигаться от поворота камеры)
     for (u32 i = 0; i < nscat && ni < RENDER_MAX_INSTANCES; ++i) inst[ni++] = in.scatter->items[i];
+    // Люди: тела с позой (docs/people.md); метки выбора и приказа — линиями
+    RenderLineVertex *plines = nullptr;
+    u32 npl = 0;
+    if (in.people && cur.person_gen) {
+        plines = arena_push<RenderLineVertex>(frame, VIEW_PEOPLE_LINES);
+        people_view_build(*in.people, assets, in, eye, frame, inst, ni, out, plines, npl, in.people_debug);
+    }
     out.instances = {inst, ni};
     if (cur.decals) build_decals(*cur.decals, assets, eye, frame, out);
     if (in.test_lights && cur.terrain) build_test_lights(cam, *cur.terrain, eye, frame, out);
@@ -367,17 +451,21 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     }
     out.points = {pts, np};
 
-    if (in.dbg && in.dbg->count) {
-        const DebugDraw &d = *in.dbg;
-        u32 nv = d.count * 2 < RENDER_MAX_LINE_VERTICES ? d.count * 2 : RENDER_MAX_LINE_VERTICES;
+    u32 ndbg = in.dbg ? in.dbg->count : 0;
+    if (ndbg || npl) {
+        const DebugDraw *d = in.dbg;
+        u32 nv = ndbg * 2 + npl < RENDER_MAX_LINE_VERTICES ? ndbg * 2 + npl : RENDER_MAX_LINE_VERTICES;
         RenderLineVertex *lv = arena_push<RenderLineVertex>(frame, nv);
-        for (u32 i = 0; i < nv / 2; ++i) {
-            const DebugLine &l = d.lines[i];
+        u32 npk = npl < nv ? npl : nv;
+        if (npk) memcpy(lv, plines, npk * sizeof *lv);
+        lv += npk;
+        for (u32 i = 0; i < (nv - npk) / 2; ++i) {
+            const DebugLine &l = d->lines[i];
             Vec3 ra = delta(eye, l.a.cx, l.a.cz, l.a.x, l.a.y, l.a.z);
             Vec3 rb = delta(eye, l.b.cx, l.b.cz, l.b.x, l.b.y, l.b.z);
             lv[2 * i] = {ra.x, ra.y, ra.z, l.rgba};
             lv[2 * i + 1] = {rb.x, rb.y, rb.z, l.rgba};
         }
-        out.lines = {lv, nv};
+        out.lines = {lv - npk, npk + (nv - npk) / 2 * 2};
     }
 }

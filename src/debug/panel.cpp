@@ -159,6 +159,9 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
         ui_value(f, "EV100 глаза → цель", t);
     }
 
+    // Люди мира: капсулы шага поверх тел, путь выбранного, след касаний стоп (отрезки отладки, L)
+    ui_section(f, "ЛЮДИ");
+    ui_toggle(f, "капсулы, путь и след стоп", d.people_lines);
     // Стенд людей (stand.cpp): человек у руины, проверка весов и морфов
     ui_section(f, "ЛЮДИ: СТЕНД");
     ui_toggle(f, "человек у руины", d.stand);

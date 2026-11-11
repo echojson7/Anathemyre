@@ -315,13 +315,6 @@ void people_separate(World &w, StepCtx &ctx) {
     arena_restore(ar, mark);
 }
 
-// Длина цикла шага при скорости v: между клипами ходьбы и бега, медленнее ходьбы — короче шаг
-static f32 cycle_len(const GaitTable &g, f32 v) {
-    if (v <= g.walk_v) return g.walk_len * (0.5f + 0.5f * v / g.walk_v);
-    if (v >= g.run_v) return g.run_len;
-    return g.walk_len + (g.run_len - g.walk_len) * (v - g.walk_v) / (g.run_v - g.walk_v);
-}
-
 // Читает: место, коллайдеры, землю, скорость. Пишет: высоту, опору, vy, фазу шага
 void people_settle(World &w, StepCtx &) {
     People &p = w.people;
@@ -339,7 +332,7 @@ void people_settle(World &w, StepCtx &) {
         }
         f32 v = p.speed[s];
         if (v > 0.01f) {
-            f32 frac = v * SIM_DT / cycle_len(w.gait, v);
+            f32 frac = v * SIM_DT / gait_cycle_len(w.gait, v);
             p.phase[s] += (u32)(i64)(frac * 4294967296.0f);
         }
     }
