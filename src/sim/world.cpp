@@ -70,7 +70,7 @@ bool world_build_static(World &w, const CollBoxIn *boxes, u32 n, const GaitTable
 }
 
 u64 world_static_hash(const World &w) {
-    return hash_combine(hash_combine(w.coll.hash, w.walk.hash), w.gait.hash);
+    return hash_combine(hash_combine(hash_combine(w.coll.hash, w.walk.hash), w.gait.hash), w.actions.hash);
 }
 
 bool props_add(World &w, u64 mesh, u64 material, const WPos &at, f32 lift, u32 yaw, f32 scale, u32 seed) {

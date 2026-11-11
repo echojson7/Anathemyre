@@ -4,16 +4,20 @@
 //   сброс страниц под изменившимися экземплярами (shadow_inval.comp) → заявки в разборе плиток (light_tiles.comp)
 //   → свободные (shadow_scan.comp) → счёт (shadow_args.comp) → выдача и очистка (shadow_alloc.comp) → отбор
 //   заслонок для новых страниц (shadow_cull.comp) → отрисовка в страницы (shadow.vert/.frag) → свет читает.
-// Страница рисуется раз и живёт, пока её читают: статичный мир почти бесплатен. Светило идёт шагами по октаэдру
-// (~0.1°): новый шаг — все страницы с нуля (перетекание старой и новой карты — 6б-2)
+// Страница рисуется раз и живёт, пока её читают: статичный мир почти бесплатен.
+// Светило идёт шагами по октаэдру (~0.1–0.2°, 6б-2). Наборов страниц два: на новый шаг строится новый набор —
+// в фоне, не больше SM_BUILD_PAGES страниц за кадр, пока показан старый; когда новый готов, свет перетекает со
+// старого на новый за SM_BLEND. Края теней не прыгают, тяжёлый кадр перерисовки размазан на несколько
 #include "vk_graph.h"
 #include "../core/log.h"
 #include "../core/mathf.h"
 
 constexpr u32 SM_MIN_PAGES = 1024, SM_MAX_PAGES = 8192;  // пул: 64 МБ … 512 МБ (64 КБ на страницу)
-constexpr u32 SM_REQ_HEAD = 16 + 16 + 16 * 4 + 16 * 32 * 4;  // SmReq до заявок (common.glsl)
+constexpr u32 SM_REQ_HEAD = 16 + 16 + 32 * 4 + 32 * 32 * 4;  // SmReq до заявок (common.glsl)
 constexpr f32 SM_FAR = 3000.0f;   // дальше тени сеток нет (карта горизонта остаётся), м
-constexpr f32 SM_STEP = 1024.0f;  // шаг светила: доля октаэдра (~0.06–0.11°)
+constexpr f32 SM_STEP = 512.0f;   // шаг светила: доля октаэдра (~0.11–0.22°)
+constexpr f32 SM_BLEND = 1.0f;    // перетекание со старого шага на новый, с
+constexpr u32 SM_BUILD_PAGES = 192;  // страниц нового набора за кадр, пока он строится в фоне
 
 bool vk_shadow_init() {
     ShadowGpu &s = g_vk.shadow;
@@ -81,41 +85,41 @@ static bool sm_ensure(u32 width, u32 height) {
     s.pages_n = pages;
     s.req_cap = pages;
     const VkBufferUsageFlags ind = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-    if (!sm_make(s.table, (VkDeviceSize)SM_LEVELS * SM_WIN * SM_WIN * 4, "тени: окна страниц", s.rg_table) ||
+    if (!sm_make(s.table, (VkDeviceSize)SM_SLOTS * SM_WIN * SM_WIN * 4, "тени: окна страниц", s.rg_table) ||
         !sm_make(s.pages, (VkDeviceSize)pages * 16, "тени: страницы", s.rg_pages) ||
         !sm_make(s.texels, (VkDeviceSize)pages * SM_PAGE * SM_PAGE * 4, "тени: тексели", s.rg_texels) ||
-        !sm_make(s.req, SM_REQ_HEAD + (VkDeviceSize)(2 * s.req_cap + 2 * pages) * 4, "тени: заявки", s.rg_req, ind) ||
+        !sm_make(s.req, SM_REQ_HEAD + (VkDeviceSize)(4 * s.req_cap + 2 * pages) * 4, "тени: заявки", s.rg_req, ind) ||
         !sm_make(s.draws, 16 + (VkDeviceSize)SM_DRAW_CAP * 20, "тени: вызовы", s.rg_draws, ind) ||
         !sm_make(s.list, (VkDeviceSize)SM_DRAW_CAP * 8, "тени: список кластеров", s.rg_list)) {
         s.pages_n = 0;
         return false;
     }
-    log_info("тени: окно %u² страниц по %u² текселей × %u уровней, пул %u страниц (%.0f МБ)", SM_WIN, SM_PAGE,
-             SM_LEVELS, pages, (f64)(s.texels.size + s.pages.size + s.table.size) / (1 << 20));
+    log_info("тени: окно %u² страниц по %u² текселей × %u уровней × %u набора, пул %u страниц (%.0f МБ)", SM_WIN,
+             SM_PAGE, SM_LEVELS, SM_SETS, pages, (f64)(s.texels.size + s.pages.size + s.table.size) / (1 << 20));
     s.reset = true;
     return true;
 }
 
-// Шаг светила: направление в октаэдр, клетка 1/SM_STEP. Ключ — номер клетки, направление — её центр
-static void sm_sun_step(const f32 l[3], i32 key[2], f32 out[3]) {
+// Октаэдр: развёртка направления (|x| + |y| + |z| = 1, нижняя половина отогнута наружу) и обратно
+static void sm_oct_fold(f32 &x, f32 &z) {
+    f32 ox = (1 - f_abs(z)) * (x >= 0 ? 1.0f : -1.0f), oz = (1 - f_abs(x)) * (z >= 0 ? 1.0f : -1.0f);
+    x = ox;
+    z = oz;
+}
+// Шаг светила: направление в октаэдр, клетка 1/SM_STEP — ключ
+static void sm_sun_key(const f32 l[3], i32 key[2]) {
     f32 n = f_abs(l[0]) + f_abs(l[1]) + f_abs(l[2]);
     if (n <= 0) n = 1;
-    f32 x = l[0] / n, y = l[1] / n, z = l[2] / n;
-    if (y < 0) {
-        f32 ox = (1 - f_abs(z)) * (x >= 0 ? 1.0f : -1.0f), oz = (1 - f_abs(x)) * (z >= 0 ? 1.0f : -1.0f);
-        x = ox;
-        z = oz;
-    }
+    f32 x = l[0] / n, z = l[2] / n;
+    if (l[1] < 0) sm_oct_fold(x, z);
     key[0] = f_floor_i(x * SM_STEP + 0.5f);
     key[1] = f_floor_i(z * SM_STEP + 0.5f);
-    x = (f32)key[0] / SM_STEP;
-    z = (f32)key[1] / SM_STEP;
-    y = 1 - f_abs(x) - f_abs(z);
-    if (y < 0) {
-        f32 ox = (1 - f_abs(z)) * (x >= 0 ? 1.0f : -1.0f), oz = (1 - f_abs(x)) * (z >= 0 ? 1.0f : -1.0f);
-        x = ox;
-        z = oz;
-    }
+}
+// Направление шага — центр клетки ключа
+static void sm_key_dir(const i32 key[2], f32 out[3]) {
+    f32 x = (f32)key[0] / SM_STEP, z = (f32)key[1] / SM_STEP;
+    f32 y = 1 - f_abs(x) - f_abs(z);
+    if (y < 0) sm_oct_fold(x, z);
     f32 m = f_sqrt(x * x + y * y + z * z);
     out[0] = x / m;
     out[1] = y / m;
@@ -206,31 +210,16 @@ static bool sm_invalidations(const FrameGpu &g, const RenderFrame &f, FrameSlot 
     return ok;
 }
 
-void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool images) {
-    ShadowGpu &s = g_vk.shadow;
-    s.on = images && f.style.cell_min > 0 && sm_ensure(g_vk.extent.width, g_vk.extent.height);
-    s.inval_n = 0;
-    if (!s.on) return;
-    // Шаг светила, размер текселя, сетки: сменилось — все страницы с нуля
-    i32 key[2];
+// Тексель уровня 0 по ступени «Качество света» (docs/light.md): на «Низко» карта вчетверо, на «Средне» вдвое грубее
+static f32 sm_texel0(const RenderFrame &f) {
+    u32 q = f.style.light_quality;
+    return f.style.cell_min * (q == RENDER_LIGHT_LOW ? 4.0f : q == RENDER_LIGHT_MEDIUM ? 2.0f : 1.0f);
+}
+
+// Оси, высота камеры и окна уровней набора i в данные кадра
+static void sm_fill_set(FrameGpu &g, u32 i, const ShadowSet &st, const f64 cam[3], f32 t0) {
     f32 S[3];
-    sm_sun_step(f.light.sun_dir, key, S);
-    f64 cam[3] = {(f64)f.view.cx * 256.0 + f.view.x, f.view.y, (f64)f.view.cz * 256.0 + f.view.z};
-    if (key[0] != s.key[0] || key[1] != s.key[1] || f.style.cell_min != s.cell_min || s.mesh_gen != s.seen_mesh) {
-        s.key[0] = key[0];
-        s.key[1] = key[1];
-        s.cell_min = f.style.cell_min;
-        s.seen_mesh = s.mesh_gen;
-        s.reset = true;
-    }
-    if (s.reset) {
-        // Якорь высоты к светилу — у камеры: высоты в страницах малые числа, f32 их держит до миллиметров
-        s.anchor = (f64)(i64)(cam[0] * S[0] + cam[1] * S[1] + cam[2] * S[2]);
-    }
-    if (!sm_invalidations(g, f, fs)) {
-        log_info("тени: изменилось больше %u заслонок — все страницы с нуля", SM_INVAL_MAX);
-        s.reset = true;
-    }
+    sm_key_dir(st.key, S);
     // Оси карты: r — горизонтальная поперёк светила, u = s × r (у светила в зените — r по x)
     f32 R[3] = {S[2], 0.0f, -S[0]};
     f32 rl = f_sqrt(R[0] * R[0] + R[2] * R[2]);
@@ -242,26 +231,100 @@ void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool image
         R[2] /= rl;
     }
     f32 U[3] = {S[1] * R[2] - S[2] * R[1], S[2] * R[0] - S[0] * R[2], S[0] * R[1] - S[1] * R[0]};
-    for (u32 i = 0; i < 3; ++i) {
-        g.sm_r[i] = R[i];
-        g.sm_u[i] = U[i];
-        g.sm_s[i] = S[i];
+    for (u32 c = 0; c < 3; ++c) {
+        g.sm_r[i][c] = R[c];
+        g.sm_u[i][c] = U[c];
+        g.sm_s[i][c] = S[c];
     }
-    g.sm_r[3] = f.style.cell_min;
-    g.sm_u[3] = (f32)(cam[0] * S[0] + cam[1] * S[1] + cam[2] * S[2] - s.anchor);
-    g.sm_s[3] = SM_FAR;
+    g.sm_r[i][3] = 0;
+    g.sm_u[i][3] = (f32)(cam[0] * S[0] + cam[1] * S[1] + cam[2] * S[2] - st.anchor);
+    g.sm_s[i][3] = 0;
     // Окна уровней: камера — в странице SM_WIN/2 окна, начало окна — целая страница мировой решётки уровня
     f64 cr = cam[0] * R[0] + cam[1] * R[1] + cam[2] * R[2];
     f64 cu = cam[0] * U[0] + cam[1] * U[1] + cam[2] * U[2];
     for (u32 k = 0; k < SM_LEVELS; ++k) {
-        f64 page = (f64)f.style.cell_min * (f64)(1u << k) * SM_PAGE;
+        f64 page = (f64)t0 * (f64)(1u << k) * SM_PAGE;
         f64 br = __builtin_floor(cr / page) - SM_WIN / 2, bu = __builtin_floor(cu / page) - SM_WIN / 2;
-        g.sm_base[k][0] = (i32)br;
-        g.sm_base[k][1] = (i32)bu;
-        g.sm_off[k][0] = (f32)(cr - br * page);
-        g.sm_off[k][1] = (f32)(cu - bu * page);
+        u32 slot = i * SM_LEVELS + k;
+        g.sm_base[slot][0] = (i32)br;
+        g.sm_base[slot][1] = (i32)bu;
+        g.sm_off[slot][0] = (f32)(cr - br * page);
+        g.sm_off[slot][1] = (f32)(cu - bu * page);
+    }
+}
+
+// Якорь высоты к светилу — у камеры: высоты в страницах малые числа, f32 их держит до миллиметров
+static f64 sm_anchor(const i32 key[2], const f64 cam[3]) {
+    f32 S[3];
+    sm_key_dir(key, S);
+    return (f64)(i64)(cam[0] * S[0] + cam[1] * S[1] + cam[2] * S[2]);
+}
+
+void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool images) {
+    ShadowGpu &s = g_vk.shadow;
+    s.on = images && f.style.cell_min > 0 && sm_ensure(g_vk.extent.width, g_vk.extent.height);
+    s.inval_n = 0;
+    fs.sm_frame = 0;
+    if (!s.on) return;
+    f64 cam[3] = {(f64)f.view.cx * 256.0 + f.view.x, f.view.y, (f64)f.view.cz * 256.0 + f.view.z};
+    // Размер текселя, сетки: сменились — оба набора с нуля
+    f32 t0 = sm_texel0(f);
+    if (f.style.cell_min != s.cell_min || t0 != s.t0 || s.mesh_gen != s.seen_mesh) {
+        s.cell_min = f.style.cell_min;
+        s.t0 = t0;
+        s.seen_mesh = s.mesh_gen;
+        s.reset = true;
+    }
+    if (!sm_invalidations(g, f, fs)) {
+        log_info("тени: изменилось больше %u заслонок — все страницы с нуля", SM_INVAL_MAX);
+        s.reset = true;
     }
     if (++s.frame == 0) s.frame = 1;
+    // Шаг светила. Сброс или «сразу» (первые кадры, снимок, --timelapse) — один набор, без перетекания. Иначе
+    // новый шаг строит новый набор, пока старый показан; шаг, пришедший во время стройки или перетекания, ждёт
+    // их конца (тень отстаёт от светила не больше чем на SM_BLEND и несколько кадров)
+    i32 key[2];
+    sm_sun_key(f.light.sun_dir, key);
+    ShadowSet &c = s.set[s.cur];
+    bool step = key[0] != c.key[0] || key[1] != c.key[1];
+    if (s.reset || (step && f.style.eye_snap)) {
+        s.reset = true;
+        s.old_on = s.building = s.clear_cur = false;
+        s.mix = 1;
+        c.key[0] = key[0];
+        c.key[1] = key[1];
+        c.anchor = sm_anchor(key, cam);
+    } else if (step && !s.old_on) {
+        s.cur ^= 1;
+        ShadowSet &n = s.set[s.cur];
+        n.key[0] = key[0];
+        n.key[1] = key[1];
+        n.anchor = sm_anchor(key, cam);
+        s.old_on = s.building = s.clear_cur = true;
+        s.mix = 0;
+        s.build_frame = s.frame;
+    }
+    if (s.old_on && !s.building) {
+        s.mix += f.style.dt / SM_BLEND;
+        if (s.mix >= 1) {
+            s.mix = 1;
+            s.old_on = false;
+        }
+    }
+    fs.sm_frame = s.frame;
+    // Старый набор, когда он не нужен, повторяет новый: шейдер его не читает и не заявляет
+    for (u32 i = 0; i < SM_SETS; ++i) sm_fill_set(g, i, s.old_on || i == s.cur ? s.set[i] : s.set[s.cur], cam, t0);
+    g.sm_cur = s.cur;
+    g.sm_read = (s.building ? 0u : 1u << s.cur) | (s.old_on && s.mix < 1 ? 1u << (s.cur ^ 1) : 0u);
+    g.sm_bg = s.building ? s.cur + 1 : 0;
+    g.sm_mix = s.mix;
+    g.sm_build_cap = SM_BUILD_PAGES;
+    // Полутень — по диску того светила, что сейчас главное (солнце или луна, sky.cpp)
+    const f32 *ld = f.light.sun_dir, *sd = f.sky.sun_dir;
+    bool sun = ld[0] * sd[0] + ld[1] * sd[1] + ld[2] * sd[2] > 0.9999f;
+    g.sm_disc = __builtin_tanf(sun ? f.sky.sun_radius : f.sky.moon_radius);
+    g.sm_far = SM_FAR;
+    g.sm_t0 = t0;
     g.sm_table = s.table.address;
     g.sm_pages = s.pages.address;
     g.sm_texels = s.texels.address;
@@ -278,8 +341,16 @@ void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool image
     g.sm_debug = f.style.shadow_pages;
 }
 
-void vk_shadow_read(const u32 *st) {
+// Перетекание шага светила, % нового набора (F3); 100 — один набор
+u32 vk_shadow_blend() {
+    const ShadowGpu &s = g_vk.shadow;
+    return s.building ? 0 : s.old_on ? (u32)(s.mix * 100) : 100;
+}
+
+// Счётчики кадра frame (0 — кадр без теней): новый набор готов, когда кадр стройки не отложил ни одной страницы
+void vk_shadow_read(const u32 *st, u32 frame) {
     ShadowGpu &s = g_vk.shadow;
+    if (s.building && frame != 0 && frame - s.build_frame < 0x80000000u && st[STAT_SM_WAIT] == 0) s.building = false;
     if (st[STAT_SM_OVER]) {
         s.grow = st[STAT_SM_OVER];
         vk_overflow("тени: страницы без места", (u64)st[STAT_SM_NEW] + st[STAT_SM_OVER], s.pages_n);
@@ -300,13 +371,19 @@ static void sm_record_reset(VkCommandBuffer cmd, void *) {
     vkCmdFillBuffer(cmd, s.table.buffer, 0, VK_WHOLE_SIZE, 0);
     vkCmdFillBuffer(cmd, s.pages.buffer, 0, VK_WHOLE_SIZE, 0);
 }
+// Окна нового набора с нуля: прежние страницы набора (шаг назад) больше не находятся и уходят в свободные
+static void sm_record_set_reset(VkCommandBuffer cmd, void *) {
+    const ShadowGpu &s = g_vk.shadow;
+    const VkDeviceSize half = (VkDeviceSize)SM_LEVELS * SM_WIN * SM_WIN * 4;
+    vkCmdFillBuffer(cmd, s.table.buffer, s.cur * half, half, 0);
+}
 static void sm_record_clear(VkCommandBuffer cmd, void *) {
     vkCmdFillBuffer(cmd, g_vk.shadow.req.buffer, 0, SM_REQ_HEAD, 0);
     vkCmdFillBuffer(cmd, g_vk.shadow.draws.buffer, 0, 16, 0);
 }
 static void sm_record_inval(VkCommandBuffer cmd, void *) {
     sm_bind(cmd, g_vk.shadow.pipe_inval);
-    vkCmdDispatch(cmd, (g_vk.shadow.inval_n + 63) / 64, SM_LEVELS, 1);
+    vkCmdDispatch(cmd, (g_vk.shadow.inval_n + 63) / 64, SM_SLOTS, 1);
 }
 static void sm_record_scan(VkCommandBuffer cmd, void *) {
     sm_bind(cmd, g_vk.shadow.pipe_scan);
@@ -356,6 +433,12 @@ void vk_shadow_begin(VkDeviceAddress frame) {
         rg_use(s.rg_table, RG_COPY_WRITE);
         rg_use(s.rg_pages, RG_COPY_WRITE);
         s.reset = false;
+        s.clear_cur = false;
+    }
+    if (s.clear_cur) {
+        rg_pass("тени: новый набор", "тени солнца", sm_record_set_reset, nullptr);
+        rg_use(s.rg_table, RG_COPY_WRITE);
+        s.clear_cur = false;
     }
     rg_pass("тени: заявки с нуля", "тени солнца", sm_record_clear, nullptr);
     rg_use(s.rg_req, RG_COPY_WRITE);

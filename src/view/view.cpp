@@ -393,7 +393,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     u32 n = cur.props_count;
     if (in.scatter && cur.terrain) scatter_update(*in.scatter, *cur.terrain, eye, assets.rocks);
     u32 nscat = in.scatter ? in.scatter->count : 0;
-    RenderInstance *inst = arena_push<RenderInstance>(frame, n + nscat + 1 + (in.people ? VIEW_BODIES_MAX : 0));
+    RenderInstance *inst = arena_push<RenderInstance>(frame, n + nscat + 1 + (in.people ? 2 * VIEW_BODIES_MAX : 0));  // тело и меч
     u32 ni = 0;
     for (u32 i = 0; i < n && ni < RENDER_MAX_INSTANCES; ++i) {
         if (!cur.prop_gen[i]) continue;

@@ -153,6 +153,16 @@ material stone rock
     extra 0.18 0.0625 0.7 0.3
 
 # Люди (стенд этапа 7, docs/people.md): временные ровные цвета — кожа и бельё «по-настоящему» после света (этап 6)
+# Меч-заглушка (этап 10): сталь клинка и тёмная кожа рукояти
+material sword_steel flat
+    color 0.62 0.63 0.65
+    rough 0.32
+    metal 1
+
+material sword_grip flat
+    color 0.20 0.13 0.08
+    rough 0.8
+
 material human_skin flat
     color 0.52 0.37 0.28
     rough 0.6

@@ -49,8 +49,9 @@ void gc_touch(int k, ivec2 t) {
     }
 }
 
-// Страница теней нужна кадру: прочитана — отметка кадра, нет — заявка (как gc_touch)
-void sm_touch(int k, ivec2 page) {
+// Страница теней нужна кадру: прочитана — отметка кадра, нет — заявка (как gc_touch). bg — набор нового шага
+// светила, что строится в фоне: его заявки — в свой список, место им дают не больше sm_build_cap за кадр
+void sm_touch(int k, ivec2 page, bool bg) {
     FrameData f = pc.frame;
     uvec2 key = sm_page_key(k, page);
     uint slot = sm_slot(k, page);
@@ -67,49 +68,58 @@ void sm_touch(int k, ivec2 page) {
         }
     }
     if (atomicCompSwap(f.sm_table.v[slot], e, req) != e) return;  // заявил другой пиксель
-    uint i = atomicAdd(f.sm_req.req_n, 1u);
+    uint i = bg ? atomicAdd(f.sm_req.bg_n, 1u) : atomicAdd(f.sm_req.req_n, 1u);
     if (i < f.sm_req_cap) {
-        f.sm_req.v[2u * i] = key.x;
-        f.sm_req.v[2u * i + 1u] = key.y;
+        uint at = bg ? 2u * (f.sm_req_cap + i) : 2u * i;
+        f.sm_req.v[at] = key.x;
+        f.sm_req.v[at + 1u] = key.y;
     } else {
         f.sm_table.v[slot] = 0u;  // список заявок полон: страница без места (свет там — без тени)
     }
 }
 
-// Страницы уровня k под квадратом разброса центра ячейки (m — его полуширина, м) с запасом на смещение по
-// нормали и четыре текселя выборки: квадрат много меньше страницы и задевает не больше 2×2
-void sm_request_level(vec3 rel, float m, int k) {
+// Страницы места k под квадратом разброса центра ячейки (m — его полуширина, м) с запасом на смещение по
+// нормали, четыре текселя выборки и круг поиска PCSS: квадрат много меньше страницы и задевает не больше 2×2
+void sm_request_level(vec3 rel, float m, int set, int lv, bool bg) {
     FrameData f = pc.frame;
-    if (k >= SM_LEVELS) return;
+    if (lv >= SM_LEVELS) return;
+    int k = set * SM_LEVELS + lv;
     float t = sm_texel(k);
-    float r = (m + 1.8 * t) / t + 1.5;
+    float r = (m + 1.8 * t) / t + 1.5 + sm_search(t);
     ivec2 lo, hi;
     if (!sm_rect(sm_window(rel, k), r, lo, hi)) return;
     ivec2 b = f.sm_base[k];
-    sm_touch(k, b + lo);
-    if (hi.x > lo.x) sm_touch(k, b + ivec2(lo.x + 1, lo.y));
-    if (hi.y > lo.y) sm_touch(k, b + ivec2(lo.x, lo.y + 1));
-    if (hi.x > lo.x && hi.y > lo.y) sm_touch(k, b + lo + 1);
+    sm_touch(k, b + lo, bg);
+    if (hi.x > lo.x) sm_touch(k, b + ivec2(lo.x + 1, lo.y), bg);
+    if (hi.y > lo.y) sm_touch(k, b + ivec2(lo.x, lo.y + 1), bg);
+    if (hi.x > lo.x && hi.y > lo.y) sm_touch(k, b + lo + 1, bg);
 }
 
-// Страницы, которые прочтёт свет ячейки этого пикселя. Свет считается в центре ячейки, а он дальше от точки
-// пикселя не больше чем на ячейку: заявляются уровни обоих краёв этого разброса и страницы под квадратом
-// разброса с запасом на смещение по нормали и четыре текселя выборки (sm_visibility)
-void sm_request(vec3 rel) {
+// Страницы набора set, которые прочтёт свет ячейки этого пикселя. Свет считается в центре ячейки, а он дальше от
+// точки пикселя не больше чем на ячейку: заявляются уровни обоих краёв этого разброса и страницы под квадратом
+// разброса с запасом на смещение по нормали, выборку и поиск (sm_visibility)
+void sm_request_set(vec3 rel, int set, bool bg) {
     FrameData f = pc.frame;
-    if (f.sm_on == 0u) return;
     float depth = dot(rel, f.forward.xyz);
     float m = (f.pixel != 0u ? cell_size(depth) : f.cell_min) * 0.9 + 0.004;
-    if (depth - m > f.sm_s.w) return;
-    vec2 ru = vec2(dot(rel, f.sm_r.xyz), dot(rel, f.sm_u.xyz));
+    if (length(rel) - m > f.sm_far) return;
+    vec2 ru = sm_ru(rel, set);
     float far = max(abs(ru.x), abs(ru.y));
     int k0 = sm_level(depth - m, max(far - m, 0.0));
     int k1 = min(sm_level(depth + m, far + m), k0 + 2);
     // Без циклов: lavapipe под GPU-AV падает на доступе к буферу в цикле шейдера с barrier() (docs/shadow.md,
     // «Проверки»), а уровней не больше трёх и страниц на уровень не больше 2×2
-    sm_request_level(rel, m, k0);
-    if (k0 + 1 <= k1) sm_request_level(rel, m, k0 + 1);
-    if (k0 + 2 <= k1) sm_request_level(rel, m, k0 + 2);
+    sm_request_level(rel, m, set, k0, bg);
+    if (k0 + 1 <= k1) sm_request_level(rel, m, set, k0 + 1, bg);
+    if (k0 + 2 <= k1) sm_request_level(rel, m, set, k0 + 2, bg);
+}
+
+// Заявки обоих наборов: показанные — сразу, набор в фоне — своим списком
+void sm_request(vec3 rel) {
+    FrameData f = pc.frame;
+    if (f.sm_on == 0u) return;
+    if ((f.sm_read & 1u) != 0u || f.sm_bg == 1u) sm_request_set(rel, 0, f.sm_bg == 1u);
+    if ((f.sm_read & 2u) != 0u || f.sm_bg == 2u) sm_request_set(rel, 1, f.sm_bg == 2u);
 }
 
 void main() {

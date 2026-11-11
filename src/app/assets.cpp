@@ -2,6 +2,7 @@
 // (только кадр). Всё читается при старте из <папка игры>/data/ — туда их кладёт make
 #include "app.h"
 #include "../asset/material.h"
+#include "../anim/clip.h"
 #include "../anim/track.h"
 #include "../asset/mesh.h"
 #include "../core/hash.h"
@@ -103,6 +104,96 @@ static bool gait_clip(AppMemory &m, const char *clip, f32 *v, f32 *len, u64 *has
     return *len > 0.1f;
 }
 
+// Дорожки клипа на game_engine (data/anims/<клип>.game_engine.trk) — в арене мира, байты — в хеш
+static const Track *world_track(AppMemory &m, const char *clip, u64 *hash) {
+    char rel[128];
+    snprintf(rel, sizeof rel, "anims/%s.game_engine.trk", clip);
+    u8 *data = nullptr;
+    usize size = 0;
+    const char *err = "";
+    Track *t = arena_push<Track>(m.world, 1);
+    if (!read_data(rel, m.load, &data, &size) || !track_parse(data, size, m.world, *t, &err)) {
+        log_error("дорожки %s: %s", rel, err);
+        return nullptr;
+    }
+    *hash = hash_combine(*hash, hash_bytes(data, size));
+    return t;
+}
+
+struct ActionNames {
+    char name[ACTIONS_MAX][32];
+    u32 count;
+    bool over;
+};
+static void list_action(const char *name, void *user) {
+    ActionNames &L = *(ActionNames *)user;
+    usize n = strlen(name) - 4;
+    if (L.count >= ACTIONS_MAX || n >= 32) { L.over = true; return; }
+    memcpy(L.name[L.count], name, n);
+    L.name[L.count++][n] = 0;
+}
+
+bool app_actions_load(World &w, AppMemory &m) {
+    ActionTable T{};
+    u64 h = 0xAC7104ull;
+    T.walk = world_track(m, "walk", &h);
+    T.run = world_track(m, "run", &h);
+    if (!T.walk || !T.run) return false;
+    ActionNames names{};
+    char dir[1024];
+    snprintf(dir, sizeof dir, "%sdata/actions", platform_exe_dir());
+    if (!platform_list_dir(dir, ".txt", list_action, &names)) log_warn("нет папки %s: действий нет", dir);
+    if (names.over) { log_error("data/actions: действий больше %u", ACTIONS_MAX); return false; }
+    // Порядок — по имени: номер действия в таблице людей не зависит от порядка файлов в папке
+    for (u32 i = 1; i < names.count; ++i)
+        for (u32 j = i; j > 0 && strcmp(names.name[j - 1], names.name[j]) > 0; --j) {
+            char tmp[32];
+            memcpy(tmp, names.name[j], 32);
+            memcpy(names.name[j], names.name[j - 1], 32);
+            memcpy(names.name[j - 1], tmp, 32);
+        }
+    usize mark = arena_mark(m.load);
+    bool ok = true;
+    for (u32 i = 0; i < names.count && ok; ++i) {
+        ActionDesc &A = T.a[T.count];
+        A = ActionDesc{};
+        char rel[128], err[256];
+        u8 *data = nullptr;
+        usize size = 0;
+        snprintf(rel, sizeof rel, "actions/%s.txt", names.name[i]);
+        ok = read_data(rel, m.load, &data, &size);
+        if (ok && !(ok = action_parse(data, size, A, err, sizeof err))) log_error("data/%s: %s", rel, err);
+        if (!ok) break;
+        A.name = hash_str(names.name[i]);
+        snprintf(A.label, sizeof A.label, "%.23s", names.name[i]);
+        A.track = world_track(m, A.clip_name, &h);
+        // Окно удара и отмена — метки клипа (ключи 30/с → тики 60/с)
+        AnimLabels lb{};
+        snprintf(rel, sizeof rel, "anims/%s.txt", A.clip_name);
+        ok = A.track && A.track->weapon && read_data(rel, m.load, &data, &size) && anim_labels_parse(data, size, lb, err, sizeof err) &&
+             lb.hit_count > 0;
+        if (!ok) {
+            log_error("действие %s: у клипа %s нет дорожек с оружием или метки hit (data/%s)", names.name[i], A.clip_name, rel);
+            break;
+        }
+        A.hit_a = (u16)(lb.hit[0].a * 2);
+        A.hit_b = (u16)(lb.hit[0].b * 2);
+        A.cancel = lb.cancel >= 0 ? (u16)(lb.cancel * 2) : 0xFFFF;
+        if (A.end > A.track->ticks - 1) A.end = (u16)(A.track->ticks - 1);
+        A.aim = action_aim(A);
+        h = hash_combine(h, action_hash(A));
+        if (A.name == hash_str("cut")) T.strike = T.count;
+        T.count++;
+    }
+    arena_restore(m.load, mark);
+    if (!ok) return false;
+    T.hash = h;
+    w.actions = T;
+    log_info("действия: %u (удар по приказу — %s, клинок идёт на %.1f° от начального курса)", T.count,
+             T.count ? T.a[T.strike].label : "нет", T.count ? (f64)(i32)T.a[T.strike].aim * (360.0 / 4294967296.0) : 0.0);
+    return true;
+}
+
 static bool world_static_load(World &w, AppMemory &m) {
     usize mark = arena_mark(m.load);
     CollLoad L{};
@@ -156,6 +247,10 @@ static bool world_static_load(World &w, AppMemory &m) {
         return false;
     }
     gait.hash = gh;
+    if (!app_actions_load(w, m)) {
+        arena_restore(m.load, mark);
+        return false;
+    }
     u64 t0 = platform_time_ns();
     bool ok = world_build_static(w, boxes, n, gait, m.world, m.load);
     if (!ok) log_error("коллайдеры: коробок или чанков с ними больше предела");

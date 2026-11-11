@@ -86,6 +86,9 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
         pair_value(f, "тени: страниц · нарисовано", in.work_sm[0], in.work_sm[1]);
         pair_value(f, "тени: без места · без страницы", in.work_sm[2], in.work_sm[3]);
         pair_value(f, "тени: вызовов · выборок", in.work_sm[4], in.work_sm[5]);
+        // Шаг светила (6б-2): страниц нового набора, отложенных стройкой в фоне, и сколько света уже на нём
+        snprintf(t, sizeof t, "%u · %u %%", in.work_sm[6], in.work_sm[7]);
+        ui_value(f, "тени: стройка шага · перетекание", t);
     }
     // Переполнения (docs/graph.md «Переполнения»): что-то не нарисовано или считается медленным путём
     for (u32 i = 0; i < in.overflows && i < DEBUG_MAX_OVERFLOWS; ++i) {

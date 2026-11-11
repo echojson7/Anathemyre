@@ -365,6 +365,7 @@ static Key map_key(SDL_Keycode k) {
     case SDLK_ESCAPE: return KEY_ESCAPE;
     case SDLK_SPACE: return KEY_SPACE;
     case SDLK_PERIOD: return KEY_PERIOD;
+    case SDLK_COMMA: return KEY_COMMA;
     case SDLK_MINUS: return KEY_MINUS;
     case SDLK_EQUALS: return KEY_EQUALS;
     case SDLK_BACKSPACE: return KEY_BACKSPACE;
@@ -390,6 +391,7 @@ static Key map_key(SDL_Keycode k) {
     case SDLK_F1: return KEY_F1;
     case SDLK_F2: return KEY_F2;
     case SDLK_F3: return KEY_F3;
+    case SDLK_F5: return KEY_F5;
     case SDLK_F11: return KEY_F11;
     default: return KEY_NONE;
     }

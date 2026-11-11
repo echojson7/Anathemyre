@@ -89,11 +89,13 @@ struct FrameGpu {
     // заявки, вызовы и список отрисовки страниц, сферы сброса кадра
     VkDeviceAddress sm_table, sm_pages, sm_texels, sm_req, sm_draws, sm_list, sm_inval;
     u32 sm_on, sm_frame, sm_pages_n, sm_req_cap;
-    u32 sm_draw_cap, sm_inval_n, sm_debug, sm_pad;
-    f32 sm_r[4], sm_u[4], sm_s[4];  // оси карты: r, u — плоскость карты, s — к светилу; r.w — тексель уровня 0,
-                                    // u.w — высота камеры к светилу от якоря, s.w — дальность теней, м
-    i32 sm_base[16][2];             // окно уровня: первая страница (номер на мировой решётке уровня)
-    f32 sm_off[16][2];              // камера от начала окна уровня по r, u, м
+    u32 sm_draw_cap, sm_inval_n, sm_debug, sm_cur;  // sm_cur — набор нового шага светила
+    u32 sm_read, sm_bg, sm_build_cap, sm_pad;       // читаемые наборы (биты); набор в фоне + 1; его страниц за кадр
+    f32 sm_mix, sm_disc, sm_far, sm_t0;  // вес нового набора; тангенс радиуса светила; дальность, м; тексель уровня 0, м
+    f32 sm_r[2][4], sm_u[2][4], sm_s[2][4];  // оси наборов: r, u — плоскость карты, s — к светилу; u.w — высота
+                                             // камеры к светилу от якоря набора
+    i32 sm_base[24][2];             // окно места уровня (набор · SM_LEVELS + уровень): первая страница на решётке
+    f32 sm_off[24][2];              // камера от начала окна по r, u, м
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -113,7 +115,8 @@ constexpr u32 STAT_SKIN_VERTS = 18;  // вершин скинено (skin.comp)
 // выборки без страницы; вызовы кластеров в страницы (до обрезки); выборки текселей карты
 constexpr u32 STAT_SM_USED = 19, STAT_SM_NEW = 20, STAT_SM_OVER = 21, STAT_SM_MISS = 22, STAT_SM_DRAWS = 23,
               STAT_SM_TAPS = 24;
-constexpr u32 STAT_COUNT = 25;
+constexpr u32 STAT_SM_WAIT = 25;  // страниц нового шага светила, отложенных на следующие кадры (стройка в фоне)
+constexpr u32 STAT_COUNT = 26;
 // Виды плиток кадра мира (TILE_* в common.glsl): небо, земля из кеша (и небо), сетки (и небо), смесь земли и
 // сеток, земля на пиксель (и небо)
 constexpr u32 TILE_KINDS = 5;
@@ -166,6 +169,7 @@ struct FrameSlot {
     GpuBuffer skin_jobs;    // работы скиннинга кадра (SkinJobGpu)
     GpuBuffer bones;        // палитры костей людей кадра (RenderBone)
     GpuBuffer sm_inval;     // сферы сброса страниц теней (vk_shadow.cpp)
+    u32 sm_frame = 0;       // кадр теней, чьи счётчики придут в readback (vk_shadow_read)
     u8 rg_readback = 0;     // он же в графе кадра
     bool stats_pending = false;  // readback заполнит отправленный кадр
     u32 marks = 0;          // записано меток времени
@@ -230,21 +234,31 @@ struct HorizonGpu {
     f32 h_max = 0;
 };
 
-// Тени солнца страницами (vk_shadow.cpp, docs/shadow.md): уровень k — решётка текселей cell_min·2^k в плоскости
-// поперёк светила, окно уровня — SM_WIN² страниц по SM_PAGE² текселей вокруг камеры, пул физических страниц общий
-constexpr u32 SM_LEVELS = 12, SM_PAGE = 128, SM_WIN = 32;
+// Тени солнца страницами (vk_shadow.cpp, docs/shadow.md): уровень k — решётка текселей t0·2^k в плоскости
+// поперёк светила, окно уровня — SM_WIN² страниц по SM_PAGE² текселей вокруг камеры, пул физических страниц общий.
+// Наборов два — старый и новый шаг светила (6б-2): место уровня — набор · SM_LEVELS + уровень
+constexpr u32 SM_LEVELS = 12, SM_SETS = 2, SM_SLOTS = SM_LEVELS * SM_SETS, SM_PAGE = 128, SM_WIN = 32;
 constexpr u32 SM_INVAL_MAX = 4096;      // сфер сброса за кадр (изменившиеся экземпляры); больше — сброс всего
 constexpr u32 SM_DRAW_CAP = 1u << 18;   // вызовов кластеров в страницы за кадр
+struct ShadowSet {
+    i32 key[2] = {0x7FFFFFFF, 0};  // шаг светила (октаэдр, 1/SM_STEP), по которому нарисован набор
+    f64 anchor = 0;                // якорь высоты к светилу, м
+};
 struct ShadowGpu {
     GpuBuffer table, pages, texels, req, draws, list;
     u32 pages_n = 0, req_cap = 0, frame = 0;
-    bool reset = true;       // окна и страницы с нуля в начале кадра
+    bool reset = true;       // окна и страницы обоих наборов с нуля в начале кадра
     bool on = false;
     u32 grow = 0;            // заявок без места в прочитанном кадре: пул растёт
     u32 mesh_gen = 0, seen_mesh = ~0u;  // сетки менялись — страницы нарисованы из старых
-    i32 key[2] = {0x7FFFFFFF, 0};       // шаг светила (октаэдр, 1/1024), по которому нарисованы страницы
-    f32 cell_min = 0;
-    f64 anchor = 0;          // якорь высоты к светилу, м
+    f32 cell_min = 0, t0 = 0;
+    ShadowSet set[SM_SETS];
+    u32 cur = 0;             // набор нового шага; другой — старый
+    bool old_on = false;     // старый набор ещё показан (свет перетекает)
+    bool building = false;   // новый набор строится в фоне и ещё не показан
+    bool clear_cur = false;  // окна нового набора с нуля в начале кадра (новый шаг)
+    u32 build_frame = 0;     // кадр, с которого строится новый набор
+    f32 mix = 1;             // вес нового набора
     u32 inval_n = 0;         // сфер сброса этого кадра
     VkPipeline pipe_inval = VK_NULL_HANDLE, pipe_scan = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE,
                pipe_alloc = VK_NULL_HANDLE, pipe_cull = VK_NULL_HANDLE, pipe_draw = VK_NULL_HANDLE;
@@ -492,7 +506,8 @@ void vk_horizon_free();
 bool vk_shadow_init();
 void vk_shadow_shutdown();
 void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool images);
-void vk_shadow_read(const u32 *stats);
+void vk_shadow_read(const u32 *stats, u32 frame);
+u32 vk_shadow_blend();
 bool vk_gcache_init();
 void vk_gcache_shutdown();
 void vk_gcache_fill(FrameGpu &g, const RenderFrame &f, bool images);

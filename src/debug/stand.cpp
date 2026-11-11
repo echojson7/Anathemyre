@@ -155,7 +155,29 @@ void debug_people(const World &w, DebugDraw &dbg, i32 selected) {
         WPos a = feet, b = feet;
         a.y += 0.3f;
         b.y += 1.5f;
-        capsule(dbg, a, b, 0.3f, col);
+        // 11 капсул тела из дорожек (этап 10): по ним шаг мира ищет попадания; задетая часть — красная, на стопе
+        // попадания — все белые. Клинок: в окне удара красный, вне — оранжевый
+        BodyCaps bc;
+        people_body(w, s, feet, bc);
+        auto at = [&](const f32 v[3]) {
+            WPos q = feet;
+            q.x += v[0];
+            q.y += v[1];
+            q.z += v[2];
+            wpos_rebase(q);
+            return q;
+        };
+        if (!bc.n) capsule(dbg, a, b, 0.3f, col);
+        for (u32 c = 0; c < bc.n; ++c) {
+            u32 cc = p.freeze[s] ? rgba8(255, 255, 255) : p.react_t[s] && p.react_part[s] == c ? rgba8(255, 60, 40) : col;
+            capsule(dbg, at(bc.a[c]), at(bc.b[c]), bc.r[c], cc);
+        }
+        f32 ba[3], bb[3];
+        if (p.act[s] && people_blade(w, s, p.act_t[s], feet, ba, bb)) {
+            const ActionDesc &A = w.actions.a[p.act[s] - 1];
+            bool hot = p.act_t[s] >= A.hit_a && p.act_t[s] <= A.hit_b && !p.act_hit[s];
+            dbg_line(dbg, at(ba), at(bb), hot ? rgba8(255, 40, 40) : rgba8(255, 160, 40));
+        }
         f32 sn, cs;
         sincos_turn(p.heading[s], &sn, &cs);
         WPos c = b, d = b;

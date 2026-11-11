@@ -1,16 +1,23 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
-// Тени солнца (docs/shadow.md): сколько заявок кадра получат страницу — dispatch выдачи (группа на страницу);
-// остальные — в счётчик «без места», свет там идёт без тени сеток, а пул растёт перед следующим кадром
+// Тени солнца (docs/shadow.md): сколько заявок кадра получат страницу — dispatch выдачи (группа на страницу).
+// Сначала заявки показанных наборов: им — сколько есть свободных, остальные — в счётчик «без места» (свет там идёт
+// без тени сеток, а пул растёт перед следующим кадром). Потом набор нового шага светила, что строится в фоне: ему
+// не больше sm_build_cap страниц за кадр (тяжёлый кадр перерисовки размазан на несколько), остаток ждёт следующих
+// кадров (STAT_SM_WAIT); не хватило свободных — тоже «без места»: в пул не влезают оба набора
 #include "shadow.glsl"
 layout(local_size_x = 1) in;
 
 void main() {
     FrameData f = pc.frame;
+    uint free_n = f.sm_req.old_n + f.sm_req.recent_n;
     uint want = f.sm_req.req_n;
-    uint r = min(want, f.sm_req_cap);
-    uint n = min(r, f.sm_req.old_n + f.sm_req.recent_n);
-    f.sm_req.alloc = uvec4(n, 1u, 1u, 0u);
-    f.stats.v[STAT_SM_NEW] = n;
-    f.stats.v[STAT_SM_OVER] = want - n;
+    uint n = min(min(want, f.sm_req_cap), free_n);
+    uint bg = f.sm_req.bg_n;
+    uint bw = min(min(bg, f.sm_req_cap), f.sm_build_cap);
+    uint nb = min(bw, free_n - n);
+    f.sm_req.alloc = uvec4(n + nb, 1u, 1u, n);
+    f.stats.v[STAT_SM_NEW] = n + nb;
+    f.stats.v[STAT_SM_OVER] = (want - n) + (bw - nb);
+    f.stats.v[STAT_SM_WAIT] = bg - nb;
 }

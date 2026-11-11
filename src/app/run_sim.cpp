@@ -40,6 +40,14 @@ int run_sim(const Args &a, AppMemory &m) {
                                    hex_u64(world_static_hash(w), shex));
     }
 
+    // --rewind-check: перемотка окна (debug/rewind.cpp) против хешей прямого хода последних 600 шагов
+    Rewind *rw = nullptr;
+    u64 *ring_hash = nullptr;
+    if (a.rewind_check) {
+        rw = arena_push<Rewind>(m.load, 1);
+        rewind_init(*rw, w);
+        ring_hash = arena_push<u64>(m.load, 600);
+    }
     f64 max_us = 0, people_us = 0;
     u64 max_at = 0;
     u64 people_steps = 0;
@@ -56,6 +64,10 @@ int run_sim(const Args &a, AppMemory &m) {
         if (w.people.live) { people_steps++; people_us += us; }
         if (us > max_us) { max_us = us; max_at = w.step; }
         if (a.record) recorder_step(rec, w, intents.span());
+        if (rw) {
+            rewind_after_step(*rw, w, intents.span());
+            ring_hash[w.step % 600] = world_hash(w);
+        }
         if (text && w.step % 1000 == 0 && text_len + 48 < text_cap) {
             char hex[17];
             text_len += (usize)snprintf(text + text_len, text_cap - text_len, "step %" PRIu64 " %s\n",
@@ -78,12 +90,26 @@ int run_sim(const Args &a, AppMemory &m) {
             going += p.state[s] != MOVE_STAND;
         }
         log_info("--sim люди: %u живых (на постройках %u, из них выше 3 м %u; в пути %u), шаг с людьми в среднем %.1f мкс, "
-                 "из них системы людей %.1f мкс; путей %u, раскрыто узлов %" PRIu64 " (%.0f на путь)",
+                 "из них системы людей %.1f мкс; путей %u, раскрыто узлов %" PRIu64 " (%.0f на путь); ударов %u, попаданий %u",
                  p.live, on_box, high, going, people_us / (f64)people_steps, (f64)stats.people_ns / 1000.0 / (f64)people_steps,
                  stats.paths, stats.expanded,
-                 stats.paths ? (f64)stats.expanded / (f64)stats.paths : 0.0);
+                 stats.paths ? (f64)stats.expanded / (f64)stats.paths : 0.0, stats.strikes, stats.hits);
     }
     int rc = 0;
+    if (rw) {
+        bool good = w.step > 600;
+        const u64 end = w.step;
+        // Назад всё дальше: каждая перемотка — от уже перемотанного мира к более раннему шагу
+        for (u64 back = 1; good && back < 500; back += 37) {
+            u64 target = end - back;
+            u64 want = ring_hash[target % 600];
+            good = rewind_to(*rw, w, target, m.step) && world_hash(w) == want;
+            if (!good) log_error("--rewind-check: перемотка на шаг %" PRIu64 " не совпала с прямым ходом", target);
+        }
+        if (good) log_info("--rewind-check: перемотка совпала с прямым ходом (14 точек до 500 шагов назад)");
+        else rc = 1;
+        rewind_free(*rw);
+    }
     if (text && !platform_write_file(a.hashes, text, text_len)) { log_error("не записать %s", a.hashes); rc = 1; }
     if (a.record && !save_record(rec, a.record, m.load)) rc = 1;
     return rc;

@@ -257,7 +257,7 @@ void vk_stats_read(FrameSlot &fs) {
     memcpy(g_vk.world.work, st, sizeof g_vk.world.work);
     memcpy(g_vk.world.eye, rb + READBACK_EYE / 4, sizeof g_vk.world.eye);
     vk_gcache_read(st);
-    vk_shadow_read(st);
+    vk_shadow_read(st, fs.sm_frame);
     g_vk.world.work_valid = true;
     if (st[STAT_FROXEL_LIGHTS]) add_over(g_gpu_over, g_ngpu, "froxels: клеток, где огни не влезли", st[STAT_FROXEL_LIGHTS], 0);
     if (st[STAT_FROXEL_DECALS]) add_over(g_gpu_over, g_ngpu, "froxels: клеток, где декали не влезли", st[STAT_FROXEL_DECALS], 0);
@@ -290,6 +290,8 @@ bool render_work(RenderWork &out) {
     out.sm_miss = w.work[STAT_SM_MISS];
     out.sm_draws = w.work[STAT_SM_DRAWS];
     out.sm_taps = w.work[STAT_SM_TAPS];
+    out.sm_wait = w.work[STAT_SM_WAIT];
+    out.sm_blend = vk_shadow_blend();
     out.gc_off = g_vk.gcache.off;
     return true;
 }

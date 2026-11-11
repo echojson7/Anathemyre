@@ -9,6 +9,8 @@
 void debug_keys(const Input &in, DebugState &d) {
     // Просьбы копятся до debug_clear_frame: клавиши и панель за один кадр не затирают друг друга
     if (in.key_pressed[KEY_PERIOD]) d.step_once = true;
+    if (in.key_pressed[KEY_COMMA]) d.step_back = true;
+    if (in.key_pressed[KEY_F5]) d.reload_actions = true;
     if (in.key_pressed[KEY_L]) d.lines = !d.lines;
     if (in.key_pressed[KEY_P]) d.pixel = !d.pixel;
     if (in.key_pressed[KEY_F1]) debug_print_help();
@@ -67,15 +69,32 @@ void autoplay_intents(const World &w, Rng &rng, FixedArray<Intent> &out) {
             out.push_back({step, INTENT_GO, t, (u64)id | (gait << 32)});
         }
     }
+    // Удары (этап 10): раз в ~3.5 с случайный нападает на ближнего к нему (подход, удар, реакция задетого)
+    if (step % 211 == 100 && w.people.live > 1) {
+        const People &p = w.people;
+        u32 s = rng_below(rng, AUTOPLAY_PEOPLE), best = PEOPLE_CAPACITY;
+        f32 best_d2 = 30.0f * 30.0f;
+        if (p.alive[s])
+            for (u32 t = 0; t < PEOPLE_CAPACITY; ++t) {
+                if (!p.alive[t] || t == s) continue;
+                Vec2 d = wpos_delta_xz(p.cx[s], p.cz[s], p.x[s], p.z[s], p.cx[t], p.cz[t], p.x[t], p.z[t]);
+                if (dot(d, d) < best_d2) { best_d2 = dot(d, d); best = t; }
+            }
+        if (best < PEOPLE_CAPACITY) {
+            u64 a = s | ((u32)p.gen[s] << 16), b = best | ((u32)p.gen[best] << 16);
+            out.push_back({step, INTENT_ATTACK, WPos{}, a | (b << 32)});
+        }
+    }
 }
 
 void debug_print_help() {
     log_info("клавиши: Esc настройки, F3 панель отладки, F11 весь экран");
-    log_info("отладка: Space пауза, . шаг на паузе, - = медленнее/быстрее, L отрезки, P ячейки");
+    log_info("отладка: Space пауза, . шаг на паузе, , шаг назад (до 10 с), - = медленнее/быстрее, L отрезки, P ячейки,");
+    log_info("        F5 перечитать описания действий (data/actions, метки клипов)");
     log_info("камера: средняя кнопка или Alt + правая — вращать, Shift + средняя — двигать, колесо — ближе/дальше,");
     log_info("        WASD — двигать, Shift — быстрее, C — за выбранным человеком");
     log_info("        F — свободный полёт (WASD, Q/E вниз/вверх, средняя кнопка — взгляд) и обратно на орбиту");
-    log_info("люди: левая кнопка — выбрать, правая — идти шагом (Ctrl — трусцой, Shift — бегом)");
+    log_info("люди: левая кнопка — выбрать, правая — идти шагом (Ctrl — трусцой, Shift — бегом), правая по человеку — ударить");
     log_info("точки: левая кнопка мимо людей — притянуть, Ctrl + левая — вспышка, R — отпустить");
     log_info("сутки: [ ] — час назад/вперёд, T — скорость суток (обычная, ×20, ×120, стоп)");
     log_info("стенд людей (у Остова, вкл. в F3): B — согнуть кость, скелет и морф — в F3");

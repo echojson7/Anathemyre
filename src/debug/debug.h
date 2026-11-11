@@ -37,6 +37,8 @@ struct DebugState {
     u32 tab = 0;              // вкладка панели: DEBUG_TAB_*
     // Просьбы этого кадра от клавиш и панели (debug_clear_frame после исполнения)
     bool step_once = false;   // «.» на паузе — один шаг
+    bool step_back = false;   // «,» на паузе — шаг назад (перемотка)
+    bool reload_actions = false;  // F5 — перечитать описания действий (data/actions, метки клипов)
     i32 clock_hours = 0;      // [ ] — часы назад и вперёд на час
     bool clock_speed = false; // T — следующая скорость суток
     i32 clock_speed_set = -1; // панель: скорость суток по номеру в CLOCK_SPEEDS
@@ -48,6 +50,8 @@ struct DebugState {
 };
 inline void debug_clear_frame(DebugState &d) {
     d.step_once = false;
+    d.step_back = false;
+    d.reload_actions = false;
     d.clock_hours = 0;
     d.clock_speed = false;
     d.clock_speed_set = -1;
@@ -93,7 +97,8 @@ struct DebugInfo {
     u32 work_shadow;           // выборки карты горизонта (тень земли, docs/horizon.md)
     u32 work_gc[4];           // кеш земли: страницы кадра, запечено, без места, поверхности мимо кеша
     u32 work_skin;            // вершин скинено (люди)
-    u32 work_sm[6];           // тени: страниц кадра, нарисовано, без места, выборок без страницы, вызовов, выборок
+    u32 work_sm[8];           // тени: страниц кадра, нарисовано, без места, выборок без страницы, вызовов, выборок,
+                              // отложено стройкой нового шага светила, перетекание на него (%)
     const char *gc_off;       // почему кеш земли выключен (nullptr — включён)
     // Глаз прочитанного кадра (render_light, docs/light.md): освещённость земли, лк, и EV100; light = false — нет
     bool light;
@@ -107,6 +112,17 @@ struct DebugInfo {
 struct World;
 struct ViewAssets;
 struct RenderFrame;
+// Перемотка мира назад (rewind.cpp): кольцо снимков столбцов и журнал намерений
+constexpr u32 REWIND_SNAPS = 100, REWIND_EVERY = 6, REWIND_LOG = 4096;  // 10 с назад
+struct Rewind {
+    u8 *buf = nullptr;
+    usize snap_bytes = 0;
+    u64 snap_step[REWIND_SNAPS] = {};
+    u32 head = 0, count = 0;
+    Intent *log = nullptr;
+    u32 log_head = 0, log_count = 0;
+    bool ok = false;
+};
 // Осмотр мира (вкладка «Мир»): только читает столбцы мира (world_columns), ничего в мире не решает
 struct WorldInspect {
     u32 table = 1;            // выбранная таблица (номер в списке таблиц)
@@ -145,6 +161,12 @@ const char *const *debug_stand_clip_names(u32 *count);
 void debug_stand_args(DebugState &d, const char *spec);
 // Люди шага мира капсулами и курсом поверх тела (stand.cpp); у выбранного — путь узлами сетки и цель
 void debug_people(const World &w, DebugDraw &dbg, i32 selected);
+// Перемотка: память под кольцо; после каждого шага окна — намерения шага и снимок раз в REWIND_EVERY шагов;
+// назад — к шагу target (снимок и повтор шагов). false — так далеко снимков нет
+void rewind_init(Rewind &r, const World &w);
+void rewind_free(Rewind &r);
+void rewind_after_step(Rewind &r, const World &w, Span<const Intent> its);
+bool rewind_to(Rewind &r, World &w, u64 target, Arena &step_arena);
 #else
 inline void debug_keys(const Input &, DebugState &) {}
 inline void autoplay_intents(const World &, Rng &, FixedArray<Intent> &) {}
@@ -159,4 +181,8 @@ inline void debug_stand_update(DebugState &, const ViewAssets &, const Terrain &
 inline void debug_stand(const DebugState &, const ViewAssets &, Arena &, RenderFrame &) {}
 inline void debug_stand_args(DebugState &, const char *) {}
 inline void debug_people(const World &, DebugDraw &, i32) {}
+inline void rewind_init(Rewind &, const World &) {}
+inline void rewind_free(Rewind &) {}
+inline void rewind_after_step(Rewind &, const World &, Span<const Intent>) {}
+inline bool rewind_to(Rewind &, World &, u64, Arena &) { return false; }
 #endif

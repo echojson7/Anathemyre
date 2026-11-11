@@ -1,7 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
-// Тени солнца (docs/shadow.md): отбор заслонок для новых страниц кадра. Поток на экземпляр: на каждом уровне,
-// где есть новые страницы, сфера сетки в плоскости карты задевает хоть одну новую → LOD по размеру текселя
+// Тени солнца (docs/shadow.md): отбор заслонок для новых страниц кадра. Поток на экземпляр: на каждом месте уровня
+// (оба набора), где есть новые страницы, сфера сетки в плоскости карты задевает хоть одну новую → LOD по размеру текселя
 // уровня (не по камере: страница одна и та же, когда бы ни нарисовалась) → кластеры, задевающие новые страницы,
 // — в вызовы. Порядок вызовов от запуска к запуску разный, страница — нет: тексель берёт максимум высот.
 // Биты новых страниц уровня читаются в локальный массив раз на уровень: и дешевле, и lavapipe под GPU-AV падает
@@ -41,7 +41,7 @@ void main() {
     vec3 c = origin + quat_rotate(q, m.sphere.xyz * it.scale);
     float r = m.sphere.w * it.scale;
     uint want = 0u;
-    for (int k = 0; k < SM_LEVELS; ++k) {
+    for (int k = 0; k < SM_SLOTS; ++k) {
         if (f.sm_req.fresh[k] == 0u) continue;
         float t = sm_texel(k);
         if (r < SM_MIN_TEXELS * t) continue;
@@ -58,7 +58,7 @@ void main() {
             want++;
             uint slot = atomicAdd(f.sm_draws.count, 1u);
             if (slot >= f.sm_draw_cap) continue;
-            f.sm_list.v[slot] = uvec2(i, ci | uint(k) << 28);
+            f.sm_list.v[slot] = uvec2(i, ci | uint(k) << 27);
             SmDrawCmd d;
             d.index_count = cl.tri_count * 3u;
             d.instance_count = 1u;
