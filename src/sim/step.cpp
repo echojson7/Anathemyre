@@ -11,6 +11,9 @@ static constexpr u32 BURST_COUNT = 40;
 
 static constexpr u64 CLOCK_RATE_MAX = 1u << 16;
 
+const char *const STEP_SYS_NAMES[SYS_COUNT] = {"намерения", "точки", "действия", "пути", "руление", "расталкивание",
+                                              "опора", "часы и прочее"};
+
 // Читает: намерения шага. Пишет: attract_*, точки (BURST), rng, clock, люди (рождение, приказы)
 static void step_intents(World &w, StepCtx &ctx) {
     for (const Intent &it : ctx.intents) {
@@ -178,19 +181,34 @@ static void step_debug_draw(const World &w, StepCtx &ctx) {
 void sim_step(World &w, StepCtx &ctx) {
     fpu_enter_sim();
     if (ctx.step_arena) arena_reset(*ctx.step_arena);
+    // Замер по системам — только с часами бенча; мир от него не зависит
+    StepStats *st = ctx.stats && ctx.stats->now_ns ? ctx.stats : nullptr;
+    u64 mark = st ? st->now_ns() : 0;
+    auto done = [&](StepSysId id) {
+        if (!st) return;
+        u64 t = st->now_ns();
+        st->sys_ns[id] += t - mark;
+        mark = t;
+    };
     step_intents(w, ctx);
+    done(SYS_INTENTS);
     step_dots_steer(w, ctx);
     step_dots_move(w, ctx);
     step_dots_life(w, ctx);
-    u64 t0 = ctx.stats && ctx.stats->now_ns ? ctx.stats->now_ns() : 0;
+    done(SYS_DOTS);
     people_act(w, ctx);
+    done(SYS_ACT);
     people_paths(w, ctx);
+    done(SYS_PATHS);
     people_steer(w, ctx);
+    done(SYS_STEER);
     people_separate(w, ctx);
+    done(SYS_SEPARATE);
     people_settle(w, ctx);
-    if (t0) ctx.stats->people_ns += ctx.stats->now_ns() - t0;
+    done(SYS_SETTLE);
     step_clock(w, ctx);
     w.step++;
     step_debug_draw(w, ctx);
+    done(SYS_REST);
     ANA_ASSERT(fpu_sim_ok());
 }

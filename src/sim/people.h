@@ -105,6 +105,8 @@ void people_order_go(World &w, u32 id, const WPos &target, u32 gait, bool player
 // Приказ атаковать: биться с целью (этап 11), пока приказ «идти» его не снимет. Какой удар или защиту делать —
 // решает ИИ намерением INTENT_ACT (people_order_act), пока он молчит — удар по умолчанию ActionTable::strike
 void people_order_attack(World &w, u32 id, u32 target_id);
+// Новая цель боя месту s (номер цели с поколением): место вокруг прежней не годится, в очередь на удар — с конца
+void people_set_target(World &w, u32 s, u32 target_id);
 // Намерение ИИ: желаемое действие (номер + 1; 0 — держать дистанцию). Исполнение решает, когда его начать
 void people_order_act(World &w, u32 id, u32 act);
 // Намерение ИИ: место вокруг цели (PLACE_*; 0 — без кольца, прямо к цели)

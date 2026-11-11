@@ -211,36 +211,42 @@ static f32 smooth01v(f32 x) {
 // Тик действия или реакции на этот кадр: между двумя выписками (на стопе тик стоит — поза замирает)
 static f32 tick_between(u16 p, u16 c, bool same, f32 a) { return same && p <= c ? (f32)p + (f32)(c - p) * a : (f32)c; }
 
-static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewInput &in, u32 i, const Root &r, f32 dist,
-                           PoseMatrix *palette, bool debug) {
-    const Extract &c = *in.cur;
-    const Skel &s = assets.bodies[pv.body].skel[pv.skin];
-    const u32 nb = (u32)s.bones.count;
-    PersonLook &L = pv.look[i];
-    const f32 dt = f_clamp(in.dt, 0.0f, 0.1f);
-    const i32 *B = pv.bones;
-    bool fresh = L.gen != c.person_gen[i] || !L.drawn;
-    if (L.gen != c.person_gen[i]) {
-        L = PersonLook{};
-        L.gen = c.person_gen[i];
-    }
-    // Сглаживание корня: высота (ступени), ускорение и поворот (наклон)
-    if (fresh || f_abs(r.at.y - L.y) > 1.0f) L.y = r.at.y;
-    else L.y = approach(L.y, r.at.y, 14.0f, dt);
-    L.acc = fresh ? 0.0f : approach(L.acc, f_clamp(r.acc, -8.0f, 8.0f), 6.0f, dt);
-    L.side = fresh ? 0.0f : approach(L.side, f_clamp(r.v * r.yaw_rate, -8.0f, 8.0f), 6.0f, dt);
-
-    Quat rot[SKEL_MAX_BONES], tmp[SKEL_MAX_BONES], wr[SKEL_MAX_BONES];
-    Vec3 wp[SKEL_MAX_BONES], trans;
+// Поза в работе: что о человеке знает кадр и повороты костей (местные rot, мировые wr и wp)
+struct PoseWork {
+    PeopleView &pv;
+    const ViewInput &in;
+    const Extract &c, &pe;
+    const Skel &s;
+    const Root &r;
+    PersonLook &L;
+    const i32 *B;
+    u32 i, nb;
+    i32 tb;
+    f32 dt;
+    bool fresh, same;
+    Quat *rot, *tmp, *wr;
+    Vec3 *wp;
+    Vec3 trans;
     f32 contact[2];
-    GaitMix m = gait_mix(r.v);
-    gait_pose(pv.gait, nb, m, r.phase, rot, &trans, tmp, contact);
-    const i32 tb = pv.gait.trans_bone;
-    const Extract &pe = *in.prev;
-    bool same = pe.person_gen[i] == c.person_gen[i];
+    GaitMix m;
+};
 
-    // Действие (этапы 10–11): клип поверх ходьбы, вход 0.15 с от тика start, выход 0.25 с к концу действия. Сорванное
-    // или сменённое действие (попадание, отбит, отмена в другое) гаснет за ACT_FADE с позы, где его оборвали
+// Вес клипов действий в позе: всех (стопы из клипа), с мечом (хват двумя руками), блока (меч клинком вверх)
+struct ActWeights {
+    f32 any, grip2, guard;
+};
+
+static ActWeights pose_actions(PoseWork &pw) {
+    PeopleView &pv = pw.pv;
+    const ViewInput &in = pw.in;
+    const Extract &c = pw.c, &pe = pw.pe;
+    PersonLook &L = pw.L;
+    const u32 i = pw.i, nb = pw.nb;
+    const f32 dt = pw.dt;
+    const bool fresh = pw.fresh, same = pw.same;
+    Quat *rot = pw.rot, *tmp = pw.tmp;
+    Vec3 &trans = pw.trans;
+    f32 *contact = pw.contact;
     f32 aw = 0.0f;
     u8 act = c.person_act[i];
     const ActionDesc *A = act && c.actions && act <= c.actions->count && pv.act[act - 1].clip ? &c.actions->a[act - 1] : nullptr;
@@ -273,20 +279,26 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
     L.last_act = A ? act : 0;
     L.last_t = act_s;
     L.last_w = aw;
-    // Вес клипов действий в позе: стопы из клипа, хват меча; у блока — меч клинком вверх
     const f32 any = f_max(aw, fw * (1.0f - aw));
     const bool aw_wpn = A && A->track && A->track->weapon, fw_wpn = F && F->track && F->track->weapon;
     const f32 grip2 = f_max(aw_wpn ? aw : 0.0f, fw_wpn ? fw * (1.0f - aw) : 0.0f);
     const f32 guard = f_max(A && A->kind == ACT_BLOCK ? aw : 0.0f, F && F->kind == ACT_BLOCK ? fw * (1.0f - aw) : 0.0f);
     for (u32 f = 0; f < 2; ++f) contact[f] = contact[f] + (1.0f - contact[f]) * any;
+    return {any, grip2, guard};
+}
 
-    // Наклон: вперёд от ускорения (позвоночник), вбок к центру поворота (таз; стопы вернёт IK)
-    pose_world(s, rot, tb, &trans, wr, wp);
-    f32 lean_f = f_clamp(L.acc * 0.03f, -0.1f, 0.14f), lean_s = f_clamp(L.side * 0.035f, -0.15f, 0.15f);
-    pose_turn_world(rot, wr, (u32)B[B_SPINE], quat_axis_angle(Vec3{1, 0, 0}, lean_f));
-    pose_turn_world(rot, wr, (u32)B[B_PELVIS], quat_axis_angle(Vec3{0, 0, 1}, -lean_s));
-    pose_world(s, rot, tb, &trans, wr, wp);
-
+static void pose_flinch(PoseWork &pw) {
+    const ViewInput &in = pw.in;
+    const Extract &c = pw.c, &pe = pw.pe;
+    const Skel &s = pw.s;
+    const Root &r = pw.r;
+    const i32 *B = pw.B;
+    const u32 i = pw.i;
+    const i32 tb = pw.tb;
+    const bool same = pw.same;
+    Quat *rot = pw.rot, *wr = pw.wr;
+    Vec3 *wp = pw.wp;
+    Vec3 &trans = pw.trans;
     // Реакция задетого: верх тела откидывается от удара (резко, потом спадает); стопы вернёт IK. Клипа реакции
     // пока нет (ждёт Mixamo), это добавка поверх позы, а не поза формулой
     if (c.person_react_t[i]) {
@@ -310,6 +322,209 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
             pose_world(s, rot, tb, &trans, wr, wp);
         }
     }
+}
+
+// Стопы по опоре (IK): подгонка шага, перестановка стоя, цели на опоре, таз до нижней стопы. Возвращает корень
+// экземпляра
+static WPos pose_feet(PoseWork &pw, f32 any, bool debug) {
+    PeopleView &pv = pw.pv;
+    const Extract &c = pw.c;
+    const Skel &s = pw.s;
+    const Root &r = pw.r;
+    PersonLook &L = pw.L;
+    const i32 *B = pw.B;
+    const i32 tb = pw.tb;
+    const f32 dt = pw.dt;
+    const bool fresh = pw.fresh;
+    Quat *rot = pw.rot, *wr = pw.wr;
+    Vec3 *wp = pw.wp;
+    Vec3 &trans = pw.trans;
+    const f32 *contact = pw.contact;
+    const GaitMix &m = pw.m;
+    WPos base;
+    // Подгонка длины шага: стопа вдоль хода — от таза в k раз, чтобы стоящая стопа не скользила
+    f32 nat = c.gait->walk_len + (c.gait->run_len - c.gait->walk_len) * m.run;
+    f32 k = 1.0f + (gait_cycle_len(*c.gait, r.v) / nat - 1.0f) * m.move;
+    f32 pz = wp[B[B_PELVIS]].z;
+    WPos want[2];
+    f32 ankle_h[2], toe_dz[2];
+    for (u32 f = 0; f < 2; ++f) {
+        Vec3 a = wp[B[B_FOOT + f]];
+        f32 mv = f_max(m.move, any);  // в действии стопы — из клипа
+        if (mv < 1.0f) {  // покой: стопы — как в бинде под тазом
+            Vec3 rest = pv.rest_foot[f] + Vec3{0, 0, pz};
+            a = rest + (a - rest) * mv;
+        }
+        f32 z = pz + (a.z - pz) * (k + (1.0f - k) * any), wx, wz;
+        body_to_world(r.yaw, a.x, z, &wx, &wz);
+        want[f] = add(r.at, wx, 0, wz);
+        ankle_h[f] = a.y;
+        toe_dz[f] = wp[B[B_BALL + f]].z - a.z;
+    }
+    // Стоит: стопы держатся на месте и переставляются по одной, если тело ушло или повернулось
+    bool standing = m.move < 0.05f && any < 0.02f;
+    if (!standing) L.lock = false;
+    else if (!L.lock || fresh) {
+        L.lock = true;
+        for (u32 f = 0; f < 2; ++f) {
+            L.lock_at[f] = want[f];
+            L.lock_yaw[f] = r.yaw;
+            L.step_t[f] = -1.0f;
+        }
+    } else {
+        for (u32 f = 0; f < 2; ++f)
+            if (L.step_t[f] >= 0.0f && (L.step_t[f] += dt / STEP_TIME) >= 1.0f) {
+                L.step_t[f] = -1.0f;
+                L.lock_at[f] = want[f];
+                L.lock_yaw[f] = r.yaw;
+            }
+        if (L.step_t[0] < 0.0f && L.step_t[1] < 0.0f) {
+            f32 err[2];
+            for (u32 f = 0; f < 2; ++f) {
+                Vec2 d = wpos_delta_xz(L.lock_at[f], want[f]);
+                f32 turn = f_abs(turn_diff_rad(L.lock_yaw[f], r.yaw));
+                err[f] = (length(d) > STEP_FAR || turn > STEP_TURN) ? length(d) + turn * 0.3f : 0.0f;
+            }
+            u32 f = err[1] > err[0] ? 1 : 0;
+            if (err[f] > 0.0f) {
+                L.step_t[f] = 0.0f;
+                L.step_from[f] = L.lock_at[f];
+                L.step_yaw0[f] = L.lock_yaw[f];
+            }
+        }
+    }
+    // Цели стоп: место, опора под пяткой и носком, высота стопы клипа над его полом
+    Vec3 target[2], normal[2];
+    f32 yaw_off[2] = {0, 0}, lift[2] = {0, 0}, sup[2];
+    for (u32 f = 0; f < 2; ++f) {
+        WPos at = want[f];
+        if (L.lock) {
+            if (L.step_t[f] >= 0.0f) {
+                f32 t = L.step_t[f], e = t * t * (3.0f - 2.0f * t);
+                Vec2 d = wpos_delta_xz(L.step_from[f], want[f]);
+                at = add(L.step_from[f], d.x * e, 0, d.y * e);
+                yaw_off[f] = turn_diff_rad(r.yaw, L.step_yaw0[f]) * (1.0f - e);
+                lift[f] = STEP_LIFT * 4.0f * t * (1.0f - t);
+            } else {
+                at = L.lock_at[f];
+                yaw_off[f] = turn_diff_rad(r.yaw, L.lock_yaw[f]);
+            }
+        }
+        f32 tx, tz;
+        body_to_world(r.yaw, 0.0f, toe_dz[f], &tx, &tz);
+        // Опора — не выше шага над корнем (стена и цоколь рядом — не опора); носок над ступенью выше пятки
+        // (марш: стопа на ребре) поднимает стопу, носок над чем-то выше ступени — нет
+        Vec3 n;
+        f32 h = support(c, at, L.y + 0.05f, &n);
+        f32 ht = support(c, add(at, tx, 0, tz), L.y + 0.05f, nullptr);
+        sup[f] = ht > h && ht - h < 0.22f ? ht : h;
+        normal[f] = n;
+        if (fresh) L.foot_h[f] = sup[f];
+        else L.foot_h[f] = approach(L.foot_h[f], sup[f], contact[f] > 0.5f ? 30.0f : 16.0f, dt);
+        Vec2 d = wpos_delta_xz(r.at, at);
+        f32 bx, bz;
+        world_to_body(r.yaw, d.x, d.y, &bx, &bz);
+        target[f] = Vec3{bx, 0.0f, bz};
+        at.y = L.foot_h[f] + ankle_h[f] + lift[f];
+        if (debug && contact[f] > 0.5f && m.move > 0.5f) {
+            const WPos &last = L.trail[(L.trail_at + VIEW_TRAIL - 1) % VIEW_TRAIL];
+            WPos mark = at;
+            mark.y = L.foot_h[f];
+            if (!L.trail_n || length(wpos_delta_xz(last, mark)) > 0.03f || f_abs(last.y - mark.y) > 0.03f) trail_add(L, mark);
+        }
+        target[f].y = L.foot_h[f] + ankle_h[f] + lift[f];
+    }
+    // Таз опускается до нижней опоры стоп (спуск, ступень ниже корня)
+    f32 low = f_min(L.foot_h[0], L.foot_h[1]) - L.y;
+    L.drop = fresh ? f_clamp(low, -0.45f, 0.0f) : approach(L.drop, f_clamp(low, -0.45f, 0.0f), 10.0f, dt);
+    f32 base_y = L.y + L.drop;
+    base = r.at;
+    base.y = base_y;
+    for (u32 f = 0; f < 2; ++f) target[f].y -= base_y;
+    for (u32 f = 0; f < 2; ++f)
+        ik_two_bone(rot, wr, wp, (u32)B[B_THIGH + f], (u32)B[B_CALF + f], (u32)B[B_FOOT + f], target[f], Vec3{0, 0, 1});
+    pose_world(s, rot, tb, &trans, wr, wp);
+    for (u32 f = 0; f < 2; ++f) {
+        // Стопа по опоре (на касании) и по своему курсу, пока стоит на месте
+        Vec3 n = normal[f];
+        f32 bx, bz;
+        world_to_body(r.yaw, n.x, n.z, &bx, &bz);
+        ik_foot_align(rot, wr, (u32)B[B_FOOT + f], Vec3{bx, n.y, bz}, 0.35f, contact[f]);
+        if (yaw_off[f] != 0.0f) pose_turn_world(rot, wr, (u32)B[B_FOOT + f], quat_axis_angle(Vec3{0, 1, 0}, yaw_off[f]));
+    }
+    pose_world(s, rot, tb, &trans, wr, wp);
+    return base;
+}
+
+// Меч: в действии — двуручный хват как в дорожках (от левой кисти у гарды, по линии кистей), иначе — в правой
+// кисти (середина кисти, от мизинца к указательному); ребро клинка — вдоль предплечья
+static void pose_sword(const PoseWork &pw, const ActWeights &aw, PoseOut &out) {
+    const Root &r = pw.r;
+    const i32 *B = pw.B;
+    const Vec3 *wp = pw.wp;
+    const f32 guard = aw.guard, grip2 = aw.grip2;
+    // Вне удара клинок опущен вперёд-вниз (~40°): кисть открыта (хвата нет), по одной оси пальцев он торчал бы
+    // вперёд горизонтально
+    Vec3 g1 = (wp[B[B_HAND_R]] + wp[B[B_MIDDLE_R]]) * 0.5f;
+    Vec3 d1 = normalize(normalize(wp[B[B_INDEX_R]] - wp[B[B_PINKY_R]]) + Vec3{0, -0.85f, 0});
+    // Блок (клип бокса, хвата нет): клинок вверх и через тело влево, перед лицом
+    d1 = normalize(d1 + (Vec3{-0.45f, 0.85f, 0.3f} - d1) * guard);
+    Vec3 g2 = wp[B[B_HAND_L]], d2 = normalize(wp[B[B_HAND_L]] - wp[B[B_HAND_R]]);
+    Vec3 g = g1 + (g2 - g1) * grip2, d = normalize(d1 + (d2 - d1) * grip2);
+    Vec3 fa = wp[B[B_HAND_R]] - wp[B[B_FOREARM_R]];
+    Vec3 e = fa - d * dot(fa, d);
+    if (dot(e, e) < 1e-6f) e = Vec3{1, 0, 0} - d * d.x;
+    e = normalize(e);
+    Quat q1 = quat_between(Vec3{0, 1, 0}, d);
+    Quat q2 = quat_between(quat_rotate(q1, Vec3{1, 0, 0}), e);
+    out.sword_q = quat_mul(quat_yaw(r.yaw), quat_mul(q2, q1));
+    f32 wx, wz;
+    body_to_world(r.yaw, g.x, g.z, &wx, &wz);
+    out.sword_at = add(out.base, wx, g.y, wz);
+}
+
+static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewInput &in, u32 i, const Root &r, f32 dist,
+                           PoseMatrix *palette, bool debug) {
+    const Extract &c = *in.cur;
+    const Skel &s = assets.bodies[pv.body].skel[pv.skin];
+    const u32 nb = (u32)s.bones.count;
+    PersonLook &L = pv.look[i];
+    const f32 dt = f_clamp(in.dt, 0.0f, 0.1f);
+    const i32 *B = pv.bones;
+    bool fresh = L.gen != c.person_gen[i] || !L.drawn;
+    if (L.gen != c.person_gen[i]) {
+        L = PersonLook{};
+        L.gen = c.person_gen[i];
+    }
+    // Сглаживание корня: высота (ступени), ускорение и поворот (наклон)
+    if (fresh || f_abs(r.at.y - L.y) > 1.0f) L.y = r.at.y;
+    else L.y = approach(L.y, r.at.y, 14.0f, dt);
+    L.acc = fresh ? 0.0f : approach(L.acc, f_clamp(r.acc, -8.0f, 8.0f), 6.0f, dt);
+    L.side = fresh ? 0.0f : approach(L.side, f_clamp(r.v * r.yaw_rate, -8.0f, 8.0f), 6.0f, dt);
+
+    Quat rot[SKEL_MAX_BONES], tmp[SKEL_MAX_BONES], wr[SKEL_MAX_BONES];
+    Vec3 wp[SKEL_MAX_BONES];
+    const Extract &pe = *in.prev;
+    PoseWork pw{pv, in, c, pe, s, r, L, B, i, nb, pv.gait.trans_bone, dt, fresh, pe.person_gen[i] == c.person_gen[i],
+               rot, tmp, wr, wp, {}, {}, gait_mix(r.v)};
+    gait_pose(pv.gait, nb, pw.m, r.phase, rot, &pw.trans, tmp, pw.contact);
+    const i32 tb = pw.tb;
+    Vec3 &trans = pw.trans;
+
+    // Действие (этапы 10–11): клип поверх ходьбы, вход 0.15 с от тика start, выход 0.25 с к концу действия. Сорванное
+    // или сменённое действие (попадание, отбит, отмена в другое) гаснет за ACT_FADE с позы, где его оборвали
+    const ActWeights aw = pose_actions(pw);
+
+    // Наклон: вперёд от ускорения (позвоночник), вбок к центру поворота (таз; стопы вернёт IK)
+    pose_world(s, rot, tb, &trans, wr, wp);
+    f32 lean_f = f_clamp(L.acc * 0.03f, -0.1f, 0.14f), lean_s = f_clamp(L.side * 0.035f, -0.15f, 0.15f);
+    pose_turn_world(rot, wr, (u32)B[B_SPINE], quat_axis_angle(Vec3{1, 0, 0}, lean_f));
+    pose_turn_world(rot, wr, (u32)B[B_PELVIS], quat_axis_angle(Vec3{0, 0, 1}, -lean_s));
+    pose_world(s, rot, tb, &trans, wr, wp);
+
+    // Реакция задетого: верх тела откидывается от удара (резко, потом спадает); стопы вернёт IK. Клипа реакции
+    // пока нет (ждёт Mixamo), это добавка поверх позы, а не поза формулой
+    if (c.person_react_t[i]) pose_flinch(pw);
 
     PoseOut out;
     bool ik = dist < VIEW_IK_FAR_M && c.coll && c.terrain;
@@ -319,142 +534,11 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
         out.base = r.at;
         out.base.y = L.y;
     } else {
-        // Подгонка длины шага: стопа вдоль хода — от таза в k раз, чтобы стоящая стопа не скользила
-        f32 nat = c.gait->walk_len + (c.gait->run_len - c.gait->walk_len) * m.run;
-        f32 k = 1.0f + (gait_cycle_len(*c.gait, r.v) / nat - 1.0f) * m.move;
-        f32 pz = wp[B[B_PELVIS]].z;
-        WPos want[2];
-        f32 ankle_h[2], toe_dz[2];
-        for (u32 f = 0; f < 2; ++f) {
-            Vec3 a = wp[B[B_FOOT + f]];
-            f32 mv = f_max(m.move, any);  // в действии стопы — из клипа
-            if (mv < 1.0f) {  // покой: стопы — как в бинде под тазом
-                Vec3 rest = pv.rest_foot[f] + Vec3{0, 0, pz};
-                a = rest + (a - rest) * mv;
-            }
-            f32 z = pz + (a.z - pz) * (k + (1.0f - k) * any), wx, wz;
-            body_to_world(r.yaw, a.x, z, &wx, &wz);
-            want[f] = add(r.at, wx, 0, wz);
-            ankle_h[f] = a.y;
-            toe_dz[f] = wp[B[B_BALL + f]].z - a.z;
-        }
-        // Стоит: стопы держатся на месте и переставляются по одной, если тело ушло или повернулось
-        bool standing = m.move < 0.05f && any < 0.02f;
-        if (!standing) L.lock = false;
-        else if (!L.lock || fresh) {
-            L.lock = true;
-            for (u32 f = 0; f < 2; ++f) {
-                L.lock_at[f] = want[f];
-                L.lock_yaw[f] = r.yaw;
-                L.step_t[f] = -1.0f;
-            }
-        } else {
-            for (u32 f = 0; f < 2; ++f)
-                if (L.step_t[f] >= 0.0f && (L.step_t[f] += dt / STEP_TIME) >= 1.0f) {
-                    L.step_t[f] = -1.0f;
-                    L.lock_at[f] = want[f];
-                    L.lock_yaw[f] = r.yaw;
-                }
-            if (L.step_t[0] < 0.0f && L.step_t[1] < 0.0f) {
-                f32 err[2];
-                for (u32 f = 0; f < 2; ++f) {
-                    Vec2 d = wpos_delta_xz(L.lock_at[f], want[f]);
-                    f32 turn = f_abs(turn_diff_rad(L.lock_yaw[f], r.yaw));
-                    err[f] = (length(d) > STEP_FAR || turn > STEP_TURN) ? length(d) + turn * 0.3f : 0.0f;
-                }
-                u32 f = err[1] > err[0] ? 1 : 0;
-                if (err[f] > 0.0f) {
-                    L.step_t[f] = 0.0f;
-                    L.step_from[f] = L.lock_at[f];
-                    L.step_yaw0[f] = L.lock_yaw[f];
-                }
-            }
-        }
-        // Цели стоп: место, опора под пяткой и носком, высота стопы клипа над его полом
-        Vec3 target[2], normal[2];
-        f32 yaw_off[2] = {0, 0}, lift[2] = {0, 0}, sup[2];
-        for (u32 f = 0; f < 2; ++f) {
-            WPos at = want[f];
-            if (L.lock) {
-                if (L.step_t[f] >= 0.0f) {
-                    f32 t = L.step_t[f], e = t * t * (3.0f - 2.0f * t);
-                    Vec2 d = wpos_delta_xz(L.step_from[f], want[f]);
-                    at = add(L.step_from[f], d.x * e, 0, d.y * e);
-                    yaw_off[f] = turn_diff_rad(r.yaw, L.step_yaw0[f]) * (1.0f - e);
-                    lift[f] = STEP_LIFT * 4.0f * t * (1.0f - t);
-                } else {
-                    at = L.lock_at[f];
-                    yaw_off[f] = turn_diff_rad(r.yaw, L.lock_yaw[f]);
-                }
-            }
-            f32 tx, tz;
-            body_to_world(r.yaw, 0.0f, toe_dz[f], &tx, &tz);
-            // Опора — не выше шага над корнем (стена и цоколь рядом — не опора); носок над ступенью выше пятки
-            // (марш: стопа на ребре) поднимает стопу, носок над чем-то выше ступени — нет
-            Vec3 n;
-            f32 h = support(c, at, L.y + 0.05f, &n);
-            f32 ht = support(c, add(at, tx, 0, tz), L.y + 0.05f, nullptr);
-            sup[f] = ht > h && ht - h < 0.22f ? ht : h;
-            normal[f] = n;
-            if (fresh) L.foot_h[f] = sup[f];
-            else L.foot_h[f] = approach(L.foot_h[f], sup[f], contact[f] > 0.5f ? 30.0f : 16.0f, dt);
-            Vec2 d = wpos_delta_xz(r.at, at);
-            f32 bx, bz;
-            world_to_body(r.yaw, d.x, d.y, &bx, &bz);
-            target[f] = Vec3{bx, 0.0f, bz};
-            at.y = L.foot_h[f] + ankle_h[f] + lift[f];
-            if (debug && contact[f] > 0.5f && m.move > 0.5f) {
-                const WPos &last = L.trail[(L.trail_at + VIEW_TRAIL - 1) % VIEW_TRAIL];
-                WPos mark = at;
-                mark.y = L.foot_h[f];
-                if (!L.trail_n || length(wpos_delta_xz(last, mark)) > 0.03f || f_abs(last.y - mark.y) > 0.03f) trail_add(L, mark);
-            }
-            target[f].y = L.foot_h[f] + ankle_h[f] + lift[f];
-        }
-        // Таз опускается до нижней опоры стоп (спуск, ступень ниже корня)
-        f32 low = f_min(L.foot_h[0], L.foot_h[1]) - L.y;
-        L.drop = fresh ? f_clamp(low, -0.45f, 0.0f) : approach(L.drop, f_clamp(low, -0.45f, 0.0f), 10.0f, dt);
-        f32 base_y = L.y + L.drop;
-        out.base = r.at;
-        out.base.y = base_y;
-        for (u32 f = 0; f < 2; ++f) target[f].y -= base_y;
-        for (u32 f = 0; f < 2; ++f)
-            ik_two_bone(rot, wr, wp, (u32)B[B_THIGH + f], (u32)B[B_CALF + f], (u32)B[B_FOOT + f], target[f], Vec3{0, 0, 1});
-        pose_world(s, rot, tb, &trans, wr, wp);
-        for (u32 f = 0; f < 2; ++f) {
-            // Стопа по опоре (на касании) и по своему курсу, пока стоит на месте
-            Vec3 n = normal[f];
-            f32 bx, bz;
-            world_to_body(r.yaw, n.x, n.z, &bx, &bz);
-            ik_foot_align(rot, wr, (u32)B[B_FOOT + f], Vec3{bx, n.y, bz}, 0.35f, contact[f]);
-            if (yaw_off[f] != 0.0f) pose_turn_world(rot, wr, (u32)B[B_FOOT + f], quat_axis_angle(Vec3{0, 1, 0}, yaw_off[f]));
-        }
-        pose_world(s, rot, tb, &trans, wr, wp);
+        out.base = pose_feet(pw, aw.any, debug);
     }
     pose_palette_world(s, wr, wp, palette);
-    // Меч: в действии — двуручный хват как в дорожках (от левой кисти у гарды, по линии кистей), иначе — в правой
-    // кисти (середина кисти, от мизинца к указательному); ребро клинка — вдоль предплечья
     out.sword = pv.sword != 0;
-    if (out.sword) {
-        // Вне удара клинок опущен вперёд-вниз (~40°): кисть открыта (хвата нет), по одной оси пальцев он торчал бы
-        // вперёд горизонтально
-        Vec3 g1 = (wp[B[B_HAND_R]] + wp[B[B_MIDDLE_R]]) * 0.5f;
-        Vec3 d1 = normalize(normalize(wp[B[B_INDEX_R]] - wp[B[B_PINKY_R]]) + Vec3{0, -0.85f, 0});
-        // Блок (клип бокса, хвата нет): клинок вверх и через тело влево, перед лицом
-        d1 = normalize(d1 + (Vec3{-0.45f, 0.85f, 0.3f} - d1) * guard);
-        Vec3 g2 = wp[B[B_HAND_L]], d2 = normalize(wp[B[B_HAND_L]] - wp[B[B_HAND_R]]);
-        Vec3 g = g1 + (g2 - g1) * grip2, d = normalize(d1 + (d2 - d1) * grip2);
-        Vec3 fa = wp[B[B_HAND_R]] - wp[B[B_FOREARM_R]];
-        Vec3 e = fa - d * dot(fa, d);
-        if (dot(e, e) < 1e-6f) e = Vec3{1, 0, 0} - d * d.x;
-        e = normalize(e);
-        Quat q1 = quat_between(Vec3{0, 1, 0}, d);
-        Quat q2 = quat_between(quat_rotate(q1, Vec3{1, 0, 0}), e);
-        out.sword_q = quat_mul(quat_yaw(r.yaw), quat_mul(q2, q1));
-        f32 wx, wz;
-        body_to_world(r.yaw, g.x, g.z, &wx, &wz);
-        out.sword_at = add(out.base, wx, g.y, wz);
-    }
+    if (out.sword) pose_sword(pw, aw, out);
     L.root = out.base;
     L.yaw = r.yaw;
     return out;

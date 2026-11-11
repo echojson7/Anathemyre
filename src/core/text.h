@@ -36,5 +36,7 @@ bool text_next(TextReader &r, TextLine &out);
 bool parse_f32(Str s, f32 &out);
 bool parse_i32(Str s, i32 &out);
 bool parse_u32(Str s, u32 &out);
+// Сообщение об ошибке разбора без printf (запрет в шаге мира): «строка N: что», при line 0 — только «что»
+void text_err(char *err, usize cap, u32 line, const char *what);
 // Хеш текста описания без '\r': файл с окончаниями строк Windows даёт тот же хеш
 u64 text_hash(const u8 *data, usize size);

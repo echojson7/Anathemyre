@@ -2,6 +2,7 @@
 // Поток кадра (docs/architecture.md): ввод → намерения → 0..N шагов → выписка → вид → рендер
 #include "app.h"
 #include "hud.h"
+#include "orders.h"
 #include "settings.h"
 #include "../asset/material.h"
 #include "../core/log.h"
@@ -149,38 +150,8 @@ int run_window(const Args &a, AppMemory &m) {
     scatter_init(*scatter, m.world);
     PeopleView *pv = arena_push<PeopleView>(m.world, 1);  // ~1.3 МБ: не на стек
     people_view_init(*pv);
-    // Приказы по кадрам (--go): «кадр место x z y аллюр», через «;»
-    struct GoOrder {
-        u64 frame;
-        u32 slot, gait;
-        f32 x, z, y;
-    };
-    GoOrder go[32];
-    u32 ngo = 0;
-    // Удары по кадрам (--attack): «кадр место цель», через «;»
-    struct AttackOrder {
-        u64 frame;
-        u32 slot, foe;
-    };
-    AttackOrder atk[32];
-    u32 natk = 0;
-    for (const char *q = a.attack; q && *q && natk < 32;) {
-        unsigned long long f = 0;
-        unsigned sl = 0, fo = 0;
-        if (sscanf(q, " %llu %u %u", &f, &sl, &fo) == 3) atk[natk++] = {(u64)f, sl, fo};
-        else log_warn("--attack: непонятный приказ %s", q);
-        const char *e = strchr(q, ';');
-        q = e ? e + 1 : nullptr;
-    }
-    for (const char *q = a.go; q && *q && ngo < 32;) {
-        unsigned long long f = 0;
-        unsigned sl = 0, g = 0;
-        float x = 0, z = 0, y = 0;
-        if (sscanf(q, " %llu %u %f %f %f %u", &f, &sl, &x, &z, &y, &g) == 6) go[ngo++] = {(u64)f, sl, g, x, z, y};
-        else log_warn("--go: непонятный приказ %s", q);
-        const char *e = strchr(q, ';');
-        q = e ? e + 1 : nullptr;
-    }
+    WindowOrders orders;
+    orders_parse(a, orders);
     if (!app_world_create(w, m, a.seed, &desc) || !app_assets_load(m, mats, *assets) || !app_terrain_upload(w)) {
         log_error("мир или ассеты не загрузились (причина — строкой выше)");
         render_shutdown();
@@ -447,71 +418,11 @@ int run_window(const Args &a, AppMemory &m) {
         if (ds.speed_set >= 0 && (u32)ds.speed_set < ANA_COUNTOF(SPEEDS)) tc.speed = (u32)ds.speed_set;
         view_camera_control(cam, win, (f32)dt, w.terrain);
 
-        // Мышь → выбор и намерения игрока (docs/ui.md, «Управление»): левая — выбрать человека; мимо — снять выбор
-        // и притянуть точки (с Ctrl — вспышка). Правая — приказ выбранному «идти» (Shift — бег, Ctrl — трусца),
-        // Alt + правая — вращать камеру. C — камера за выбранным. R — отпустить точки.
-        // На вкладке «Мир» панели отладки левая кнопка выбирает строку точки, а не приказывает
+        // Мышь и приказы → намерения игрока (orders.cpp). На вкладке «Мир» панели отладки левая кнопка выбирает
+        // строку точки, а не приказывает
         bool inspecting = hud_on && set.debug && set.debug_panel && ds.tab == DEBUG_TAB_WORLD;
-        const Extract &seen = ring_cur(ring);
-        WPos at;
-        if (win.mouse_pressed[MOUSE_LEFT]) {
-            i32 hit = inspecting ? -1 : people_view_pick(*pv, seen, cam, ww, wh, in.mouse_x, in.mouse_y);
-            if (hit >= 0) {
-                pv->sel = hit;
-                pv->sel_gen = seen.person_gen[hit];
-            } else if (view_screen_to_ground(cam, ww, wh, in.mouse_x, in.mouse_y, w.terrain, at)) {
-                if (inspecting) debug_inspect_pick(w, *inspect, at);
-                else {
-                    pv->sel = -1;
-                    cam.follow = false;
-                    pending.push_back({0, win.key_down[KEY_CTRL] ? (u32)INTENT_BURST : (u32)INTENT_ATTRACT, at, 0});
-                }
-            }
-        }
-        auto order_go = [&](u32 slot, u16 gen, const WPos &to, u32 gait) {
-            pending.push_back({0, INTENT_GO, to, (u64)slot | ((u64)gen << 16) | ((u64)gait << 32)});
-            if ((i32)slot == pv->sel) {
-                pv->mark_on = true;
-                pv->mark = to;
-                pv->mark_fade = 1.0f;
-                pv->mark_step = w.step;
-            }
-        };
-        // Правая по другому человеку — «атаковать» (этап 10: подойти и ударить раз)
-        i32 foe = -1;
-        if (win.mouse_pressed[MOUSE_RIGHT] && !win.key_down[KEY_ALT] && pv->sel >= 0)
-            foe = people_view_pick(*pv, seen, cam, ww, wh, in.mouse_x, in.mouse_y);
-        if (foe >= 0 && foe != pv->sel) {
-            pending.push_back({0, INTENT_ATTACK, WPos{}, ((u64)pv->sel | ((u64)pv->sel_gen << 16)) |
-                                                             ((u64)((u32)foe | ((u32)seen.person_gen[foe] << 16)) << 32)});
-        } else if (win.mouse_pressed[MOUSE_RIGHT] && !win.key_down[KEY_ALT] && pv->sel >= 0 &&
-                   view_screen_to_support(cam, ww, wh, in.mouse_x, in.mouse_y, w.terrain, &w.coll, at))
-            order_go((u32)pv->sel, pv->sel_gen, at, win.key_down[KEY_SHIFT] ? GAIT_RUN : win.key_down[KEY_CTRL] ? GAIT_JOG : GAIT_WALK);
-        if (win.key_pressed[KEY_C] && pv->sel >= 0) cam.follow = !cam.follow;
-        // Выбор и приказы из командной строки (видео, проверка повтора)
-        if (a.select >= 0 && pv->sel < 0 && seen.person_gen[a.select] && frames < 4) {
-            pv->sel = a.select;
-            pv->sel_gen = seen.person_gen[a.select];
-            cam.follow = a.follow;
-        }
-        for (u32 i = 0; i < ngo; ++i) {
-            if (go[i].frame != frames || go[i].slot >= PEOPLE_CAPACITY || !seen.person_gen[go[i].slot]) continue;
-            WPos to;
-            to.x = go[i].x;
-            to.z = go[i].z;
-            wpos_rebase(to);
-            to.y = ground_at(w.terrain, to).height + go[i].y;  // y — над землёй (плита, пол руины)
-            order_go(go[i].slot, seen.person_gen[go[i].slot], to, go[i].gait);
-        }
-        for (u32 i = 0; i < natk; ++i) {
-            const AttackOrder &o = atk[i];
-            if (o.frame != frames || o.slot >= PEOPLE_CAPACITY || o.foe >= PEOPLE_CAPACITY || !seen.person_gen[o.slot] ||
-                !seen.person_gen[o.foe])
-                continue;
-            pending.push_back({0, INTENT_ATTACK, WPos{}, ((u64)o.slot | ((u64)seen.person_gen[o.slot] << 16)) |
-                                                             ((u64)(o.foe | ((u32)seen.person_gen[o.foe] << 16)) << 32)});
-        }
-        if (win.key_pressed[KEY_R]) pending.push_back({0, INTENT_RELEASE, WPos{}, 0});
+        orders_frame(a, orders, OrdersFrame{&w, &ring_cur(ring), &cam, pv, inspect, ww, wh, frames, inspecting}, in, win,
+                     pending);
         // Часы (отладка): [ ] и ползунок — час, T и выбор — скорость суток; через намерения, запись повтора их помнит
         if (ds.hour_set) pending.push_back({0, INTENT_CLOCK_SET, WPos{}, hour_turn(ds.hour)});
         if (ds.clock_speed_set >= 0 && (u32)ds.clock_speed_set < ANA_COUNTOF(CLOCK_SPEEDS)) {

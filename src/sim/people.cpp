@@ -2,8 +2,8 @@
 // старта и остановки нравилась пользователю): разгон 3, торможение 6, мягкое торможение к цели 2.5 м/с²
 #include "people.h"
 #include "../core/hash.h"
-#include "../core/sort.h"
 #include "ground.h"
+#include "people_grid.h"
 #include "step.h"
 
 static constexpr f32 CAPSULE_R = 0.3f;
@@ -35,55 +35,24 @@ static void push_capsule(const Colliders &c, People &p, u32 s) {
 
 void people_push_capsule(World &w, u32 s) { push_capsule(w.coll, w.people, s); }
 
+// Столбцы таблицы на место (сколько на человека) — один список для выделения и для хеша и записи повтора.
+// Порядок — порядок столбцов в записи: новый столбец — в конец группы, с новым SIM_VERSION
+#define PEOPLE_SLOT_COLUMNS(X)                                                                                     \
+    X(gen, 1) X(alive, 1) X(support, 1) X(cx, 1) X(cz, 1) X(x, 1) X(z, 1) X(y, 1) X(vy, 1) X(heading, 1)           \
+    X(move_yaw, 1) X(speed, 1) X(gait, 1) X(phase, 1) X(state, 1) X(stuck, 1) X(gcx, 1) X(gcz, 1) X(gx, 1)         \
+    X(gz, 1) X(gy, 1) X(path, PATH_MAX) X(path_n, 1) X(path_i, 1) X(path_area, 1) X(path_more, 1) X(queued, 1)     \
+    X(seed, 1) X(target, 1) X(act, 1) X(act_t, 1) X(act_yaw, 1) X(act_hit, 1) X(freeze, 1) X(react_t, 1)          \
+    X(react_yaw, 1) X(react_part, 1) X(hits, 1) X(react_len, 1) X(react_push, 1) X(skill, 1) X(want, 1)          \
+    X(last, 1) X(side, 1) X(place, 1) X(struck, 1) X(free, 1)
+
+template <typename T>
+static void people_alloc(Arena &a, T *&col, usize n) { col = arena_push<T>(a, n); }
+
 void people_init(People &p, Arena &arena) {
     const u32 n = PEOPLE_CAPACITY;
-    p.gen = arena_push<u16>(arena, n);
-    p.alive = arena_push<u8>(arena, n);
-    p.support = arena_push<u32>(arena, n);
-    p.cx = arena_push<i32>(arena, n);
-    p.cz = arena_push<i32>(arena, n);
-    p.x = arena_push<f32>(arena, n);
-    p.z = arena_push<f32>(arena, n);
-    p.y = arena_push<f32>(arena, n);
-    p.vy = arena_push<f32>(arena, n);
-    p.heading = arena_push<u32>(arena, n);
-    p.move_yaw = arena_push<u32>(arena, n);
-    p.speed = arena_push<f32>(arena, n);
-    p.gait = arena_push<u8>(arena, n);
-    p.phase = arena_push<u32>(arena, n);
-    p.state = arena_push<u8>(arena, n);
-    p.stuck = arena_push<u16>(arena, n);
-    p.gcx = arena_push<i32>(arena, n);
-    p.gcz = arena_push<i32>(arena, n);
-    p.gx = arena_push<f32>(arena, n);
-    p.gz = arena_push<f32>(arena, n);
-    p.gy = arena_push<f32>(arena, n);
-    p.path = arena_push<u32>(arena, n * PATH_MAX);
-    p.path_n = arena_push<u8>(arena, n);
-    p.path_i = arena_push<u8>(arena, n);
-    p.path_area = arena_push<u8>(arena, n);
-    p.path_more = arena_push<u8>(arena, n);
-    p.queued = arena_push<u8>(arena, n);
-    p.seed = arena_push<u32>(arena, n);
-    p.target = arena_push<u32>(arena, n);
-    p.act = arena_push<u8>(arena, n);
-    p.act_t = arena_push<u16>(arena, n);
-    p.act_yaw = arena_push<u32>(arena, n);
-    p.act_hit = arena_push<u8>(arena, n);
-    p.freeze = arena_push<u8>(arena, n);
-    p.react_t = arena_push<u16>(arena, n);
-    p.react_yaw = arena_push<u32>(arena, n);
-    p.react_part = arena_push<u8>(arena, n);
-    p.hits = arena_push<u16>(arena, n);
-    p.react_len = arena_push<u16>(arena, n);
-    p.react_push = arena_push<f32>(arena, n);
-    p.skill = arena_push<u8>(arena, n);
-    p.want = arena_push<u8>(arena, n);
-    p.last = arena_push<u8>(arena, n);
-    p.side = arena_push<u8>(arena, n);
-    p.place = arena_push<u16>(arena, n);
-    p.struck = arena_push<u32>(arena, n);
-    p.free = arena_push<u16>(arena, n);
+#define X(name, per) people_alloc(arena, p.name, n * (per));
+    PEOPLE_SLOT_COLUMNS(X)
+#undef X
     p.queue = arena_push<u16>(arena, n);
     p.free_count = n;
     for (u32 i = 0; i < n; ++i) p.free[i] = (u16)(n - 1 - i);
@@ -179,8 +148,11 @@ void people_order_attack(World &w, u32 id, u32 target_id) {
     People &p = w.people;
     u32 s, t;
     if (!people_valid(p, id, &s) || !people_valid(p, target_id, &t) || s == t) return;
-    if (p.target[s] == target_id) return;
-    // Новая цель: место вокруг прежней не годится, в очередь на удар — с конца
+    if (p.target[s] != target_id) people_set_target(w, s, target_id);
+}
+
+void people_set_target(World &w, u32 s, u32 target_id) {
+    People &p = w.people;
     p.target[s] = target_id;
     p.place[s] = 0;
     p.struck[s] = (u32)w.step;
@@ -278,7 +250,7 @@ static void current_target(const World &w, u32 s, Vec2 *to, bool *last) {
 }
 
 // Читает: путь, место, курсы, скорость. Пишет: курсы, скорость, место (с выталкиванием из стен), state, stuck
-void people_steer(World &w, StepCtx &ctx) {
+void people_steer(World &w, StepCtx &) {
     People &p = w.people;
     for (u32 s = 0; s < PEOPLE_CAPACITY; ++s) {
         if (!p.alive[s]) continue;
@@ -287,7 +259,6 @@ void people_steer(World &w, StepCtx &ctx) {
             continue;
         }
         f32 goal_v = 0.0f;
-        f32 v0 = p.speed[s];
         if (p.state[s] == MOVE_FOLLOW) {
             Vec2 to;
             bool last;
@@ -337,51 +308,40 @@ void people_steer(World &w, StepCtx &ctx) {
         // Тело: на ходу смотрит по шагу, на месте разворачивается к цели
         f32 tw = (p.speed[s] < 0.5f ? TURN_BODY : TURN_TRACK) * SIM_DT;
         p.heading[s] = turn_add_rad(p.heading[s], f_clamp(turn_diff_rad(p.heading[s], p.move_yaw[s]), -tw, tw));
-        (void)v0;
     }
-    (void)ctx;
 }
 
-// Расталкивание капсул: пары по сетке 2 м, сдвиги считаются по положению до шага и складываются в порядке
-// номеров (ни у кого нет форы от номера: оба в паре сдвигаются поровну)
+// Расталкивание капсул: пары по сетке людей 2 м, сдвиги считаются по положению до шага и складываются в порядке
+// записей сетки (ни у кого нет форы от номера: оба в паре сдвигаются поровну)
 void people_separate(World &w, StepCtx &ctx) {
     People &p = w.people;
     if (!ctx.step_arena || p.live < 2) return;
     Arena &ar = *ctx.step_arena;
     usize mark = arena_mark(ar);
-    struct Entry { u64 key; u32 slot; };
-    Entry *e = arena_push<Entry>(ar, p.live), *tmp = arena_push<Entry>(ar, p.live);
-    u32 n = 0;
-    auto cell_key = [](i32 cx, i32 cz, f32 x, f32 z, i32 dx, i32 dz) {
-        i32 gx = cx * 128 + f_floor_i(x * 0.5f) + dx, gz = cz * 128 + f_floor_i(z * 0.5f) + dz;
-        return ((u64)(u32)(gz + (1 << 30)) << 32) | (u64)(u32)(gx + (1 << 30));
-    };
-    for (u32 s = 0; s < PEOPLE_CAPACITY; ++s)
-        if (p.alive[s]) e[n++] = {cell_key(p.cx[s], p.cz[s], p.x[s], p.z[s], 0, 0), s};
-    radix_sort_u64(e, tmp, n, [](const Entry &a) { return a.key; });
+    PeopleGrid &g = *arena_push<PeopleGrid>(ar, 1);
+    people_grid_build(p, PEOPLE_GRID_FINE, g, arena_push<PeopleGridEntry>(ar, PEOPLE_CAPACITY));
     f32 *px = arena_push<f32>(ar, PEOPLE_CAPACITY), *pz = arena_push<f32>(ar, PEOPLE_CAPACITY);
     const f32 dmin = 2.0f * CAPSULE_R;
-    for (u32 k = 0; k < n; ++k) {
-        u32 a = e[k].slot;
-        for (i32 dz = -1; dz <= 1; ++dz)
-            for (i32 dx = -1; dx <= 1; ++dx) {
-                u64 key = cell_key(p.cx[a], p.cz[a], p.x[a], p.z[a], dx, dz);
-                u32 lo = 0, hi = n;  // первый с ключом ≥ key
-                while (lo < hi) { u32 m = (lo + hi) / 2; if (e[m].key < key) lo = m + 1; else hi = m; }
-                for (u32 q = lo; q < n && e[q].key == key; ++q) {
-                    u32 b = e[q].slot;
-                    if (b <= a) continue;
-                    if (f_abs(p.y[a] - p.y[b]) > CAPSULE_H * 0.8f) continue;
-                    Vec2 d = wpos_delta_xz(p.cx[a], p.cz[a], p.x[a], p.z[a], p.cx[b], p.cz[b], p.x[b], p.z[b]);
-                    f32 d2 = dot(d, d);
-                    if (d2 >= dmin * dmin) continue;
-                    f32 len = f_sqrt(d2);
-                    Vec2 dir = len > 1e-4f ? d * (1.0f / len) : Vec2{1.0f, 0.0f};
-                    f32 m = (dmin - len) * 0.5f * PUSH_SOFT;
-                    px[a] -= dir.x * m; pz[a] -= dir.y * m;
-                    px[b] += dir.x * m; pz[b] += dir.y * m;
-                }
+    for (u32 k = 0; k < g.n; ++k) {
+        u32 a = g.e[k].slot;
+        // Три клетки ряда — ключи подряд: один поиск на ряд, порядок тот же, что клетка за клеткой
+        for (i32 dz = -1; dz <= 1; ++dz) {
+            const u64 hi = people_grid_key(g, p.cx[a], p.cz[a], p.x[a], p.z[a], 1, dz);
+            u32 q = people_grid_find(g, people_grid_key(g, p.cx[a], p.cz[a], p.x[a], p.z[a], -1, dz));
+            for (; q < g.n && g.e[q].key <= hi; ++q) {
+                u32 b = g.e[q].slot;
+                if (b <= a) continue;
+                if (f_abs(p.y[a] - p.y[b]) > CAPSULE_H * 0.8f) continue;
+                Vec2 d = wpos_delta_xz(p.cx[a], p.cz[a], p.x[a], p.z[a], p.cx[b], p.cz[b], p.x[b], p.z[b]);
+                f32 d2 = dot(d, d);
+                if (d2 >= dmin * dmin) continue;
+                f32 len = f_sqrt(d2);
+                Vec2 dir = len > 1e-4f ? d * (1.0f / len) : Vec2{1.0f, 0.0f};
+                f32 m = (dmin - len) * 0.5f * PUSH_SOFT;
+                px[a] -= dir.x * m; pz[a] -= dir.y * m;
+                px[b] += dir.x * m; pz[b] += dir.y * m;
             }
+        }
     }
     for (u32 s = 0; s < PEOPLE_CAPACITY; ++s) {
         if (!p.alive[s] || (px[s] == 0.0f && pz[s] == 0.0f)) continue;
@@ -418,53 +378,9 @@ void people_settle(World &w, StepCtx &) {
 u32 people_columns(const People &p, Column *out) {
     const u32 n = PEOPLE_CAPACITY;
     u32 k = 0;
-    out[k++] = column("people.gen", p.gen, n);
-    out[k++] = column("people.alive", p.alive, n);
-    out[k++] = column("people.support", p.support, n);
-    out[k++] = column("people.cx", p.cx, n);
-    out[k++] = column("people.cz", p.cz, n);
-    out[k++] = column("people.x", p.x, n);
-    out[k++] = column("people.z", p.z, n);
-    out[k++] = column("people.y", p.y, n);
-    out[k++] = column("people.vy", p.vy, n);
-    out[k++] = column("people.heading", p.heading, n);
-    out[k++] = column("people.move_yaw", p.move_yaw, n);
-    out[k++] = column("people.speed", p.speed, n);
-    out[k++] = column("people.gait", p.gait, n);
-    out[k++] = column("people.phase", p.phase, n);
-    out[k++] = column("people.state", p.state, n);
-    out[k++] = column("people.stuck", p.stuck, n);
-    out[k++] = column("people.gcx", p.gcx, n);
-    out[k++] = column("people.gcz", p.gcz, n);
-    out[k++] = column("people.gx", p.gx, n);
-    out[k++] = column("people.gz", p.gz, n);
-    out[k++] = column("people.gy", p.gy, n);
-    out[k++] = column("people.path", p.path, n * PATH_MAX);
-    out[k++] = column("people.path_n", p.path_n, n);
-    out[k++] = column("people.path_i", p.path_i, n);
-    out[k++] = column("people.path_area", p.path_area, n);
-    out[k++] = column("people.path_more", p.path_more, n);
-    out[k++] = column("people.queued", p.queued, n);
-    out[k++] = column("people.seed", p.seed, n);
-    out[k++] = column("people.target", p.target, n);
-    out[k++] = column("people.act", p.act, n);
-    out[k++] = column("people.act_t", p.act_t, n);
-    out[k++] = column("people.act_yaw", p.act_yaw, n);
-    out[k++] = column("people.act_hit", p.act_hit, n);
-    out[k++] = column("people.freeze", p.freeze, n);
-    out[k++] = column("people.react_t", p.react_t, n);
-    out[k++] = column("people.react_yaw", p.react_yaw, n);
-    out[k++] = column("people.react_part", p.react_part, n);
-    out[k++] = column("people.hits", p.hits, n);
-    out[k++] = column("people.react_len", p.react_len, n);
-    out[k++] = column("people.react_push", p.react_push, n);
-    out[k++] = column("people.skill", p.skill, n);
-    out[k++] = column("people.want", p.want, n);
-    out[k++] = column("people.last", p.last, n);
-    out[k++] = column("people.side", p.side, n);
-    out[k++] = column("people.place", p.place, n);
-    out[k++] = column("people.struck", p.struck, n);
-    out[k++] = column("people.free", p.free, n);
+#define X(name, per) out[k++] = column("people." #name, p.name, n * (per));
+    PEOPLE_SLOT_COLUMNS(X)
+#undef X
     out[k++] = column("people.free_count", &p.free_count, 1);
     out[k++] = column("people.live", &p.live, 1);
     out[k++] = column("people.queue", p.queue, n);

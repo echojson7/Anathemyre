@@ -91,6 +91,19 @@ int run_sim(const Args &a, AppMemory &m) {
     log_info("--sim: %" PRIu64 " шагов за %.1f мс, шаг в среднем %.1f мкс, макс %.1f мкс (шаг %" PRIu64 "); точек %u; хеш %s",
              a.sim_steps, total_ms, total_ms * 1000.0 / (f64)a.sim_steps, max_us, max_at, w.dots.live,
              hex_u64(world_hash(w), hex));
+    // Шаг по системам (docs/sim.md «Замер шага»): среднее на шаг за весь прогон; ИИ боя — до шага, вне sim_step
+    {
+        char line[512];
+        i32 len = snprintf(line, sizeof line, "--sim по системам, мкс на шаг:");
+        for (u32 i = 0; i < SYS_COUNT && len > 0 && len < (i32)sizeof line; ++i)
+            len += snprintf(line + len, sizeof line - (usize)len, "%s %s %.1f", i ? " ·" : "", STEP_SYS_NAMES[i],
+                            (f64)stats.sys_ns[i] / 1000.0 / (f64)a.sim_steps);
+        if (len > 0 && len < (i32)sizeof line)
+            snprintf(line + len, sizeof line - (usize)len, " · ИИ боя %.1f", (f64)ai_ns / 1000.0 / (f64)a.sim_steps);
+        log_info("%s", line);
+    }
+    u64 people_ns = 0;
+    for (u32 i = SYS_PEOPLE_FIRST; i <= SYS_PEOPLE_LAST; ++i) people_ns += stats.sys_ns[i];
     // Бенч людей (docs/people.md, цель шага мира ≤ 2 мс на 512 в бою): средний шаг с людьми и работа поиска пути
     if (people_steps) {
         const People &p = w.people;
@@ -104,7 +117,7 @@ int run_sim(const Args &a, AppMemory &m) {
         log_info("--sim люди: %u живых (на постройках %u, из них выше 3 м %u; в пути %u), шаг с людьми в среднем %.1f мкс, "
                  "из них системы людей %.1f мкс; ИИ боя %.1f мкс; путей %u, раскрыто узлов %" PRIu64 " (%.0f на путь); ударов %u, попаданий %u, "
                  "отбито %u, защит %u, по своим %u",
-                 p.live, on_box, high, going, people_us / (f64)people_steps, (f64)stats.people_ns / 1000.0 / (f64)people_steps,
+                 p.live, on_box, high, going, people_us / (f64)people_steps, (f64)people_ns / 1000.0 / (f64)people_steps,
                  (f64)ai_ns / 1000.0 / (f64)people_steps,
                  stats.paths, stats.expanded,
                  stats.paths ? (f64)stats.expanded / (f64)stats.paths : 0.0, stats.strikes, stats.hits, stats.blocks, stats.defends, stats.friendly);
