@@ -8,6 +8,7 @@ struct Extract {
     const Decals *decals;    // декали карты — тоже
     const Colliders *coll;   // коллайдеры построек — тоже (опора стоп у вида, support_at)
     const GaitTable *gait;   // длины цикла шага — тоже (подгонка шага у вида)
+    const ActionTable *actions;  // действия (клип, окна) — тоже
     u64 step;
     Clock clock;
     u16 *gen;      // 0 — места нет или точка мертва
@@ -33,6 +34,15 @@ struct Extract {
     u32 *person_phase;
     u32 *person_seed;
     u8 *person_state;        // MoveState: стоит, ждёт путь, идёт
+    // Действие и удар (этап 10): номер действия + 1, тик действия, стоп на попадании, реакция (тик, откуда удар,
+    // часть), попал ли бьющий (часть + 1)
+    u8 *person_act;
+    u16 *person_act_t;
+    u8 *person_act_hit;
+    u8 *person_freeze;
+    u16 *person_react_t;
+    u32 *person_react_yaw;
+    u8 *person_react_part;
 };
 
 void extract_init(Extract &e, Arena &arena);

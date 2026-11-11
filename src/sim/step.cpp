@@ -29,6 +29,7 @@ static void step_intents(World &w, StepCtx &ctx) {
             for (u32 i = 0; i < n && people_spawn(w, it.target, r); ++i) {}
         } break;
         case INTENT_GO: people_order_go(w, (u32)it.arg, it.target, (u32)(it.arg >> 32)); break;
+        case INTENT_ATTACK: people_order_attack(w, (u32)it.arg, (u32)(it.arg >> 32)); break;
         case INTENT_BURST: {
             // Гибнут BURST_COUNT случайных живых, столько же рождается у цели
             u32 killed = 0;
@@ -179,6 +180,7 @@ void sim_step(World &w, StepCtx &ctx) {
     step_dots_move(w, ctx);
     step_dots_life(w, ctx);
     u64 t0 = ctx.stats && ctx.stats->now_ns ? ctx.stats->now_ns() : 0;
+    people_act(w, ctx);
     people_paths(w, ctx);
     people_steer(w, ctx);
     people_separate(w, ctx);

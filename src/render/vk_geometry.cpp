@@ -248,6 +248,11 @@ u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices,
     return id;
 }
 
+void render_mesh_moving(u32 mesh) {
+    if (mesh == 0 || mesh >= RENDER_MAX_MESHES || !g_vk.meshes[mesh].used) return;
+    ((MeshGpu *)g_vk.mesh_table.mapped)[mesh].pad |= MESH_DYNAMIC;
+}
+
 void render_mesh_destroy(u32 mesh) {
     if (mesh == 0 || mesh >= RENDER_MAX_MESHES || !g_vk.meshes[mesh].used || g_vk.meshes[mesh].dying) return;
     if (g_vk.pending_count >= MAX_PENDING_FREES) {

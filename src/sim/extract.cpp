@@ -32,6 +32,13 @@ void extract_init(Extract &e, Arena &arena) {
     e.person_phase = arena_push<u32>(arena, np);
     e.person_seed = arena_push<u32>(arena, np);
     e.person_state = arena_push<u8>(arena, np);
+    e.person_act = arena_push<u8>(arena, np);
+    e.person_act_t = arena_push<u16>(arena, np);
+    e.person_act_hit = arena_push<u8>(arena, np);
+    e.person_freeze = arena_push<u8>(arena, np);
+    e.person_react_t = arena_push<u16>(arena, np);
+    e.person_react_yaw = arena_push<u32>(arena, np);
+    e.person_react_part = arena_push<u8>(arena, np);
 }
 
 void sim_extract(const World &w, Extract &e) {
@@ -40,6 +47,7 @@ void sim_extract(const World &w, Extract &e) {
     e.decals = &w.decals;
     e.coll = &w.coll;
     e.gait = &w.gait;
+    e.actions = &w.actions;
     e.step = w.step;
     e.clock = w.clock;
     for (u32 i = 0; i < DOTS_CAPACITY; ++i) e.gen[i] = d.alive[i] ? d.gen[i] : 0;
@@ -79,6 +87,13 @@ void sim_extract(const World &w, Extract &e) {
     memcpy(e.person_phase, q.phase, np * sizeof *e.person_phase);
     memcpy(e.person_seed, q.seed, np * sizeof *e.person_seed);
     memcpy(e.person_state, q.state, np * sizeof *e.person_state);
+    memcpy(e.person_act, q.act, np * sizeof *e.person_act);
+    memcpy(e.person_act_t, q.act_t, np * sizeof *e.person_act_t);
+    memcpy(e.person_act_hit, q.act_hit, np * sizeof *e.person_act_hit);
+    memcpy(e.person_freeze, q.freeze, np * sizeof *e.person_freeze);
+    memcpy(e.person_react_t, q.react_t, np * sizeof *e.person_react_t);
+    memcpy(e.person_react_yaw, q.react_yaw, np * sizeof *e.person_react_yaw);
+    memcpy(e.person_react_part, q.react_part, np * sizeof *e.person_react_part);
 }
 
 void ring_init(ExtractRing &r, Arena &arena) {

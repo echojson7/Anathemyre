@@ -12,6 +12,7 @@ enum IntentKind : u32 {
     INTENT_CLOCK_RATE = 5,  // ход часов: arg — тиков за шаг (отладка)
     INTENT_PEOPLE_SPAWN = 6,  // родить людей у target: arg — число | радиус, м << 16 (отладка, бенч)
     INTENT_GO = 7,            // идти в target: arg — номер человека | аллюр << 32 (0 шаг, 1 трусца, 2 бег)
+    INTENT_ATTACK = 8,        // атаковать: arg — номер бьющего | номер цели << 32 (подойти и ударить раз)
 };
 
 struct Intent {

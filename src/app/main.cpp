@@ -39,6 +39,7 @@ static void usage() {
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
     log_info("           --frames N --video префикс                                   каждый кадр → префикс_0000.bmp… (стенд: 1/30 с на кадр)");
     log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines]  выбрать, камера за ним, приказы, отладка");
+    log_info("           [--attack \"кадр место цель; …\"] [--slow кадр]  приказы «атаковать» по кадрам, замедление ×0.25 (видео удара)");
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
     log_info("           --replay файл.rec                                            проверка повтора");
     log_info("           --terrain-map файл.bmp                                       карта земли сверху");
@@ -89,6 +90,7 @@ int main(int argc, char **argv) {
         bool ok = true;
         if (!strcmp(s, "--sim")) { ok = parse_u64(next, a.sim_steps) && a.sim_steps > 0; i++; }
         else if (!strcmp(s, "--seed")) { ok = parse_u64(next, a.seed); i++; }
+        else if (!strcmp(s, "--rewind-check")) a.rewind_check = true;
         else if (!strcmp(s, "--frames")) { ok = parse_u64(next, a.frames); i++; }
         else if (!strcmp(s, "--window")) {
             ok = parse_u64(next, a.win_w) && i + 2 < argc && parse_u64(argv[i + 2], a.win_h) &&
@@ -154,6 +156,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--follow")) a.follow = true;
         else if (!strcmp(s, "--people-lines")) a.people_lines = true;
         else if (!strcmp(s, "--go")) { a.go = next; ok = next != nullptr; i++; }
+        else if (!strcmp(s, "--attack")) { a.attack = next; ok = next != nullptr; i++; }
+        else if (!strcmp(s, "--slow")) { u64 f = 0; ok = parse_u64(next, f); a.slow_from = (i64)f; i++; }
         else if (!strcmp(s, "--terrain-map")) { a.terrain_map = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--walk-map")) { a.walk_map = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--novsync")) a.vsync = false;

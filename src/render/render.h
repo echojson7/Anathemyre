@@ -196,6 +196,8 @@ struct RenderCluster {
 u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices, Span<const RenderLod> lods,
                        Span<const RenderCluster> clusters);
 void render_mesh_destroy(u32 mesh);
+// Сетка движется каждый кадр целиком (меч в руках): в страницы теней не идёт до 6б-3, как скин-копии людей
+void render_mesh_moving(u32 mesh);
 
 // Скиннинг (docs/people.md, «Скиннинг»). Источник — сетка с весами одного скелета (render_mesh_create вершин
 // бинд-позы) и её морфы; у каждого человека своя копия вершин и кластеров (render_skinned_create, отдельный

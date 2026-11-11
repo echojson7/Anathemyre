@@ -4,6 +4,7 @@
 #include "../core/dbgdraw.h"
 #include "../core/mem.h"
 #include "../core/rng.h"
+#include "action.h"
 #include "collide.h"
 #include "people.h"
 #include "terrain.h"
@@ -12,7 +13,7 @@
 constexpr u32 SIM_HZ = 60;
 constexpr f32 SIM_DT = 1.0f / 60.0f;
 // Меняется при правке шага мира, после которой старые записи не повторяются
-constexpr u32 SIM_VERSION = 9;
+constexpr u32 SIM_VERSION = 10;
 
 // Номер сущности: место (младшие 16 бит) + поколение (старшие 16). Связи в мире — только номерами
 struct Id {
@@ -115,6 +116,7 @@ struct World {
     Colliders coll;
     WalkGrid walk;
     GaitTable gait;
+    ActionTable actions;  // действия и дорожки тел (этап 10): ставит app до world_build_static
     SceneStart start;  // из сцены, для окна
 };
 
@@ -132,7 +134,7 @@ bool decals_add(World &w, u64 kind, u64 material, const WPos &at, u32 yaw, const
 // После сцены: коллайдеры построек (коробки COLL деталей — читает app) и сетка ходимости по ним.
 // false — коробок или чанков с ними больше предела
 bool world_build_static(World &w, const CollBoxIn *boxes, u32 n, const GaitTable &gait, Arena &arena, Arena &scratch);
-// Хеш неизменного: коллайдеры, сетка ходимости, длины шага (в хеш описаний и в эталон --sim)
+// Хеш неизменного: коллайдеры, сетка ходимости, длины шага, действия (в хеш описаний и в эталон --sim)
 u64 world_static_hash(const World &w);
 
 // Столбцы мира для хеша и проверки повтора: имя, данные, байты. Порядок — порядок в хеше

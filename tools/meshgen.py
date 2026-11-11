@@ -205,7 +205,24 @@ def rock(seed, squash):
     return m
 
 
-MESHES = {"cube": cube, "pillar": pillar, "plate": plate,
+def sword():
+    """Двуручный меч-заглушка (этап 10): начало — хват (середина кисти у гарды), клинок вдоль +y на 0.10–1.00 м,
+    как отрезок клинка в дорожках (tools/retarget/bake.py, SWORD); рукоять на две кисти вниз."""
+    m = Mesh(["sword_steel", "sword_grip"])
+    steel = lambda c: (0, 0, 0, 255)
+    grip = lambda c: (1, 1, 0, 220)
+    m.box(0.050, 0.86, 0.008, steel, 0.08)    # клинок
+    m.box(0.030, 0.05, 0.006, steel, 0.94)    # сужение к острию
+    m.box(0.012, 0.03, 0.004, steel, 0.99)    # остриё
+    m.box(0.22, 0.025, 0.032, steel, 0.055)   # гарда
+    m.box(0.032, 0.29, 0.032, grip, -0.235)   # рукоять
+    m.box(0.050, 0.045, 0.050, steel, -0.28)  # навершие
+    m.collider.clear()
+    m.coarse.clear()
+    return m
+
+
+MESHES = {"cube": cube, "sword": sword, "pillar": pillar, "plate": plate,
           "rock_a": lambda: rock(1, 0.62), "rock_b": lambda: rock(2, 0.8), "rock_c": lambda: rock(3, 0.45)}
 
 

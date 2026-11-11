@@ -32,6 +32,8 @@ static void push_capsule(const Colliders &c, People &p, u32 s) {
     wpos_rebase(p.cz[s], p.z[s]);
 }
 
+void people_push_capsule(World &w, u32 s) { push_capsule(w.coll, w.people, s); }
+
 void people_init(People &p, Arena &arena) {
     const u32 n = PEOPLE_CAPACITY;
     p.gen = arena_push<u16>(arena, n);
@@ -62,6 +64,16 @@ void people_init(People &p, Arena &arena) {
     p.path_more = arena_push<u8>(arena, n);
     p.queued = arena_push<u8>(arena, n);
     p.seed = arena_push<u32>(arena, n);
+    p.target = arena_push<u32>(arena, n);
+    p.act = arena_push<u8>(arena, n);
+    p.act_t = arena_push<u16>(arena, n);
+    p.act_yaw = arena_push<u32>(arena, n);
+    p.act_hit = arena_push<u8>(arena, n);
+    p.freeze = arena_push<u8>(arena, n);
+    p.react_t = arena_push<u16>(arena, n);
+    p.react_yaw = arena_push<u32>(arena, n);
+    p.react_part = arena_push<u8>(arena, n);
+    p.hits = arena_push<u16>(arena, n);
     p.free = arena_push<u16>(arena, n);
     p.queue = arena_push<u16>(arena, n);
     p.free_count = n;
@@ -114,6 +126,10 @@ bool people_spawn(World &w, const WPos &at, f32 radius) {
     p.path_area[s] = PATH_DIRECT;
     p.queued[s] = 0;
     p.seed[s] = rng_u32(w.rng);
+    p.target[s] = 0;
+    p.act[s] = p.act_hit[s] = p.freeze[s] = p.react_part[s] = 0;
+    p.act_t[s] = p.react_t[s] = p.hits[s] = 0;
+    p.act_yaw[s] = p.react_yaw[s] = 0;
     p.live++;
     return true;
 }
@@ -134,10 +150,25 @@ static void queue_path(People &p, u32 s) {
     p.queued[s] = 1;
 }
 
-void people_order_go(World &w, u32 id, const WPos &target, u32 gait) {
-    People &p = w.people;
+bool people_valid(const People &p, u32 id, u32 *slot) {
     u32 s = id & 0xFFFFu;
-    if (s >= PEOPLE_CAPACITY || !p.alive[s] || p.gen[s] != (u16)(id >> 16)) return;
+    if (s >= PEOPLE_CAPACITY || !p.alive[s] || p.gen[s] != (u16)(id >> 16)) return false;
+    *slot = s;
+    return true;
+}
+
+void people_order_attack(World &w, u32 id, u32 target_id) {
+    People &p = w.people;
+    u32 s, t;
+    if (!people_valid(p, id, &s) || !people_valid(p, target_id, &t) || s == t) return;
+    p.target[s] = target_id;
+}
+
+void people_order_go(World &w, u32 id, const WPos &target, u32 gait, bool player) {
+    People &p = w.people;
+    u32 s;
+    if (!people_valid(p, id, &s)) return;
+    if (player) p.target[s] = 0;
     WPos t = target;
     wpos_rebase(t);
     p.gcx[s] = t.cx; p.gcz[s] = t.cz; p.gx[s] = t.x; p.gz[s] = t.z; p.gy[s] = t.y;
@@ -209,6 +240,10 @@ void people_steer(World &w, StepCtx &ctx) {
     People &p = w.people;
     for (u32 s = 0; s < PEOPLE_CAPACITY; ++s) {
         if (!p.alive[s]) continue;
+        if (people_busy(p, s)) {  // действие, стоп или реакция ведут корень сами (action.cpp)
+            p.speed[s] = 0.0f;
+            continue;
+        }
         f32 goal_v = 0.0f;
         f32 v0 = p.speed[s];
         if (p.state[s] == MOVE_FOLLOW) {
@@ -369,6 +404,16 @@ u32 people_columns(const People &p, Column *out) {
     out[k++] = column("people.path_more", p.path_more, n);
     out[k++] = column("people.queued", p.queued, n);
     out[k++] = column("people.seed", p.seed, n);
+    out[k++] = column("people.target", p.target, n);
+    out[k++] = column("people.act", p.act, n);
+    out[k++] = column("people.act_t", p.act_t, n);
+    out[k++] = column("people.act_yaw", p.act_yaw, n);
+    out[k++] = column("people.act_hit", p.act_hit, n);
+    out[k++] = column("people.freeze", p.freeze, n);
+    out[k++] = column("people.react_t", p.react_t, n);
+    out[k++] = column("people.react_yaw", p.react_yaw, n);
+    out[k++] = column("people.react_part", p.react_part, n);
+    out[k++] = column("people.hits", p.hits, n);
     out[k++] = column("people.free", p.free, n);
     out[k++] = column("people.free_count", &p.free_count, 1);
     out[k++] = column("people.live", &p.live, 1);
