@@ -6,3 +6,5 @@ surf_mesh 0.3
 gc_direct 0.05
 tiles_ground_px 0.05 плитку
 gc_baked 0
+sdf_taps 25
+sdf_bricks 0

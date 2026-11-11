@@ -240,6 +240,7 @@ u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices,
         }
         mg.lods[i] = {s.first_cluster + l.first_cluster, l.cluster_count, l.error, 0};
     }
+    vk_sdf_mesh_clusters(s.first_cluster, cg, ncls);  // сферы кластеров — отбору засыпки поля расстояний
     vmaFlushAllocation(g_vk.vma, staging.alloc, 0, VK_WHOLE_SIZE);
     UploadCopy u{staging.buffer, {0, voff, vbytes}, {vbytes, ioff, ibytes}, {vbytes + ibytes, coff * sizeof(ClusterGpu), cbytes}};
     bool ok = vk_one_shot(record_upload, &u);

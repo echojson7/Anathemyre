@@ -89,6 +89,10 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
         // Шаг светила (6б-2): страниц нового набора, отложенных стройкой в фоне, и сколько света уже на нём
         snprintf(t, sizeof t, "%u · %u %%", in.work_sm[6], in.work_sm[7]);
         ui_value(f, "тени: стройка шага · перетекание", t);
+        // Поле расстояний мира (docs/sdf.md): выборки светом; засыпка и сборка — только когда кирпичи грязные
+        pair_value(f, "поле: выборок · кирпичей", in.work_sdf[0], in.work_sdf[2]);
+        snprintf(t, sizeof t, "%u", in.work_sdf[1]);
+        ui_value(f, "поле: треугольников засыпки", t);
     }
     // Переполнения (docs/graph.md «Переполнения»): что-то не нарисовано или считается медленным путём
     for (u32 i = 0; i < in.overflows && i < DEBUG_MAX_OVERFLOWS; ++i) {
@@ -151,6 +155,8 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_toggle(f, "без кеша земли", d.gcache_off);
     static const char *const SM_VIEWS[] = {"кадр", "страницы", "только тень"};
     ui_choice(f, "тени солнца", d.shadow_pages, SM_VIEWS, ANA_COUNTOF(SM_VIEWS));
+    static const char *const SDF_VIEWS[] = {"кадр", "только небо", "поле", "выкл"};
+    ui_choice(f, "поле расстояний", d.sdf_view, SDF_VIEWS, ANA_COUNTOF(SDF_VIEWS));
     // Свет (docs/light.md): тонмаппинг на выбор по кадрам; освещённость земли и глаз — «Единицы», «Экспозиция»
     ui_section(f, "СВЕТ");
     static const char *const TONEMAPS[] = {"AgX", "ACES"};

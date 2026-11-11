@@ -3,9 +3,11 @@
 // экспозицию и тонмаппинг делает стиль (post.glsl), HDR кадра уже умножен на экспозицию (light_cells.comp).
 // Этап 6а: отражение GGX с поправкой многократного рассеяния, металл, рассеянное Ламберта; главный свет
 // (солнце, ночью луна) с тенью земли по карте горизонта (sun_visibility, дальше — карта теней 6б); свет неба
-// по нормали (atmo_ambient) и отражение неба (atmo_sky) по шероховатости; дымка atmo_fog() (atmosphere.glsl)
+// по нормали (atmo_ambient) и отражение неба (atmo_sky) по шероховатости, оба — с видимостью неба по полю
+// расстояний мира (6в, sdf_sky); дымка atmo_fog() (atmosphere.glsl)
 #include "horizon.glsl"
 #include "shadow.glsl"
+#include "sdf.glsl"
 #include "atmosphere.glsl"
 
 // Видимость главного светила: 1 — свет, 0 — тень, всегда мягко (docs/light.md, правило 5). Земля — карта
@@ -89,8 +91,11 @@ vec3 light_surface(Surface s) {
     vec3 env = atmo_ambient(rd);
     // Таблица неба — только у гладкого и со ступени «Средне» (на «Низко» отражение — из гармоник неба)
     if (blur < 1.0 && f.light_q >= LIGHT_Q_MEDIUM) env = mix(atmo_sky(vec3(rd.x, max(rd.y, 0.0), rd.z)), env, blur);
-    float so = spec_occlusion(nv, s.ao, a);
-    c += kd * irr * s.ao + (fss_ess * env + fms * ems * irr) * so;
+    // Видимость неба по полю расстояний мира (6в, docs/sdf.md): здание и камни закрывают небо — интерьер темнеет
+    // (свет, отражённый от стен, — зонды 6г). Свет неба и его отражение гаснут вместе с ao материала
+    float ao = s.ao * sdf_sky(s.pos, n);
+    float so = spec_occlusion(nv, ao, a);
+    c += kd * irr * ao + (fss_ess * env + fms * ems * irr) * so;
     c += s.emissive;
     return atmo_fog(c, s.pos);
 }

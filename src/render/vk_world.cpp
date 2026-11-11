@@ -17,23 +17,32 @@ static u32 g_ncopies = 0;
 
 bool vk_world_layout() {
     WorldGpu &w = g_vk.world;
-    VkDescriptorSetLayoutBinding b[2] = {};
-    for (u32 i = 0; i < 2; ++i) {
+    // 0, 1 — visibility buffer и HDR; 2 — поле расстояний мира для выборки светом (сэмплер неизменный: трилинейно,
+    // по x и y с заворотом кольца, по z — по краю слоя), 3 — оно же для записи сборкой (docs/sdf.md)
+    auto si = vk_info<VkSamplerCreateInfo>(VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO);
+    si.magFilter = si.minFilter = VK_FILTER_LINEAR;
+    si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    si.addressModeU = si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    if (!vk_check(vkCreateSampler(g_vk.device, &si, nullptr, &g_vk.sdf.sampler), "vkCreateSampler")) return false;
+    VkDescriptorSetLayoutBinding b[4] = {};
+    for (u32 i = 0; i < 4; ++i) {
         b[i].binding = i;
-        b[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        b[i].descriptorType = i == 2 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = 1;
-        b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | (i < 2 ? VK_SHADER_STAGE_FRAGMENT_BIT : 0);
     }
+    b[2].pImmutableSamplers = &g_vk.sdf.sampler;
     auto li = vk_info<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
-    li.bindingCount = 2;
+    li.bindingCount = 4;
     li.pBindings = b;
     if (!vk_check(vkCreateDescriptorSetLayout(g_vk.device, &li, nullptr, &w.set_layout), "vkCreateDescriptorSetLayout"))
         return false;
-    VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
+    VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}};
     auto pi = vk_info<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
     pi.maxSets = 1;
-    pi.poolSizeCount = 1;
-    pi.pPoolSizes = &ps;
+    pi.poolSizeCount = 2;
+    pi.pPoolSizes = ps;
     if (!vk_check(vkCreateDescriptorPool(g_vk.device, &pi, nullptr, &w.pool), "vkCreateDescriptorPool")) return false;
     auto ai = vk_info<VkDescriptorSetAllocateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO);
     ai.descriptorPool = w.pool;
@@ -93,7 +102,7 @@ bool vk_world_init() {
         lights = lights && w.pipe_light[k];
     }
     return w.pipe_vis_mesh && w.pipe_vis_ground && w.pipe_style && w.pipe_cull_count && w.pipe_cull_scan &&
-           w.pipe_cull_write && lights && w.pipe_tiles && w.pipe_ground_bake && vk_gcache_init() && vk_shadow_init();
+           w.pipe_cull_write && lights && w.pipe_tiles && w.pipe_ground_bake && vk_gcache_init() && vk_shadow_init() && vk_sdf_init();
 }
 
 static void destroy_image(GpuImage &im) {
@@ -121,8 +130,11 @@ void vk_world_shutdown() {
     for (FrameSlot &fs : g_vk.frames) vk_destroy_buffer(fs.inst_upload);
     vk_gcache_shutdown();
     vk_shadow_shutdown();
+    vk_sdf_shutdown();
     if (w.pool) vkDestroyDescriptorPool(g_vk.device, w.pool, nullptr);
     if (w.set_layout) vkDestroyDescriptorSetLayout(g_vk.device, w.set_layout, nullptr);
+    if (g_vk.sdf.sampler) vkDestroySampler(g_vk.device, g_vk.sdf.sampler, nullptr);
+    g_vk.sdf.sampler = VK_NULL_HANDLE;
     w = WorldGpu{};
 }
 
@@ -244,6 +256,7 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.tile_cap = w.tile_cap;
     vk_gcache_fill(g, f, images);
     vk_shadow_fill(g, f, fs, images);
+    vk_sdf_fill(g, f, fs, images);
 }
 
 static void dispatch(VkCommandBuffer cmd, VkPipeline p, VkDeviceAddress frame, u32 gx, u32 gy) {
@@ -435,6 +448,8 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     rg_use(w.rg_inst, RG_VS_READ);
     rg_use(w.rg_gverts, RG_VS_READ);
     vk_skin_vertices_read(RG_VS_READ);
+    // Поле расстояний мира (docs/sdf.md): засыпка и сборка грязных кирпичей, экземпляры уже на GPU
+    vk_sdf_passes();
     // 4. Плитки по видам и освещение: вид — свой конвейер и своя строка F3. Виды пишут разные пиксели HDR, но
     // барьер между ними граф ставит (запись после записи): без него слой проверки синхронизации видел бы гонку,
     // а цена — хвост одного dispatch, пока следующий не начался (docs/tiles.md)
@@ -475,6 +490,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         vk_gcache_reads();
         vk_horizon_reads(RG_CS_READ);
         vk_shadow_reads();
+        vk_sdf_reads();
     }
     // 5. Стиль, отрезки, точки
     rg_pass("стиль", "стиль", record_style, nullptr);
