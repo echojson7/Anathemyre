@@ -19,11 +19,11 @@ void debug_keys(const Input &in, DebugState &d) {
     if (in.key_pressed[KEY_B]) d.stand_bend = !d.stand_bend;
 }
 
-// Люди подставного игрока: 256 человек у руины (docs/ruin.md), приказы идти — в точки вокруг, внутрь руины и на
-// плиту второго этажа (через лестницу). Номер берётся из таблицы мира: --sim идёт без кадра
+// Люди подставного игрока: 256 человек у Остова (docs/ostov.md), приказы идти — в точки вокруг, внутрь здания и
+// на галерею (через марш). Номер берётся из таблицы мира: --sim идёт без кадра
 static constexpr u32 AUTOPLAY_PEOPLE = 256;
-// Точка у руины: сдвиг от середины пятна, высота — над площадкой (земля под серединой)
-static WPos ruin_at(const World &w, f32 dx, f32 dz, f32 y) {
+// Точка у Остова: сдвиг от середины пятна, высота — над площадкой (земля под серединой)
+static WPos ostov_at(const World &w, f32 dx, f32 dz, f32 y) {
     WPos c{45, -10, 11704.0f - 45.0f * 256.0f, 0.0f, -2336.0f + 10.0f * 256.0f};
     WPos p = c;
     p.x += dx;
@@ -49,10 +49,10 @@ void autoplay_intents(const World &w, Rng &rng, FixedArray<Intent> &out) {
     // Часы: прыжок на случайный час и смена скорости суток — повтор проверяет и числа намерений
     if (step % 1201 == 600) out.push_back({step, INTENT_CLOCK_SET, WPos{}, rng_u32(rng)});
     if (step % 2003 == 1000) out.push_back({step, INTENT_CLOCK_RATE, WPos{}, rng_below(rng, 200)});
-    // Люди: толпа в дюнах к западу от руины в первом шаге
-    if (step == 0) out.push_back({step, INTENT_PEOPLE_SPAWN, ruin_at(w, -40.0f, 0.0f, 0.0f), AUTOPLAY_PEOPLE | (25ull << 16)});
-    // Приказы: каждые 13 шагов — двоим случайным (каждому раз в ~30 с); цели — дюны вокруг, пол руины,
-    // плита второго этажа над лестницей
+    // Люди: толпа в дюнах к западу от Остова в первом шаге
+    if (step == 0) out.push_back({step, INTENT_PEOPLE_SPAWN, ostov_at(w, -40.0f, 0.0f, 0.0f), AUTOPLAY_PEOPLE | (25ull << 16)});
+    // Приказы: каждые 13 шагов — двоим случайным (каждому раз в ~30 с); цели — дюны вокруг, пол Остова,
+    // галерея над маршем
     if (step % 13 == 3 && w.people.live) {
         for (u32 k = 0; k < 2; ++k) {
             u32 s = rng_below(rng, AUTOPLAY_PEOPLE);
@@ -62,9 +62,9 @@ void autoplay_intents(const World &w, Rng &rng, FixedArray<Intent> &out) {
             // Аргументы — отдельными строками: порядок их вычисления у clang и gcc разный, а RNG один
             f32 dx, dz, y;
             if (kind < 4) { dx = rng_range(rng, -60.0f, 60.0f); dz = rng_range(rng, -60.0f, 60.0f); y = 0.0f; }
-            else if (kind < 8) { dx = rng_range(rng, -9.0f, 9.0f); dz = rng_range(rng, -9.0f, 9.0f); y = 0.5f; }
-            else { dx = rng_range(rng, 4.5f, 9.0f); dz = rng_range(rng, -9.0f, 9.0f); y = 4.5f; }
-            WPos t = ruin_at(w, dx, dz, y);
+            else if (kind < 8) { dx = rng_range(rng, -13.5f, 13.5f); dz = rng_range(rng, -8.5f, 10.5f); y = 0.25f; }
+            else { dx = rng_range(rng, -13.5f, 12.0f); dz = rng_range(rng, 9.0f, 11.0f); y = 4.0f; }
+            WPos t = ostov_at(w, dx, dz, y);
             u64 gait = rng_below(rng, 3);
             out.push_back({step, INTENT_GO, t, (u64)id | (gait << 32)});
         }
@@ -97,7 +97,7 @@ void debug_print_help() {
     log_info("люди: левая кнопка — выбрать, правая — идти шагом (Ctrl — трусцой, Shift — бегом), правая по человеку — ударить");
     log_info("точки: левая кнопка мимо людей — притянуть, Ctrl + левая — вспышка, R — отпустить");
     log_info("сутки: [ ] — час назад/вперёд, T — скорость суток (обычная, ×20, ×120, стоп)");
-    log_info("стенд людей (у руины, вкл. в F3): B — согнуть кость, скелет и морф — в F3");
+    log_info("стенд людей (у Остова, вкл. в F3): B — согнуть кость, скелет и морф — в F3");
 }
 
 static void put16(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); }
@@ -196,17 +196,17 @@ bool debug_write_terrain_map(const Terrain &t, const char *path, Arena &scratch)
     return ok;
 }
 
-// Карта сетки ходимости у руины (--walk-map): 32 × 32 м, клетка 0.5 м — 14 пикселей, север сверху. Нет уровня —
+// Карта сетки ходимости у Остова (--walk-map): 40 × 40 м, клетка 0.5 м — 14 пикселей, север сверху. Нет уровня —
 // тёмно-красный; земля — песочный; пол постройки — от синего (низ) к белому (верх плиты); две плиты над клеткой —
-// полоска. Поверх — путь подставного приказа: от дюн к западу на плиту второго этажа (A* + сглаживание)
+// полоска. Поверх — путь подставного приказа: от входа на галерею по маршу (A* + сглаживание)
 bool debug_write_walk_map(const World &w, const char *path, Arena &scratch) {
     usize mark = arena_mark(scratch);
-    WPos c = ruin_at(w, 0.0f, 0.0f, 0.0f);
+    WPos c = ostov_at(w, 0.0f, 1.0f, 0.0f);
     u32 ci, cj;
     i32 ar = walk_area_of(w.walk, c.cx, c.cz, c.x, c.z, &ci, &cj);
-    if (ar < 0) { log_error("--walk-map: руина вне сетки ходимости"); return false; }
+    if (ar < 0) { log_error("--walk-map: Остов вне сетки ходимости"); return false; }
     const WalkArea &a = w.walk.area[ar];
-    const u32 cells = 64, px = 14, size = cells * px;
+    const u32 cells = 80, px = 14, size = cells * px;
     u8 *rgba = arena_push<u8>(scratch, (usize)size * size * 4);
     i32 i0 = (i32)ci - (i32)cells / 2, j0 = (i32)cj - (i32)cells / 2;
     i32 base = (i32)(c.y * 100.0f) - a.base_cm;
@@ -229,8 +229,8 @@ bool debug_write_walk_map(const World &w, const char *path, Arena &scratch) {
             }
             if ((x % px) == 0 || (y % px) == 0) { o[0] = (u8)(o[0] * 7 / 8); o[1] = (u8)(o[1] * 7 / 8); o[2] = (u8)(o[2] * 7 / 8); }
         }
-    // Путь: с дюн на плиту второго этажа
-    WPos from = ruin_at(w, -15.0f, -14.0f, 0.0f), to = ruin_at(w, 7.0f, 6.0f, 4.5f);
+    // Путь: от входа на галерею
+    WPos from = ostov_at(w, 3.0f, -16.0f, 0.0f), to = ostov_at(w, -6.0f, 10.0f, 4.0f);
     u32 fi, fj, ti, tj, nf, nt;
     walk_area_of(w.walk, from.cx, from.cz, from.x, from.z, &fi, &fj);
     walk_area_of(w.walk, to.cx, to.cz, to.x, to.z, &ti, &tj);
@@ -239,7 +239,7 @@ bool debug_write_walk_map(const World &w, const char *path, Arena &scratch) {
         ws.max_expand = 400000;
         u32 out[256];
         u32 n = walk_find(a, nf, nt, scratch, ws, out, 256);
-        log_info("--walk-map: путь с дюн на плиту — %s, узлов после сглаживания %u, раскрыто %u", ws.reached ? "дошёл" : "НЕ дошёл", n, ws.expanded);
+        log_info("--walk-map: путь от входа на галерею — %s, узлов после сглаживания %u, раскрыто %u", ws.reached ? "дошёл" : "НЕ дошёл", n, ws.expanded);
         u32 prev = nf;
         for (u32 k = 0; k < n; ++k) {
             i32 ax = ((i32)walk_node_i(prev) - i0) * (i32)px + (i32)px / 2, ay = ((i32)cells - 1 - ((i32)walk_node_j(prev) - j0)) * (i32)px + (i32)px / 2;

@@ -43,7 +43,7 @@ static void usage() {
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
     log_info("           --replay файл.rec                                            проверка повтора");
     log_info("           --terrain-map файл.bmp                                       карта земли сверху");
-    log_info("           --walk-map файл.bmp                                          сетка ходимости у руины и путь");
+    log_info("           --walk-map файл.bmp                                          сетка ходимости у Остова и путь");
 }
 
 void app_memory_init(AppMemory &m, bool with_record) {

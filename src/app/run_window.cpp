@@ -239,7 +239,7 @@ int run_window(const Args &a, AppMemory &m) {
         cam.pivot.z = a.cam[4];
         wpos_rebase(cam.pivot);
     } else if (w.start.set) {
-        // Точка старта из сцены (строка start, docs/text.md): сейчас — у руины в пустыне
+        // Точка старта из сцены (строка start, docs/text.md): сейчас — у входа в Остов в пустыне
         const f32 deg = PI_F / 180.0f;
         cam.yaw = w.start.yaw * deg;
         cam.pitch = w.start.pitch * deg;

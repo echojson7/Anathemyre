@@ -20,7 +20,7 @@ struct RenderInstance {
 static_assert(sizeof(RenderInstance) == 48, "RenderInstance — 48 байт");
 constexpr u32 RENDER_NO_MATERIAL = 0xFFFFFFFFu;
 
-// Декаль (docs/ruin.md, «Декали»): коробка проекции относительно камеры, вид узора, материал, зерно. 48 байт,
+// Декаль (docs/ostov.md, «Декали»): коробка проекции относительно камеры, вид узора, материал, зерно. 48 байт,
 // как Decal в data/shaders/common.glsl
 enum RenderDecalKind : u32 { DECAL_STREAK = 0, DECAL_GRIME = 1, DECAL_DUST = 2, DECAL_STAIN = 3, DECAL_KINDS = 4 };
 struct RenderDecal {
