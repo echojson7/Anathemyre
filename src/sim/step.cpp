@@ -30,6 +30,7 @@ static void step_intents(World &w, StepCtx &ctx) {
         } break;
         case INTENT_GO: people_order_go(w, (u32)it.arg, it.target, (u32)(it.arg >> 32)); break;
         case INTENT_ATTACK: people_order_attack(w, (u32)it.arg, (u32)(it.arg >> 32)); break;
+        case INTENT_ACT: people_order_act(w, (u32)it.arg, (u32)(it.arg >> 32)); break;
         case INTENT_BURST: {
             // Гибнут BURST_COUNT случайных живых, столько же рождается у цели
             u32 killed = 0;

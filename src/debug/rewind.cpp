@@ -73,10 +73,10 @@ bool rewind_to(Rewind &r, World &w, u64 target, Arena &step_arena) {
     snap_load(r, w, (u32)best);
     // Снимки новее точки — уже будущее другой ветки: забыть их
     while (r.count && r.snap_step[(r.head + r.count - 1) % REWIND_SNAPS] > w.step) r.count--;
-    Intent its[64];
+    Intent its[256];
     while (w.step < target) {
         u32 n = 0;
-        for (u32 k = 0; k < r.log_count && n < 64; ++k) {
+        for (u32 k = 0; k < r.log_count && n < 256; ++k) {
             const Intent &it = r.log[(r.log_head + k) % REWIND_LOG];
             if (it.step == w.step) its[n++] = it;
         }

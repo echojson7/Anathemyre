@@ -87,6 +87,38 @@ void autoplay_intents(const World &w, Rng &rng, FixedArray<Intent> &out) {
     }
 }
 
+void duel_intents(const World &w, u32 pairs, FixedArray<Intent> &out) {
+    // Пары в ряд с шагом 8 м к западу от Остова, бойцы в 3 м друг от друга; места рождения — 0, 1, 2… по порядку
+    if (w.step == 0)
+        for (u32 k = 0; k < pairs * 2; ++k)
+            out.push_back({0, INTENT_PEOPLE_SPAWN, ostov_at(w, -36.0f - 3.0f * (f32)(k & 1), -40.0f + 8.0f * (f32)(k / 2), 0.0f), 1});
+    if (w.step == 1)
+        for (u32 k = 0; k < pairs; ++k) {
+            u64 a = (2 * k) | ((u32)w.people.gen[2 * k] << 16), b = (2 * k + 1) | ((u32)w.people.gen[2 * k + 1] << 16);
+            out.push_back({1, INTENT_ATTACK, WPos{}, a | (b << 32)});
+        }
+}
+
+void debug_duel_report(const World &w, u32 pairs) {
+    const People &p = w.people;
+    u32 skilled_won = 0, decided = 0, even = 0, h_lo = 0, h_hi = 0;
+    for (u32 k = 0; k < pairs; ++k) {
+        u32 a = 2 * k, b = a + 1;
+        // Задели a — счёт b; кто задел больше, тот и взял пару
+        log_info("--duel пара %u: навык %u и %u, задеты %u и %u раз", k, p.skill[a], p.skill[b], p.hits[a], p.hits[b]);
+        u32 lo = p.skill[a] < p.skill[b] ? a : b, hi = lo == a ? b : a;
+        h_lo += p.hits[lo];
+        h_hi += p.hits[hi];
+        if (p.hits[a] == p.hits[b]) continue;
+        if (p.skill[a] == p.skill[b]) { even++; continue; }
+        decided++;
+        skilled_won += p.hits[lo] > p.hits[hi];
+    }
+    log_info("--duel: %u пар, сильнее по навыку взял %u из %u; слабых задели %u раз, сильных — %u", pairs, skilled_won, decided,
+             h_lo, h_hi);
+    (void)even;
+}
+
 void debug_print_help() {
     log_info("клавиши: Esc настройки, F3 панель отладки, F11 весь экран");
     log_info("отладка: Space пауза, . шаг на паузе, , шаг назад (до 10 с), - = медленнее/быстрее, L отрезки, P ячейки,");

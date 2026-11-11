@@ -1,6 +1,7 @@
 // Люди: рождение, приказ, путь, руление, расталкивание, опора и фаза шага. Числа руления — из беты (инерция
 // старта и остановки нравилась пользователю): разгон 3, торможение 6, мягкое торможение к цели 2.5 м/с²
 #include "people.h"
+#include "../core/hash.h"
 #include "../core/sort.h"
 #include "ground.h"
 #include "step.h"
@@ -74,6 +75,11 @@ void people_init(People &p, Arena &arena) {
     p.react_yaw = arena_push<u32>(arena, n);
     p.react_part = arena_push<u8>(arena, n);
     p.hits = arena_push<u16>(arena, n);
+    p.react_len = arena_push<u16>(arena, n);
+    p.react_push = arena_push<f32>(arena, n);
+    p.skill = arena_push<u8>(arena, n);
+    p.want = arena_push<u8>(arena, n);
+    p.last = arena_push<u8>(arena, n);
     p.free = arena_push<u16>(arena, n);
     p.queue = arena_push<u16>(arena, n);
     p.free_count = n;
@@ -130,6 +136,12 @@ bool people_spawn(World &w, const WPos &at, f32 radius) {
     p.act[s] = p.act_hit[s] = p.freeze[s] = p.react_part[s] = 0;
     p.act_t[s] = p.react_t[s] = p.hits[s] = 0;
     p.act_yaw[s] = p.react_yaw[s] = 0;
+    p.react_len[s] = 0;
+    p.react_push[s] = 0.0f;
+    // Навык — из зерна внешности, без лишнего числа RNG: 20–82, у большинства около середины (сумма двух)
+    u64 h = hash_mix(p.seed[s] ^ 0x5ce11ull);
+    p.skill[s] = (u8)(20 + (h & 31) + ((h >> 8) & 31));
+    p.want[s] = p.last[s] = 0;
     p.live++;
     return true;
 }
@@ -164,11 +176,21 @@ void people_order_attack(World &w, u32 id, u32 target_id) {
     p.target[s] = target_id;
 }
 
+void people_order_act(World &w, u32 id, u32 act) {
+    People &p = w.people;
+    u32 s;
+    if (!people_valid(p, id, &s) || act > w.actions.count) return;
+    p.want[s] = (u8)act;
+}
+
 void people_order_go(World &w, u32 id, const WPos &target, u32 gait, bool player) {
     People &p = w.people;
     u32 s;
     if (!people_valid(p, id, &s)) return;
-    if (player) p.target[s] = 0;
+    if (player) {
+        p.target[s] = 0;
+        p.want[s] = 0;
+    }
     WPos t = target;
     wpos_rebase(t);
     p.gcx[s] = t.cx; p.gcz[s] = t.cz; p.gx[s] = t.x; p.gz[s] = t.z; p.gy[s] = t.y;
@@ -414,6 +436,11 @@ u32 people_columns(const People &p, Column *out) {
     out[k++] = column("people.react_yaw", p.react_yaw, n);
     out[k++] = column("people.react_part", p.react_part, n);
     out[k++] = column("people.hits", p.hits, n);
+    out[k++] = column("people.react_len", p.react_len, n);
+    out[k++] = column("people.react_push", p.react_push, n);
+    out[k++] = column("people.skill", p.skill, n);
+    out[k++] = column("people.want", p.want, n);
+    out[k++] = column("people.last", p.last, n);
     out[k++] = column("people.free", p.free, n);
     out[k++] = column("people.free_count", &p.free_count, 1);
     out[k++] = column("people.live", &p.live, 1);
