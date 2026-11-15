@@ -4,7 +4,7 @@
 #pragma once
 #include "../core/mem.h"
 #include "../sim/intent.h"
-#include "../sim/people.h"
+#include "../sim/people_grid.h"
 
 struct World;
 struct DuelDesc;
@@ -33,6 +33,7 @@ struct FightView {
     u16 list[PEOPLE_CAPACITY];
     u16 holders[PEOPLE_CAPACITY];    // сколько из них держат жетон (бьют до конца окна удара или хотят бить)
     u16 urgent[PEOPLE_CAPACITY];     // чей удар по месту ближе всех к окну, 0xFFFF — никто не замахнулся
+    PeopleGrid grid;                 // сетка людей 8 м: кого выбрать целью, кто из своих рядом
 };
 void fight_view(const World &w, FightView &v);
 // Держит ли s жетон: бьёт (до конца окна удара) или ИИ уже велел бить
