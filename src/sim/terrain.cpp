@@ -707,56 +707,11 @@ void terrain_generate(Terrain &t, const TerrainDesc &d, Arena &world, Arena &scr
     t.hash = hash_combine(t.hash, hash_bytes(t.dune, nodes * sizeof(u16)));
     if (t.fine) t.hash = hash_combine(t.hash, hash_bytes(t.fine, t.fine_count * sizeof(u16)));
     t.hash = hash_combine(t.hash, t.detail_seed ^ ((u64)t.dune_seed << 32));
-}
-
-// --- описание ---
-
-// seed <n> · chunks <n, чётное> · ring <м> · locations <valley|desert>… (с запада на восток) ·
-// dunes <номер локации> <файл .dun в data/> · pad <x> <z> <w> <d> [<переход м>]
-bool terrain_desc_parse(const u8 *text, usize size, TerrainDesc &out, char *err, usize err_cap) {
-    out = TerrainDesc{};
-    TextReader r = text_reader(text, size);
-    TextLine l;
-    while (text_next(r, l)) {
-        if (l.count >= 2 && str_eq(l.w[0], "locations")) {
-            if (l.count - 1 > TERRAIN_MAX_LOCATIONS) { text_err(err, err_cap, l.line, "слишком много локаций"); return false; }
-            out.locations = l.count - 1;
-            for (u32 k = 1; k < l.count; ++k) {
-                if (str_eq(l.w[k], "valley")) out.biome[k - 1] = BIOME_VALLEY;
-                else if (str_eq(l.w[k], "desert")) out.biome[k - 1] = BIOME_DESERT;
-                else { text_err(err, err_cap, l.line, "локация: valley или desert"); return false; }
-            }
-            continue;
-        }
-        if (l.count == 3 && str_eq(l.w[0], "dunes")) {
-            u32 loc = 0;
-            if (!parse_u32(l.w[1], loc) || loc >= TERRAIN_MAX_LOCATIONS || l.w[2].n >= sizeof out.dune_path[0]) {
-                text_err(err, err_cap, l.line, "dunes <локация> <файл>");
-                return false;
-            }
-            memcpy(out.dune_path[loc], l.w[2].p, l.w[2].n);
-            out.dune_path[loc][l.w[2].n] = 0;
-            continue;
-        }
-        if ((l.count == 5 || l.count == 6) && str_eq(l.w[0], "pad")) {
-            if (out.pad_count >= TERRAIN_MAX_PADS) { text_err(err, err_cap, l.line, "слишком много площадок"); return false; }
-            TerrainPad &p = out.pad[out.pad_count++];
-            p.margin = 16;
-            if (!parse_i32(l.w[1], p.x) || !parse_i32(l.w[2], p.z) || !parse_i32(l.w[3], p.w) || !parse_i32(l.w[4], p.d) ||
-                (l.count == 6 && !parse_i32(l.w[5], p.margin)) || p.w < 1 || p.d < 1 || p.w > 512 || p.d > 512 ||
-                p.margin < 1 || p.margin > 256) {
-                text_err(err, err_cap, l.line, "pad <x> <z> <ширина 1..512> <глубина 1..512> [<переход 1..256 м>]");
-                return false;
-            }
-            continue;
-        }
-        if (l.count != 2) { text_err(err, err_cap, l.line, "ожидается <ключ> <значение>"); return false; }
-        bool ok = true;
-        if (str_eq(l.w[0], "seed")) ok = parse_u32(l.w[1], out.seed);
-        else if (str_eq(l.w[0], "chunks")) ok = parse_i32(l.w[1], out.chunks) && out.chunks >= 4 && out.chunks <= 200 && out.chunks % 2 == 0;
-        else if (str_eq(l.w[0], "ring")) ok = parse_f32(l.w[1], out.ring) && out.ring >= 256;
-        else { text_err(err, err_cap, l.line, "неизвестный ключ"); return false; }
-        if (!ok) { text_err(err, err_cap, l.line, "плохое значение"); return false; }
+    // Проёмы: в сантиметрах от угла карты. В хеше — только если есть (земля без проёмов — прежний хеш)
+    t.hole_count = d.hole_count;
+    for (u32 k = 0; k < d.hole_count; ++k) {
+        const i32 org = -t.chunk0 * 25600;
+        t.hole[k] = {d.hole[k].x0 + org, d.hole[k].z0 + org, d.hole[k].x1 + org, d.hole[k].z1 + org};
     }
-    return true;
+    if (t.hole_count) t.hash = hash_combine(t.hash, hash_bytes(t.hole, t.hole_count * sizeof(TerrainHole)));
 }

@@ -23,6 +23,7 @@ struct CameraSettings {
 
 struct PeopleView;
 struct Colliders;
+constexpr f32 CAM_PIVOT_UNSET = -1e9f;
 
 // Камера: точка опоры, направление взгляда и штанга от опоры до глаза (как у камеры за персонажем).
 // Орбита: опора над землёй на высоте глаз человека, позже — голова персонажа. Если землю пересекает штанга,
@@ -35,7 +36,8 @@ struct Camera {
     f32 pitch = 0.42f;      // радианы: > 0 — глаз выше опоры, смотрит вниз; < 0 — смотрит вверх
     f32 dist = 24.0f;       // желаемая длина штанги, метров (0 — вид от глаз)
     f32 arm = -1.0f;        // длина штанги в кадре, после земли (< 0 — ещё не считали)
-    f32 pivot_above = -1.0f;  // опора орбиты над землёй, м (< 0 — на высоте глаз; --pivot для крупных планов)
+    f32 pivot_above = CAM_PIVOT_UNSET;  // опора орбиты от земли, м (не задана — на высоте глаз; --pivot для крупных
+                                        // планов, ниже нуля — под землёй)
     bool follow = false;      // опора — голова выбранного человека (view_camera_follow); WASD и сдвиг опоры снимают
     CameraSettings settings;
 };
@@ -105,8 +107,9 @@ struct ViewInput {
 // Память под экземпляры, точки и отрезки — из арены кадра
 void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in, Arena &frame, RenderFrame &out);
 // Мышь, колесо и клавиши → камера. dt — секунды кадра (камера движется по времени кадра, не мира).
-// Опора орбиты — над землёй, глаз не уходит под землю
-void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &ground);
+// Опора орбиты — над землёй, глаз не уходит под землю; с коллайдерами coll опора спускается в проём земли и
+// ходит по полу подземной постройки (docs/camera.md, «Под землёй»)
+void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &ground, const Colliders *coll = nullptr);
 // Опора орбиты над точкой земли p
 WPos view_pivot_at(const Terrain &ground, WPos p);
 // Глаз камеры (чанк + смещение)

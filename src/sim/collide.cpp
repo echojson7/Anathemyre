@@ -121,14 +121,28 @@ bool coll_touches(const Colliders &c, u32 k, i32 cx, i32 cz, f32 x, f32 z, f32 r
 }
 
 Support support_at(const Terrain &t, const Colliders &c, i32 cx, i32 cz, f32 x, f32 z, f32 from_y) {
-    Support s{ground_at(t, cx, cz, x, z).height, 0};
     const f32 top = from_y + STEP_UP_M;
+    const f32 g = ground_at(t, cx, cz, x, z).height;
+    // Земля — опора, пока до неё можно шагнуть и здесь не проём. Ниже (лестница под землю, подземный зал)
+    // держат только коробки; коробки нет — человека возвращает на землю
+    Support s{g, 0};
+    f32 best = (g <= top && !ground_hole(t, cx, cz, x, z)) ? g : -1e30f;
     for (u16 k : colliders_near(c, cx, cz, x, z)) {
         f32 y1 = c.y1[k];
-        if (y1 <= s.height || y1 > top) continue;
-        if (coll_covers(c, k, cx, cz, x, z)) s = {y1, (u32)k + 1};
+        if (y1 <= best || y1 > top) continue;
+        if (coll_covers(c, k, cx, cz, x, z)) {
+            best = y1;
+            s = {y1, (u32)k + 1};
+        }
     }
     return s;
+}
+
+bool underground_open(const Terrain &t, const Colliders &c, i32 cx, i32 cz, f32 x, f32 z, f32 y) {
+    if (ground_hole(t, cx, cz, x, z)) return true;
+    for (u16 k : colliders_near(c, cx, cz, x, z))
+        if (c.y1[k] > y && coll_covers(c, k, cx, cz, x, z)) return true;
+    return false;
 }
 
 bool coll_push_circle(const Colliders &c, i32 cx, i32 cz, f32 &x, f32 &z, f32 r, f32 lo, f32 hi) {

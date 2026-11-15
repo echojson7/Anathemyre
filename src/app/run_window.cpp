@@ -232,7 +232,7 @@ int run_window(const Args &a, AppMemory &m) {
         cam.pivot.z = 10.0f;  // сцена этапа 1 — к северу от начала карты
     }
     cam.pivot = view_pivot_at(w.terrain, cam.pivot);
-    if (a.pivot_above >= 0) {
+    if (a.pivot_above > CAM_PIVOT_UNSET) {
         cam.pivot_above = a.pivot_above;
         cam.pivot.y = ground_at(w.terrain, cam.pivot).height + a.pivot_above;
     }
@@ -416,7 +416,7 @@ int run_window(const Args &a, AppMemory &m) {
         if (ds.flight_toggle) win.key_pressed[KEY_F] = true;  // кнопка панели — как клавиша F
         if (ds.pause_toggle) tc.paused = !tc.paused;
         if (ds.speed_set >= 0 && (u32)ds.speed_set < ANA_COUNTOF(SPEEDS)) tc.speed = (u32)ds.speed_set;
-        view_camera_control(cam, win, (f32)dt, w.terrain);
+        view_camera_control(cam, win, (f32)dt, w.terrain, &w.coll);
 
         // Мышь и приказы → намерения игрока (orders.cpp). На вкладке «Мир» панели отладки левая кнопка выбирает
         // строку точки, а не приказывает

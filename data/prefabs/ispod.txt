@@ -1,0 +1,11 @@
+# Исподь — подземная станция с выходом на поверхность (docs/ispod.md): оголовок входа, лестница в три марша,
+# платформа с путём и тоннелем, технический коридор. Сетки — фабрика деталей tools/parts (make parts), у всех
+# начало координат — на земле площадки, поэтому каждая стоит в 0 0 0. Над лестницей — проём земли (hole в
+# data/terrain.txt): прямоугольник tools/parts/ispod.py HOLE плюс место заготовки в data/scene.txt.
+#   part <сетка> <x> <y> <z> [yaw градусы] [material имя] [seed n]
+#   decal <вид> <материал> <x> <y> <z> <sx> <sy> <sz> [yaw градусы] [seed n]   вид: streak grime dust stain
+
+part ispod_shell 0 0 0
+part ispod_tech 0 0 0
+part ispod_hall 0 0 0
+part ispod_track 0 0 0

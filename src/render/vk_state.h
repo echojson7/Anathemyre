@@ -104,6 +104,9 @@ struct FrameGpu {
     u32 sdf_jobs_n, sdf_bricks_n, sdf_pad0, sdf_pad1;
     f32 sdf_cam[4];              // камера от якоря, м; w — воксель уровня 0, м
     i32 sdf_lo[8][4], sdf_hi[8][4];  // рамка грязных вокселей уровня (засыпка пишет только в неё)
+    // Проёмы земли: x0, z0, x1, z1 от камеры, м (vis_ground.frag в них землю не рисует); t_hole_n — сколько
+    f32 t_hole[4][4];
+    u32 t_hole_n, t_hole_pad[3];
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
