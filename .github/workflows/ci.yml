@@ -118,7 +118,8 @@ jobs:
           par_wait 3
 
   # Окно под Xvfb + lavapipe со слоями проверки Vulkan. lavapipe медленный: конвейеры создаются ~0.5 мин на
-  # запуск, первый кадр (горизонт, кеш земли, зонды, JIT шейдеров) — минуты. Три машины: ASan, GPU-AV, кадры.
+  # запуск, первый кадр (горизонт, кеш земли, зонды, JIT шейдеров) — минуты. Четыре машины: ASan, GPU-AV, снимок,
+  # сверка кадров. Три запуска разом на одной машине шли втрое дольше одного: первый кадр lavapipe считает всеми ядрами
   # Кеш шейдеров Mesa (~/.cache/mesa_shader_cache) между прогонами снимает JIT неизменных шейдеров
   # (машинный код тот же, кадр побайтно тот же); конвейеры lavapipe не кеширует (docs/frame_time.md)
   window:
@@ -128,7 +129,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kind: [asan, gpuav, frame]
+        kind: [asan, gpuav, shot, same]
     steps:
       - uses: actions/checkout@v4
       - name: Пакеты
@@ -178,16 +179,27 @@ jobs:
             --gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp \
             --cam 45 5 6 11698 -2348.5 --stand elbow,morph1
           par_wait 5
-      - name: Снимок сцены и сверка кадров
-        if: matrix.kind == 'frame'
+      - name: Снимок сцены
+        if: matrix.kind == 'shot'
         run: |
           . tools/ci_par.sh
           # снимок в полный размер для глаза
           par shot 360 xvfb-run -n 93 -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 10 --validation \
             --shot frame.bmp
+          par_wait 2
+      - uses: actions/upload-artifact@v4
+        if: matrix.kind == 'shot'
+        with:
+          name: frame
+          path: frame.bmp
+          retention-days: 7
+      - name: Сверка кадров и счётчики работы
+        if: matrix.kind == 'same'
+        run: |
+          . tools/ci_par.sh
           # кадр мира одинаков от запуска к запуску (docs/frame.md, «Сверка кадров»): два запуска с тестовыми огнями
           # и картой огней по клеткам, побайтно. Без интерфейса (к/с в нём разные) и --timelapse: кадр — ровно один
-          # шаг мира, а не сколько успело по часам. Запуски одновременно: кадр от этого не зависит
+          # шаг мира, а не сколько успело по часам. Оба запуска разом на одной машине: кадр от этого не зависит
           # Первый запуск пишет и счётчики работы освещения (docs/tiles.md): сверка с эталоном ловит «стало делать
           # больше работы» без видеокарты
           for k in 1 2; do
@@ -205,11 +217,10 @@ jobs:
           # молча уводит всю землю на пиксель, а кадр при этом верный — ловим по счётчику, отдельно от допуска эталона
           awk '$1 == "gc_used" { ok = $2 > 0 } END { if (!ok) { print "кеш земли пуст: gc_used = 0"; exit 1 } }' work_1.txt
       - uses: actions/upload-artifact@v4
-        if: matrix.kind == 'frame'
+        if: matrix.kind == 'same'
         with:
-          name: frame
+          name: same
           path: |
-            frame.bmp
             same_1_0003.bmp
             work_1.txt
           retention-days: 7
