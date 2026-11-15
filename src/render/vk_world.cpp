@@ -6,7 +6,8 @@
 // 3) visibility buffer: кластеры и земля пишут номер треугольника и глубину;
 // 4) плитки 8×8 по видам (light_tiles.comp, docs/tiles.md), освещение в compute по виду своим конвейером
 //    (light_cells.comp, косвенный dispatch): surface() → light_surface() раз на ячейку, линейный цвет в HDR;
-// 5) стиль (style.frag) — в картинку swapchain, поверх — отладочные отрезки и точки, потом интерфейс
+// 5) сглаживание (aa.comp, docs/aa.md): TAA, FXAA или копия HDR в историю этого кадра;
+// 6) стиль (style.frag) — из неё в картинку swapchain, поверх — отладочные отрезки и точки, потом интерфейс
 #include "vk_graph.h"
 #include "../core/log.h"
 
@@ -34,24 +35,28 @@ bool vk_world_layout() {
     si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     si.maxLod = VK_LOD_CLAMP_NONE;
     if (!vk_check(vkCreateSampler(g_vk.device, &si, nullptr, &g_vk.scans.sampler), "vkCreateSampler")) return false;
-    constexpr u32 NB = 11;
+    // 11 — векторы движения, 12 — две истории сглаживания для выборки (линейно, по краю — тот же сэмплер, что у
+    // зондов), 13 — они же для записи и для стиля (docs/aa.md, vk_aa.cpp)
+    constexpr u32 NB = 14;
     VkDescriptorSetLayoutBinding b[NB] = {};
+    VkSampler hist_samplers[2] = {g_vk.gi.sampler, g_vk.gi.sampler};
     for (u32 i = 0; i < NB; ++i) {
-        bool sampled = i == 2 || i == 4 || i == 5 || i >= 9;
+        bool sampled = i == 2 || i == 4 || i == 5 || i == 9 || i == 10 || i == 12;
         b[i].binding = i;
         b[i].descriptorType = sampled ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        b[i].descriptorCount = 1;
-        b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | (i < 2 ? VK_SHADER_STAGE_FRAGMENT_BIT : 0);
+        b[i].descriptorCount = i == 12 || i == 13 ? 2 : 1;
+        b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | (i < 2 || i == 13 ? VK_SHADER_STAGE_FRAGMENT_BIT : 0);
     }
     b[2].pImmutableSamplers = &g_vk.sdf.sampler;
     b[4].pImmutableSamplers = b[5].pImmutableSamplers = &g_vk.gi.sampler;
     b[9].pImmutableSamplers = b[10].pImmutableSamplers = &g_vk.scans.sampler;
+    b[12].pImmutableSamplers = hist_samplers;
     auto li = vk_info<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
     li.bindingCount = NB;
     li.pBindings = b;
     if (!vk_check(vkCreateDescriptorSetLayout(g_vk.device, &li, nullptr, &w.set_layout), "vkCreateDescriptorSetLayout"))
         return false;
-    VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 6}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5}};
+    VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 9}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7}};
     auto pi = vk_info<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
     pi.maxSets = 1;
     pi.poolSizeCount = 2;
@@ -114,7 +119,7 @@ bool vk_world_init() {
         ok = vk_make_compute(&w.pipe_light[k], "light_cells.comp", &si) && ok;
     }
     return ok && vk_gcache_init() && vk_shadow_init() && vk_sdf_init() &&
-           vk_gi_init() && vk_scans_init();
+           vk_gi_init() && vk_scans_init() && vk_aa_init();
 }
 
 static void destroy_image(GpuImage &im) {
@@ -144,6 +149,7 @@ void vk_world_shutdown() {
     vk_shadow_shutdown();
     vk_sdf_shutdown();
     vk_gi_shutdown();
+    vk_aa_shutdown();
     vk_scans_shutdown();
     if (w.pool) vkDestroyDescriptorPool(g_vk.device, w.pool, nullptr);
     if (w.set_layout) vkDestroyDescriptorSetLayout(g_vk.device, w.set_layout, nullptr);
@@ -212,7 +218,7 @@ static bool ensure_images() {
         wr[i].pImageInfo = &ii[i];
     }
     vkUpdateDescriptorSets(g_vk.device, 2, wr, 0, nullptr);
-    return true;
+    return vk_aa_images(w.set);
 }
 
 void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
@@ -409,7 +415,7 @@ static void record_style(VkCommandBuffer cmd, void *) {
     sa.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;  // стиль закрывает весь кадр
     sa.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     begin_rendering(cmd, sa, depth_attachment(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_DONT_CARE));
-    PushConsts pc{g_wf.frame, 0, 0};
+    PushConsts pc{g_wf.frame, vk_aa_cur(), 0};  // a — история сглаживания этого кадра (docs/aa.md)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, w.pipe_style);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.layout, 0, 1, &w.set, 0, nullptr);
     vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
@@ -512,11 +518,15 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         vk_shadow_reads();
         vk_sdf_reads();
         vk_gi_reads();
+        vk_skin_prev_read();
+        vk_aa_light_uses(k == 0);
     }
-    // 5. Стиль, отрезки, точки
+    // 5. Сглаживание (docs/aa.md): HDR → история этого кадра
+    vk_aa_pass(&fs.frame.address);
+    // 6. Стиль, отрезки, точки
     rg_pass("стиль", "стиль", record_style, nullptr);
     rg_use(g_vk.rg_swap, RG_COLOR, RG_DISCARD);
-    rg_use(w.rg_hdr, RG_IMG_FS_READ);
+    vk_aa_style_reads();
     rg_use(g_vk.rg_depth, RG_DEPTH);
     vk_sky_reads(RG_FS_READ);
     return true;

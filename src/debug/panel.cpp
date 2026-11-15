@@ -153,7 +153,7 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
 
     ui_section(f, "ВИД");
     ui_toggle(f, "отрезки и точки", d.lines);
-    ui_toggle(f, "пиксельное правило", d.pixel);
+    ui_toggle(f, "ячейки (старое правило)", d.pixel);
     ui_toggle(f, "тестовые огни", d.test_lights);
     bool lamps = !d.lamps_off;
     if (ui_toggle(f, "лампы карты", lamps)) d.lamps_off = !lamps;

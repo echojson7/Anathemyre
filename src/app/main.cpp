@@ -24,7 +24,7 @@ static bool parse_u64(const char *s, u64 &out) {
 }
 
 static void usage() {
-    log_info("anathemyre [--seed N] [--novsync] [--validation | --gpuav] [--frames N] [--record файл.rec] [--nopixel] [--nohud]");
+    log_info("anathemyre [--seed N] [--novsync] [--validation | --gpuav] [--frames N] [--record файл.rec] [--cells] [--aa off|fxaa|taa] [--nohud]");
     log_info("           [--gpuav-skip a.comp,b.frag]                                 шейдеры без проверки на GPU");
     log_info("           [--lights] [--heat]                                          тестовые огни, огни по клеткам froxels");
     log_info("           [--nolamps]                                                  лампы карты не светят (было/стало)");
@@ -130,7 +130,13 @@ int main(int argc, char **argv) {
             }
             i += 5;
         }
-        else if (!strcmp(s, "--nopixel")) a.nopixel = true;
+        else if (!strcmp(s, "--cells")) a.cells = true;
+        else if (!strcmp(s, "--aa")) {
+            ok = next != nullptr;
+            if (ok) a.aa = !strcmp(next, "off") ? 0 : !strcmp(next, "fxaa") ? 1 : !strcmp(next, "taa") ? 2 : -2;
+            ok = ok && a.aa >= 0;
+            i++;
+        }
         else if (!strcmp(s, "--lights")) a.test_lights = true;
         else if (!strcmp(s, "--nolamps")) a.lamps_off = true;
         else if (!strcmp(s, "--heat")) a.froxel_heat = true;

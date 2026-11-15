@@ -98,6 +98,14 @@ void vk_gi_reads();
 // (u — стадия) и таблицу кластеров (отсечение)
 void vk_skin_passes(const VkDeviceAddress *frame);
 void vk_skin_vertices_read(RgUse u);
+// Прошлые положения вершин людей (векторы движения TAA): чтение освещением
+void vk_skin_prev_read();
+// Сглаживание (vk_aa.cpp, docs/aa.md): проход после освещения; что пишет освещение (first — первый вид плиток),
+// что читает стиль; история, которую пишет этот кадр (номер для push-констант стиля)
+void vk_aa_pass(const VkDeviceAddress *frame);
+void vk_aa_light_uses(bool first);
+void vk_aa_style_reads();
+u32 vk_aa_cur();
 void vk_skin_clusters_read();
 // Интерфейс поверх кадра (vk_ui.cpp)
 void vk_ui_pass(u32 img);

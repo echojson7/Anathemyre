@@ -47,7 +47,7 @@ float decal_amount(Decal d, vec3 l, vec3 nl) {
         float hb = l.y + d.h.y;
         float top = 2.0 * d.h.y * (0.45 + 0.35 * d_fbm(vec2(along / 0.8, 0.0), sd + 3u));
         float band = 1.0 - smoothstep(top * 0.5, top, hb);
-        float spl = d_noise(vec2(along / 0.06, hb / 0.06), sd + 4u) > 0.8 && hb < top * 1.4 ? 0.5 : 0.0;
+        float spl = hb < top * 1.4 ? 0.5 * smoothstep(0.78, 0.84, d_noise(vec2(along / 0.06, hb / 0.06), sd + 4u)) : 0.0;
         float a = max(band * (0.65 + 0.35 * d_noise(vec2(along / 0.15, hb / 0.15), sd + 6u)), spl);
         return a * (vert ? 1.0 : 0.5) * edge;
     }

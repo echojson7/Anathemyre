@@ -11,6 +11,9 @@
 constexpr f32 LOD_PIXELS = 0.75f;  // как в cull.glsl
 // Сфера сетки человека: бинд-поза × запас (руки вверх и в стороны выходят из сферы A-позы)
 constexpr f32 SKIN_SPHERE_GROW = 1.6f;
+// Прошлый экземпляр и кадр сглаживания, в котором сетку человека скинили (векторы движения TAA, docs/aa.md)
+static RenderInstance g_last_inst[RENDER_MAX_MESHES];
+static u32 g_last_frame[RENDER_MAX_MESHES];
 
 bool vk_skin_init() {
     SkinGpu &k = g_vk.skin;
@@ -24,6 +27,17 @@ bool vk_skin_init() {
         vk_buffer_name(fs.skin_jobs, "люди: работы кадра");
         vk_buffer_name(fs.bones, "люди: палитры костей");
     }
+    // Прошлые положения вершин (векторы движения TAA, docs/aa.md): на вершину общего буфера, xyz половинками
+    if (!vk_create_buffer(k.prev, GEOMETRY_VERTEX_BYTES / sizeof(MeshVertex) * 8, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true))
+        return false;
+    vk_buffer_name(k.prev, "люди: прошлые вершины");
+    for (FrameSlot &fs : g_vk.frames) {
+        if (!vk_create_buffer(fs.mesh_prev, RENDER_MAX_MESHES * sizeof(MeshPrevGpu), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT))
+            return false;
+        memset(fs.mesh_prev.mapped, 0, RENDER_MAX_MESHES * sizeof(MeshPrevGpu));  // кадр 0 — «не годен»
+        vk_buffer_name(fs.mesh_prev, "люди: прошлые экземпляры");
+    }
+    k.rg_prev = rg_buffer("люди: прошлые вершины");
     k.rg_vertices = rg_buffer("сетки: вершины");
     k.rg_clusters = rg_buffer("сетки: кластеры");
     bool ok = true;
@@ -36,12 +50,15 @@ void vk_skin_shutdown() {
     SkinGpu &k = g_vk.skin;
     if (k.pipe_skin) vkDestroyPipeline(g_vk.device, k.pipe_skin, nullptr);
     if (k.pipe_bounds) vkDestroyPipeline(g_vk.device, k.pipe_bounds, nullptr);
+    vk_destroy_buffer(k.prev);
     for (FrameSlot &fs : g_vk.frames) {
         vk_destroy_buffer(fs.skin_jobs);
         vk_destroy_buffer(fs.bones);
+        vk_destroy_buffer(fs.mesh_prev);
     }
     vk_destroy_buffer(k.data);
     k = SkinGpu{};
+    memset(g_last_frame, 0, sizeof g_last_frame);
 }
 
 struct SkinUpload {
@@ -243,6 +260,14 @@ void vk_skin_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
         quat_rotate(q, sc, c);
         for (u32 a = 0; a < 3; ++a) c[a] += origin[a];
         if (!sphere_visible(g, c, mg.sphere[3] * it.scale * 1.05f + 0.1f)) continue;
+        // Прошлый экземпляр (векторы движения TAA): годен, если человека скинили в прошлом кадре — тогда и его
+        // прошлые вершины (skin.comp пишет их из копии) от прошлого кадра
+        MeshPrevGpu &mp = ((MeshPrevGpu *)fs.mesh_prev.mapped)[it.mesh];
+        bool prev_ok = g_last_frame[it.mesh] != 0 && g_last_frame[it.mesh] + 1 == g.aa_frame;
+        const RenderInstance &pi = prev_ok ? g_last_inst[it.mesh] : it;
+        mp = MeshPrevGpu{pi.cx, pi.cz, pi.x, pi.y, pi.z, pi.rot_xy, pi.rot_zw, pi.scale, prev_ok ? g.aa_frame : 0u, {}};
+        g_last_inst[it.mesh] = it;
+        g_last_frame[it.mesh] = g.aa_frame;
         SkinJobGpu &w = jobs[k.jobs++];
         w = SkinJobGpu{};
         w.src_vertex = g_vk.meshes[s.mesh].first_vertex;
@@ -264,13 +289,18 @@ void vk_skin_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
         k.max_clusters = w.cluster_count > k.max_clusters ? w.cluster_count : k.max_clusters;
         k.skinned_verts += w.vertex_count;
     }
-    if (k.jobs) vmaFlushAllocation(g_vk.vma, fs.skin_jobs.alloc, 0, VK_WHOLE_SIZE);
+    if (k.jobs) {
+        vmaFlushAllocation(g_vk.vma, fs.skin_jobs.alloc, 0, VK_WHOLE_SIZE);
+        vmaFlushAllocation(g_vk.vma, fs.mesh_prev.alloc, 0, VK_WHOLE_SIZE);
+    }
     if (nb) vmaFlushAllocation(g_vk.vma, fs.bones.alloc, 0, VK_WHOLE_SIZE);
     g.skin_jobs = fs.skin_jobs.address;
     g.bones = fs.bones.address;
     g.vertices_w = g_vk.vertices.address;
     g.clusters_w = g_vk.clusters.address;
     g.skin_count = k.jobs;
+    g.skin_prev = k.prev.address;
+    g.mesh_prev = fs.mesh_prev.address;
 }
 
 static void record_skin(VkCommandBuffer cmd, void *user) {
@@ -296,6 +326,7 @@ void vk_skin_passes(const VkDeviceAddress *frame) {
     if (!k.jobs) return;
     rg_pass("люди: скиннинг", "люди", record_skin, (void *)frame);
     rg_use(k.rg_vertices, RG_CS_WRITE);
+    rg_use(k.rg_prev, RG_CS_WRITE);
     rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
     rg_pass("люди: сферы кластеров", "люди", record_bounds, (void *)frame);
     rg_use(k.rg_vertices, RG_CS_READ);
@@ -304,3 +335,4 @@ void vk_skin_passes(const VkDeviceAddress *frame) {
 
 void vk_skin_vertices_read(RgUse u) { rg_use(g_vk.skin.rg_vertices, u); }
 void vk_skin_clusters_read() { rg_use(g_vk.skin.rg_clusters, RG_CS_READ); }
+void vk_skin_prev_read() { rg_use(g_vk.skin.rg_prev, RG_CS_READ); }

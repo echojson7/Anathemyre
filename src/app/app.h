@@ -27,7 +27,8 @@ struct Args {
     const char *work = nullptr;     // --work файл.txt: счётчики работы освещения последнего кадра мира (CI, docs/tiles.md)
     bool cam_set = false;           // --cam yaw pitch dist x z (градусы, метры): камера для снимков
     f32 cam[5] = {};
-    bool nopixel = false;           // --nopixel: без правила ячейки
+    bool cells = false;             // --cells: старое правило ячеек (свет раз на ячейку), для сравнения
+    i32 aa = -1;                    // --aa off|fxaa|taa: сглаживание поверх настройки; −1 — из настроек
     bool test_lights = false;       // --lights: тестовые огни вокруг камеры
     bool lamps_off = false;         // --nolamps: лампы карты не светят
     bool froxel_heat = false;       // --heat: тепловая карта огней по клеткам froxels

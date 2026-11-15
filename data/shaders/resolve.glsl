@@ -25,10 +25,11 @@ struct Hit {
     uint m0, m1, seed, level;  // сетка: материалы и зерно; земля: кольцо
 };
 
-// Луч пикселя (центр) относительно камеры, его проекция на взгляд = 1: точка = dir · глубина
+// Луч пикселя относительно камеры, его проекция на взгляд = 1: точка = dir · глубина. Через центр пикселя со
+// сдвигом дрожания TAA — ту же точку, что растр visibility buffer (to_clip_jittered)
 vec3 pixel_ray(ivec2 px) {
     FrameData f = pc.frame;
-    vec2 ndc = (vec2(px) + 0.5) * f.ndc_per_pixel - 1.0;
+    vec2 ndc = (vec2(px) + 0.5 + f.jitter) * f.ndc_per_pixel - 1.0;
     return f.forward.xyz + f.right.xyz * (ndc.x / f.proj_x) - f.up.xyz * (ndc.y / f.proj_y);
 }
 
