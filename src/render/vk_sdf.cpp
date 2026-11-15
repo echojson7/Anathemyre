@@ -66,9 +66,10 @@ bool vk_sdf_init() {
         vk_buffer_name(fs.sdf_bricks, "поле расстояний: кирпичи кадра");
         vk_buffer_name(fs.sdf_bits, "поле расстояний: биты кирпичей");
     }
-    s.pipe_splat = vk_make_compute("sdf_splat.comp");
-    s.pipe_final = vk_make_compute("sdf_final.comp");
-    s.pipe_eye = vk_make_compute("eye.comp");
+    bool ok = true;
+    ok = vk_make_compute(&s.pipe_splat, "sdf_splat.comp") && ok;
+    ok = vk_make_compute(&s.pipe_final, "sdf_final.comp") && ok;
+    ok = vk_make_compute(&s.pipe_eye, "eye.comp") && ok;
     s.rg_field = rg_image("поле расстояний", VK_IMAGE_ASPECT_COLOR_BIT);
     rg_bind_image(s.rg_field, s.field.image);
     s.rg_scratch = rg_buffer("поле расстояний: засыпка");
@@ -88,7 +89,7 @@ bool vk_sdf_init() {
     s.reset = s.clear = true;
     log_info("поле расстояний: %u колец по %u³ вокселей от %.2f м, %.0f МБ", SDF_LEVELS, SDF_N, (f64)SDF_V0,
              (f64)(scratch + (VkDeviceSize)SDF_N * SDF_N * SDF_SLAB * SDF_LEVELS * 2) / (1 << 20));
-    return s.pipe_splat && s.pipe_final && s.pipe_eye;
+    return ok;
 }
 
 void vk_sdf_shutdown() {

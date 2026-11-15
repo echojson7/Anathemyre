@@ -599,7 +599,8 @@ void vk_sky_fill(FrameGpu &g, const RenderFrame &f);
 void vk_destroy_pipelines();
 // Compute-конвейер общей раскладки из шейдера name (.spv); spec — константы специализации или nullptr.
 // VK_NULL_HANDLE — ошибка
-VkPipeline vk_make_compute(const char *name, const VkSpecializationInfo *spec = nullptr);
+// Заявка на конвейер (vk_pipes.cpp, docs/startup.md): *out заполнит vk_pipelines_build. false — нет шейдера
+bool vk_make_compute(VkPipeline *out, const char *name, const VkSpecializationInfo *spec = nullptr);
 // Метка времени GPU после прохода name (первая метка кадра — без имени); ставит граф (rg_execute)
 void vk_mark(VkCommandBuffer cmd, const char *name);
 // Графический конвейер общей раскладки
@@ -613,7 +614,10 @@ struct PipeDesc {
     bool depth_test = true;
     bool no_attach = false;  // без картинок: проход пишет только в буферы (страницы теней)
 };
-VkPipeline vk_make_pipeline(const PipeDesc &d);
+bool vk_make_pipeline(VkPipeline *out, const PipeDesc &d);
+// Собрать все заявки в нескольких потоках; false — какой-то не собрался (причина в журнале). Число, потоки и
+// самый долгий — для журнала
+bool vk_pipelines_build(u32 *count, u32 *threads, const char **slowest, f64 *slowest_ms);
 // Кадр мира (vk_world.cpp): набор картинок для шейдеров (до раскладки конвейеров), конвейеры, кадр
 bool vk_world_layout();
 bool vk_world_init();

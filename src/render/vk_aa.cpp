@@ -26,8 +26,7 @@ bool vk_aa_init() {
     a.rg_motion = rg_image("сглаживание: векторы движения", VK_IMAGE_ASPECT_COLOR_BIT);
     a.rg_hist[0] = rg_image("сглаживание: история 0", VK_IMAGE_ASPECT_COLOR_BIT);
     a.rg_hist[1] = rg_image("сглаживание: история 1", VK_IMAGE_ASPECT_COLOR_BIT);
-    a.pipe = vk_make_compute("aa.comp");
-    return a.pipe != VK_NULL_HANDLE;
+    return vk_make_compute(&a.pipe, "aa.comp");
 }
 
 static void aa_destroy_image(GpuImage &im) {

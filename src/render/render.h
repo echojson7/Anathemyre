@@ -191,6 +191,8 @@ void render_shutdown();
 bool render_frame(const RenderFrame &f);
 // Окно поменяло размер: swapchain пересоздаётся перед следующим кадром
 void render_resized();
+// Дождаться, пока GPU доделает всё отправленное (строка запуска после первого кадра). В игровом цикле не нужно
+void render_wait_idle();
 // Число ошибок слоя проверки за всё время
 u32 render_validation_errors();
 const char *render_device_name();

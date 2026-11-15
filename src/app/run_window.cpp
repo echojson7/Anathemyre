@@ -5,6 +5,7 @@
 #include "orders.h"
 #include "settings.h"
 #include "../asset/material.h"
+#include "../core/fpu.h"
 #include "../core/log.h"
 #include "../core/prof.h"
 #include "../debug/debug.h"
@@ -119,13 +120,50 @@ static Input world_input(const Input &in, MouseOwner &mo, bool ui_mouse, bool ui
     return w;
 }
 
+// Создание мира (земля с эрозией, сцена, сетка ходимости) — в своём потоке, пока главный поднимает Vulkan и
+// собирает конвейеры (docs/startup.md). Поток трогает только w и арены мира и загрузки; главный в это время их
+// не трогает. Регистр float — как у шага мира: мир один и тот же, в каком бы потоке ни создавался
+struct WorldJob {
+    World *w;
+    AppMemory *m;
+    u64 seed;
+    u64 *desc;
+    bool ok;
+    u64 ns;
+};
+
+static void world_job(void *user) {
+    WorldJob &j = *(WorldJob *)user;
+    fpu_enter_sim();
+    u64 t0 = platform_time_ns();
+    j.ok = app_world_create(*j.w, *j.m, j.seed, j.desc);
+    j.ns = platform_time_ns() - t0;
+}
+
+static f64 ms_since(u64 t0) { return (f64)(platform_time_ns() - t0) / 1e6; }
+
 int run_window(const Args &a, AppMemory &m) {
+    const u64 t_start = platform_time_ns();
     // Настройки игрока (docs/ui.md): запуски для CI и видео (--frames) их не пишут
     Settings set;
     settings_load(set, settings_path());
     const bool save_settings = a.frames == 0;
     if (!platform_window_open("Anathemyre", (i32)a.win_w, (i32)a.win_h)) return 1;
     if (set.fullscreen && !a.frames) platform_set_fullscreen(true);
+    const f64 ms_window = ms_since(t_start);
+    // Мир — сразу в свой поток (места в арене мира под вид — до него, в прежнем порядке)
+    World w;
+    u64 desc = 0;
+    MaterialTable mats;
+    ViewAssets *assets = arena_push<ViewAssets>(m.world, 1);
+    ScatterCache *scatter = arena_push<ScatterCache>(m.world, 1);
+    scatter_init(*scatter, m.world);
+    PeopleView *pv = arena_push<PeopleView>(m.world, 1);  // ~1.3 МБ: не на стек
+    people_view_init(*pv);
+    WorldJob wj{&w, &m, a.seed, &desc, false, 0};
+    PlatformThread *world_thread = platform_thread_start("world", world_job, &wj);
+    if (!world_thread) world_job(&wj);  // поток не создан — по порядку, как раньше
+    u64 t_phase = platform_time_ns();
     RenderConfig rc;
     rc.vsync = a.vsync && set.vsync;  // --novsync сильнее настройки и в файл не пишется
     rc.validation = a.validation && !a.gpu_validation;
@@ -139,25 +177,38 @@ int run_window(const Args &a, AppMemory &m) {
     rc.pipeline_cache_path = pipe_cache;
     if (!render_init(rc)) {
         log_error("отрисовка не запустилась (причина — строкой выше; подробнее: --validation)");
+        platform_thread_join(world_thread);  // поток пишет в w на стеке этой функции
         platform_window_close();
         return 1;
     }
-
-    World w;
-    u64 desc = 0;
-    MaterialTable mats;
-    ViewAssets *assets = arena_push<ViewAssets>(m.world, 1);
-    ScatterCache *scatter = arena_push<ScatterCache>(m.world, 1);
-    scatter_init(*scatter, m.world);
-    PeopleView *pv = arena_push<PeopleView>(m.world, 1);  // ~1.3 МБ: не на стек
-    people_view_init(*pv);
+    const f64 ms_render = ms_since(t_phase);
+    // Ждём мир, а окно отвечает системе: без опроса Windows через ~5 с пишет «не отвечает». Нажатия этого
+    // времени не нужны, кроме закрытия окна и смены размера
+    t_phase = platform_time_ns();
+    bool quit_early = false;
+    while (!platform_thread_done(world_thread)) {
+        Input wait_in{};
+        platform_poll(wait_in);
+        if (wait_in.quit) quit_early = true;
+        if (wait_in.resized) render_resized();
+        platform_sleep_ms(4);
+    }
+    platform_thread_join(world_thread);
+    const f64 ms_world_wait = ms_since(t_phase);
     WindowOrders orders;
     orders_parse(a, orders);
-    if (!app_world_create(w, m, a.seed, &desc) || !app_assets_load(m, mats, *assets) || !app_terrain_upload(w)) {
-        log_error("мир или ассеты не загрузились (причина — строкой выше)");
+    t_phase = platform_time_ns();
+    bool loaded = wj.ok && app_assets_load(m, mats, *assets);
+    const f64 ms_assets = ms_since(t_phase);
+    t_phase = platform_time_ns();
+    loaded = loaded && app_terrain_upload(w);
+    const f64 ms_upload = ms_since(t_phase);
+    t_phase = platform_time_ns();
+    if (!loaded || quit_early) {  // окно закрыли во время загрузки — выход без ошибки
+        if (!loaded) log_error("мир или ассеты не загрузились (причина — строкой выше)");
         render_shutdown();
         platform_window_close();
-        return 1;
+        return loaded ? 0 : 1;
     }
     DuelDesc duel{};
     GroupDesc group{};
@@ -277,6 +328,8 @@ int run_window(const Args &a, AppMemory &m) {
     u64 last = platform_time_ns(), window_t0 = last;
     int rc_exit = 0;
     debug_print_help();
+    const u64 t_loop = platform_time_ns();
+    const f64 ms_setup = ms_since(t_phase);  // после земли в видеопамять: бои, перемотка, интерфейс
 
     for (;;) {
         u64 now = platform_time_ns();
@@ -556,6 +609,15 @@ int run_window(const Args &a, AppMemory &m) {
         bool last_frame = a.frames && frames + 1 >= a.frames;
         if ((last_frame && a.shot) || a.timelapse || a.video) render_capture_next();
         if (!render_frame(rf)) { rc_exit = 1; break; }
+        if (frames == 0) {
+            // Первый кадр тяжёлый (горизонт, поле расстояний, снимок зондов, кеш земли): дождаться его на GPU —
+            // только для строки запуска, следующий кадр всё равно ждал бы его (docs/startup.md)
+            render_wait_idle();
+            log_info("запуск по частям, мс: окно %.0f · Vulkan и конвейеры %.0f · мир %.0f в своём потоке (ждали ещё %.0f) · "
+                     "ассеты %.0f · земля в видеопамять %.0f · прочее %.0f · первый кадр %.0f · всего до картинки %.0f",
+                     ms_window, ms_render, (f64)wj.ns / 1e6, ms_world_wait, ms_assets, ms_upload, ms_setup,
+                     ms_since(t_loop), ms_since(t_start));
+        }
         {
             RenderCpuTimes rt = render_cpu_times();
             prof_add(*prof, FP_FENCE, rt.fence);

@@ -8,125 +8,6 @@
 #include <stdio.h>
 #include <string.h>
 
-// name — один из списка через запятую
-static bool name_listed(const char *list, const char *name) {
-    if (!list) return false;
-    usize n = strlen(name);
-    for (const char *p = list; *p;) {
-        const char *e = strchr(p, ',');
-        usize len = e ? (usize)(e - p) : strlen(p);
-        if (len == n && !memcmp(p, name, n)) return true;
-        if (!e) break;
-        p = e + 1;
-    }
-    return false;
-}
-
-VkShaderModule vk_load_shader(const char *name) {
-    char path[1024];
-    snprintf(path, sizeof path, "%s%s.spv", g_vk.cfg.shader_dir, name);
-    // Загрузка при старте: временная память, не игровой цикл
-    usize cap = 1u << 20;
-    void *mem = platform_alloc(cap);
-    Arena a;
-    arena_init(a, mem, cap, "shader");
-    u8 *data = nullptr;
-    usize size = 0;
-    VkShaderModule m = VK_NULL_HANDLE;
-    if (!platform_read_file(path, a, &data, &size) || size % 4 != 0) {
-        log_error("нет шейдера %s (собери: make)", path);
-    } else {
-        auto ci = vk_info<VkShaderModuleCreateInfo>(VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO);
-        ci.codeSize = size;
-        ci.pCode = (const u32 *)data;
-        // Проверка на GPU — у каждого шейдера, кроме названных в gpu_validation_skip (docs/graph.md, «Проверки»)
-        VkValidationFeatureEnableEXT gpuav = VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT;
-        auto vf = vk_info<VkValidationFeaturesEXT>(VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT);
-        vf.enabledValidationFeatureCount = 1;
-        vf.pEnabledValidationFeatures = &gpuav;
-        if (g_vk.cfg.gpu_validation && !name_listed(g_vk.cfg.gpu_validation_skip, name)) ci.pNext = &vf;
-        vk_check(vkCreateShaderModule(g_vk.device, &ci, nullptr, &m), path);
-    }
-    platform_free(mem);
-    return m;
-}
-
-VkPipeline vk_make_pipeline(const PipeDesc &d) {
-    VkShaderModule vs = vk_load_shader(d.vs);
-    VkShaderModule fs = vk_load_shader(d.fs);
-    VkPipeline p = VK_NULL_HANDLE;
-    if (vs && fs) {
-        VkPipelineShaderStageCreateInfo st[2] = {};
-        st[0].sType = st[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        st[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-        st[0].module = vs;
-        st[0].pName = "main";
-        st[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        st[1].module = fs;
-        st[1].pName = "main";
-        auto vi = vk_info<VkPipelineVertexInputStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
-        auto ia = vk_info<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
-        ia.topology = d.topo;
-        auto vp = vk_info<VkPipelineViewportStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
-        vp.viewportCount = 1;
-        vp.scissorCount = 1;
-        auto rs = vk_info<VkPipelineRasterizationStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO);
-        rs.polygonMode = VK_POLYGON_MODE_FILL;
-        rs.cullMode = d.cull;
-        // Грани .mesh — против часовой стрелки снаружи в осях мира (x восток, y вверх, z север). Вид смотрит
-        // с правым = вверх × вперёд (восток справа при взгляде на север), y в NDC вниз — на экране они по часовой
-        rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
-        rs.lineWidth = 1.0f;
-        auto ms = vk_info<VkPipelineMultisampleStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO);
-        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        // Обратная глубина: ближе — больше, очистка нулём
-        auto dss = vk_info<VkPipelineDepthStencilStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO);
-        dss.depthTestEnable = d.depth_test ? VK_TRUE : VK_FALSE;
-        dss.depthWriteEnable = d.depth_write ? VK_TRUE : VK_FALSE;
-        dss.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
-        VkPipelineColorBlendAttachmentState ba{};
-        ba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
-                            VK_COLOR_COMPONENT_A_BIT;
-        if (d.blend) {
-            ba.blendEnable = VK_TRUE;
-            ba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-            ba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            ba.colorBlendOp = VK_BLEND_OP_ADD;
-            ba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            ba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            ba.alphaBlendOp = VK_BLEND_OP_ADD;
-        }
-        auto cb = vk_info<VkPipelineColorBlendStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO);
-        cb.attachmentCount = d.no_attach ? 0 : 1;
-        cb.pAttachments = &ba;
-        VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-        auto ds = vk_info<VkPipelineDynamicStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO);
-        ds.dynamicStateCount = 2;
-        ds.pDynamicStates = dyn;
-        auto ri = vk_info<VkPipelineRenderingCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO);
-        VkFormat color = d.color != VK_FORMAT_UNDEFINED ? d.color : g_vk.format;
-        ri.colorAttachmentCount = d.no_attach ? 0 : 1;
-        ri.pColorAttachmentFormats = &color;
-        ri.depthAttachmentFormat = d.no_attach ? VK_FORMAT_UNDEFINED : DEPTH_FORMAT;
-        auto pi = vk_info<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
-        pi.pNext = &ri;
-        pi.stageCount = 2;
-        pi.pStages = st;
-        pi.pVertexInputState = &vi;
-        pi.pInputAssemblyState = &ia;
-        pi.pViewportState = &vp;
-        pi.pRasterizationState = &rs;
-        pi.pMultisampleState = &ms;
-        pi.pDepthStencilState = &dss;
-        pi.pColorBlendState = &cb;
-        pi.pDynamicState = &ds;
-        pi.layout = g_vk.layout;
-        vk_check(vkCreateGraphicsPipelines(g_vk.device, g_vk.pipeline_cache, 1, &pi, nullptr, &p), d.vs);
-    }
-    if (vs) vkDestroyShaderModule(g_vk.device, vs, nullptr);
-    if (fs) vkDestroyShaderModule(g_vk.device, fs, nullptr);
-    return p;
-}
 
 bool vk_create_pipelines() {
     // Общая раскладка: push-константы и набор картинок кадра мира (visibility buffer, HDR)
@@ -142,10 +23,16 @@ bool vk_create_pipelines() {
     points.blend = true;
     points.depth_write = false;
     PipeDesc lines{"lines.vert", "color.frag", VK_PRIMITIVE_TOPOLOGY_LINE_LIST, true, false};
-    g_vk.pipe_points = vk_make_pipeline(points);
-    g_vk.pipe_lines = vk_make_pipeline(lines);
-    return g_vk.pipe_points && g_vk.pipe_lines && vk_sky_init() &&
-           vk_horizon_init() && vk_world_init() && vk_froxel_init() && vk_skin_init() && vk_ui_init();
+    // Заявки модулей, потом сборка пачкой (vk_pipes.cpp). Сборка — и после отказа: она же освобождает шейдеры
+    bool ok = vk_make_pipeline(&g_vk.pipe_points, points);
+    ok = vk_make_pipeline(&g_vk.pipe_lines, lines) && ok;
+    ok = ok && vk_sky_init() && vk_horizon_init() && vk_world_init() && vk_froxel_init() && vk_skin_init() && vk_ui_init();
+    u32 n = 0, threads = 0;
+    const char *slow = "";
+    f64 slow_ms = 0;
+    bool built = vk_pipelines_build(&n, &threads, &slow, &slow_ms);
+    if (ok && built) log_info("конвейеры: %u в %u потоках, дольше всех %s — %.0f мс", n, threads, slow, slow_ms);
+    return ok && built;
 }
 
 void vk_destroy_pipelines() {
@@ -400,6 +287,10 @@ bool render_frame(const RenderFrame &f) {
 
 // Окно поменяло размер: swapchain пересоздаётся перед следующим кадром
 void render_resized() { g_vk.swapchain_dirty = true; }
+
+void render_wait_idle() {
+    if (g_vk.device) vkDeviceWaitIdle(g_vk.device);
+}
 
 void render_capture_next() { g_vk.capture_next = true; }
 

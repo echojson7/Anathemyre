@@ -40,9 +40,10 @@ bool vk_skin_init() {
     k.rg_prev = rg_buffer("люди: прошлые вершины");
     k.rg_vertices = rg_buffer("сетки: вершины");
     k.rg_clusters = rg_buffer("сетки: кластеры");
-    k.pipe_skin = vk_make_compute("skin.comp");
-    k.pipe_bounds = vk_make_compute("skin_bounds.comp");
-    return k.pipe_skin && k.pipe_bounds;
+    bool ok = true;
+    ok = vk_make_compute(&k.pipe_skin, "skin.comp") && ok;
+    ok = vk_make_compute(&k.pipe_bounds, "skin_bounds.comp") && ok;
+    return ok;
 }
 
 void vk_skin_shutdown() {

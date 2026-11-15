@@ -14,16 +14,17 @@ constexpr u32 GC_MAX_W = 1024;                               // окно уро�
 
 bool vk_gcache_init() {
     GcacheGpu &c = g_vk.gcache;
-    c.pipe_scan = vk_make_compute("gcache_scan.comp");
-    c.pipe_args = vk_make_compute("gcache_args.comp");
-    c.pipe_bake = vk_make_compute("gcache_bake.comp");
+    bool ok = true;
+    ok = vk_make_compute(&c.pipe_scan, "gcache_scan.comp") && ok;
+    ok = vk_make_compute(&c.pipe_args, "gcache_args.comp") && ok;
+    ok = vk_make_compute(&c.pipe_bake, "gcache_bake.comp") && ok;
     c.rg_table = rg_buffer("земля: кеш, окна страниц");
     c.rg_pages = rg_buffer("земля: кеш, страницы");
     c.rg_texels = rg_buffer("земля: кеш, тексели");
     c.rg_req = rg_buffer("земля: кеш, заявки");
     c.rg_cells = rg_buffer("земля: ячейки пикселей");
     c.reset = true;
-    return c.pipe_scan && c.pipe_args && c.pipe_bake;
+    return ok;
 }
 
 void vk_gcache_shutdown() {
