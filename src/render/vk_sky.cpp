@@ -97,6 +97,7 @@ void vk_sky_passes(VkDeviceAddress frame) {
     rg_use(s.rg_ms, RG_CS_READ);
     rg_use(s.rg_sun, RG_CS_WRITE);
     rg_use(s.rg_moon, RG_CS_WRITE);
+    vk_clouds_passes(frame);
     rg_pass("небо: свет", "небо", record_sum, nullptr);
     vk_sky_reads(RG_CS_READ);
     rg_use(s.rg_out, RG_CS_WRITE);
@@ -106,4 +107,5 @@ void vk_sky_reads(RgUse u) {
     const SkyGpu &s = g_vk.sky;
     RgRes rs[] = {s.rg_trans, s.rg_ms, s.rg_sun, s.rg_moon, s.rg_out};
     for (RgRes r : rs) rg_use(r, u);
+    vk_clouds_reads(u);
 }

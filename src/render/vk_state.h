@@ -120,6 +120,13 @@ struct FrameGpu {
     f32 prev_right[4], prev_up[4], prev_forward[4];
     f32 prev_delta[4];
     VkDeviceAddress skin_prev, mesh_prev;
+    // Облака (vk_clouds.cpp)
+    VkDeviceAddress cl_map, cl_noise, cl_shadow, cl_info;
+    u32 cl_on, cl_size, cl_slot_a, cl_slot_b;
+    f32 cl_mix, cl_mean_t;
+    u32 cl_steps, cl_pad;
+    f32 cl_off_a[4], cl_off_b[4];
+    f32 cl_build[4], cl_build_light[4], cl_cam[4];
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -252,6 +259,29 @@ struct GcacheGpu {
     u32 layers[8] = {};
     VkPipeline pipe_scan = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE, pipe_bake = VK_NULL_HANDLE;
     u8 rg_table = 0, rg_pages = 0, rg_texels = 0, rg_req = 0, rg_cells = 0;
+};
+
+// Облака (vk_clouds.cpp, docs/clouds.md): карта купола вокруг камеры в трёх слотах (два показаны с перетеканием,
+// третий строится по частям), шум, карта тени на землю, постоянные слота
+struct CloudSnap {
+    f64 cam[3] = {};    // камера сборки, м мира
+    f32 wind[2] = {};   // снос ветром к сборке, м
+    f32 evolve = 0;     // время формы, с
+    f32 light[4] = {};  // светило облаков
+};
+struct CloudGpu {
+    GpuBuffer map, noise, shadow, info;
+    VkPipeline pipe_noise = VK_NULL_HANDLE, pipe_map = VK_NULL_HANDLE, pipe_shadow = VK_NULL_HANDLE;
+    u8 rg_map = 0, rg_noise = 0, rg_shadow = 0, rg_info = 0;
+    bool noise_ready = false, ready = false;  // ready — слоты a и b собраны
+    u32 size = 0;                             // сторона карты (по ступени света)
+    u32 slot_a = 0, slot_b = 0, slot_w = 1;
+    u32 phase = 0;     // фаз слота w уже собрано (из CLOUD_PHASES)
+    u32 sh_phase = 0;  // следующая фаза карты тени
+    CloudSnap snap_a, snap_b, snap_w;
+    // Работа этого кадра (vk_clouds_fill → vk_clouds_passes)
+    bool job_on = false, job_first = false, job_sh_full = false;
+    u32 job_slot = 0, job_phase = 0, job_n = 0;
 };
 
 // Карта горизонта земли (vk_horizon.cpp, docs/horizon.md): H_DIRS/2 слов u32 на узел сетки 8 м. Собирается
@@ -526,6 +556,7 @@ struct VkState {
     WorldGpu world;
     GcacheGpu gcache;
     HorizonGpu horizon;
+    CloudGpu clouds;
     ShadowGpu shadow;
     SdfGpu sdf;
     GiGpu gi;
@@ -596,6 +627,10 @@ constexpr VkShaderStageFlags PUSH_STAGES = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADE
 bool vk_sky_init();
 void vk_sky_shutdown();
 void vk_sky_fill(FrameGpu &g, const RenderFrame &f);
+// Облака (vk_clouds.cpp): буферы и конвейеры; состояние слотов и работа кадра (после vk_sky_fill)
+bool vk_clouds_init();
+void vk_clouds_shutdown();
+void vk_clouds_fill(FrameGpu &g, const RenderFrame &f);
 void vk_destroy_pipelines();
 // Compute-конвейер общей раскладки из шейдера name (.spv); spec — константы специализации или nullptr.
 // VK_NULL_HANDLE — ошибка

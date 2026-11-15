@@ -2,7 +2,7 @@
 // звёздным величинам, Млечный путь. Зовёт освещение visibility buffer (light_cells.comp) для пустых пикселей
 #ifndef SKY_GLSL
 #define SKY_GLSL
-#include "atmosphere.glsl"
+#include "clouds.glsl"
 
 uint sky_hash3(uvec3 v) {
     uint h = v.x * 0x8DA6B343u ^ v.y * 0xD8163841u ^ v.z * 0xCB1AB31Fu;
@@ -232,19 +232,22 @@ vec3 sky_moon_disc(vec3 dir, float ex, out float cover) {
     return shade * e0 * cover * min(1.0, 1.1 / max(peak, 1e-9));
 }
 
-// Яркость неба по направлению dir (мир, единичный): рассеянный свет, ореол, солнце, луна, звёзды; линейная
+// Яркость неба по направлению dir (мир, единичный): рассеянный свет, облака (docs/clouds.md), ореол, солнце,
+// луна, звёзды; линейная. Облака закрывают диски, ореол и звёзды
 vec3 sky_radiance(vec3 dir) {
     FrameData f = pc.frame;
     vec4 sky = atmo_sky_lut(dir);
-    vec3 L = sky.rgb;
     float hz = atmo_horizon(atmo_cam_alt());
     float above = smoothstep(hz - 0.002, hz + 0.002, asin(clamp(dir.y, -1.0, 1.0)));
-    if (above <= 0.0) return L;
+    if (above <= 0.0) return sky.rgb;
+    float tc;
+    vec3 L = cloud_over_sky(dir, sky, tc);
+    if (tc <= 0.0) return L;
     float ex = f.sky_out.v[SKY_OUT_EYE].x;
     float cover;
     vec3 moon = sky_moon_disc(dir, ex, cover);
     vec3 top = atmo_halo(dir) + sky_sun_disc(dir, ex) + moon;
     top += sky_stars(dir, ex) * (sky.a * (1.0 - cover));
-    return L + top * above;
+    return L + top * (above * tc);
 }
 #endif

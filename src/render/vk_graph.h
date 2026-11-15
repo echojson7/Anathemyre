@@ -61,7 +61,11 @@ void vk_stats_copy_pass(FrameSlot &fs);
 void vk_stats_read(FrameSlot &fs);
 // Небо (vk_sky.cpp): таблицы пропускания и рассеяния при смене воздуха, вид и свет неба — каждый кадр
 void vk_sky_passes(VkDeviceAddress frame);
-// Чтение всех таблиц неба проходом (u — стадия: RG_CS_READ или RG_FS_READ)
+// Облака (vk_clouds.cpp): шум при первом кадре, часть карты купола и карты тени — каждый кадр; между видом
+// неба и светом неба (свет неба читает карту). Чтение облаков проходом — вместе с таблицами неба (vk_sky_reads)
+void vk_clouds_passes(VkDeviceAddress frame);
+void vk_clouds_reads(RgUse u);
+// Чтение всех таблиц неба и облаков проходом (u — стадия: RG_CS_READ или RG_FS_READ)
 void vk_sky_reads(RgUse u);
 // Froxels (vk_froxel.cpp): среда и списки огней и декалей по клеткам; чтение их проходом
 void vk_froxel_passes(const FrameSlot &fs);

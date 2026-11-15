@@ -31,6 +31,10 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"halo_g", &d.halo_g, 1},         {"night_dark", &d.night_dark, 1}, {"milky", &d.milky, 1},
         {"twinkle", &d.twinkle, 1},       {"adapt_night", &d.adapt_night, 1},
         {"night_fill", &d.night_fill, 1},
+        {"clouds", &d.clouds, 1},         {"cloud_base", &d.cloud_base, 1}, {"cloud_top", &d.cloud_top, 1},
+        {"cloud_density", &d.cloud_density, 1}, {"cloud_light", &d.cloud_light, 1},
+        {"cirrus", &d.cirrus, 1},         {"cirrus_height", &d.cirrus_height, 1},
+        {"wind", &d.wind, 1},             {"wind_dir", &d.wind_dir, 1},
     };
     TextReader r = text_reader(text, size);
     TextLine l;
@@ -60,6 +64,13 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
     if (d.sun_size < 0.1f || d.sun_size > 5.0f || d.moon_size < 0.1f || d.moon_size > 5.0f || d.halo < 0.0f || d.halo > 0.9f ||
         d.halo_g < 0.5f || d.halo_g > 0.995f) {
         snprintf(err, err_cap, "sun_size и moon_size 0.1–5, halo 0–0.9, halo_g 0.5–0.995");
+        return false;
+    }
+    if (d.clouds < 0.0f || d.clouds > 1.0f || d.cirrus < 0.0f || d.cirrus > 1.0f || d.cloud_base < 500.0f ||
+        d.cloud_top < d.cloud_base + 300.0f || d.cloud_top > 8000.0f || d.cirrus_height < d.cloud_top + 500.0f ||
+        d.cirrus_height > 14000.0f || d.cloud_density <= 0.0f || d.cloud_light < 0.0f || d.wind < 0.0f || d.wind > 60.0f) {
+        snprintf(err, err_cap, "clouds и cirrus 0–1, cloud_base ≥ 500, cloud_top от cloud_base + 300 до 8000, cirrus_height от "
+                               "cloud_top + 500 до 14000, cloud_density > 0, cloud_light ≥ 0, wind 0–60");
         return false;
     }
     return true;
@@ -137,8 +148,8 @@ static void transmittance(const Air &a, f32 alt, const f32 dir[3], f32 radius, f
 
 static f32 lum(const f32 c[3]) { return 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]; }
 
-void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f32 cam_y, RenderSky &o,
-               RenderLight &key) {
+void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f32 cam_y, f64 cloud_time,
+               RenderSky &o, RenderLight &key) {
     o = RenderSky{};
     // Воздух пустыни: пыль и дымка смешиваются с воздухом долины (таблицы неба пересчитаются сами)
     SkyDesc d = desc;
@@ -248,4 +259,26 @@ void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f
         key.sun_dir[k] = sun ? o.sun_dir[k] : o.moon_dir[k];
         key.sun_color[k] = sun ? es[k] : em[k];
     }
+
+    // Облака (docs/clouds.md). Их светило — то, что сильнее на высоте их верха: солнце светит облакам и после
+    // заката на земле. Ветер несёт облака целиком (сдвиг — в метрах к этому кадру), форма меняется медленнее
+    o.cloud_shape[0] = d.cloud_base;
+    o.cloud_shape[1] = d.cloud_top;
+    o.cloud_shape[2] = d.clouds;
+    o.cloud_shape[3] = 0.045f * d.cloud_density;
+    f64 wa = (f64)d.wind_dir * deg;
+    o.cloud_wind[0] = (f32)(sin(wa) * (f64)d.wind * cloud_time);
+    o.cloud_wind[1] = (f32)(cos(wa) * (f64)d.wind * cloud_time);
+    o.cloud_wind[2] = (f32)cloud_time;
+    o.cloud_wind[3] = d.cloud_light;
+    o.cloud_cirrus[0] = d.cirrus_height;
+    o.cloud_cirrus[1] = d.cirrus;
+    o.cloud_cirrus[2] = (f32)sin(wa);
+    o.cloud_cirrus[3] = (f32)cos(wa);
+    f32 ts[3], tm[3], unused[3];
+    transmittance(a, d.cloud_top, o.sun_dir, SUN_RADIUS, ts, unused);
+    transmittance(a, d.cloud_top, o.moon_dir, MOON_RADIUS, tm, unused);
+    bool csun = o.sun_e * lum(ts) >= o.moon_e * lum(tm);
+    for (u32 k = 0; k < 3; ++k) o.cloud_light[k] = csun ? o.sun_dir[k] : o.moon_dir[k];
+    o.cloud_e = csun ? o.sun_e : o.moon_e;
 }
