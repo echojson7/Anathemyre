@@ -11,8 +11,7 @@ bool vk_froxel_init() {
             return false;
     g_vk.rg_froxels = rg_buffer("froxels: списки");
     g_vk.rg_media = rg_buffer("froxels: среда");
-    g_vk.pipe_froxel = vk_make_compute("froxel.comp");
-    return g_vk.pipe_froxel != VK_NULL_HANDLE;
+    return vk_make_compute(&g_vk.pipe_froxel, "froxel.comp");
 }
 
 void vk_froxel_shutdown() {

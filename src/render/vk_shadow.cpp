@@ -21,11 +21,12 @@ constexpr u32 SM_BUILD_PAGES = 192;  // страниц нового набора
 
 bool vk_shadow_init() {
     ShadowGpu &s = g_vk.shadow;
-    s.pipe_inval = vk_make_compute("shadow_inval.comp");
-    s.pipe_scan = vk_make_compute("shadow_scan.comp");
-    s.pipe_args = vk_make_compute("shadow_args.comp");
-    s.pipe_alloc = vk_make_compute("shadow_alloc.comp");
-    s.pipe_cull = vk_make_compute("shadow_cull.comp");
+    bool ok = true;
+    ok = vk_make_compute(&s.pipe_inval, "shadow_inval.comp") && ok;
+    ok = vk_make_compute(&s.pipe_scan, "shadow_scan.comp") && ok;
+    ok = vk_make_compute(&s.pipe_args, "shadow_args.comp") && ok;
+    ok = vk_make_compute(&s.pipe_alloc, "shadow_alloc.comp") && ok;
+    ok = vk_make_compute(&s.pipe_cull, "shadow_cull.comp") && ok;
     PipeDesc d{"shadow.vert", "shadow.frag"};
     d.no_attach = true;
     d.depth_test = false;
@@ -33,7 +34,7 @@ bool vk_shadow_init() {
     // Только грани, повёрнутые от светила (у сеток они снаружи против часовой, как у visibility buffer): тексель
     // хранит нижнюю грань заслонки, и освещённая грань не затеняет сама себя
     d.cull = VK_CULL_MODE_FRONT_BIT;
-    s.pipe_draw = vk_make_pipeline(d);
+    ok = vk_make_pipeline(&s.pipe_draw, d) && ok;
     s.rg_table = rg_buffer("тени: окна страниц");
     s.rg_pages = rg_buffer("тени: страницы");
     s.rg_texels = rg_buffer("тени: тексели");
@@ -45,7 +46,7 @@ bool vk_shadow_init() {
         if (!vk_create_buffer(fs.sm_inval, SM_INVAL_MAX * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) return false;
         vk_buffer_name(fs.sm_inval, "тени: сферы сброса");
     }
-    return s.pipe_inval && s.pipe_scan && s.pipe_args && s.pipe_alloc && s.pipe_cull && s.pipe_draw;
+    return ok;
 }
 
 void vk_shadow_shutdown() {

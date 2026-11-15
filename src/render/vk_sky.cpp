@@ -9,22 +9,6 @@ static constexpr u32 TRANS_W = 256, TRANS_H = 64, MS_N = 32;
 static constexpr u32 SKY_W = 192, SKY_H = 128, MOON_W = 96, MOON_H = 64;
 static constexpr u32 SKY_OUT = 8;
 
-VkPipeline vk_make_compute(const char *name, const VkSpecializationInfo *spec) {
-    VkShaderModule m = vk_load_shader(name);
-    if (!m) return VK_NULL_HANDLE;
-    auto ci = vk_info<VkComputePipelineCreateInfo>(VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO);
-    ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    ci.stage.module = m;
-    ci.stage.pName = "main";
-    ci.stage.pSpecializationInfo = spec;
-    ci.layout = g_vk.layout;
-    VkPipeline p = VK_NULL_HANDLE;
-    vk_check(vkCreateComputePipelines(g_vk.device, g_vk.pipeline_cache, 1, &ci, nullptr, &p), name);
-    vkDestroyShaderModule(g_vk.device, m, nullptr);
-    return p;
-}
-
 bool vk_sky_init() {
     SkyGpu &s = g_vk.sky;
     const VkBufferUsageFlags ssbo = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
@@ -40,12 +24,13 @@ bool vk_sky_init() {
         vk_buffer_name(*bs[i], names[i]);
         *rs[i] = rg_buffer(names[i]);
     }
-    s.pipe_trans = vk_make_compute("sky_trans.comp");
-    s.pipe_ms = vk_make_compute("sky_ms.comp");
-    s.pipe_view = vk_make_compute("sky_view.comp");
-    s.pipe_sum = vk_make_compute("sky_sum.comp");
+    bool ok = true;
+    ok = vk_make_compute(&s.pipe_trans, "sky_trans.comp") && ok;
+    ok = vk_make_compute(&s.pipe_ms, "sky_ms.comp") && ok;
+    ok = vk_make_compute(&s.pipe_view, "sky_view.comp") && ok;
+    ok = vk_make_compute(&s.pipe_sum, "sky_sum.comp") && ok;
     s.luts_ready = false;
-    return s.pipe_trans && s.pipe_ms && s.pipe_view && s.pipe_sum;
+    return ok;
 }
 
 void vk_sky_shutdown() {

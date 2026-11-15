@@ -98,24 +98,22 @@ bool vk_world_init() {
     PipeDesc st{"sky.vert", "style.frag"};
     st.depth_test = false;
     st.depth_write = false;
-    w.pipe_vis_mesh = vk_make_pipeline(vm);
-    w.pipe_vis_ground = vk_make_pipeline(vg);
-    w.pipe_style = vk_make_pipeline(st);
-    w.pipe_cull_count = vk_make_compute("cull_count.comp");
-    w.pipe_cull_scan = vk_make_compute("cull_scan.comp");
-    w.pipe_cull_write = vk_make_compute("cull_write.comp");
-    w.pipe_ground_bake = vk_make_compute("ground_bake.comp");
-    w.pipe_tiles = vk_make_compute("light_tiles.comp");
+    bool ok = true;
+    ok = vk_make_pipeline(&w.pipe_vis_mesh, vm) && ok;
+    ok = vk_make_pipeline(&w.pipe_vis_ground, vg) && ok;
+    ok = vk_make_pipeline(&w.pipe_style, st) && ok;
+    ok = vk_make_compute(&w.pipe_cull_count, "cull_count.comp") && ok;
+    ok = vk_make_compute(&w.pipe_cull_scan, "cull_scan.comp") && ok;
+    ok = vk_make_compute(&w.pipe_cull_write, "cull_write.comp") && ok;
+    ok = vk_make_compute(&w.pipe_ground_bake, "ground_bake.comp") && ok;
+    ok = vk_make_compute(&w.pipe_tiles, "light_tiles.comp") && ok;
     // Освещение: конвейер на вид плиток, вид — константа специализации TILE_KIND
-    bool lights = true;
     for (u32 k = 0; k < TILE_KINDS; ++k) {
         VkSpecializationMapEntry me{0, 0, sizeof(u32)};
         VkSpecializationInfo si{1, &me, sizeof(u32), &k};
-        w.pipe_light[k] = vk_make_compute("light_cells.comp", &si);
-        lights = lights && w.pipe_light[k];
+        ok = vk_make_compute(&w.pipe_light[k], "light_cells.comp", &si) && ok;
     }
-    return w.pipe_vis_mesh && w.pipe_vis_ground && w.pipe_style && w.pipe_cull_count && w.pipe_cull_scan &&
-           w.pipe_cull_write && lights && w.pipe_tiles && w.pipe_ground_bake && vk_gcache_init() && vk_shadow_init() && vk_sdf_init() &&
+    return ok && vk_gcache_init() && vk_shadow_init() && vk_sdf_init() &&
            vk_gi_init() && vk_scans_init();
 }
 
