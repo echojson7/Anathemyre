@@ -11,10 +11,10 @@
 // Как в data/shaders/clouds.glsl
 static constexpr u32 CLOUD_N = 128, CLOUD_SH_N = 512;
 static constexpr u32 CLOUD_PHASES = 64, CLOUD_SH_PHASES = 16;
-static constexpr u32 CLOUD_SIZE_MAX = 1536;
-static constexpr u32 CLOUD_SIZES[RENDER_LIGHT_QUALITIES] = {512, 768, 1024, 1536};
+static constexpr u32 CLOUD_SIZE_MAX = 2048;
+static constexpr u32 CLOUD_SIZES[RENDER_LIGHT_QUALITIES] = {768, 1024, 1536, 2048};
 static constexpr u32 CLOUD_STEPS[RENDER_LIGHT_QUALITIES] = {64, 96, 128, 160};
-static constexpr u32 CLOUD_RATE = 2;  // фаз карты за кадр: вся карта — за 32 кадра
+static constexpr u32 CLOUD_RATE[RENDER_LIGHT_QUALITIES] = {1, 1, 1, 2};  // фаз карты за кадр: вся карта — за 64 или 32 кадра
 
 bool vk_clouds_init() {
     CloudGpu &c = g_vk.clouds;
@@ -129,7 +129,7 @@ void vk_clouds_fill(FrameGpu &g, const RenderFrame &f) {
         c.job_slot = c.slot_w;
         c.job_first = c.phase == 0;
         c.job_phase = c.phase;
-        c.job_n = CLOUD_RATE < CLOUD_PHASES - c.phase ? CLOUD_RATE : CLOUD_PHASES - c.phase;
+        c.job_n = CLOUD_RATE[q] < CLOUD_PHASES - c.phase ? CLOUD_RATE[q] : CLOUD_PHASES - c.phase;
     }
     g.cl_on = 1;
     g.cl_size = c.size;

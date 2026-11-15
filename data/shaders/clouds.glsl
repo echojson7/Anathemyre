@@ -83,17 +83,17 @@ float cloud_density(vec3 p, float tev, bool fine) {
     if (wt.x * prof < 0.02) return 0.0;
     // Шум формы медленно идёт вверх сквозь профиль: облако клубится
     vec4 n = cloud_noise(vec3(p.x, p.y - 0.4 * tev, p.z) * (1.0 / CLOUD_TILE));
-    float d = cl_remap(n.r * prof, 1.0 - wt.x, 1.0 - wt.x + 0.22);
+    float d = cl_remap(n.r * prof, 1.0 - wt.x, 1.0 - wt.x + 0.45);
     if (d <= 0.0) return 0.0;
     if (fine) {
         vec4 m = cloud_noise(p * (1.0 / CLOUD_DETAIL) + vec3(0.004, -0.003, 0.002) * tev);
         float hf = m.g * 0.625 + m.b * 0.25 + m.a * 0.125;
         // У низа края рваные (клочья), выше — клубы
-        d = cl_remap(d, mix(1.0 - hf, hf, clamp(h * 4.0, 0.0, 1.0)) * 0.45, 1.0);
+        d = cl_remap(d, mix(1.0 - hf, hf, clamp(h * 4.0, 0.0, 1.0)) * 0.6, 1.0);
     } else {
-        d = cl_remap(d, 0.18, 1.0);
+        d = cl_remap(d, 0.25, 1.0);
     }
-    return d * f.cl_shape.w * mix(0.6, 1.3, h);
+    return min(d * 2.5, 1.0) * f.cl_shape.w * mix(0.6, 1.3, h);
 }
 
 // Перистые: оптическая толщина слоя по вертикали в точке (оси облаков, м). Поля в сотню километров, в них
@@ -110,9 +110,9 @@ float cirrus_tau(vec2 q) {
     vec2 s = vec2(p.x / 16000.0, p.y / 3800.0);
     s += (vec2(cl_vnoise(s * 0.6 + 11.0), cl_vnoise(s * 0.6 + 37.0)) - 0.5) * 1.4;  // волокна гнутся
     float v = cl_fbm(s, 4);
-    float fib = cl_fbm(vec2(p.x / 6000.0, p.y / 480.0) + s * 0.9, 3);  // тонкие нити
-    float d = cl_remap(v * 0.65 + fib * 0.35, 1.0 - cov * 0.9, 1.0 - cov * 0.9 + 0.3);
-    return d * d * 0.6;
+    float fib = cl_fbm(vec2(p.x / 9000.0, p.y / 1100.0) + s * 0.9, 3);  // нити
+    float d = cl_remap(v * 0.7 + fib * 0.3, 1.0 - cov * 0.9, 1.0 - cov * 0.9 + 0.35);
+    return d * d * 0.8;
 }
 
 float cl_hg(float c, float g) {
@@ -131,7 +131,7 @@ float cloud_sun(float tau, float c) {
         b *= 0.35;
         g *= 0.5;
     }
-    return s + 0.12 * exp(-0.12 * tau);
+    return 1.3 * s + 0.16 * exp(-0.2 * tau);
 }
 
 // Карта купола: стереографическая проекция от надира — зенит в центре, горизонт у края, у горизонта тексели

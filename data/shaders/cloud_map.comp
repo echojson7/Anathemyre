@@ -90,16 +90,17 @@ void main() {
                 float rho = cloud_density(p, tev, fine);
                 if (rho <= 0.0) continue;
                 rho *= smoothstep(CLOUD_FAR, 0.7 * CLOUD_FAR, t);
-                // Толщина облака к светилу: пять шагов, каждый вдвое длиннее
+                // Толщина облака к светилу: пять шагов, каждый вдвое длиннее; первые два — с мелочью (клубы
+                // затеняют друг друга)
                 float tau = 0.0, sl = 70.0, sd = 0.0;
                 for (int j = 0; j < 5; ++j) {
                     vec3 q = p + lt * (sd + 0.5 * sl);
-                    tau += cloud_density(q, tev, false) * sl;
+                    tau += cloud_density(q, tev, fine && j < 2) * sl;
                     sd += sl;
                     sl *= 2.0;
                 }
                 float h = clamp((ha - base) / (top - base), 0.0, 1.0);
-                vec3 S = mix(e_lo, e_hi, h) * cloud_sun(tau, cs) + a_top * (0.4 + 0.6 * h) + a_bot * (0.6 * (1.0 - h));
+                vec3 S = mix(e_lo, e_hi, h) * cloud_sun(tau, cs) + a_top * (0.25 + 0.45 * h) + a_bot * (0.4 * (1.0 - h));
                 float tr = exp(-rho * dt);
                 float w = T * (1.0 - tr);
                 L += S * (w * gain);

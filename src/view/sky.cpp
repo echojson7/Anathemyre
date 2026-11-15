@@ -30,11 +30,11 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"sun_size", &d.sun_size, 1},     {"moon_size", &d.moon_size, 1}, {"halo", &d.halo, 1},
         {"halo_g", &d.halo_g, 1},         {"night_dark", &d.night_dark, 1}, {"milky", &d.milky, 1},
         {"twinkle", &d.twinkle, 1},       {"adapt_night", &d.adapt_night, 1},
-        {"night_fill", &d.night_fill, 1},
         {"clouds", &d.clouds, 1},         {"cloud_base", &d.cloud_base, 1}, {"cloud_top", &d.cloud_top, 1},
         {"cloud_density", &d.cloud_density, 1}, {"cloud_light", &d.cloud_light, 1},
         {"cirrus", &d.cirrus, 1},         {"cirrus_height", &d.cirrus_height, 1},
         {"wind", &d.wind, 1},             {"wind_dir", &d.wind_dir, 1},
+        {"night_fill", &d.night_fill, 1},
     };
     TextReader r = text_reader(text, size);
     TextLine l;

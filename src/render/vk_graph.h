@@ -5,7 +5,7 @@
 #pragma once
 #include "vk_state.h"
 
-constexpr u32 RG_MAX_RES = 64, RG_MAX_PASSES = 96, RG_MAX_USES = 32;
+constexpr u32 RG_MAX_RES = 64, RG_MAX_PASSES = 96, RG_MAX_USES = 48;
 
 // Как проход трогает ресурс. Запись включает чтение тем же проходом (атомики, чтение-запись)
 enum RgUse : u8 {
