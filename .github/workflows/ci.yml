@@ -1,5 +1,7 @@
 # CI v2 (docs/build.md): сборки обеих целей без предупреждений, запреты и слои, эталонные хеши --sim,
-# повтор записи Linux на настоящем Windows; окно под lavapipe со слоями проверки Vulkan — своей работой параллельно
+# повтор записи Linux на настоящем Windows; окно под lavapipe со слоями проверки Vulkan.
+# Долгое разнесено по машинам (у каждой 4 ядра), однопоточные проверки внутри задачи идут параллельно
+# (tools/ci_par.sh), у каждой свой предел времени: зависание падает за минуты, а не по таймауту задачи
 name: ci
 on:
   push:
@@ -8,9 +10,10 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Сборки, слои, сетки, хеши clang -O2 и gcc, запись для Windows. Отладочная сборка — в задаче debug
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Пакеты
@@ -18,8 +21,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq cmake ninja-build glslang-tools spirv-tools \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev \
-            libxkbcommon-dev libasound2-dev libpulse-dev mesa-vulkan-drivers vulkan-validationlayers xvfb \
-            python3-numpy
+            libxkbcommon-dev libasound2-dev libpulse-dev python3-numpy
       - name: Кеш компиляторов и SDL3
         uses: actions/cache@v4
         with:
@@ -52,21 +54,21 @@ jobs:
           git diff --exit-code data/anims
       - name: Сборки
         run: |
+          # четыре сборки разом: модулей в каждой мало, по одной ядра простаивают
+          . tools/ci_par.sh
           J=$(nproc)
-          make -s -j$J WERROR=1
-          make -s -j$J WERROR=1 TARGET=windows
-          make -s -j$J WERROR=1 MODE=debug
-          make -s -j$J WERROR=1 COMPILER=gcc
-          make -s -j$J WERROR=1 NODEBUG=1
-      - name: Эталонные хеши --sim (clang -O2, clang -O0 с ASan, gcc)
+          par release 600 make -s -j$J WERROR=1
+          par windows 600 make -s -j$J WERROR=1 TARGET=windows
+          par gcc 600 make -s -j$J WERROR=1 COMPILER=gcc
+          par nodebug 600 make -s -j$J WERROR=1 NODEBUG=1
+          par_wait 20
+      - name: Эталонные хеши --sim (clang -O2, gcc), запись для Windows
         run: |
-          make -s sim-check
-          make -s sim-check MODE=debug
-          make -s sim-check COMPILER=gcc
-      - name: Запись и повтор
-        run: |
-          build/linux-release/anathemyre --sim 10000 --seed 1 --record linux.rec
-          build/linux-debug/anathemyre --replay linux.rec
+          . tools/ci_par.sh
+          par sim_clang 180 make -s sim-check
+          par sim_gcc 180 make -s sim-check COMPILER=gcc
+          par record 180 build/linux-release/anathemyre --sim 10000 --seed 1 --record linux.rec
+          par_wait 3
       - name: Для Windows-раннера
         run: |
           mkdir -p win
@@ -78,10 +80,55 @@ jobs:
           path: win/
           retention-days: 7
 
-  # Окно — отдельно и параллельно сборкам: lavapipe рисует ландшафт ~1 с на кадр, это самый долгий шаг
-  window:
+  # Отладочная сборка (clang -O0, ASan + UBSan): эталонные хеши и повтор записи релиза — бит в бит между
+  # оптимизациями. Обе проверки ~2.5 мин однопоточно, поэтому рядом друг с другом и отдельно от linux
+  debug:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Пакеты
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build glslang-tools spirv-tools \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev \
+            libxkbcommon-dev libasound2-dev libpulse-dev
+      - name: Кеш компиляторов и SDL3
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/anathemyre
+            build/third_party
+          key: tc-window-${{ runner.os }}-${{ hashFiles('tools/versions.sh', 'tools/toolchain.sh', 'tools/third_party.sh') }}
+      - name: Компиляторы и SDL3
+        run: make toolchain third_party TARGET=linux
+      - name: Сборки отладка и релиз
+        run: |
+          . tools/ci_par.sh
+          J=$(nproc)
+          par debug 600 make -s -j$J WERROR=1 MODE=debug
+          par release 600 make -s -j$J WERROR=1
+          par_wait 20
+      - name: Эталонные хеши --sim (clang -O0 с ASan), запись релиза и её повтор отладкой
+        run: |
+          . tools/ci_par.sh
+          par sim_debug 420 make -s sim-check MODE=debug
+          par replay 480 sh -c 'build/linux-release/anathemyre --sim 10000 --seed 1 --record linux.rec &&
+            build/linux-debug/anathemyre --replay linux.rec'
+          par_wait 3
+
+  # Окно под Xvfb + lavapipe со слоями проверки Vulkan. lavapipe медленный: конвейеры создаются ~0.5 мин на
+  # запуск, первый кадр (горизонт, кеш земли, зонды, JIT шейдеров) — минуты. Три машины: ASan, GPU-AV, кадры.
+  # Кеш шейдеров Mesa (~/.cache/mesa_shader_cache) между прогонами снимает JIT неизменных шейдеров
+  # (машинный код тот же, кадр побайтно тот же); конвейеры lavapipe не кеширует (docs/frame_time.md)
+  window:
+    name: window (${{ matrix.kind }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [asan, gpuav, frame]
     steps:
       - uses: actions/checkout@v4
       - name: Пакеты
@@ -97,41 +144,58 @@ jobs:
             ~/.cache/anathemyre
             build/third_party
           key: tc-window-${{ runner.os }}-${{ hashFiles('tools/versions.sh', 'tools/toolchain.sh', 'tools/third_party.sh') }}
+      - name: Кеш шейдеров Mesa
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mesa_shader_cache
+          key: mesa-${{ matrix.kind }}-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}
+          restore-keys: mesa-${{ matrix.kind }}-
       - name: Компиляторы и SDL3
-        run: |
-          make toolchain third_party TARGET=linux
-      - name: Сборки релиз и отладка
-        run: |
-          J=$(nproc)
-          make -s -j$J WERROR=1
-          make -s -j$J WERROR=1 MODE=debug
-      - name: Окно под lavapipe, слои проверки Vulkan, кадр сцены
+        run: make toolchain third_party TARGET=linux
+      - name: Сборка
+        run: make -s -j$(nproc) WERROR=1 MODE=${{ matrix.kind == 'asan' && 'debug' || 'release' }}
+      - name: Отладка с ASan и слоями проверки
+        if: matrix.kind == 'asan'
         env:
           LSAN_OPTIONS: suppressions=${{ github.workspace }}/tools/lsan.supp
         run: |
-          set -o pipefail  # иначе код выхода игры теряется за tail
+          . tools/ci_par.sh
           . tools/versions.sh
           export ASAN_SYMBOLIZER_PATH=~/.cache/anathemyre/llvm-$LLVM_VER/bin/llvm-symbolizer  # иначе подавления не видят имён функций
           # ASan + слои проверки: ошибки Vulkan видны с первых кадров, малое окно — lavapipe считает пиксели
-          xvfb-run -a -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation --window 640 360 2>&1 | tail -40
-          # проверка на GPU (GPU-AV, docs/graph.md «Проверки»): чтение и запись мимо буферов по адресам, кадр мира.
+          par asan 600 xvfb-run -n 91 -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation \
+            --window 640 360
+          par_wait 40
+      - name: Проверка на GPU (GPU-AV)
+        if: matrix.kind == 'gpuav'
+        run: |
+          . tools/ci_par.sh
+          # чтение и запись мимо буферов по адресам, кадр мира (docs/graph.md «Проверки»).
           # Пять шейдеров lavapipe под GPU-AV не тянет (падает, съедает ~14 ГБ или считает минуты) — без проверки;
           # лучи зондов (gi_trace) — снимок 4 × 49 152 зонда под GPU-AV идёт дольше 10 мин
           # Камера у стенда людей с согнутой костью и морфом: скиннинг и сферы кластеров тоже под проверкой
-          xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 4 --window 640 360 --gpuav \
-            --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp \
-            --cam 45 5 6 11698 -2348.5 --stand elbow,morph1 2>&1 | tail -5
+          par gpuav 540 xvfb-run -n 92 -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 4 --window 640 360 \
+            --gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp \
+            --cam 45 5 6 11698 -2348.5 --stand elbow,morph1
+          par_wait 5
+      - name: Снимок сцены и сверка кадров
+        if: matrix.kind == 'frame'
+        run: |
+          . tools/ci_par.sh
           # снимок в полный размер для глаза
-          xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 10 --validation --shot frame.bmp | tail -5
+          par shot 360 xvfb-run -n 93 -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 10 --validation \
+            --shot frame.bmp
           # кадр мира одинаков от запуска к запуску (docs/frame.md, «Сверка кадров»): два запуска с тестовыми огнями
           # и картой огней по клеткам, побайтно. Без интерфейса (к/с в нём разные) и --timelapse: кадр — ровно один
-          # шаг мира, а не сколько успело по часам
+          # шаг мира, а не сколько успело по часам. Запуски одновременно: кадр от этого не зависит
           # Первый запуск пишет и счётчики работы освещения (docs/tiles.md): сверка с эталоном ловит «стало делать
           # больше работы» без видеокарты
           for k in 1 2; do
-            xvfb-run -a -s "-screen 0 1600x900x24" build/linux-release/anathemyre --nohud --frames 4 --window 800 450 \
-              --lights --heat --cam 315 14 34 11704 -2336 --timelapse same_$k 15.5 15.5 --work work_$k.txt | tail -2
+            par same_$k 360 xvfb-run -n 9$((3 + k)) -s "-screen 0 1600x900x24" build/linux-release/anathemyre --nohud \
+              --frames 4 --window 800 450 --lights --heat --cam 315 14 34 11704 -2336 --timelapse same_$k 15.5 15.5 \
+              --work work_$k.txt
           done
+          par_wait 2
           cmp same_1_0003.bmp same_2_0003.bmp && echo "кадры двух запусков совпали"
           cmp work_1.txt work_2.txt && echo "счётчики работы двух запусков совпали"
           tools/work_check.sh tests/work_ref.txt work_1.txt
@@ -141,6 +205,7 @@ jobs:
           # молча уводит всю землю на пиксель, а кадр при этом верный — ловим по счётчику, отдельно от допуска эталона
           awk '$1 == "gc_used" { ok = $2 > 0 } END { if (!ok) { print "кеш земли пуст: gc_used = 0"; exit 1 } }' work_1.txt
       - uses: actions/upload-artifact@v4
+        if: matrix.kind == 'frame'
         with:
           name: frame
           path: |
@@ -153,7 +218,7 @@ jobs:
   windows:
     needs: linux
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
     defaults:
       run:
         shell: bash
@@ -161,9 +226,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: windows-exe
-      - name: Повтор записи Linux
-        run: ./anathemyre.exe --replay linux.rec
-      - name: Эталонные хеши --sim
+      - name: Повтор записи Linux и эталонные хеши --sim
         run: |
-          ./anathemyre.exe --sim 10000 --seed 1 --hashes win_hashes.txt
-          diff -u sim_hashes.txt win_hashes.txt && echo "хеши Windows совпали с эталоном"
+          # обе проверки однопоточные — рядом друг с другом
+          ./anathemyre.exe --replay linux.rec > replay.log 2>&1 &
+          replay=$!
+          ./anathemyre.exe --sim 10000 --seed 1 --hashes win_hashes.txt > sim.log 2>&1 &
+          sim=$!
+          rc=0
+          wait $replay && tail -n 3 replay.log || { rc=1; tail -n 40 replay.log; }
+          wait $sim && tail -n 3 sim.log || { rc=1; tail -n 40 sim.log; }
+          diff -u sim_hashes.txt win_hashes.txt && echo "хеши Windows совпали с эталоном" || rc=1
+          exit $rc
