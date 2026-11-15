@@ -98,17 +98,30 @@ float gi_ground_h(vec3 pa) {
     vec2 g = pa.xz + vec2((f.sdf_anchor - ivec2(f.t_chunk0)) * 256);
     return t_base_height(g);
 }
-float gi_ground_dist(vec3 pa) {
-    if (pc.frame.t_on == 0u) return SDF_FREE;
-    return (pa.y - gi_ground_h(pa)) * 0.85;
+// Под землёй — только постройки в проёмах (docs/terrain.md). Луч или зонд над землёй видит землю сплошной;
+// из-под земли (Исподь) земля — пласт GI_SOIL м под поверхностью, ниже — пусто: внутри постройки лучи
+// ограничивает её поле. В проёме земли нет: расстояние — не меньше чем до края проёма
+const float GI_SOIL = 1.0;
+float gi_ground_dist(vec3 pa, bool soil) {
+    FrameData f = pc.frame;
+    if (f.t_on == 0u) return SDF_FREE;
+    float d = pa.y - gi_ground_h(pa);
+    if (soil) d = max(d, -GI_SOIL - d);
+    vec2 q = pa.xz - f.sdf_cam.xz;
+    for (uint k = 0u; k < f.t_hole_n; ++k) {
+        vec4 h = f.t_hole[k];
+        d = max(d, min(min(q.x - h.x, h.z - q.x), min(q.y - h.y, h.w - q.y)));
+    }
+    return d * 0.85;
 }
+bool gi_under(vec3 pa) { return pc.frame.t_on != 0u && pa.y < gi_ground_h(pa); }
 // Расстояние до мира: поле (уровень не мельче L) и земля
-float gi_dist(vec3 pa, int L) { return min(sdf_dist(pa, L), gi_ground_dist(pa)); }
-vec3 gi_grad(vec3 pa, int L) {
+float gi_dist(vec3 pa, int L, bool soil) { return min(sdf_dist(pa, L), gi_ground_dist(pa, soil)); }
+vec3 gi_grad(vec3 pa, int L, bool soil) {
     float e = pc.frame.sdf_cam.w * float(1 << L);
-    return vec3(gi_dist(pa + vec3(e, 0, 0), L) - gi_dist(pa - vec3(e, 0, 0), L),
-                gi_dist(pa + vec3(0, e, 0), L) - gi_dist(pa - vec3(0, e, 0), L),
-                gi_dist(pa + vec3(0, 0, e), L) - gi_dist(pa - vec3(0, 0, e), L));
+    return vec3(gi_dist(pa + vec3(e, 0, 0), L, soil) - gi_dist(pa - vec3(e, 0, 0), L, soil),
+                gi_dist(pa + vec3(0, e, 0), L, soil) - gi_dist(pa - vec3(0, e, 0), L, soil),
+                gi_dist(pa + vec3(0, 0, e), L, soil) - gi_dist(pa - vec3(0, 0, e), L, soil));
 }
 
 // Цвет земли в точке для отражённого света: песок и песок пустыни по маске пустыни (среднее двух цветов слоя)

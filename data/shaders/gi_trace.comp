@@ -31,13 +31,14 @@ vec4 gi_ray(vec3 o, vec3 d, out bool back) {
     float v0 = f.sdf_cam.w;
     float t = 0.5 * v0;
     bool hit = false, gnd = false;
+    bool soil = gi_under(o);  // луч из-под земли: земля — пласт (gi_ground_dist)
     int L = 0;
     for (uint i = 0u; i < GI_STEPS; ++i) {
         vec3 p = o + d * t;
         float r = max(t * GI_SPREAD, 0.5 * v0);
         L = clamp(int(ceil(log2(r / (SDF_BAND * v0)))), 0, SDF_LEVELS - 1);
         float ds = sdf_dist(p, L);
-        float dg = gi_ground_dist(p);
+        float dg = gi_ground_dist(p, soil);
         float dd = min(ds, dg);
         if (dd < 0.25 * r) {
             hit = true;
@@ -51,8 +52,12 @@ vec4 gi_ray(vec3 o, vec3 d, out bool back) {
             gnd = dg <= ds;
         }
     }
-    if (!hit) return vec4(atmo_sky(vec3(d.x, max(d.y, 0.0), d.z)), -1.0);
     vec3 p = o + d * t;
+    if (!hit && soil && gi_under(p)) {
+        back = true;  // ушёл в землю под пластом: зонд в земле, а не в постройке
+        return vec4(0.0, 0.0, 0.0, t);
+    }
+    if (!hit) return vec4(atmo_sky(vec3(d.x, max(d.y, 0.0), d.z)), -1.0);
     float vox = v0 * float(1 << L);
     vec3 n;
     vec3 alb;
@@ -63,7 +68,7 @@ vec4 gi_ray(vec3 o, vec3 d, out bool back) {
         n = normalize(vec3(-hx, 2.0 * e, -hz));
         alb = gi_ground_albedo(p);
     } else {
-        vec3 gr = gi_grad(p, L);
+        vec3 gr = gi_grad(p, L, soil);
         float gl = length(gr);
         n = gl > 1e-6 ? gr / gl : -d;
         alb = GI_WALL_ALBEDO;
@@ -84,16 +89,20 @@ vec4 gi_ray(vec3 o, vec3 d, out bool back) {
 
 // Сдвиг зонда из заслонок: по наклону поля, пока до мира ближе 0.3 шага (не дальше 0.45 шага от узла).
 // Остался ближе 0.05 шага или внутри — зонд в стене
+// Под пластом земли зонд дальше 6 м от поля — в сплошной земле: без лучей
 vec4 gi_place(vec3 h, int L) {
     float s = gi_step(L);
+    bool soil = gi_under(h);
+    if (soil && h.y < gi_ground_h(h) - GI_SOIL && sdf_dist(h, SDF_LEVELS - 1) > 6.0)
+        return vec4(h, float(GI_INACTIVE));
     vec3 p = h;
-    float d = gi_dist(p, L);
+    float d = gi_dist(p, L, soil);
     for (int k = 0; k < 4 && d < 0.3 * s; ++k) {
-        vec3 g = gi_grad(p, L);
+        vec3 g = gi_grad(p, L, soil);
         float gl = length(g);
         if (gl < 1e-6) break;
         p = clamp(p + g / gl * (0.3 * s - d), h - 0.45 * s, h + 0.45 * s);
-        d = gi_dist(p, L);
+        d = gi_dist(p, L, soil);
     }
     return vec4(p, d > 0.05 * s ? float(GI_ACTIVE) : float(GI_INACTIVE));
 }

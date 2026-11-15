@@ -184,3 +184,52 @@ material human_eye flat
 material human_iris flat
     color 0.07 0.05 0.04
     rough 0.3
+
+# Исподь (docs/ispod.md): чугун труб, крашеная и оцинкованная сталь, резина кабелей, просмолённое дерево шпал.
+# Вид metal: color — металл или краска, color2 — ржавчина, extra — доля ржавчины, размер пятен (м), разброс
+material iron_cast metal
+    color 0.13 0.10 0.085
+    color2 0.30 0.13 0.06
+    rough 0.7
+    metal 0.6
+    texel 0.03125
+    extra 0.45 0.4 0.35 0
+
+material steel_paint metal
+    color 0.33 0.34 0.30
+    color2 0.31 0.14 0.07
+    rough 0.6
+    metal 0
+    texel 0.03125
+    extra 0.3 0.35 0.2 0
+
+material steel_galv metal
+    color 0.62 0.64 0.66
+    color2 0.36 0.20 0.12
+    rough 0.5
+    metal 1
+    texel 0.03125
+    extra 0.18 0.3 0.25 0
+
+material rubber_black flat
+    color 0.025 0.025 0.027
+    rough 0.75
+
+material wood_tar metal
+    color 0.105 0.075 0.05
+    color2 0.05 0.04 0.035
+    rough 0.9
+    metal 0
+    texel 0.03125
+    extra 0.4 0.25 0.5 0
+
+# Вид glow: поверхность светится сама, extra a — яркость, кд/м² (стекло ламп; свет на стены — огни этапа 6е)
+material lamp_glass glow
+    color 1.0 0.86 0.62
+    rough 0.4
+    extra 6000 0 0 0
+
+material lamp_red glow
+    color 1.0 0.07 0.03
+    rough 0.4
+    extra 1500 0 0 0

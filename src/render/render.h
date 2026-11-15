@@ -242,6 +242,7 @@ bool render_set_materials(Span<const RenderMaterial> materials);
 // Земля (docs/terrain.md): сетка высот и маски копируются в видеопамять один раз, числа — как Terrain
 // в src/sim/terrain.h (рендер шаг мира не видит, их передаёт app). Рисуется clipmap'ом вокруг камеры
 constexpr u32 RENDER_TERRAIN_OCTAVES = 5;
+constexpr u32 RENDER_TERRAIN_HOLES = 4;
 struct RenderTerrain {
     const u16 *height;  // nx·nz
     const u16 *dune;    // nx·nz: дюны в узлах сетки, 1/640 м
@@ -259,6 +260,9 @@ struct RenderTerrain {
     u32 dune_seed;
     i32 oct_lp[RENDER_TERRAIN_OCTAVES], oct_amp[RENDER_TERRAIN_OCTAVES];
     u32 oct_seed[RENDER_TERRAIN_OCTAVES];
+    // Проёмы земли (docs/terrain.md, «Проём»): x0, z0, x1, z1 в см от юго-западного угла карты; в них земля не рисуется
+    i32 hole[RENDER_TERRAIN_HOLES][4];
+    u32 hole_count;
 };
 bool render_terrain_set(const RenderTerrain &t);
 

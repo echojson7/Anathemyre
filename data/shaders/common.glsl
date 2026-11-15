@@ -270,6 +270,8 @@ layout(buffer_reference, scalar) buffer FrameData {
     ivec4 gi_lo[4];           // первый зонд окна уровня: мировой номер от якоря поля
     uint gi_on, gi_view, gi_rays_n, gi_pad0;  // зонды читаются; режим F3 (GI_VIEW_*); лучей на зонд
     float gi_hyst, gi_pad1, gi_pad2, gi_pad3;  // доля старого значения при смешении
+    vec4 t_hole[4];           // проёмы земли (docs/terrain.md): x0, z0, x1, z1 от камеры, м
+    uint t_hole_n, t_hole_pad0, t_hole_pad1, t_hole_pad2;
 };
 
 layout(push_constant, scalar) uniform Push {

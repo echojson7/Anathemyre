@@ -110,6 +110,9 @@ struct FrameGpu {
     i32 gi_lo[4][4];
     u32 gi_on, gi_view, gi_rays_n, gi_pad0;
     f32 gi_hyst, gi_pad1, gi_pad2, gi_pad3;
+    // Проёмы земли: x0, z0, x1, z1 от камеры, м (vis_ground.frag в них землю не рисует); t_hole_n — сколько
+    f32 t_hole[4][4];
+    u32 t_hole_n, t_hole_pad[3];
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там

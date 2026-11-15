@@ -105,7 +105,7 @@ vec2 sdf_sky(vec3 pos, vec3 n) { return sdf_sky_q(pos, n, pc.frame.light_q); }
 float sdf_ao(vec3 pos, vec3 n) {
     uint q = pc.frame.light_q;
     uint steps = q == LIGHT_Q_LOW ? 4u : q == LIGHT_Q_MEDIUM ? 5u : q == LIGHT_Q_HIGH ? 6u : 7u;
-    return sdf_cones(pos, n, q, SDF_NEAR, steps).x;
+    return sdf_cones(pos, n, q, 1.0, steps).x;
 }
 
 // F3 «поле»: расстояние у точки (на полвокселя над поверхностью) изолиниями через 25 см, синее — у заслонки,

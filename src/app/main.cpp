@@ -213,11 +213,14 @@ int main(int argc, char **argv) {
 // Отладка с ASan: утечки системных библиотек (Xlib в SDL, в том числе перекодировка заголовка окна, драйвер
 // Vulkan) — не наши, их не показывать.
 // asan_thread_start — потоки драйвера: он выгружается с instance, и имени модуля в стеке уже нет.
+// vkb::InstanceBuilder::build — память, которую драйвер и слои берут один раз внутри vkCreateInstance
+// (pthread_once): модуль драйвера к выходу выгружен, в стеке остаётся только наш вызов (раннер CI, 2026-11-15).
 // Свой поток у игры один — журнал (platform_log_open), он памяти не выделяет; с пулом потоков
 // (docs/architecture.md) это правило пересмотреть
 extern "C" const char *__lsan_default_suppressions() {
     return "leak:libX11.so\nleak:X11_InitIM\nleak:X11_GetGlobalContentScale\nleak:libvulkan\nleak:libLLVM\n"
-           "leak:libdbus\nleak:libxcb\nleak:asan_thread_start\nleak:SDL_X11_SetWindowTitle\n";
+           "leak:libdbus\nleak:libxcb\nleak:asan_thread_start\nleak:SDL_X11_SetWindowTitle\n"
+           "leak:vkb::InstanceBuilder::build\n";
 }
 #endif
 #endif
