@@ -2,7 +2,11 @@
 #extension GL_GOOGLE_include_directive : require
 // Тени солнца (docs/shadow.md): высота заслонки — в тексель страницы, только у страниц, нарисованных в этом
 // кадре (остальные уже готовы). Атомарный максимум: порядок кластеров не важен, страница от запуска к запуску
-// одна и та же. Картинок у прохода нет
+// одна и та же. Картинок у прохода нет.
+// Пишут обе стороны: грань, повёрнутая от светила, — свою высоту (нижняя грань заслонки, как раньше); грань,
+// повёрнутая к светилу, — высоту с отступом вниз (SM_FRONT, наклон грани на тексель). Без неё тексель над
+// сплошным бетоном (стык стены и потолка, угол двух стен) хранил только дальний выход луча из тела, и выборка
+// рядом со стыком читала «свет» сквозь толщу — светлая линия по стыкам. С отступом освещённая грань себя не затеняет
 #include "shadow.glsl"
 layout(location = 0) in float v_h;
 layout(location = 1) flat in int v_k;
@@ -16,5 +20,7 @@ void main() {
     uint phys = e - 1u;
     SmPage pg = f.sm_pages.v[phys];
     if (pg.made != f.sm_frame || uvec2(pg.key0, pg.key1) != sm_page_key(v_k, page)) return;
-    atomicMax(f.sm_texels.v[phys * uint(SM_PAGE * SM_PAGE) + uint((t.y & 127) * SM_PAGE + (t.x & 127))], sm_enc(v_h));
+    float h = v_h;
+    if (gl_FrontFacing) h -= SM_FRONT * sm_texel(v_k) + min(SM_FRONT_SLOPE * fwidth(v_h), SM_FRONT_MAX * sm_texel(v_k));
+    atomicMax(f.sm_texels.v[phys * uint(SM_PAGE * SM_PAGE) + uint((t.y & 127) * SM_PAGE + (t.x & 127))], sm_enc(h));
 }
