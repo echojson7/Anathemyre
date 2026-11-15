@@ -458,45 +458,43 @@ void debug_panel(const DebugInfo &info, const World &w, DebugState &d, WorldInsp
     ui_block(x, y, pw, ph);
 }
 
-// Таблица точек по имени (номер в списке таблиц меняется, когда появляются новые)
-static bool dots_table(const World &w, const WorldInspect &wi) {
-    Column cols[MAX_COLUMNS];
-    u32 n = world_columns(w, cols);
-    Table tabs[16];
-    u32 nt = tables_of(cols, n, tabs, 16);
-    return wi.table < nt && !strcmp(tabs[wi.table].name, "dots");
-}
-
-void debug_inspect_mark(const World &w, const WorldInspect &wi, DebugDraw &dbg) {
-    if (wi.row < 0 || wi.row >= (i32)DOTS_CAPACITY || !w.dots.alive[wi.row] || !dots_table(w, wi)) return;
-    const Dots &d = w.dots;
-    WPos p{d.cx[wi.row], d.cz[wi.row], d.x[wi.row], d.y[wi.row], d.z[wi.row]};
-    WPos top = p;
-    top.y += 4.0f;
-    const u32 c = rgba8(240, 238, 230);
-    dbg_line(dbg, p, top, c);
-    dbg_cross(dbg, p, 1.0f, c);
-    dbg_cross(dbg, top, 0.4f, c);
-}
-
-void debug_inspect_pick(const World &w, WorldInspect &wi, const WPos &at) {
-    // Точки — единственная таблица с местом в мире сейчас; с людьми сюда добавится их таблица
-    const Dots &dd = w.dots;
-    f32 best = 16.0f;  // квадрат радиуса выбора, м²
-    i32 row = -1;
-    for (u32 i = 0; i < DOTS_CAPACITY; ++i) {
-        if (!dd.alive[i]) continue;
-        Vec2 dl = wpos_delta_xz(at.cx, at.cz, at.x, at.z, dd.cx[i], dd.cz[i], dd.x[i], dd.z[i]);
-        f32 d2 = dl.x * dl.x + dl.y * dl.y;
-        if (d2 < best) { best = d2; row = (i32)i; }
-    }
-    if (row < 0) return;
-    // Таблица точек — по имени, а не по номеру
+// Таблица людей по имени (номер в списке таблиц меняется, когда появляются новые)
+static u32 people_table(const World &w) {
     Column cols[MAX_COLUMNS];
     u32 n = world_columns(w, cols);
     Table tabs[16];
     u32 nt = tables_of(cols, n, tabs, 16);
     for (u32 i = 0; i < nt; ++i)
-        if (!strcmp(tabs[i].name, "dots")) wi.table = i;
+        if (!strcmp(tabs[i].name, "people")) return i;
+    return 0xFFFFFFFFu;
+}
+
+void debug_inspect_mark(const World &w, const WorldInspect &wi, DebugDraw &dbg) {
+    const People &p = w.people;
+    if (wi.row < 0 || wi.row >= (i32)PEOPLE_CAPACITY || !p.alive[wi.row] || wi.table != people_table(w)) return;
+    const u32 s = (u32)wi.row;
+    WPos at{p.cx[s], p.cz[s], p.x[s], p.y[s], p.z[s]};
+    WPos top = at;
+    top.y += 4.0f;
+    const u32 c = rgba8(240, 238, 230);
+    dbg_line(dbg, at, top, c);
+    dbg_cross(dbg, at, 1.0f, c);
+    dbg_cross(dbg, top, 0.4f, c);
+}
+
+void debug_inspect_pick(const World &w, WorldInspect &wi, const WPos &at) {
+    // Люди — таблица с местом в мире: строка ближайшего к точке земли под курсором (не дальше 2 м)
+    const People &p = w.people;
+    f32 best = 4.0f;  // квадрат радиуса выбора, м²
+    i32 row = -1;
+    for (u32 i = 0; i < PEOPLE_CAPACITY; ++i) {
+        if (!p.alive[i]) continue;
+        Vec2 dl = wpos_delta_xz(at.cx, at.cz, at.x, at.z, p.cx[i], p.cz[i], p.x[i], p.z[i]);
+        f32 d2 = dl.x * dl.x + dl.y * dl.y;
+        if (d2 < best) { best = d2; row = (i32)i; }
+    }
+    u32 t = people_table(w);
+    if (row < 0 || t == 0xFFFFFFFFu) return;
+    wi.table = t;
     wi.row = row;
 }

@@ -49,16 +49,6 @@ static WPos ispod_at(const World &w, f32 dx, f32 dz, f32 y) {
 void autoplay_intents(const World &w, Rng &rng, FixedArray<Intent> &out) {
     const u64 step = w.step;
     // Ритм нарочно неровный: намерения попадают на разные фазы шага
-    auto at = [&rng]() {
-        WPos p;
-        p.x = rng_range(rng, -60.0f, 60.0f);
-        p.z = rng_range(rng, -60.0f, 60.0f);
-        wpos_rebase(p);
-        return p;
-    };
-    if (step % 97 == 13) out.push_back({step, INTENT_ATTRACT, at(), 0});
-    if (step % 331 == 200) out.push_back({step, INTENT_BURST, at(), 0});
-    if (step % 500 == 499) out.push_back({step, INTENT_RELEASE, WPos{}, 0});
     // Часы: прыжок на случайный час и смена скорости суток — повтор проверяет и числа намерений
     if (step % 1201 == 600) out.push_back({step, INTENT_CLOCK_SET, WPos{}, rng_u32(rng)});
     if (step % 2003 == 1000) out.push_back({step, INTENT_CLOCK_RATE, WPos{}, rng_below(rng, 200)});

@@ -8,12 +8,6 @@
 #include "../sim/world.h"
 #include <stddef.h>
 
-static void group_err(char *err, usize n, const char *what) {
-    usize o = 0;
-    for (const char *q = what; *q && o + 1 < n; ++q) err[o++] = *q;
-    if (n) err[o] = 0;
-}
-
 bool group_parse(const u8 *data, usize size, GroupDesc &out, char *err, usize err_size) {
     TextReader r = text_reader(data, size);
     TextLine l;
@@ -35,12 +29,12 @@ bool group_parse(const u8 *data, usize size, GroupDesc &out, char *err, usize er
         else if (str_eq(k, "wait") && one && a >= 0 && a <= 6.3f) { out.wait = a; have |= 256; }
         else if (str_eq(k, "gap") && one && a >= 10 && a <= 180) { out.gap = a / 360.0f; have |= 512; }
         else {
-            group_err(err, err_size, "непонятная строка (retarget, aggro, tokens, crowd, near, keep, threat, open, wait, gap)");
+            text_err(err, err_size, l.line, "непонятная строка (retarget, aggro, tokens, crowd, near, keep, threat, open, wait, gap)");
             return false;
         }
     }
     if (have != 1023) {
-        group_err(err, err_size, "нужны все поля: retarget, aggro, tokens, crowd, near, keep, threat, open, wait, gap");
+        text_err(err, err_size, 0, "нужны все поля: retarget, aggro, tokens, crowd, near, keep, threat, open, wait, gap");
         return false;
     }
     out.hash = hash_bytes(&out, offsetof(GroupDesc, hash));
@@ -60,6 +54,8 @@ void fight_view(const World &w, FightView &v) {
     const People &p = w.people;
     u16 tgt[PEOPLE_CAPACITY], fill[PEOPLE_CAPACITY];
     i32 soon[PEOPLE_CAPACITY];
+    PeopleGridEntry tmp[PEOPLE_CAPACITY];
+    people_grid_build(p, PEOPLE_GRID_COARSE, v.grid, tmp);
     for (u32 i = 0; i < PEOPLE_CAPACITY; ++i) { v.holders[i] = 0; v.urgent[i] = 0xFFFF; soon[i] = 0x7FFFFFFF; }
     // Цель каждого; счёт нападающих — во временном (holders), потом список по цели в порядке номеров
     for (u32 s = 0; s < PEOPLE_CAPACITY; ++s) {
@@ -153,12 +149,14 @@ static u32 group_pick(const World &w, const GroupDesc &g, const FightView &v, u3
     const u32 id = make_id(s, p.gen[s]).v;
     f32 best = -1e9f;
     u32 pick = PEOPLE_CAPACITY;
-    for (u32 e = 0; e < PEOPLE_CAPACITY; ++e) {
-        if (!p.alive[e] || e == s || !p.side[e] || p.side[e] == p.side[s]) continue;
+    PeopleSet near;
+    people_grid_near(v.grid, p.cx[s], p.cz[s], p.x[s], p.z[s], g.aggro * 1.5f, near);
+    people_set_each(near, [&](u32 e) {
+        if (e == s || !p.side[e] || p.side[e] == p.side[s]) return;
         Vec2 d = wpos_delta_xz(p.cx[s], p.cz[s], p.x[s], p.z[s], p.cx[e], p.cz[e], p.x[e], p.z[e]);
         const f32 lim = e == cur ? g.aggro * 1.5f : g.aggro;
         const f32 d2 = dot(d, d);
-        if (d2 > lim * lim) continue;
+        if (d2 > lim * lim) return;
         f32 n = (f32)(v.first[e + 1] - v.first[e]) - (e == cur ? 1.0f : 0.0f);
         f32 c = -f_sqrt(d2) / g.near - g.crowd * n;
         if (n >= (f32)g.tokens) c -= g.crowd * (n - (f32)g.tokens + 1.0f);
@@ -168,7 +166,7 @@ static u32 group_pick(const World &w, const GroupDesc &g, const FightView &v, u3
         if (p.react_t[e]) c += g.open;
         c += ai_roll(w.step, id, 2000 + e) * 0.05f;
         if (c > best) { best = c; pick = e; }
-    }
+    });
     return pick;
 }
 

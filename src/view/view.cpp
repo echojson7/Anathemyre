@@ -430,7 +430,6 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) out.ground_layers[k] = assets.ground_layers[k];
 
     // Статичные объекты — из последней выписки (не двигаются, интерполяция не нужна)
-    const Extract &p = *in.prev;
     const Extract &cur = *in.cur;
     u32 n = cur.props_count;
     if (in.scatter && cur.terrain) scatter_update(*in.scatter, *cur.terrain, eye, assets.rocks);
@@ -472,26 +471,6 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.instances = {inst, ni};
     if (cur.decals) build_decals(*cur.decals, assets, eye, frame, out);
     if (in.test_lights && cur.terrain) build_test_lights(cam, *cur.terrain, eye, frame, out);
-
-    // Точки-заглушки этапа 0 — чуть над землёй, с интерполяцией
-    RenderPoint *pts = arena_push<RenderPoint>(frame, RENDER_MAX_POINTS);
-    u32 np = 0;
-    f32 a = in.alpha;
-    for (u32 i = 0; i < DOTS_CAPACITY && np < RENDER_MAX_POINTS; ++i) {
-        if (!cur.gen[i]) continue;
-        Vec3 r1 = delta(eye, cur.cx[i], cur.cz[i], cur.x[i], cur.y[i] + 0.15f, cur.z[i]);
-        if (p.gen[i] == cur.gen[i]) {
-            Vec3 r0 = delta(eye, p.cx[i], p.cz[i], p.x[i], p.y[i] + 0.15f, p.z[i]);
-            r1 = r0 + (r1 - r0) * a;
-        }
-        RenderPoint &q = pts[np++];
-        q.x = r1.x;
-        q.y = r1.y;
-        q.z = r1.z;
-        q.size = 4.0f;
-        q.rgba = rgba8(70, 58, 44);
-    }
-    out.points = {pts, np};
 
     u32 ndbg = in.dbg ? in.dbg->count : 0;
     if (ndbg || npl) {
