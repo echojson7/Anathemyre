@@ -36,9 +36,9 @@ vec3 post_color(vec3 c) {
     FrameData f = pc.frame;
     c = max(c, vec3(0.0));
     // Ночью глаз видит палочками: цвет уходит в холодный серо-синий. По освещённости земли, лк: полная
-    // синева — ниже ~10 лк (глубокие сумерки, луна), без неё — выше ~600 лк (солнце у горизонта)
+    // синева — ниже ~0.3 лк (луна), без неё — выше ~30 лк: сумерки после заката ещё цветные (заря)
     float e = f.sky_out.v[SKY_OUT_EYE].y;
-    float night = f.a_post.w * (1.0 - smoothstep(10.0, 600.0, e));
+    float night = f.a_post.w * (1.0 - smoothstep(-1.7, 4.9, log2(max(e, 1e-6))));
     float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
     c = mix(c, l * vec3(0.72, 0.88, 1.25), night);
     return f.tonemap == TONEMAP_ACES ? tonemap_aces(c) : tonemap_agx(c);

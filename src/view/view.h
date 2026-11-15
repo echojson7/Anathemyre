@@ -73,6 +73,7 @@ struct ViewInput {
     bool lamps_off = false;        // лампы карты не светят (F3 «лампы карты», --nolamps): сравнение было/стало
     // Свет (docs/light.md): секунды кадра и «привыкнуть сразу» для глаза, тонмаппинг (F3), качество (меню)
     f32 dt = 0.0f;
+    f32 time = 0.0f;  // время от запуска, с (мерцание звёзд, docs/sky.md); в снимках — номер кадра / 30
     bool eye_snap = true;
     u32 tonemap = RENDER_TONEMAP_AGX;
     bool scans = false;  // поверхности из сканов CC0 (docs/scans.md), F3 и --scans

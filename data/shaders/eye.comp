@@ -48,6 +48,12 @@ void main() {
     float ev_scene = log2(e / 2.5);
     float ev_ref = f.a_post.z;
     float ev_goal = ev_ref + f.a_post.y * (ev_scene - ev_ref);
+    // Ночь темнее привыкания (docs/sky.md, «Ночь»): от ~20 лк у глаза кадр уходит в темноту на night_dark EV —
+    // полностью к свету полной луны (0.35 лк). Темнее луны глаз привыкает слабо (adapt_night): безлунная ночь
+    // темнее лунной, а не светлее. По свету у глаза, а не по часу: под лампами и днём в зале поправки нет
+    const float L_MOON = -1.5;  // log2(0.35 лк)
+    float le = log2(e);
+    ev_goal += f.a_misc.w * (1.0 - smoothstep(L_MOON, 4.3, le)) + (f.a_post.y - f.a_night2.x) * max(L_MOON - le, 0.0);
     float ev = ev_goal;
     float ev_prev = f.sky_out.v[SKY_OUT_EYE].z;
     // Прошлое значение годно, если не первый кадр и оно в разумных пределах (буфер в начале — мусор)

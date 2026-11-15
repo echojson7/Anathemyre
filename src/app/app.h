@@ -45,6 +45,8 @@ struct Args {
     f32 hour = 0;
     const char *timelapse = nullptr;  // --timelapse префикс H0 H1: каждый кадр — свой час, снимок в префикс_NNNN.bmp
     f32 timelapse_hours[2] = {};
+    u32 look = 0;         // --look sun|moon град: взгляд по азимуту светила + поворот (1 — солнце, 2 — луна)
+    f32 look_yaw = 0.0f;
     f32 pivot_above = -1e9f;          // --pivot м: опора камеры от земли (крупные планы стенда; ниже нуля — под землёй)
     const char *video = nullptr;      // --video префикс: каждый кадр в префикс_NNNN.bmp, мир идёт ровно 1/30 с на кадр
     i32 select = -1;                  // --select место: выбрать человека (и --follow — камера за ним)
