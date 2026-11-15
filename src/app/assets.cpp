@@ -75,8 +75,10 @@ static void load_coll(const char *name, void *user) {
         return;
     }
     usize n = md.collider.count;
-    MeshBox tmp[256];
-    if (n > 256) { log_error("сетка %s: коробок коллайдера больше 256", name); L.failed++; n = 0; }
+    // Цельное здание фабрики деталей (docs/parts.md) — сотни коробок в одной сетке (Исподь — 337)
+    static constexpr usize MESH_BOXES_MAX = 1024;
+    MeshBox tmp[MESH_BOXES_MAX];
+    if (n > MESH_BOXES_MAX) { log_error("сетка %s: коробок коллайдера больше %u", name, (u32)MESH_BOXES_MAX); L.failed++; n = 0; }
     memcpy(tmp, md.collider.data, n * sizeof(MeshBox));
     arena_restore(L.m->load, mark);
     MeshBox *keep = arena_push<MeshBox>(L.m->load, n + 1);
@@ -573,6 +575,14 @@ bool app_terrain_upload(const World &w) {
     rt.size_x = t.size_x;
     rt.size_z = t.size_z;
     rt.dune_seed = t.dune_seed;
+    static_assert(RENDER_TERRAIN_HOLES == TERRAIN_MAX_HOLES, "проёмы земли у кадра и шага мира");
+    rt.hole_count = t.hole_count;
+    for (u32 k = 0; k < t.hole_count; ++k) {
+        rt.hole[k][0] = t.hole[k].x0;
+        rt.hole[k][1] = t.hole[k].z0;
+        rt.hole[k][2] = t.hole[k].x1;
+        rt.hole[k][3] = t.hole[k].z1;
+    }
     static_assert(RENDER_TERRAIN_OCTAVES == TERRAIN_DETAIL_OCTAVES, "октавы деталей у кадра и шага мира");
     for (u32 k = 0; k < RENDER_TERRAIN_OCTAVES; ++k) {
         terrain_detail_octave(k, &rt.oct_lp[k], &rt.oct_amp[k]);

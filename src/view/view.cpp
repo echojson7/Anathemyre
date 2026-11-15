@@ -42,6 +42,39 @@ WPos view_pivot_at(const Terrain &ground, WPos p) {
     return p;
 }
 
+// Точка ниже земли, но не в грунте: проём земли или подземная постройка (docs/camera.md, «Под землёй»)
+static bool open_below(const Terrain &ground, const Colliders *coll, const WPos &p) {
+    if (!coll) return false;
+    if (ground_hole(ground, p)) return true;
+    return p.y < ground_at(ground, p).height && underground_open(ground, *coll, p.cx, p.cz, p.x, p.z, p.y);
+}
+
+// Опора орбиты, когда она ушла под землю или стоит над проёмом: на высоте глаз над полом постройки. По ступеням —
+// как человек; не вышло — на уступ до CAM_STEP_M (край платформы). Пол годится, если над ним не грунт. Пола нет
+// (опора в стене) — высота прежняя; постройки нет — на землю
+static constexpr f32 CAM_STEP_M = 1.25f;
+static constexpr f32 CAM_BELOW_M = 1.0f;  // глубже — опора под землёй (склон за кадр столько не даёт)
+static WPos pivot_settle(const Terrain &ground, const Colliders *coll, WPos p) {
+    f32 g = ground_at(ground, p).height;
+    f32 feet = p.y - PIVOT_ABOVE_GROUND;
+    bool below = feet < g - CAM_BELOW_M;
+    if (coll && (below || ground_hole(ground, p))) {
+        const f32 steps[2] = {STEP_UP_M, CAM_STEP_M};
+        for (f32 step : steps) {
+            Support s = support_at(ground, *coll, p.cx, p.cz, p.x, p.z, feet + step - STEP_UP_M);
+            WPos q = p;
+            q.y = s.height + 0.1f;
+            if (s.kind && (s.height > g || open_below(ground, coll, q))) {
+                p.y = s.height + PIVOT_ABOVE_GROUND;
+                return p;
+            }
+        }
+        if (below && open_below(ground, coll, p)) return p;
+    }
+    p.y = g + PIVOT_ABOVE_GROUND;
+    return p;
+}
+
 WPos view_eye(const Camera &cam) {
     if (cam.free) return cam.pivot;
     return offset(cam.pivot, back_dir(cam) * (cam.arm < 0.0f ? cam.dist : cam.arm));
@@ -62,7 +95,7 @@ static Basis basis(const Camera &cam) {
 static constexpr f32 EYE_WALL_M = 0.3f;
 static constexpr f32 FOLLOW_ARM_MIN = 1.2f;  // штанга за человеком не короче, м
 static bool eye_clear(const Terrain &ground, const WPos &p, const Colliders *coll = nullptr) {
-    if (p.y < ground_at(ground, p).height + EYE_ABOVE_GROUND) return false;
+    if (p.y < ground_at(ground, p).height + EYE_ABOVE_GROUND && !open_below(ground, coll, p)) return false;
     if (coll)
         for (u16 k : colliders_near(*coll, p.cx, p.cz, p.x, p.z))
             if (p.y > coll->y0[k] - EYE_WALL_M && p.y < coll->y1[k] + EYE_WALL_M &&
@@ -76,7 +109,8 @@ static f32 arm_room(const Camera &cam, const Terrain &ground, const Colliders *c
     if (cam.dist <= 0.0f) return 0.0f;
     Vec3 d = back_dir(cam);
     f32 step = coll ? 0.1f : f_max(0.25f, cam.dist / 64.0f), ok = 0.0f;
-    for (f32 t = step;; t += step) {
+    // Со стенами шаг мелкий (стена 0.2 м); дальше 20 м он растёт — длинная штанга не стоит тысяч проверок
+    for (f32 t = step;; t += (coll && t > 20.0f) ? t * 0.02f : step) {
         f32 tt = f_min(t, cam.dist);
         if (!eye_clear(ground, offset(cam.pivot, d * tt), coll)) return ok;
         ok = tt;
@@ -84,7 +118,7 @@ static f32 arm_room(const Camera &cam, const Terrain &ground, const Colliders *c
     }
 }
 
-void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &ground) {
+void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &ground, const Colliders *coll) {
     if (in.key_pressed[KEY_F]) {
         if (!cam.free) {
             cam.pivot = view_eye(cam);
@@ -94,7 +128,10 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &gr
             // горизонта — опора впереди на прежнем расстоянии
             WPos eye = cam.pivot, hit;
             Basis b = basis(cam);
-            if (view_screen_to_ground(cam, 2, 2, 1.0f, 1.0f, ground, hit)) {
+            if (open_below(ground, coll, eye) && eye.y < ground_at(ground, eye).height) {
+                // Под землёй (подземная постройка): опора — на месте глаза, на пол её ставит pivot_settle ниже
+                cam.dist = f_min(cam.dist, 3.0f);
+            } else if (view_screen_to_ground(cam, 2, 2, 1.0f, 1.0f, ground, hit)) {
                 cam.dist = f_clamp(length(delta(eye, hit.cx, hit.cz, hit.x, hit.y, hit.z)), DIST_MIN, DIST_MAX);
                 cam.pivot = view_pivot_at(ground, hit);
             } else {
@@ -134,8 +171,10 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &gr
         f32 speed = 12.0f * f_max(1.0f, above / 20.0f);
         cam.pivot = offset(cam.pivot, move * (speed * fast * dt));
         if (in.wheel != 0) cam.pivot = offset(cam.pivot, b.forward * (in.wheel * 2.0f * fast * f_max(1.0f, above / 20.0f)));
+        // Под землю — только в проём и в подземную постройку (там пол полёта — её низ не проверяется: стены
+        // полёт и так проходит насквозь)
         f32 floor_y = ground_at(ground, cam.pivot).height + EYE_ABOVE_GROUND;
-        if (cam.pivot.y < floor_y) cam.pivot.y = floor_y;
+        if (cam.pivot.y < floor_y && !open_below(ground, coll, cam.pivot)) cam.pivot.y = floor_y;
         return;
     }
     // Орбита: WASD и Shift + средняя кнопка двигают опору над землёй (и снимают слежение за человеком), колесо —
@@ -153,12 +192,13 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &gr
     for (f32 w = in.wheel; w < -0.5f; w += 1.0f) cam.dist = cam.dist < DIST_SNAP ? DIST_SNAP : cam.dist / 0.85f;
     cam.dist = f_clamp(cam.dist, DIST_MIN, DIST_MAX);
     if (!cam.follow) {
-        cam.pivot = view_pivot_at(ground, cam.pivot);
-        if (cam.pivot_above >= 0) cam.pivot.y = ground_at(ground, cam.pivot).height + cam.pivot_above;
+        cam.pivot = pivot_settle(ground, coll, cam.pivot);
+        if (cam.pivot_above > CAM_PIVOT_UNSET) cam.pivot.y = ground_at(ground, cam.pivot).height + cam.pivot_above;
     }
     // Штанга: земля укорачивает её сразу (глаз не уходит под склон), назад — плавно, чтобы на кочках
-    // не дёргалась. Взгляд при этом не меняется
-    f32 room = arm_room(cam, ground);
+    // не дёргалась. Взгляд при этом не меняется. Под землёй её держат стены постройки
+    bool below = cam.pivot.y < ground_at(ground, cam.pivot).height + EYE_ABOVE_GROUND;
+    f32 room = arm_room(cam, ground, below ? coll : nullptr);
     if (cam.arm < 0.0f || room < cam.arm) cam.arm = room;
     else cam.arm += (room - cam.arm) * f_min(1.0f, dt * ARM_GROW);
 }
@@ -195,7 +235,7 @@ static bool solid_at(const Terrain &ground, const Colliders *coll, const WPos &p
             return true;
         }
     }
-    if (p.y <= ground_at(ground, p).height) {
+    if (p.y <= ground_at(ground, p).height && !open_below(ground, coll, p)) {
         *top = -1e9f;
         return true;
     }

@@ -12,7 +12,8 @@ static void cell_center(const WalkArea &a, u32 i, u32 j, i32 *cx, i32 *cz, f32 *
     *z = (f32)(j % WALK_CELLS_PER_CHUNK) * WALK_CELL_M + WALK_CELL_M * 0.5f;
 }
 
-// Уровни одной клетки: земля и верхи коробок, у которых есть просвет и куда капсула встаёт, не задевая стен
+// Уровни одной клетки: земля и верхи коробок, у которых есть просвет и куда капсула встаёт, не задевая стен.
+// Ниже земли уровень — пол подземной постройки (над ним перекрытие) или ступень в проёме земли
 static void build_cell(WalkArea &a, const Terrain &t, const Colliders &c, u32 i, u32 j) {
     i32 cx, cz;
     f32 x, z;
@@ -21,10 +22,22 @@ static void build_cell(WalkArea &a, const Terrain &t, const Colliders &c, u32 i,
     f32 cand[16];
     u8 cbox[16];
     u32 n = 0;
-    if (g.normal.y >= 0.85f && g.kind != GROUND_WATER) { cand[n] = g.height; cbox[n++] = 0; }
+    // В проёме земли (штамп hole) земля не уровень: там ступени вниз
+    const bool hole = ground_hole(t, cx, cz, x, z);
+    if (!hole && g.normal.y >= 0.85f && g.kind != GROUND_WATER) { cand[n] = g.height; cbox[n++] = 0; }
     Span<const u16> near = colliders_near(c, cx, cz, x, z);
-    for (u16 k : near)
-        if (n < 16 && c.y1[k] > g.height + 0.05f && coll_covers(c, k, cx, cz, x, z)) { cand[n] = c.y1[k]; cbox[n++] = 1; }
+    for (u16 k : near) {
+        if (n >= 16 || !coll_covers(c, k, cx, cz, x, z)) continue;
+        if (c.y1[k] <= g.height + 0.05f && !hole) {
+            // Верх коробки под землёй — пол, только если над ним перекрытие (подземный зал), иначе это грунт
+            bool roof = false;
+            for (u16 q : near)
+                if (c.y0[q] > c.y1[k] + 0.05f && coll_covers(c, q, cx, cz, x, z)) { roof = true; break; }
+            if (!roof) continue;
+        }
+        cand[n] = c.y1[k];
+        cbox[n++] = 1;
+    }
     // По возрастанию высоты (вставками: порядок равных — порядок коробок)
     for (u32 p = 1; p < n; ++p)
         for (u32 q = p; q > 0 && cand[q] < cand[q - 1]; --q) {

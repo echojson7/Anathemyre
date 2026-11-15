@@ -26,6 +26,14 @@ struct TerrainPad {
     i32 margin;    // ширина перехода к рельефу
 };
 
+// Штамп «проём» (docs/terrain.md, «Проём»): прямоугольник, где земли нет — она не рисуется и не держит ноги
+// (спуск в подземную постройку). Сантиметры: в описании — от начала координат, у готовой земли — от
+// юго-западного угла карты
+constexpr u32 TERRAIN_MAX_HOLES = 4;
+struct TerrainHole {
+    i32 x0, z0, x1, z1;
+};
+
 // Описание земли (data/terrain.txt)
 struct TerrainDesc {
     u32 seed = 1;
@@ -39,6 +47,8 @@ struct TerrainDesc {
     usize dune_size[TERRAIN_MAX_LOCATIONS] = {};
     TerrainPad pad[TERRAIN_MAX_PADS] = {};
     u32 pad_count = 0;
+    TerrainHole hole[TERRAIN_MAX_HOLES] = {};
+    u32 hole_count = 0;
 };
 // Карта дюн: узлы 2 м на всю локацию (сторона loc_m / 2 + 1), единицы 1/640 м
 constexpr i32 TERRAIN_FINE_SHIFT = 1;
@@ -64,7 +74,9 @@ struct Terrain {
     u32 fine_n = 0;         // узлов на сторону сетки локации
     usize fine_count = 0;   // всего узлов
     i32 fine_off[TERRAIN_MAX_LOCATIONS] = {-1, -1, -1, -1};
-    u64 hash = 0;           // хеш сетки, масок, воды и дюн
+    TerrainHole hole[TERRAIN_MAX_HOLES] = {};  // проёмы, см от юго-западного угла карты
+    u32 hole_count = 0;
+    u64 hash = 0;           // хеш сетки, масок, воды, дюн и проёмов
 };
 
 // Разобрать data/terrain.txt. false — ошибка в err

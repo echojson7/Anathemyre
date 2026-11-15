@@ -35,6 +35,17 @@ static WPos ostov_at(const World &w, f32 dx, f32 dz, f32 y) {
     return p;
 }
 
+// Точка у Исподи (docs/ispod.md): сдвиг от начала заготовки, высота — от земли площадки (пол платформы −9 м)
+static WPos ispod_at(const World &w, f32 dx, f32 dz, f32 y) {
+    WPos c{45, -10, 11763.0f - 45.0f * 256.0f, 0.0f, -2365.0f + 10.0f * 256.0f};
+    WPos p = c;
+    p.x += dx;
+    p.z += dz;
+    p.y = ground_at(w.terrain, c).height + y;
+    wpos_rebase(p);
+    return p;
+}
+
 void autoplay_intents(const World &w, Rng &rng, FixedArray<Intent> &out) {
     const u64 step = w.step;
     // Ритм нарочно неровный: намерения попадают на разные фазы шага
@@ -72,6 +83,33 @@ void autoplay_intents(const World &w, Rng &rng, FixedArray<Intent> &out) {
             WPos t = ostov_at(w, dx, dz, y);
             u64 gait = rng_below(rng, 3);
             out.push_back({step, INTENT_GO, t, (u64)id | (gait << 32)});
+        }
+    }
+    // Исподь (docs/ispod.md): горстка людей у входа и те, кто забрёл ближе 70 м, ходят под землю и обратно —
+    // хеши CI проверяют опору и путь ниже земли. Раз в секунду приказ одному: платформа, коридор, тоннель на
+    // север, путь и тоннель на юг, поверхность у входа
+    if (step == 0) out.push_back({step, INTENT_PEOPLE_SPAWN, ispod_at(w, -3.1f, 31.0f, 0.0f), 12 | (3ull << 16)});
+    if (step % 61 == 30 && w.people.live) {
+        const People &p = w.people;
+        WPos c = ispod_at(w, 0.0f, 26.0f, 0.0f);
+        u32 cand[64], n = 0;
+        for (u32 s = 0; s < PEOPLE_CAPACITY && n < 64; ++s) {
+            if (!p.alive[s]) continue;
+            Vec2 d = wpos_delta_xz(c.cx, c.cz, c.x, c.z, p.cx[s], p.cz[s], p.x[s], p.z[s]);
+            if (dot(d, d) < 70.0f * 70.0f) cand[n++] = s;
+        }
+        if (n) {
+            u32 s = cand[rng_below(rng, n)];
+            u32 kind = rng_below(rng, 5);
+            f32 dx, dz, y;
+            if (kind == 0) { dx = rng_range(rng, -3.5f, 1.5f); dz = rng_range(rng, 1.0f, 28.0f); y = -9.0f; }
+            else if (kind == 1) { dx = -7.3f; dz = rng_range(rng, 6.0f, 36.0f); y = -9.0f; }
+            else if (kind == 2) { dx = rng_range(rng, 3.5f, 6.0f); dz = rng_range(rng, 31.0f, 64.0f); y = -10.1f; }
+            else if (kind == 3) { dx = rng_range(rng, 3.5f, 6.0f); dz = rng_range(rng, -12.0f, 28.0f); y = -10.1f; }
+            else { dx = rng_range(rng, -12.0f, 6.0f); dz = rng_range(rng, 28.0f, 40.0f); y = 0.0f; }
+            WPos t = ispod_at(w, dx, dz, y);
+            u64 gait = rng_below(rng, 3);
+            out.push_back({step, INTENT_GO, t, (u64)(s | ((u32)p.gen[s] << 16)) | (gait << 32)});
         }
     }
     // Удары (этап 10): раз в ~3.5 с случайный нападает на ближнего к нему (подход, удар, реакция задетого)
@@ -309,7 +347,7 @@ bool debug_write_terrain_map(const Terrain &t, const char *path, Arena &scratch)
     return ok;
 }
 
-// Карта сетки ходимости у Остова (--walk-map): 40 × 40 м, клетка 0.5 м — 14 пикселей, север сверху. Нет уровня —
+// Карта сетки ходимости у Остова (--walk-map; пути Исподи под землю — строками журнала): 40 × 40 м, клетка 0.5 м — 14 пикселей, север сверху. Нет уровня —
 // тёмно-красный; земля — песочный; пол постройки — от синего (низ) к белому (верх плиты); две плиты над клеткой —
 // полоска. Поверх — путь подставного приказа: от входа на галерею по маршу (A* + сглаживание)
 bool debug_write_walk_map(const World &w, const char *path, Arena &scratch) {
@@ -371,6 +409,35 @@ bool debug_write_walk_map(const World &w, const char *path, Arena &scratch) {
         }
     }
     bool ok = write_bmp(path, rgba, size, size, scratch);
+    // Исподь (docs/ispod.md): пути под землю и обратно — с поверхности на платформу, через дверь в коридор, по
+    // коридору в тоннель, по пути и сходу назад на платформу, с платформы наверх
+    struct Leg { const char *name; f32 x0, z0, y0, x1, z1, y1; };
+    const Leg legs[] = {{"с поверхности на платформу", -3.1f, 28.0f, 0.0f, 0.0f, 15.0f, -9.0f},
+                        {"с платформы в коридор", 0.0f, 15.0f, -9.0f, -7.3f, 20.0f, -9.0f},
+                        {"из коридора в тоннель", -7.3f, 20.0f, -9.0f, 4.75f, 45.0f, -10.1f},
+                        {"из тоннеля на платформу", 4.75f, 45.0f, -10.1f, 0.0f, 15.0f, -9.0f},
+                        {"с платформы на поверхность", 0.0f, 15.0f, -9.0f, -3.1f, 28.0f, 0.0f}};
+    for (const Leg &g : legs) {
+        WPos p0 = ispod_at(w, g.x0, g.z0, g.y0), p1 = ispod_at(w, g.x1, g.z1, g.y1);
+        u32 i_a, j_a, i_b, j_b, node_a, node_b;
+        i32 area_a = walk_area_of(w.walk, p0.cx, p0.cz, p0.x, p0.z, &i_a, &j_a);
+        i32 area_b = walk_area_of(w.walk, p1.cx, p1.cz, p1.x, p1.z, &i_b, &j_b);
+        if (area_a < 0 || area_a != area_b) { log_error("--walk-map: Исподь вне сетки ходимости"); ok = false; break; }
+        const WalkArea &sa = w.walk.area[area_a];
+        if (!walk_node_near(sa, i_a, j_a, p0.y, 2, &node_a) || !walk_node_near(sa, i_b, j_b, p1.y, 2, &node_b)) {
+            log_error("--walk-map: Исподь, %s — нет узла", g.name);
+            ok = false;
+            continue;
+        }
+        WalkSearch search;
+        search.max_expand = 400000;
+        u32 nodes[256];
+        u32 count = walk_find(sa, node_a, node_b, scratch, search, nodes, 256);
+        f32 y0 = ispod_at(w, 0, 0, 0).y;
+        log_info("--walk-map: Исподь, %s (%.2f → %.2f м) — %s, узлов %u, раскрыто %u", g.name, (double)(walk_node_pos(sa, node_a).y - y0),
+                 (double)(walk_node_pos(sa, node_b).y - y0), search.reached ? "дошёл" : "НЕ дошёл", count, search.expanded);
+        ok = ok && search.reached;
+    }
     arena_restore(scratch, mark);
     return ok;
 }
