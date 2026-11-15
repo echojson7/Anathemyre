@@ -3,11 +3,12 @@
 // экспозицию и тонмаппинг делает стиль (post.glsl), HDR кадра уже умножен на экспозицию (light_cells.comp).
 // Этап 6а: отражение GGX с поправкой многократного рассеяния, металл, рассеянное Ламберта; главный свет
 // (солнце, ночью луна) с тенью земли по карте горизонта (sun_visibility, дальше — карта теней 6б); свет неба
-// по нормали (atmo_ambient) и отражение неба (atmo_sky) по шероховатости, оба — с видимостью неба по полю
-// расстояний мира (6в, sdf_sky); дымка atmo_fog() (atmosphere.glsl)
+// по нормали и отражение неба по шероховатости — из зондов непрямого света (6г, gi.glsl: небо и отражённое
+// стенами и землёй) с ближним затенением по полю (sdf_ao); вне окон зондов — небо (atmo_ambient, atmo_sky) с
+// видимостью по полю расстояний мира (6в, sdf_sky); дымка atmo_fog() (atmosphere.glsl)
 #include "horizon.glsl"
 #include "shadow.glsl"
-#include "sdf.glsl"
+#include "gi.glsl"
 #include "atmosphere.glsl"
 
 // Видимость главного светила: 1 — свет, 0 — тень, всегда мягко (docs/light.md, правило 5). Земля — карта
@@ -43,6 +44,48 @@ vec2 brdf_dfg(float nv, float rough) {
 // Затенение отражения по ao (Lagarde 2014): в щели отражение гаснет быстрее рассеянного у гладкого
 float spec_occlusion(float nv, float ao, float a) {
     return clamp(pow(nv + ao, exp2(-16.0 * a - 1.0)) - 1.0 + ao, 0.0, 1.0);
+}
+
+// Непрямой свет (6г, docs/gi.md): рассеянное и отражение от неба и от того, что отразили стены и земля.
+// irr, env — небо без заслонки по нормали и в сторону отражения; kd — доля рассеянного, fss_ess, fms_ems —
+// отражение за один отскок и добавка многократного (Fdez-Agüera 2019).
+// Зонды: E/π по нормали — уже с заслонкой и отскоками, ближнее затенение (sdf_ao) — углы мельче шага зондов.
+// Отражение у шероховатого — свет зондов в его сторону, у гладкого — небо в долю, в какой зонды видят его туда,
+// и отражённое стенами за остальное. Вне окон зондов (и при выключенных) — запасной путь 6в: небо × видимость
+// неба конусами по полю (sdf_sky), без отражённого. Оба затеняются ao материала и по Lagarde для отражения
+// lit — освещённость воздуха у точки против открытого неба (рассеянный свет к небу по нормали): дымке отрезка
+vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, vec3 irr, vec3 env, vec3 kd,
+                    vec3 fss_ess, vec3 fms_ems, out float lit) {
+    GiSample g = gi_sample(s.pos, n, rd, true);
+    vec3 c = vec3(0.0);
+    const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
+    float sky_y = max(dot(irr, Y), 1e-6);
+    lit = 0.0;
+    if (g.cov < 1.0) {
+        float vis = sdf_sky(s.pos, n).x;
+        lit = vis * (1.0 - g.cov);
+        float ao = s.ao * vis;
+        float so = spec_occlusion(nv, ao, a);
+        c = (kd * irr * ao + (fss_ess * env + fms_ems * irr) * so) * (1.0 - g.cov);
+    }
+    if (g.cov > 0.0) {
+        lit += clamp(dot(g.irr, Y) / sky_y, 0.0, 1.0) * g.cov;
+        float ao = s.ao * sdf_ao(s.pos, n);
+        float so = spec_occlusion(nv, ao, a);
+        vec3 bounce = max(g.refl.rgb - atmo_ambient(rd) * g.refl.a, vec3(0.0));
+        vec3 env_g = mix(env * g.refl.a + bounce, g.refl.rgb, blur);
+        c += (kd * g.irr * ao + (fss_ess * env_g + fms_ems * g.irr) * so) * g.cov;
+    }
+    return c;
+}
+
+// F3 «только непрямой» (docs/gi.md): серая карта 50 % под рассеянным непрямым светом, как его видит свет кадра
+vec3 light_indirect_view(Surface s) {
+    GiSample g = gi_sample(s.pos, s.normal, s.normal, false);
+    vec3 irr = atmo_ambient(s.normal);
+    vec3 fb = irr * (s.ao * (g.cov < 1.0 ? sdf_sky(s.pos, s.normal).x : 1.0));
+    vec3 gi = g.cov > 0.0 ? g.irr * (s.ao * sdf_ao(s.pos, s.normal)) : vec3(0.0);
+    return 0.5 * mix(fb, gi, g.cov);
 }
 
 vec3 light_surface(Surface s) {
@@ -91,11 +134,10 @@ vec3 light_surface(Surface s) {
     vec3 env = atmo_ambient(rd);
     // Таблица неба — только у гладкого и со ступени «Средне» (на «Низко» отражение — из гармоник неба)
     if (blur < 1.0 && f.light_q >= LIGHT_Q_MEDIUM) env = mix(atmo_sky(vec3(rd.x, max(rd.y, 0.0), rd.z)), env, blur);
-    // Видимость неба по полю расстояний мира (6в, docs/sdf.md): здание и камни закрывают небо — интерьер темнеет
-    // (свет, отражённый от стен, — зонды 6г). Свет неба и его отражение гаснут вместе с ao материала
-    float ao = s.ao * sdf_sky_light(sdf_sky(s.pos, n));
-    float so = spec_occlusion(nv, ao, a);
-    c += kd * irr * ao + (fss_ess * env + fms * ems * irr) * so;
+    float lit;
+    c += light_indirect(s, n, nv, a, rd, blur, irr, env, kd, fss_ess, fms * ems, lit);
     c += s.emissive;
-    return atmo_fog(c, s.pos);
+    // Воздух отрезка освещён как у точки вдали и как у глаза вблизи (глаз — eye.comp, sky_out [5].w)
+    float lc = clamp(f.sky_out.v[SKY_OUT_EYE2].w, 0.0, 1.0);
+    return atmo_fog_lit(c, s.pos, mix(lit, lc, exp(-dist / 32.0)));
 }
