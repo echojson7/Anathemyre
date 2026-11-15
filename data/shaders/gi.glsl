@@ -115,6 +115,20 @@ float gi_ground_dist(vec3 pa, bool soil) {
     return d * 0.85;
 }
 bool gi_under(vec3 pa) { return pc.frame.t_on != 0u && pa.y < gi_ground_h(pa); }
+// Грунт над точкой pa (м от якоря): 0 — на поверхности и под проёмом земли, 1 — глубже GI_SOIL + 1.5 м под землёй.
+// Запасной свет неба (где зондов нет) под грунтом не светит: конусы видимости неба идут не дальше 16–32 м и вдоль
+// длинного тоннеля или коридора заслонки не находят — днём тоннель Исподи светился небом (разбор 2026-11-15)
+float gi_buried(vec3 pa) {
+    FrameData f = pc.frame;
+    if (f.t_on == 0u) return 0.0;
+    float d = gi_ground_h(pa) - pa.y;
+    vec2 q = pa.xz - f.sdf_cam.xz;
+    for (uint k = 0u; k < f.t_hole_n; ++k) {
+        vec4 h = f.t_hole[k];
+        d = min(d, -min(min(q.x - h.x, h.z - q.x), min(q.y - h.y, h.w - q.y)));
+    }
+    return smoothstep(GI_SOIL, GI_SOIL + 1.5, d);
+}
 // Расстояние до мира: поле (уровень не мельче L) и земля
 float gi_dist(vec3 pa, int L, bool soil) { return min(sdf_dist(pa, L), gi_ground_dist(pa, soil)); }
 vec3 gi_grad(vec3 pa, int L, bool soil) {
