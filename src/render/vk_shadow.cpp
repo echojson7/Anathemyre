@@ -31,9 +31,10 @@ bool vk_shadow_init() {
     d.no_attach = true;
     d.depth_test = false;
     d.depth_write = false;
-    // Только грани, повёрнутые от светила (у сеток они снаружи против часовой, как у visibility buffer): тексель
-    // хранит нижнюю грань заслонки, и освещённая грань не затеняет сама себя
-    d.cull = VK_CULL_MODE_FRONT_BIT;
+    // Обе стороны (у сеток грани снаружи против часовой, как у visibility buffer): грань, повёрнутая от светила, —
+    // нижняя грань заслонки; повёрнутая к светилу пишет высоту с отступом (shadow.frag) — толща тела не пропускает
+    // свет на стыках, а освещённая грань не затеняет сама себя
+    d.cull = VK_CULL_MODE_NONE;
     ok = vk_make_pipeline(&s.pipe_draw, d) && ok;
     s.rg_table = rg_buffer("тени: окна страниц");
     s.rg_pages = rg_buffer("тени: страницы");
