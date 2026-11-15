@@ -378,6 +378,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.style.dt = in.dt;
     out.style.eye_snap = in.eye_snap;
     out.style.tonemap = in.tonemap;
+    out.style.scans = in.scans;
     out.style.light_quality = in.light_quality;
 
     // Небо, светила и временный главный свет — из часов мира (docs/sky.md). Воздух пустыни (пыль, тёплая

@@ -8,6 +8,7 @@
 #   make check                 слои и запреты; make sim-check — эталонные хеши --sim; make sim-ref — обновить их
 #   make compdb                compile_commands.json по исходным файлам
 #   make anims                 дорожки клипов из .anim (CI сверяет); make retarget — ретаргет BVH/FBX (bpy)
+#   make scans                 сканы CC0 в данные сборки (docs/scans.md): нужна сеть и python3 с numpy, PIL
 #   make parts                 детали фабрики (docs/parts.md): нужен bpy, PYTHON=интерпретатор с ним
 # Компиляторы и SDL3 скачиваются и собираются сами при первой сборке (tools/toolchain.sh, tools/third_party.sh).
 
@@ -121,7 +122,7 @@ DATA_SRC := data/materials.txt data/scene.txt data/sky.txt data/terrain.txt data
             $(sort $(wildcard data/actions/*.txt)) data/duel.txt data/group.txt
 DATA_OUT := $(patsubst data/%,$(OUT)/data/%,$(DATA_SRC))
 
-.PHONY: all clean check sim-check sim-ref compdb toolchain third_party meshes parts anims retarget
+.PHONY: all clean check sim-check sim-ref compdb toolchain third_party meshes parts anims retarget scans
 all: $(BIN) $(SHADER_SPV) $(DATA_OUT)
 
 $(OUT)/data/%: data/%
@@ -145,6 +146,11 @@ endif
 meshes: $(MESHPACK)
 	python3 tools/meshgen.py data/meshes $(MESHPACK)
 	./tools/humanconv/fetch.sh $(MESHPACK)
+# Сканы CC0 (docs/scans.md): картинки Poly Haven по sha256 в кеш и пакет в данные сборки. Нужна сеть, не в CI:
+# без пакета материалы остаются узором
+scans:
+	./tools/scans/fetch.sh $(OUT)/data
+
 # Детали фабрики (docs/parts.md): бетон булевыми операциями Blender и наполнение рецептами. Нужен Blender как
 # модуль Python (pip install bpy==5.3.0), поэтому отдельно от meshes и не в CI; PYTHON — интерпретатор с bpy
 PYTHON ?= python3

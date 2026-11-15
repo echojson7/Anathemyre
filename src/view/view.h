@@ -100,6 +100,7 @@ struct ViewInput {
     f32 dt = 0.0f;
     bool eye_snap = true;
     u32 tonemap = RENDER_TONEMAP_AGX;
+    bool scans = false;  // поверхности из сканов CC0 (docs/scans.md), F3 и --scans
     u32 light_quality = RENDER_LIGHT_HIGH;
     u32 shadow_pages = 0;  // F3 (docs/shadow.md): 1 — страницы теней поверх кадра, 2 — только тень
     u32 sdf_view = RENDER_SDF_FRAME;  // F3 (docs/sdf.md): поле расстояний мира — кадр, только небо, поле, выкл
