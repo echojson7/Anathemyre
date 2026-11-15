@@ -70,8 +70,9 @@ struct AppMemory {
 void app_memory_init(AppMemory &m, bool with_record);
 void app_memory_free(AppMemory &m);
 
-// Мир из зерна и описаний (data/scene.txt); desc_hash — хеш описаний для записи повтора
-bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash);
+// Мир из зерна и описаний (data/scene.txt); desc_hash — хеш описаний для записи повтора. erode_cache — файл
+// кеша эрозии земли (docs/startup.md), только у окна; nullptr — эрозия считается всегда
+bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash, const char *erode_cache = nullptr);
 // Действия людей (data/actions/*.txt, этап 10) и дорожки тел — в w.actions. Зовёт app_world_create; повторно —
 // горячая перезагрузка описаний в окне (отладка: запись повтора после неё не сходится с описаниями)
 bool app_actions_load(World &w, AppMemory &m);
