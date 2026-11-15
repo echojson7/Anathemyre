@@ -49,6 +49,99 @@ void gc_touch(int k, ivec2 t) {
     }
 }
 
+// След пикселя на плоскости его треугольника (точка rel, нормаль ng): углы пикселя без дрожания, то есть всё, куда
+// может попасть точка пикселя при любой фазе дрожания TAA (docs/aa.md). ok — все четыре луча упёрлись в плоскость
+// (иначе пиксель задевает её горизонт)
+struct PxFoot {
+    vec3 p[4];
+    bool ok;
+};
+PxFoot px_foot(ivec2 px, vec3 rel, vec3 ng) {
+    FrameData f = pc.frame;
+    PxFoot r;
+    r.ok = true;
+    float h = dot(rel, ng);
+    [[unroll]] for (int j = 0; j < 4; ++j) {
+        vec2 ndc = (vec2(px) + vec2(j & 1, j >> 1)) * f.ndc_per_pixel - 1.0;
+        vec3 dir = f.forward.xyz + f.right.xyz * (ndc.x / f.proj_x) - f.up.xyz * (ndc.y / f.proj_y);
+        float dn = dot(dir, ng);
+        float t = abs(dn) > 1e-6 ? h / dn : -1.0;
+        r.ok = r.ok && t > 0.0;
+        r.p[j] = t > 0.0 ? dir * t : rel;
+    }
+    return r;
+}
+
+// Вытянутость следа, которую кеш земли оставляет дрожанию TAA: уровень текселя — не мельче трети длинной стороны
+// следа. Луч вдоль земли не берёт тексель мельче пикселя поперёк, а след и его страницы остаются в окне 4 × 4
+// текселя; деталь вдоль луча мельче трёх пикселей кадр копит дрожанием (как анизотропная фильтрация ×3)
+const float GC_ANISO = 0.3;
+
+// След пикселя для уровня кеша земли (м): поперечный по средней глубине углов и треть длинной стороны
+float gc_foot(PxFoot pf) {
+    FrameData f = pc.frame;
+    if (!pf.ok) return 1e9;
+    vec3 w = f.forward.xyz;
+    float depth = 0.25 * (dot(pf.p[0], w) + dot(pf.p[1], w) + dot(pf.p[2], w) + dot(pf.p[3], w));
+    float side = max(max(distance(pf.p[0], pf.p[1]), distance(pf.p[2], pf.p[3])),
+                     max(distance(pf.p[0], pf.p[2]), distance(pf.p[1], pf.p[3])));
+    return max(depth * f.pixel_angle * f.cell_pixels, side * GC_ANISO);
+}
+
+// Страницы под текселями lo … hi уровня k (окно не шире 10 текселей — не больше 3 × 3 страниц). Без цикла
+// (lavapipe под GPU-AV, docs/shadow.md)
+void gc_touch_span(int k, ivec2 lo, ivec2 hi) {
+    ivec2 p0 = lo >> 3, p2 = hi >> 3;
+    bool x1 = p2.x > p0.x, x2 = p2.x > p0.x + 1, z1 = p2.y > p0.y, z2 = p2.y > p0.y + 1;
+    ivec2 t0 = lo, t1 = (p0 + 1) * 8, t2 = hi;
+    gc_touch(k, t0);
+    if (x1) gc_touch(k, ivec2(t1.x, t0.y));
+    if (x2) gc_touch(k, ivec2(t2.x, t0.y));
+    if (z1) {
+        gc_touch(k, ivec2(t0.x, t1.y));
+        if (x1) gc_touch(k, t1);
+        if (x2) gc_touch(k, ivec2(t2.x, t1.y));
+    }
+    if (z2) {
+        gc_touch(k, ivec2(t0.x, t2.y));
+        if (x1) gc_touch(k, ivec2(t1.x, t2.y));
+        if (x2) gc_touch(k, t2);
+    }
+}
+
+// Тексели уровня k, которые смешает пиксель при любой фазе дрожания: четыре соседних под каждой точкой следа.
+// Окно урезается вокруг текселя b самой точки пикселя (след у горизонта плоскости)
+void gc_touch_level(int k, ivec2 b, PxFoot pf) {
+    FrameData f = pc.frame;
+    vec2 mn = min(min(pf.p[0].xz, pf.p[1].xz), min(pf.p[2].xz, pf.p[3].xz));
+    vec2 mx = max(max(pf.p[0].xz, pf.p[1].xz), max(pf.p[2].xz, pf.p[3].xz));
+    ivec2 sh = (f.cam_chunk - ivec2(f.t_chunk0)) * (f.gc_tpc0 >> k);
+    float c = gc_cell(k);
+    ivec2 lo = ivec2(floor((f.cam_off.xz + mn) / c - 0.5)) + sh;
+    ivec2 hi = ivec2(floor((f.cam_off.xz + mx) / c - 0.5)) + 1 + sh;
+    gc_touch_span(k, clamp(lo, b - 4, b), clamp(hi, b + 1, b + 5));
+}
+
+// На пиксель: страницы под следом пикселя — кадр покоя не запекает новых страниц, на какой бы фазе дрожания ни
+// стоял. След почти у границы уровней (плоскость под соседней фазой может быть другого треугольника) — и
+// соседний уровень
+void gc_touch_px(vec3 rel, GcCell cell, PxFoot pf, float foot) {
+    int k = gc_cell_level(cell);
+    gc_touch_level(k, gc_cell_texel(cell), pf);
+    float lf = log2(max(foot / pc.frame.cell_min, 1.0));
+    int ko = lf > 0.0 && float(k) - lf < 0.05 ? k + 1 : (lf - float(k - 1) < 0.05 && k > 0) ? k - 1 : k;
+    if (ko != k && ko < GC_LEVELS) {
+        vec2 fr;
+        gc_touch_level(ko, gc_bilinear(rel, ko, fr), pf);
+    }
+}
+
+// Разброс точки пикселя по фазам дрожания (м): даль от точки до углов следа, не больше 1 м. Для заявок теней
+float px_spread(vec3 rel, PxFoot pf) {
+    float r = max(max(distance(pf.p[0], rel), distance(pf.p[1], rel)), max(distance(pf.p[2], rel), distance(pf.p[3], rel)));
+    return pf.ok ? min(r, 1.0) : 1.0;
+}
+
 // Страница теней нужна кадру: прочитана — отметка кадра, нет — заявка (как gc_touch). bg — набор нового шага
 // светила, что строится в фоне: его заявки — в свой список, место им дают не больше sm_build_cap за кадр
 void sm_touch(int k, ivec2 page, bool bg) {
@@ -95,13 +188,14 @@ void sm_request_level(vec3 rel, float m, int set, int lv, bool bg) {
     if (hi.x > lo.x && hi.y > lo.y) sm_touch(k, b + lo + 1, bg);
 }
 
-// Страницы набора set, которые прочтёт свет ячейки этого пикселя. Свет считается в центре ячейки, а он дальше от
-// точки пикселя не больше чем на ячейку: заявляются уровни обоих краёв этого разброса и страницы под квадратом
-// разброса с запасом на смещение по нормали, выборку и поиск (sm_visibility)
-void sm_request_set(vec3 rel, int set, bool bg) {
+// Страницы набора set, которые прочтёт свет этого пикселя. Правило ячеек: свет — в центре ячейки, он дальше от
+// точки пикселя не больше чем на ячейку; на пиксель — точка ходит по фазам дрожания TAA на spread. Заявляются
+// уровни обоих краёв разброса и страницы под его квадратом с запасом на смещение по нормали, выборку и поиск
+// (sm_visibility)
+void sm_request_set(vec3 rel, float spread, int set, bool bg) {
     FrameData f = pc.frame;
     float depth = dot(rel, f.forward.xyz);
-    float m = (f.pixel != 0u ? cell_size(depth) : f.cell_min) * 0.9 + 0.004;
+    float m = (f.pixel != 0u ? cell_size(depth) * 0.9 : spread) + 0.004;
     if (length(rel) - m > f.sm_far) return;
     vec2 ru = sm_ru(rel, set);
     float far = max(abs(ru.x), abs(ru.y));
@@ -115,11 +209,11 @@ void sm_request_set(vec3 rel, int set, bool bg) {
 }
 
 // Заявки обоих наборов: показанные — сразу, набор в фоне — своим списком
-void sm_request(vec3 rel) {
+void sm_request(vec3 rel, float spread) {
     FrameData f = pc.frame;
     if (f.sm_on == 0u) return;
-    if ((f.sm_read & 1u) != 0u || f.sm_bg == 1u) sm_request_set(rel, 0, f.sm_bg == 1u);
-    if ((f.sm_read & 2u) != 0u || f.sm_bg == 2u) sm_request_set(rel, 1, f.sm_bg == 2u);
+    if ((f.sm_read & 1u) != 0u || f.sm_bg == 1u) sm_request_set(rel, spread, 0, f.sm_bg == 1u);
+    if ((f.sm_read & 2u) != 0u || f.sm_bg == 2u) sm_request_set(rel, spread, 1, f.sm_bg == 2u);
 }
 
 void main() {
@@ -132,13 +226,20 @@ void main() {
         uint has = id == 0u ? 1u : (id & VIS_GROUND) != 0u ? 2u : 4u;
         if (has != 1u) {
             Hit h = resolve(px, id);
+            PxFoot pf;
+            float foot = 0.0;
+            if (f.pixel == 0u) {
+                pf = px_foot(px, h.rel, h.ng);
+                foot = gc_foot(pf);
+            }
             if (has == 2u) {
-                GcCell c = gc_cell_of(h.rel, h.ng);
+                GcCell c = gc_cell_of(h.rel, h.ng, foot);
                 if (f.gc_on != 0u) f.gc_cells.v[px.y * int(f.viewport.x) + px.x] = c;
                 if (c.kt == GC_NONE) has |= 8u;
-                else gc_touch(gc_cell_level(c), gc_cell_texel(c));
+                else if (f.pixel != 0u) gc_touch(gc_cell_level(c), gc_cell_texel(c));
+                else gc_touch_px(h.rel, c, pf, foot);
             }
-            sm_request(h.rel);
+            sm_request(h.rel, f.pixel != 0u ? 0.0 : px_spread(h.rel, pf));
         }
         atomicOr(s_has, has);
     }

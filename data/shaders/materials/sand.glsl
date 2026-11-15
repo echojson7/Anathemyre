@@ -1,4 +1,4 @@
-// Песок: color — светлый, color2 — тёмный (пятна, впадины ряби). texel — квадрат зерна (фактура — sand_texture).
+// Песок: color — светлый, color2 — тёмный (пятна, впадины ряби). texel — размер зерна, м (фактура — sand_texture).
 // extra.x — длина волны мелкой ряби (м, степень двойки), крупная рябь — в 8 раз длиннее; extra.y — наклон
 // нормали на ряби, extra.z — размер пятен (м), extra.w — сила пятен (размер — степень двойки).
 // Рябь поперёк ветра с запада-юго-запада (как наносы долины), гаснет, когда пиксель крупнее волны. На
@@ -57,11 +57,10 @@ float ripple_mix(vec3 p, float lam, float nsz, vec2 wind, float angle, uint seed
 }
 
 // Фактура песка (docs/terrain.md, «Фактура песка»): тон пятнами 128…16 м (светлый бледный и тёмный рыжий),
-// комки 2…0.5 м, зерно квадратами texel и 4·texel и редкие тёмные и светлые крупинки. Без неё песок — ровная
-// заливка (так было до 11.11); у беты он читался по зерну квадратами и пятнам тона — это и берём.
-// Зерно мельче ячейки кадра не гаснет до нуля, а остаётся слабым шумом ячеек: он привязан к миру и не рябит,
-// издали песок читается зернистым, как в бете
-vec3 sand_texture(vec3 c, SurfIn i, vec3 q, float t, float lee) {
+// комки 2…0.5 м, зерно 4·texel…texel и редкие тёмные и светлые крупинки. Без неё песок — ровная заливка (так было
+// до 11.11). Зерно плавное (не квадратами, как в бете и до 15.11) и гаснет мельче пикселя: свет теперь на пиксель,
+// и зерно мельче пикселя рябило бы. Издали песок держат комки и пятна тона
+vec3 sand_texture(vec3 c, SurfIn i, float t, float lee) {
     float tone = fbm_n(i.p, 128.0, 4, 52u) - 0.5;
     c *= 1.0 + tone * 0.36;
     // Тёмное — рыжее и насыщеннее, светлое — бледнее
@@ -72,17 +71,13 @@ vec3 sand_texture(vec3 c, SurfIn i, vec3 q, float t, float lee) {
     float kq = 1.0 - smoothstep(0.06, 0.25, i.foot);
     c *= 1.0 + ((fbm_n(i.p, 2.0, 3, 53u) - 0.5) * 0.18 * kc + (value_noise(i.p, 0.25, 54u) - 0.5) * 0.1 * kq)
                    * mix(1.0, 0.5, lee);
-    // Зерно квадратами texel, как у беты; мельче ячейки кадра — слабее, но не до нуля
-    float kg = mix(0.5, 1.0, 1.0 - smoothstep(t, t * 8.0, i.foot));
-    c *= 1.0 + (cell_noise(q, t, 46u) - 0.5) * 0.14 * kg;
-    // Крупинки texel/4: тёмные (железистые, камешки) и светлые (кварц), гаснут мельче пикселя
-    float ks = 1.0 - smoothstep(t * 0.15, t * 0.5, i.foot);
-    if (ks > 0.0) {
-        float sp = cell_noise(i.p, t * 0.25, 55u);
-        float dens = 0.025 * (1.0 - 0.6 * lee) * smoothstep(0.2, 0.6, fbm_n(i.p, 8.0, 2, 56u) + 0.2);
-        if (sp < dens) c *= mix(1.0, 0.55 + 0.25 * sp / max(dens, 1e-4), ks);
-        else if (sp > 1.0 - dens * 0.4) c *= mix(1.0, 1.18, ks);
-    }
+    // Зерно: 4·texel и texel, плавным шумом
+    c *= 1.0 + (grain_noise(i.p, t * 4.0, i.foot, 47u) * 0.08 + grain_noise(i.p, t, i.foot, 46u) * 0.12);
+    // Крупинки до texel/5: тёмные (железистые, камешки) и светлые (кварц), гаснут мельче пикселя
+    float dens = 0.4 * (1.0 - 0.6 * lee) * smoothstep(0.2, 0.6, fbm_n(i.p, 8.0, 2, 56u) + 0.2);
+    float dark = spot_noise(i.p, i.n, t, dens, t * 0.2, i.foot, 55u);
+    float light = spot_noise(i.p, i.n, t, dens * 0.4, t * 0.15, i.foot, 57u);
+    c *= (1.0 - 0.4 * dark) * (1.0 + 0.18 * light);
     return c;
 }
 
@@ -90,7 +85,6 @@ vec3 sand_texture(vec3 c, SurfIn i, vec3 q, float t, float lee) {
 Surface sand_surf(SurfIn i, vec2 wind) {
     FrameData f = pc.frame;
     float t = i.m.p1.a;
-    vec3 q = snap(i.p, t);
     float lam = i.m.p2.x;
     vec2 wp = vec2(ORIGIN_CHUNK) * CHUNK_M + i.p.xz;  // мировые метры: узор не прыгает со сменой чанка
     // Подветренный склон: земля уходит вниз по ветру, или склон крут, как склон осыпания (~30°). Там ряби нет
@@ -144,7 +138,7 @@ Surface sand_surf(SurfIn i, vec2 wind) {
         c *= 1.0 + (tongue - 0.5) * 0.12 * kt;
         n = normalize(n + vec3(-d.y, 0.0, d.x) * (grad_noise(sp, 0.5, 50u) - 0.5) * 0.15 * kt);
     }
-    c = sand_texture(c, i, q, t, lee);
+    c = sand_texture(c, i, t, lee);
     // Наветренные склоны ряби светлее, во впадинах оседает тёмная пыль; издали рябь — чуть темнее гладкого
     c *= 1.0 - 0.06 * (1.0 - h1) * k1 - 0.06 * (1.0 - h2) * k2 - 0.03 * on;
     Surface s;

@@ -11,6 +11,6 @@ void main() {
     Instance it = f.vis_instances.v[vc.x];
     Vertex vx = f.vertices.v[gl_VertexIndex];
     vec3 local = quat_rotate(inst_quat(it), vec3(vx.px, vx.py, vx.pz) * it.scale);
-    gl_Position = to_clip(rel_to_camera(ivec2(it.cx, it.cz), vec3(it.x, it.y, it.z)) + local);
+    gl_Position = to_clip_jittered(rel_to_camera(ivec2(it.cx, it.cz), vec3(it.x, it.y, it.z)) + local);
     v_slot = uint(gl_InstanceIndex);
 }

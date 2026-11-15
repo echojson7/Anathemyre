@@ -241,6 +241,7 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     vk_terrain_fill(g, f);
     vk_sky_fill(g, f);
     vk_horizon_fill(g, f);
+    vk_aa_fill(g, f);        // до vk_skin_fill: кадр сглаживания нужен прошлым экземплярам людей
     vk_skin_fill(g, f, fs);  // до vk_world_fill: LOD людей идёт в их экземпляры
     vk_world_fill(g, f, fs);
     vk_froxel_fill(g, f, fs);

@@ -44,6 +44,7 @@ void hud_fps(const Settings &s, const HudStats &st) {
 static const char *const TABS[HUD_TABS] = {"ЭКРАН", "ИНТЕРФЕЙС", "УПРАВЛЕНИЕ", "ОТЛАДКА"};
 static const char *const FPS_NAMES[FPS_MODES] = {"выкл", "к/с", "подробно"};
 static const char *const QUALITY_NAMES[] = {"низко", "средне", "высоко", "ультра"};
+static const char *const AA_NAMES[] = {"выкл", "FXAA", "TAA"};
 
 static void tab_screen(UiForm &f, Settings &s, bool &ch) {
     ui_section(f, "ОКНО");
@@ -54,6 +55,8 @@ static void tab_screen(UiForm &f, Settings &s, bool &ch) {
     // Ступени света (docs/light.md, «Ступени»): каждая — тот же облик, ниже — дешевле. Шаги этапа 6 добавляют свои
     ui_section(f, "ГРАФИКА");
     ch |= ui_choice(f, "Качество света", s.light_quality, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES));
+    // Сглаживание краёв (docs/aa.md): TAA — края и мерцание мелочи, FXAA — только края, дешевле
+    ch |= ui_choice(f, "Сглаживание", s.aa, AA_NAMES, ANA_COUNTOF(AA_NAMES));
 }
 
 static void tab_ui(UiForm &f, Settings &s, bool &ch) {
@@ -83,7 +86,7 @@ static void tab_controls(UiForm &f, Settings &s, bool &ch) {
     static const char *const MAIN[][2] = {{"Esc", "настройки"}, {"F11", "весь экран"}, {"F3", "панель отладки"}};
     static const char *const DBG[][2] = {{"Space", "пауза"}, {".", "шаг на паузе"}, {"−  =", "скорость мира"},
                                           {"[  ]", "час назад, вперёд"}, {"T", "ход суток"}, {"L", "отрезки"},
-                                          {"P", "пиксельное правило"}, {"B", "стенд: согнуть кость"}};
+                                          {"P", "ячейки (старое правило)"}, {"B", "стенд: согнуть кость"}};
     f32 gap = ui_px(28), cw = (f.w - gap) * 0.5f;
     UiForm l = f, r = f;
     l.w = r.w = cw;
@@ -104,7 +107,6 @@ static void tab_debug(UiForm &f, Settings &s, bool &ch) {
     ch |= ui_toggle(f, "Панель отладки  (F3)", s.debug_panel);
     ui_section(f, "ВИД");
     ch |= ui_toggle(f, "Отрезки и точки  (L)", s.lines);
-    ch |= ui_toggle(f, "Пиксельное правило  (P)", s.pixel);
 }
 
 void hud_menu(HudMenu &m, Settings &s) {

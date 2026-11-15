@@ -88,7 +88,7 @@ struct ViewInput {
     f32 alpha;              // 0 — prev, 1 — cur
     const DebugDraw *dbg;   // может быть nullptr
     i32 width, height;      // пиксели кадра
-    bool pixel;             // правило ячейки (P)
+    bool pixel;             // старое правило ячеек (P, --cells)
     bool test_lights;       // тестовые огни вокруг опоры камеры (F3): проверка списков froxels
     bool froxel_heat;       // тепловая карта числа огней по клеткам (F3)
     bool gcache_off;        // без кеша поверхности земли: земля на пиксель (F3, --nogcache)
@@ -100,6 +100,7 @@ struct ViewInput {
     bool eye_snap = true;
     u32 tonemap = RENDER_TONEMAP_AGX;
     u32 light_quality = RENDER_LIGHT_HIGH;
+    u32 aa = RENDER_AA_TAA;
     u32 shadow_pages = 0;  // F3 (docs/shadow.md): 1 — страницы теней поверх кадра, 2 — только тень
     u32 sdf_view = RENDER_SDF_FRAME;  // F3 (docs/sdf.md): поле расстояний мира — кадр, только небо, поле, выкл
     u32 gi_view = RENDER_GI_FRAME;    // F3 (docs/gi.md): непрямой свет — кадр, только он, без зондов

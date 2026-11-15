@@ -19,11 +19,11 @@ struct Settings {
     f32 fov_deg = 60.0f;
     // Графика (docs/light.md, «Ступени»): RENDER_LIGHT_* — низко, средне, высоко, ультра
     u32 light_quality = 2;
+    u32 aa = 2;               // сглаживание (docs/aa.md): RENDER_AA_* — выкл, FXAA, TAA
     // Отладка
     bool debug = true;        // отладочные клавиши и панель
     bool debug_panel = false; // панель отладки (F3)
     bool lines = true;        // отладочные отрезки и точки (L)
-    bool pixel = true;        // правило ячейки (P)
 };
 
 // Путь файла настроек: рядом с исполняемым файлом

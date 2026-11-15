@@ -46,7 +46,7 @@ void settings_load(Settings &s, const char *path) {
         else if (str_eq(k, "debug") && num) s.debug = b;
         else if (str_eq(k, "debug_panel") && num) s.debug_panel = b;
         else if (str_eq(k, "lines") && num) s.lines = b;
-        else if (str_eq(k, "pixel") && num) s.pixel = b;
+        else if (str_eq(k, "aa") && parse_u32(v, u)) s.aa = u < 3 ? u : 2;
     }
     log_info("настройки: %s", path);
 }
@@ -58,10 +58,10 @@ bool settings_save(const Settings &s, const char *path) {
                      "fullscreen %d\nvsync %d\n"
                      "ui_scale %.2f\ntext_scale %.2f\nfps %u\n"
                      "mouse_sens %.2f\ninvert_y %d\nfov %.0f\n"
-                     "light_quality %u\n"
-                     "debug %d\ndebug_panel %d\nlines %d\npixel %d\n",
+                     "light_quality %u\naa %u\n"
+                     "debug %d\ndebug_panel %d\nlines %d\n",
                      s.fullscreen, s.vsync, (double)s.ui_scale, (double)s.text_scale, s.fps, (double)s.mouse_sens,
-                     s.invert_y, (double)s.fov_deg, s.light_quality, s.debug, s.debug_panel, s.lines, s.pixel);
+                     s.invert_y, (double)s.fov_deg, s.light_quality, s.aa, s.debug, s.debug_panel, s.lines);
     bool ok = n > 0 && platform_write_file(path, t, (usize)n);
     if (!ok) log_error("не записать настройки %s", path);
     return ok;

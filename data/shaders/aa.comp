@@ -1,0 +1,164 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Сглаживание краёв (docs/aa.md, vk_aa.cpp): поток на пиксель. HDR кадра (уже × экспозиция) → история этого кадра
+// (pc.a), её же читает стиль. Режим — aa_mode:
+// TAA — точка пикселя дрожит по кадрам (to_clip_jittered, pixel_ray), история прошлого кадра берётся по вектору
+// движения ближайшего из соседей 3×3 (Catmull-Rom, пять выборок), зажимается в разброс соседей этого кадра (YCoCg,
+// цвет сжат c / (1 + яркость), чтобы яркие блики не перевешивали) и смешивается с новым кадром 1 : 9. Края и
+// мерцание мелочи гаснут за несколько кадров; зажим не даёт истории тянуть шлейф за движущимся.
+// FXAA — поиск края по яркости одного кадра (Lottes, FXAA 3.11 «качество»): края без мерцания мелочи, дешевле.
+// Выкл — копия
+#include "common.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 1, rgba16f) uniform readonly image2D u_hdr;
+layout(set = 0, binding = 9, rgba16f) uniform readonly image2D u_motion;
+layout(set = 0, binding = 10) uniform sampler2D u_hist[2];
+layout(set = 0, binding = 11, rgba16f) uniform writeonly image2D u_out[2];
+
+const float AA_NEW = 0.1;     // доля нового кадра в смеси (TAA)
+const float AA_GAMMA = 1.25;  // ширина зажима в разбросах соседей
+
+ivec2 g_size;
+vec3 hdr_at(ivec2 p) { return imageLoad(u_hdr, clamp(p, ivec2(0), g_size - 1)).rgb; }
+float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+// Сжатие яркого (Karis 2014): обратимо, блик в тысячи раз ярче соседей не решает смесь в одиночку
+vec3 squash(vec3 c) { return c / (1.0 + luma(c)); }
+vec3 unsquash(vec3 c) { return c / max(1.0 - luma(c), 1e-4); }
+vec3 to_ycocg(vec3 c) { return vec3(dot(c, vec3(0.25, 0.5, 0.25)), dot(c, vec3(0.5, 0.0, -0.5)), dot(c, vec3(-0.25, 0.5, -0.25))); }
+vec3 from_ycocg(vec3 c) { return vec3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
+
+void out_store(ivec2 p, vec3 c) {
+    if (pc.a == 0u) imageStore(u_out[0], p, vec4(c, 1.0));
+    else imageStore(u_out[1], p, vec4(c, 1.0));
+}
+vec3 hist_tap(vec2 uv) {
+    // История прошлого кадра — та, которую этот кадр не пишет
+    return pc.a == 0u ? textureLod(u_hist[1], uv, 0.0).rgb : textureLod(u_hist[0], uv, 0.0).rgb;
+}
+
+// Catmull-Rom по истории пятью билинейными выборками (Jimenez 2016): резче билинейной, история не мылится
+vec3 hist_catmull(vec2 uv) {
+    vec2 sz = vec2(g_size);
+    vec2 p = uv * sz;
+    vec2 c = floor(p - 0.5) + 0.5;
+    vec2 f = p - c;
+    vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    vec2 w3 = f * f * (-0.5 + 0.5 * f);
+    vec2 w12 = w1 + w2;
+    vec2 t0 = (c - 1.0) / sz, t3 = (c + 2.0) / sz, t12 = (c + w2 / w12) / sz;
+    vec3 r = hist_tap(vec2(t12.x, t0.y)) * (w12.x * w0.y) + hist_tap(vec2(t0.x, t12.y)) * (w0.x * w12.y) +
+             hist_tap(t12) * (w12.x * w12.y) + hist_tap(vec2(t3.x, t12.y)) * (w3.x * w12.y) +
+             hist_tap(vec2(t12.x, t3.y)) * (w12.x * w3.y);
+    float wsum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+    return max(r / wsum, vec3(0.0));
+}
+
+// Зажим истории в коробку соседей: к середине коробки по прямой, а не по осям (Playdead 2016) — цвет не уезжает
+vec3 clip_box(vec3 h, vec3 lo, vec3 hi) {
+    vec3 c = 0.5 * (hi + lo), e = 0.5 * (hi - lo) + 1e-5;
+    vec3 v = h - c;
+    vec3 a = abs(v / e);
+    float m = max(a.x, max(a.y, a.z));
+    return m > 1.0 ? c + v / m : h;
+}
+
+vec3 taa(ivec2 px) {
+    FrameData f = pc.frame;
+    vec3 cur = vec3(0.0), m1 = vec3(0.0), m2 = vec3(0.0), lo = vec3(1e9), hi = vec3(-1e9);
+    float best = 1e9;
+    vec2 mv = vec2(0.0);
+    [[unroll]] for (int dy = -1; dy <= 1; ++dy)
+        [[unroll]] for (int dx = -1; dx <= 1; ++dx) {
+            ivec2 q = clamp(px + ivec2(dx, dy), ivec2(0), g_size - 1);
+            vec3 y = to_ycocg(squash(imageLoad(u_hdr, q).rgb));
+            if (dx == 0 && dy == 0) cur = y;
+            m1 += y;
+            m2 += y * y;
+            lo = min(lo, y);
+            hi = max(hi, y);
+            vec4 m = imageLoad(u_motion, q);
+            if (m.z < best) {
+                best = m.z;
+                mv = m.xy;
+            }
+        }
+    if (f.aa_hist == 0u) return unsquash(from_ycocg(cur));
+    vec2 uv = (vec2(px) + 0.5 + mv) / vec2(g_size);
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return unsquash(from_ycocg(cur));
+    vec3 mu = m1 / 9.0, sg = sqrt(max(m2 / 9.0 - mu * mu, vec3(0.0)));
+    vec3 h = to_ycocg(squash(hist_catmull(uv)));
+    h = clip_box(h, max(lo, mu - AA_GAMMA * sg), min(hi, mu + AA_GAMMA * sg));
+    // Быстрое движение — новому кадру больше веса: история после пересэмплинга мягче
+    float a = mix(AA_NEW, 0.25, clamp(length(mv) / 16.0, 0.0, 1.0));
+    return unsquash(from_ycocg(mix(h, cur, a)));
+}
+
+// FXAA (Lottes, 3.11 «качество», без выборок сэмплером: полпикселя поперёк края — среднее двух соседних)
+float fxaa_luma(ivec2 p) { return sqrt(luma(squash(hdr_at(p)))); }
+
+vec3 fxaa(ivec2 px) {
+    const float EDGE_MIN = 0.0312, EDGE_MAX = 0.125, SUBPIX = 0.75;
+    vec3 c = hdr_at(px);
+    float lc = sqrt(luma(squash(c)));
+    float ld = fxaa_luma(px + ivec2(0, 1)), lu = fxaa_luma(px + ivec2(0, -1));
+    float ll = fxaa_luma(px + ivec2(-1, 0)), lr = fxaa_luma(px + ivec2(1, 0));
+    float mn = min(lc, min(min(ld, lu), min(ll, lr))), mx = max(lc, max(max(ld, lu), max(ll, lr)));
+    float range = mx - mn;
+    if (range < max(EDGE_MIN, mx * EDGE_MAX)) return c;
+    float ldl = fxaa_luma(px + ivec2(-1, 1)), lur = fxaa_luma(px + ivec2(1, -1));
+    float lul = fxaa_luma(px + ivec2(-1, -1)), ldr = fxaa_luma(px + ivec2(1, 1));
+    float edge_h = abs(-2.0 * ll + lul + ldl) + abs(-2.0 * lc + lu + ld) * 2.0 + abs(-2.0 * lr + lur + ldr);
+    float edge_v = abs(-2.0 * lu + lul + lur) + abs(-2.0 * lc + ll + lr) * 2.0 + abs(-2.0 * ld + ldl + ldr);
+    bool horiz = edge_h >= edge_v;
+    // Поперёк края: вниз/вверх для горизонтального, вправо/влево для вертикального
+    float l1 = horiz ? lu : ll, l2 = horiz ? ld : lr;
+    float g1 = l1 - lc, g2 = l2 - lc;
+    bool steep1 = abs(g1) >= abs(g2);
+    float gscaled = 0.25 * max(abs(g1), abs(g2));
+    ivec2 across = horiz ? ivec2(0, steep1 ? -1 : 1) : ivec2(steep1 ? -1 : 1, 0);
+    ivec2 along = horiz ? ivec2(1, 0) : ivec2(0, 1);
+    float lavg = 0.5 * ((steep1 ? l1 : l2) + lc);
+    // Вдоль края в обе стороны, пока средняя яркость пары (пиксель и сосед поперёк) не уйдёт от края
+    const int STEPS = 10;
+    const int QUALITY[STEPS] = int[STEPS](1, 1, 1, 1, 1, 2, 2, 2, 4, 8);
+    int d1 = 0, d2 = 0;
+    float e1 = 0.0, e2 = 0.0;
+    bool r1 = false, r2 = false;
+    for (int i = 0; i < STEPS && !(r1 && r2); ++i) {
+        if (!r1) {
+            d1 += QUALITY[i];
+            ivec2 p = px - along * d1;
+            e1 = 0.5 * (fxaa_luma(p) + fxaa_luma(p + across)) - lavg;
+            r1 = abs(e1) >= gscaled;
+        }
+        if (!r2) {
+            d2 += QUALITY[i];
+            ivec2 p = px + along * d2;
+            e2 = 0.5 * (fxaa_luma(p) + fxaa_luma(p + across)) - lavg;
+            r2 = abs(e2) >= gscaled;
+        }
+    }
+    float len = float(d1 + d2);
+    bool near1 = d1 < d2;
+    float dmin = float(min(d1, d2));
+    bool smaller = lc < lavg;
+    bool correct = ((near1 ? e1 : e2) < 0.0) != smaller;
+    float off = correct ? 0.5 - dmin / len : 0.0;
+    // Сглаживание мелочи меньше пикселя: по отличию центра от среднего соседей
+    float lavg9 = (2.0 * (ld + lu + ll + lr) + ldl + lur + lul + ldr) / 12.0;
+    float s1 = clamp(abs(lavg9 - lc) / range, 0.0, 1.0);
+    float s2 = (-2.0 * s1 + 3.0) * s1 * s1;
+    off = max(off, s2 * s2 * SUBPIX);
+    return mix(c, hdr_at(px + across), off);
+}
+
+void main() {
+    FrameData f = pc.frame;
+    g_size = ivec2(f.viewport);
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= g_size.x || px.y >= g_size.y) return;
+    vec3 c = f.aa_mode == AA_TAA ? taa(px) : f.aa_mode == AA_FXAA ? fxaa(px) : imageLoad(u_hdr, px).rgb;
+    out_store(px, max(c, vec3(0.0)));
+}

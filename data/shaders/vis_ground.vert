@@ -8,5 +8,5 @@ void main() {
     int row = 2 * pc.frame.clip_n + 1;
     vec3 rel = pc.frame.g_verts.v[int(pc.a) * row * row + gl_VertexIndex].rel;
     o_rel = rel.xz;
-    gl_Position = to_clip(rel);
+    gl_Position = to_clip_jittered(rel);
 }

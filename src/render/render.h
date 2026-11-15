@@ -73,8 +73,9 @@ struct RenderView {
     f32 near_m;
 };
 
-// Правило ячейки (docs/render.md «Пиксельность»): узор и свет раз на мировую ячейку, ячейка не мельче
-// cell_min метров и растёт с глубиной степенями двойки, пока не станет пикселем кадра
+// Старое правило ячеек (docs/render.md, «На пиксель»): узор и свет раз на мировую ячейку, ячейка не мельче
+// cell_min метров и растёт с глубиной степенями двойки, пока не станет пикселем кадра. Выключено: свет на пиксель.
+// cell_min и cell_pixels по-прежнему задают решётки кеша земли и теней солнца
 // Тонмаппинг (post.glsl) и ступени качества света (docs/light.md, «Ступени»): номера — как в common.glsl
 enum RenderTonemap : u32 { RENDER_TONEMAP_AGX, RENDER_TONEMAP_ACES, RENDER_TONEMAPS };
 // Поле расстояний мира (docs/sdf.md), режим F3: кадр, только видимость неба, поле изолиниями, свет без поля
@@ -82,9 +83,12 @@ enum RenderSdfView : u32 { RENDER_SDF_FRAME, RENDER_SDF_SKY, RENDER_SDF_FIELD, R
 // Зонды непрямого света (docs/gi.md), режим F3: кадр, только непрямой свет, без зондов
 enum RenderGiView : u32 { RENDER_GI_FRAME, RENDER_GI_ONLY, RENDER_GI_OFF, RENDER_GI_VIEWS };
 enum RenderLightQuality : u32 { RENDER_LIGHT_LOW, RENDER_LIGHT_MEDIUM, RENDER_LIGHT_HIGH, RENDER_LIGHT_ULTRA, RENDER_LIGHT_QUALITIES };
+// Сглаживание краёв (docs/aa.md): номера — как AA_* в common.glsl
+enum RenderAa : u32 { RENDER_AA_OFF, RENDER_AA_FXAA, RENDER_AA_TAA, RENDER_AAS };
 
 struct RenderStyle {
-    bool pixel = true;     // выключается клавишей P
+    bool pixel = false;    // старое правило ячеек (P, --cells), только для сравнения
+    u32 aa = RENDER_AA_TAA;  // сглаживание краёв (docs/aa.md)
     bool froxel_heat = false;  // тепловая карта числа огней в клетке froxels поверх кадра (F3)
     bool gcache = true;        // кеш поверхности земли (docs/gcache.md); выкл — земля на пиксель (F3, --nogcache)
     u32 shadow_pages = 0;      // F3 (docs/shadow.md): 1 — страницы теней поверх кадра, 2 — только тень светила

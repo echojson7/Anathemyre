@@ -11,7 +11,7 @@
 struct DebugState {
     // Что держится между кадрами (правда — в настройках, run_window копирует туда и обратно)
     bool lines = true;        // L — отладочные отрезки
-    bool pixel = true;        // P — правило ячейки
+    bool pixel = false;       // P — старое правило ячеек (свет раз на ячейку, docs/render.md); только для сравнения
     bool test_lights = false; // тестовые огни вокруг камеры (froxels)
     bool froxel_heat = false; // тепловая карта огней по клеткам froxels
     bool gcache_off = false;  // без кеша поверхности земли (сравнение, не сохраняется)
