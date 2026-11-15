@@ -5,10 +5,12 @@
 // (солнце, ночью луна) с тенью земли по карте горизонта (sun_visibility, дальше — карта теней 6б); свет неба
 // по нормали и отражение неба по шероховатости — из зондов непрямого света (6г, gi.glsl: небо и отражённое
 // стенами и землёй) с ближним затенением по полю (sdf_ao); вне окон зондов — небо (atmo_ambient, atmo_sky) с
-// видимостью по полю расстояний мира (6в, sdf_sky); дымка atmo_fog() (atmosphere.glsl)
+// видимостью по полю расстояний мира (6в, sdf_sky); огни ламп с тенью по полю (6е, lamps.glsl, docs/lamps.md);
+// дымка atmo_fog() (atmosphere.glsl)
 #include "horizon.glsl"
 #include "shadow.glsl"
 #include "gi.glsl"
+#include "lamps.glsl"
 #include "atmosphere.glsl"
 
 // Видимость главного светила: 1 — свет, 0 — тень, всегда мягко (docs/light.md, правило 5). Земля — карта
@@ -46,6 +48,57 @@ float spec_occlusion(float nv, float ao, float a) {
     return clamp(pow(nv + ao, exp2(-16.0 * a - 1.0)) - 1.0 + ao, 0.0, 1.0);
 }
 
+// Огни клетки на поверхность s: рассеянное kd/π и отражение GGX (как у солнца в light.glsl). v — к глазу,
+// a, a2 — α и α², f0, comp — Френель и поправка многократного рассеяния
+vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd, vec3 f0, vec3 comp) {
+    uint fi = froxel_at(s.pos);
+    uint cnt = froxel_light_count(fi);
+    if (cnt == 0u) return vec3(0.0);
+    FrameData f = pc.frame;
+    uint steps = lamp_steps(f.light_q);
+    vec3 r = reflect(-v, n);
+    vec3 c = vec3(0.0);
+    for (uint k = 0u; k < cnt; ++k) {
+        Light l = f.lights.v[froxel_light(fi, k)];
+        vec3 q = lamp_closest(l, s.pos);
+        vec3 dl = q - s.pos;
+        float d = length(dl);
+        if (d >= l.radius || d < 1e-4) continue;
+        float w = lamp_window(d, l.radius) * lamp_face(l, -dl / d);
+        float e = lamp_irr(l, s.pos, n) * w;
+        if (e * max(l.color.r, max(l.color.g, l.color.b)) < LAMP_E_SKIP) continue;
+        // Отражение: точка отрезка, ближайшая к лучу отражения, потом точка шара тела у луча (Karis 2013)
+        vec3 L0 = l.c - l.axis - s.pos, Ld = 2.0 * l.axis;
+        vec3 lc = L0;
+        float ll = dot(Ld, Ld);
+        if (ll > 1e-8) {
+            float rl = dot(r, Ld);
+            float t = (dot(r, L0) * rl - dot(L0, Ld)) / max(ll - rl * rl, 1e-6);
+            lc = L0 + Ld * clamp(t, 0.0, 1.0);
+        }
+        vec3 cr = dot(lc, r) * r - lc;
+        float crl = length(cr);
+        vec3 ls = lc + cr * clamp(l.size / max(crl, 1e-6), 0.0, 1.0);
+        float ds = length(ls);
+        vec3 lv = ls / ds;
+        float nls = dot(n, lv);
+        vec3 spec = vec3(0.0);
+        if (nls > 0.0) {
+            vec3 h = normalize(lv + v);
+            float nh = max(dot(n, h), 0.0), vh = max(dot(v, h), 0.0);
+            // Поправка энергии: шар (α/α')², отрезок α/α'
+            float as = clamp(a + l.size / (2.0 * ds), 0.0, 1.0);
+            float al = clamp(a + sqrt(ll) / (4.0 * ds), 0.0, 1.0);
+            float norm = (a / as) * (a / as) * (ll > 1e-8 ? a / al : 1.0);
+            // Освещённость в сторону представительной точки: вся сила трубки, растянутая нормой по лепестку
+            float es = nls / (ds * ds + l.size * l.size) * w;
+            spec = brdf_d(nh, a2) * brdf_v(nv, nls, a2) * brdf_f(vh, f0) * comp * (norm * es);
+        }
+        float sh = lamp_shadow(s.pos, n, l, q, steps);
+        c += (kd * (e / A_PI) + spec) * l.color * sh;
+    }
+    return c;
+}
 // Непрямой свет (6г, docs/gi.md): рассеянное и отражение от неба и от того, что отразили стены и земля.
 // irr, env — небо без заслонки по нормали и в сторону отражения; kd — доля рассеянного, fss_ess, fms_ems —
 // отражение за один отскок и добавка многократного (Fdez-Agüera 2019).
@@ -134,6 +187,7 @@ vec3 light_surface(Surface s) {
     vec3 env = atmo_ambient(rd);
     // Таблица неба — только у гладкого и со ступени «Средне» (на «Низко» отражение — из гармоник неба)
     if (blur < 1.0 && f.light_q >= LIGHT_Q_MEDIUM) env = mix(atmo_sky(vec3(rd.x, max(rd.y, 0.0), rd.z)), env, blur);
+    c += light_lamps(s, n, v, nv, a, a2, kd, f0, comp);
     float lit;
     c += light_indirect(s, n, nv, a, rd, blur, irr, env, kd, fss_ess, fms * ems, lit);
     c += s.emissive;

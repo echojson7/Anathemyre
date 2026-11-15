@@ -232,7 +232,7 @@ material wood_tar metal
     texel 0.03125
     extra 0.4 0.25 0.5 0
 
-# Вид glow: поверхность светится сама, extra a — яркость, кд/м² (стекло ламп; свет на стены — огни этапа 6е)
+# Вид glow: поверхность светится сама, extra a — яркость, кд/м² (стекло ламп; свет на стены дают лампы light, docs/lamps.md)
 material lamp_glass glow
     color 1.0 0.86 0.62
     rough 0.4

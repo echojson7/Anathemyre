@@ -39,6 +39,13 @@ void world_init(World &w, Arena &arena, u64 seed, const TerrainDesc &terrain, Ar
     dc.seed = arena_push<u32>(arena, DECALS_CAPACITY);
     dc.count = 0;
 
+    Lamps &lp = w.lamps;
+    f32 **lf[] = {&lp.x, &lp.y, &lp.z, &lp.ax, &lp.ay, &lp.az, &lp.fx, &lp.fy, &lp.fz, &lp.back, &lp.lm, &lp.kelvin, &lp.size};
+    for (f32 **col : lf) *col = arena_push<f32>(arena, LAMPS_CAPACITY);
+    lp.cx = arena_push<i32>(arena, LAMPS_CAPACITY);
+    lp.cz = arena_push<i32>(arena, LAMPS_CAPACITY);
+    lp.count = 0;
+
     people_init(w.people, arena);
 }
 
@@ -99,6 +106,30 @@ bool decals_add(World &w, u64 kind, u64 material, const WPos &at, u32 yaw, const
     d.hy[s] = h[1];
     d.hz[s] = h[2];
     d.seed[s] = seed;
+    return true;
+}
+
+bool lamps_add(World &w, const WPos &at, const f32 axis[3], const f32 face[3], f32 back, f32 lm, f32 kelvin, f32 size) {
+    Lamps &l = w.lamps;
+    if (l.count >= LAMPS_CAPACITY) return false;
+    u32 s = l.count++;
+    WPos q = at;
+    wpos_rebase(q);
+    l.cx[s] = q.cx;
+    l.cz[s] = q.cz;
+    l.x[s] = q.x;
+    l.y[s] = q.y;
+    l.z[s] = q.z;
+    l.ax[s] = axis[0];
+    l.ay[s] = axis[1];
+    l.az[s] = axis[2];
+    l.fx[s] = face[0];
+    l.fy[s] = face[1];
+    l.fz[s] = face[2];
+    l.back[s] = back;
+    l.lm[s] = lm;
+    l.kelvin[s] = kelvin;
+    l.size[s] = size;
     return true;
 }
 

@@ -529,6 +529,7 @@ int run_window(const Args &a, AppMemory &m) {
         vi.eye_snap = frames < 2 || a.timelapse || a.shot;
         vi.tonemap = ds.tonemap;
         vi.scans = ds.scans;
+        vi.lamps_off = a.lamps_off || ds.lamps_off;
         vi.shadow_pages = a.shadow_pages ? a.shadow_pages : ds.shadow_pages;
         vi.sdf_view = a.sdf_view ? a.sdf_view : ds.sdf_view;
         vi.gi_view = a.gi_view ? a.gi_view : ds.gi_view;
