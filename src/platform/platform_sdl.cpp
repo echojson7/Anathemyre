@@ -406,6 +406,10 @@ static int map_button(u8 b) {
     }
 }
 
+void platform_mouse_grab(bool on) {
+    if (g_window) SDL_SetWindowRelativeMouseMode(g_window, on);
+}
+
 void platform_poll(Input &in) {
     for (bool &b : in.key_pressed) b = false;
     for (bool &b : in.mouse_pressed) b = false;

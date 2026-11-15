@@ -11,36 +11,11 @@
 #include "../platform/platform.h"
 #include "../render/render.h"
 #include "../sim/extract.h"
+#include "camera.h"
 #include "scatter.h"
 #include "sky.h"
 
-// Настройки камеры, которые меняет игрок (меню HUD пишет их сюда раз в кадр)
-struct CameraSettings {
-    f32 mouse_sens = 1.0f;  // множитель к 0.005 рад на пиксель
-    bool invert_y = false;  // false: мышь вверх — взгляд вверх
-    f32 fov_deg = 60.0f;    // поле зрения по вертикали, градусы
-};
-
 struct PeopleView;
-struct Colliders;
-constexpr f32 CAM_PIVOT_UNSET = -1e9f;
-
-// Камера: точка опоры, направление взгляда и штанга от опоры до глаза (как у камеры за персонажем).
-// Орбита: опора над землёй на высоте глаз человека, позже — голова персонажа. Если землю пересекает штанга,
-// она укорачивается, а взгляд не трогается — так у земли можно смотреть в небо. Полёт (F): штанга нулевая,
-// опора — сам глаз. yaw, pitch — направление от опоры к глазу, взгляд — обратный
-struct Camera {
-    bool free = false;
-    WPos pivot;             // точка опоры
-    f32 yaw = 0.55f;        // радианы, 0 — глаз на юге от опоры (−z), смотрит на север
-    f32 pitch = 0.42f;      // радианы: > 0 — глаз выше опоры, смотрит вниз; < 0 — смотрит вверх
-    f32 dist = 24.0f;       // желаемая длина штанги, метров (0 — вид от глаз)
-    f32 arm = -1.0f;        // длина штанги в кадре, после земли (< 0 — ещё не считали)
-    f32 pivot_above = CAM_PIVOT_UNSET;  // опора орбиты от земли, м (не задана — на высоте глаз; --pivot для крупных
-                                        // планов, ниже нуля — под землёй)
-    bool follow = false;      // опора — голова выбранного человека (view_camera_follow); WASD и сдвиг опоры снимают
-    CameraSettings settings;
-};
 
 // Сетки и материалы, загруженные для кадра: имя (хеш) → номер в рендере
 struct ViewMesh {
@@ -108,21 +83,3 @@ struct ViewInput {
 
 // Память под экземпляры, точки и отрезки — из арены кадра
 void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in, Arena &frame, RenderFrame &out);
-// Мышь, колесо и клавиши → камера. dt — секунды кадра (камера движется по времени кадра, не мира).
-// Опора орбиты — над землёй, глаз не уходит под землю; с коллайдерами coll опора спускается в проём земли и
-// ходит по полу подземной постройки (docs/camera.md, «Под землёй»)
-void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &ground, const Colliders *coll = nullptr);
-// Опора орбиты над точкой земли p
-WPos view_pivot_at(const Terrain &ground, WPos p);
-// Глаз камеры (чанк + смещение)
-WPos view_eye(const Camera &cam);
-// Луч из пикселя окна до земли (по ground_at, шагами с уточнением). false — луч не попал в землю
-bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32 py, const Terrain &ground, WPos &out);
-// Луч из пикселя окна: глаз и направление
-bool view_screen_ray(const Camera &cam, i32 width, i32 height, f32 px, f32 py, WPos &eye, Vec3 &dir);
-// Луч до земли или коробки постройки (пол, плита, ступень): точка приказа «идти»
-bool view_screen_to_support(const Camera &cam, i32 width, i32 height, f32 px, f32 py, const Terrain &ground,
-                            const Colliders *coll, WPos &out);
-// Камера за человеком: опора — его голова, штанга укорачивается землёй и постройками (глаз не входит в стены
-// руины, когда человек внутри)
-void view_camera_follow(Camera &cam, const WPos &head, f32 dt, const Terrain &ground, const Colliders *coll);
