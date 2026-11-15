@@ -11,9 +11,9 @@
 #include "common.glsl"
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 1, rgba16f) uniform readonly image2D u_hdr;
-layout(set = 0, binding = 9, rgba16f) uniform readonly image2D u_motion;
-layout(set = 0, binding = 10) uniform sampler2D u_hist[2];
-layout(set = 0, binding = 11, rgba16f) uniform writeonly image2D u_out[2];
+layout(set = 0, binding = 11, rgba16f) uniform readonly image2D u_motion;
+layout(set = 0, binding = 12) uniform sampler2D u_hist[2];
+layout(set = 0, binding = 13, rgba16f) uniform writeonly image2D u_out[2];
 
 const float AA_NEW = 0.1;     // доля нового кадра в смеси (TAA)
 const float AA_GAMMA = 1.25;  // ширина зажима в разбросах соседей

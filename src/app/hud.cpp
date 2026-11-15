@@ -76,6 +76,8 @@ static void tab_controls(UiForm &f, Settings &s, bool &ch) {
     ui_section(f, "МЫШЬ");
     ch |= ui_slider(f, "Чувствительность", s.mouse_sens, 0.2f, 4.0f, 0.05f, "%.2f×");
     ch |= ui_toggle(f, "Инвертировать по вертикали", s.invert_y);
+    ch |= ui_toggle(f, "Инвертировать по горизонтали", s.invert_x);
+    ch |= ui_slider(f, "Плавность камеры", s.cam_smooth, 0.0f, 2.0f, 0.1f, "%.1f×");
     // Справка по клавишам — два столбца
     static const char *const CAM[][2] = {
         {"СКМ, Alt ПКМ", "вращать"}, {"Shift СКМ", "двигать"}, {"Колесо", "ближе, дальше"}, {"W A S D", "двигать"},

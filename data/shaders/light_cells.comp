@@ -31,7 +31,7 @@ ivec2 g_origin;  // начало отсчёта узоров: чанк каме�
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0, r32ui) uniform readonly uimage2D u_vis;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D u_hdr;
-layout(set = 0, binding = 9, rgba16f) uniform writeonly image2D u_motion;  // векторы движения TAA (motion.glsl)
+layout(set = 0, binding = 11, rgba16f) uniform writeonly image2D u_motion;  // векторы движения TAA (motion.glsl)
 
 // Цвет в HDR кадра: × экспозиция глаза этого кадра (sky_sum.comp), предел — запас до края f16
 vec3 pre_exposed(vec3 c) { return min(c * pc.frame.sky_out.v[SKY_OUT_EYE].x, vec3(60000.0)); }

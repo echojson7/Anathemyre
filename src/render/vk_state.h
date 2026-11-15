@@ -40,7 +40,7 @@ struct FrameGpu {
     f32 right[4], up[4], forward[4];   // .w не используется
     f32 proj_x, proj_y, near_m, pixel_angle;  // pixel_angle — 2·tan(fov/2)/высота: метров на пиксель на 1 м глубины
     f32 cell_min, cell_pixels;
-    u32 pixel, pad1;
+    u32 pixel, scans;  // scans — поверхности из сканов CC0 (docs/scans.md)
     f32 sun_dir[4], sun_color[4];
     f32 viewport[2], ndc_per_pixel[2];
     i32 t_chunk0, t_size_x, t_size_z, t_nx, t_nz, t_nmx, t_nmz;
@@ -303,6 +303,14 @@ struct ShadowGpu {
 constexpr u32 SDF_LEVELS = 5, SDF_N = 128, SDF_SLAB = SDF_N + 2, SDF_BRICK = 8, SDF_NB = SDF_N / SDF_BRICK;
 constexpr u32 SDF_LEVEL_BRICKS = SDF_NB * SDF_NB * SDF_NB;
 constexpr u32 SDF_JOB_CAP = 1u << 18;  // кластеров засыпки за кадр
+// Сканы CC0 (docs/scans.md): две картинки-массива, слой на скан; без пакета — заглушка 1 × 1, чтобы набор был полным
+struct ScansGpu {
+    GpuImage albedo;          // RGBA8 sRGB: цвет, AO
+    GpuImage normal;          // RGBA8: нормаль OpenGL (xyz · 0.5 + 0.5), шероховатость
+    VkSampler sampler = VK_NULL_HANDLE;
+    u32 layers = 0;           // 0 — пакета нет
+};
+
 struct SdfGpu {
     GpuImage field;           // R16F SDF_N × SDF_N × SDF_SLAB·SDF_LEVELS, расстояние в метрах
     GpuBuffer scratch;        // засыпка: u32 на воксель уровня (расстояние и знак), между кадрами — «пусто»
@@ -521,6 +529,7 @@ struct VkState {
     ShadowGpu shadow;
     SdfGpu sdf;
     GiGpu gi;
+    ScansGpu scans;
     // Froxels (vk_froxel.cpp): клетки 64×64 пикселя × FROXEL_Z слоёв глубины
     GpuBuffer froxels;     // списки на клетку, FROXEL_STRIDE u32
     GpuBuffer media;       // среда на клетку (туман и пыль, vec4) — место для света пользователя, пока нули
@@ -627,6 +636,8 @@ void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool image
 void vk_shadow_read(const u32 *stats, u32 frame);
 u32 vk_shadow_blend();
 // Поле расстояний мира (vk_sdf.cpp, docs/sdf.md): конвейеры, картинка, сэмплер и запись в набор кадра мира
+bool vk_scans_init();
+void vk_scans_shutdown();
 bool vk_sdf_init();
 void vk_sdf_shutdown();
 void vk_sdf_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool images);

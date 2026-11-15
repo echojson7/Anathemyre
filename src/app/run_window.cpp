@@ -212,6 +212,7 @@ int run_window(const Args &a, AppMemory &m) {
     FixedArray<Intent> step_its;  // намерения шага: игрока (в первом шаге кадра) и ИИ бойцов
     step_its.init(m.world, 1024);
     Camera cam;
+    bool mouse_grab = false;
     if (a.cam_set) {
         const f32 deg = PI_F / 180.0f;
         cam.yaw = a.cam[0] * deg;
@@ -232,14 +233,13 @@ int run_window(const Args &a, AppMemory &m) {
     } else {
         cam.pivot.z = 10.0f;  // сцена этапа 1 — к северу от начала карты
     }
-    cam.pivot = view_pivot_at(w.terrain, cam.pivot);
-    if (a.pivot_above > CAM_PIVOT_UNSET) {
-        cam.pivot_above = a.pivot_above;
-        cam.pivot.y = ground_at(w.terrain, cam.pivot).height + a.pivot_above;
-    }
+    if (a.pivot_above > CAM_PIVOT_UNSET) cam.pivot_above = a.pivot_above;
+    cam.exact = a.cam_set && a.frames;  // снимок: без сглаживания, кадр не зависит от времени кадра
+    view_camera_place(cam, w.terrain, &w.coll);
     TimeCtl tc;
     DebugState ds;
     if (a.tonemap >= 0) ds.tonemap = (u32)a.tonemap;
+    ds.scans = a.scans;
     u32 clock_speed = 0;  // номер в CLOCK_SPEEDS
     // Час дня → доля суток в оборотах (намерение часов)
     auto hour_turn = [](f64 h) { return (u64)(u32)(u64)(h / 24.0 * 4294967296.0); };
@@ -407,7 +407,7 @@ int run_window(const Args &a, AppMemory &m) {
             render_set_vsync(vs);
             vsync_applied = vs;
         }
-        cam.settings = CameraSettings{set.mouse_sens, set.invert_y, set.fov_deg};
+        cam.settings = CameraSettings{set.mouse_sens, set.invert_y, set.fov_deg, set.invert_x, set.cam_smooth};
         bool pixel = ds.pixel || a.cells;
         unfair_modes(unfair, sizeof unfair, pixel, a.nogcache || ds.gcache_off, a.test_lights || ds.test_lights,
                      a.froxel_heat || ds.froxel_heat, a.validation || a.gpu_validation, vsync_applied,
@@ -419,6 +419,8 @@ int run_window(const Args &a, AppMemory &m) {
         if (ds.pause_toggle) tc.paused = !tc.paused;
         if (ds.speed_set >= 0 && (u32)ds.speed_set < ANA_COUNTOF(SPEEDS)) tc.speed = (u32)ds.speed_set;
         view_camera_control(cam, win, (f32)dt, w.terrain, &w.coll);
+        // Пока игрок крутит или тащит камеру, курсор спрятан и не упирается в край экрана
+        if (cam.grab != mouse_grab && !a.frames) platform_mouse_grab(mouse_grab = cam.grab);
 
         // Мышь и приказы → намерения игрока (orders.cpp). На вкладке «Мир» панели отладки левая кнопка выбирает
         // строку точки, а не приказывает
@@ -525,6 +527,8 @@ int run_window(const Args &a, AppMemory &m) {
         vi.dt = a.frames ? 1.0f / 30.0f : (f32)dt;
         vi.eye_snap = frames < 2 || a.timelapse || a.shot;
         vi.tonemap = ds.tonemap;
+        vi.scans = ds.scans;
+        vi.lamps_off = a.lamps_off || ds.lamps_off;
         vi.shadow_pages = a.shadow_pages ? a.shadow_pages : ds.shadow_pages;
         vi.sdf_view = a.sdf_view ? a.sdf_view : ds.sdf_view;
         vi.gi_view = a.gi_view ? a.gi_view : ds.gi_view;

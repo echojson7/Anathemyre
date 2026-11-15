@@ -16,6 +16,8 @@ struct Settings {
     // Управление (камера — CameraSettings в src/view/view.h, копируется каждый кадр)
     f32 mouse_sens = 1.0f;
     bool invert_y = false;
+    bool invert_x = false;   // мышь вправо — взгляд влево
+    f32 cam_smooth = 1.0f;   // плавность камеры: 0 — без сглаживания
     f32 fov_deg = 60.0f;
     // Графика (docs/light.md, «Ступени»): RENDER_LIGHT_* — низко, средне, высоко, ультра
     u32 light_quality = 2;

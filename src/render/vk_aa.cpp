@@ -68,8 +68,8 @@ static bool aa_create_image(GpuImage &im, VkImageUsageFlags usage, const char *n
     return true;
 }
 
-// Картинки под размер кадра (зовёт vk_world при смене размера, GPU уже стоит) и места 9–11 набора кадра мира:
-// 9 — векторы движения (запись освещением, чтение сглаживанием), 10 — истории для выборки, 11 — они же для записи
+// Картинки под размер кадра (зовёт vk_world при смене размера, GPU уже стоит) и места 11–13 набора кадра мира:
+// 11 — векторы движения (запись освещением, чтение сглаживанием), 12 — истории для выборки, 13 — они же для записи
 bool vk_aa_images(VkDescriptorSet set) {
     AaGpu &a = g_vk.aa;
     aa_destroy_image(a.motion);
@@ -91,7 +91,7 @@ bool vk_aa_images(VkDescriptorSet set) {
     for (u32 i = 0; i < 3; ++i) {
         wr[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         wr[i].dstSet = set;
-        wr[i].dstBinding = 9 + i;
+        wr[i].dstBinding = 11 + i;
     }
     wr[0].descriptorCount = 1;
     wr[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;

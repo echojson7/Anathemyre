@@ -5,6 +5,7 @@
 #include "../anim/clip.h"
 #include "../anim/track.h"
 #include "../asset/mesh.h"
+#include "../asset/scans.h"
 #include "../core/hash.h"
 #include "../core/log.h"
 #include "../core/text.h"
@@ -509,11 +510,33 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
         return false;
     }
     usize mark = arena_mark(m.load);
+    // Сканы CC0 (docs/scans.md): пакета нет — не ошибка, материалы остаются узором
+    ScansPack scans;
+    {
+        char path[1024];
+        snprintf(path, sizeof path, "%sdata/scans.pak", platform_exe_dir());
+        u8 *pak = nullptr;
+        usize pak_size = 0;
+        if (platform_read_file(path, m.load, &pak, &pak_size)) {
+            if (!scans_parse(pak, pak_size, scans, err, sizeof err)) log_warn("%s: %s", path, err);
+            else if (!render_set_scans({scans.layers, scans.size, scans.mips, scans.albedo, scans.normal, scans.array_bytes}))
+                scans = ScansPack{};
+        } else {
+            log_info("сканов нет (%s, make scans) — материалы узором", path);
+        }
+    }
     RenderMaterial *rm = arena_push<RenderMaterial>(m.load, mats.count);
     for (u32 i = 0; i < mats.count; ++i) {
-        rm[i].kind = mats.items[i].kind;
-        rm[i].metal = mats.items[i].metal;
-        memcpy(rm[i].p, mats.items[i].p, sizeof rm[i].p);
+        const MaterialDesc &d = mats.items[i];
+        rm[i].kind = d.kind;
+        rm[i].metal = d.metal;
+        memcpy(rm[i].p, d.p, sizeof rm[i].p);
+        if (d.scan.n) {
+            rm[i].scan = scans_find(scans, d.scan);
+            if (!rm[i].scan && scans.layers) log_warn("data/materials.txt: %.*s — нет скана %.*s", (int)d.name.n, d.name.p, (int)d.scan.n, d.scan.p);
+            memcpy(rm[i].scan_tint, d.scan_tint, sizeof rm[i].scan_tint);
+            rm[i].scan_tile = d.scan_tile;
+        }
     }
     bool ok = render_set_materials({rm, mats.count});
     arena_restore(m.load, mark);

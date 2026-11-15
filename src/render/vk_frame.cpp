@@ -230,6 +230,7 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.cell_min = f.style.cell_min;
     g.cell_pixels = f.style.cell_pixels;
     g.pixel = f.style.pixel ? 1u : 0u;
+    g.scans = f.style.scans && g_vk.scans.layers ? 1u : 0u;
     g.dt = f.style.dt;
     g.eye_snap = f.style.eye_snap ? 1u : 0u;
     g.tonemap = f.style.tonemap < RENDER_TONEMAPS ? f.style.tonemap : RENDER_TONEMAP_AGX;

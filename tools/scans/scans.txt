@@ -1,0 +1,29 @@
+# Сканы CC0 с Poly Haven (docs/scans.md): слой → ассет и sha256 картинок 1K. Порядок строк — номер слоя в пакете.
+# Картинки: https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/<ассет>/<ассет>_<карта>_1k.jpg
+# Новый скан: строка scan и четыре карты (diff — цвет, nor_gl — нормаль OpenGL, rough — шероховатость, ao).
+# Имя слоя — не длиннее 16 букв латиницы; материал берёт его строкой scan в data/materials.txt
+scan wall concrete_layers_02        # опалубочный бетон слоями
+    diff   cca314fbb793e3928111912f1d6d4d79edf4420402e56019d70fec0bdc2efca5
+    nor_gl ee35d817b5fa26f824479ef9d3a5ab308f4f33846c7d62d6583457dc900c6049
+    rough  1120d3546b604db2db5ef300f2e16d4aee211d09e3b6ca67ce2350f714d9d087
+    ao     86d1b7ff00dc1e24feca0582981e5ef938f50b0eeab7921d977334483bcb642e
+scan floor concrete_floor_worn_001  # истёртый бетонный пол
+    diff   6e40c0fc908f4d66431836f5abe203f3a4eb064e88824378a91a46a26e2f464c
+    nor_gl 523bd94a1be5dd2f11c2ae2b7d7c77445cf5bd9e41604db515a7c8364dcba067
+    rough  069efe4ca018e0ef61fd8cc9964395ba8272284ae239da68d7f87988e2e9f488
+    ao     6e8d38ec3df66c496d08ec62fa721e70c1274528cddc3bfecdcf6f1266a2bde5
+scan rust rust_coarse_01            # сплошная ржавчина
+    diff   369f69eb86a7dcc4e5b6e30b1f3a4da5ce6ba50cf417de937efb4f09101f88d4
+    nor_gl 08ae69576b453b0970f5982d359897f09aae41c7cb18c19c02de37324160625c
+    rough  f5b4a23044af1b49284e6adb082f49e6ea1a33c3753d5641e36f72de1ebf323e
+    ao     c72ebb9661a6a94859bd9ba3ec0d28cdec431270af368d799d9bb18253855de8
+scan paint green_metal_rust         # зелёная краска по металлу, царапины, потёки ржавчины
+    diff   4509ab0cb1cf6bf9b9f970450a41f83ebd9bff178006deae568ff34b404856fc
+    nor_gl 8ecb28b0ea4026b740ce492e3f606f61a76bdce1f78cb2e29287bf9a56c54a80
+    rough  f214f22608dd75aa3e7b4da8bffac97c344cbacbc50f49ba0beb0236701a622c
+    ao     3a6becabbe4b66c169e1a7216234b30bb561c011d24f2ed93529bb712fbfbdcc
+scan wood dark_wooden_planks        # тёмные старые доски
+    diff   e8216baa6b2d701b5523fcb904d45570acf7b96d160ef815e96e2dbfa82bdd9b
+    nor_gl 87a7b26bc674477865d4589c6589200bfa649a6461422bf56f5600c05a470206
+    rough  a10ea0b52fe395a7ad205cacfd28bd1aea48ef8545d171209f528dcf58d0a8d3
+    ao     afa6cee23c80dacb65c0039ef61ae067699a27d4b86e736166055f44bf1800fd

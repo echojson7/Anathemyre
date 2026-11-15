@@ -3,7 +3,7 @@
 // Проход стиля (docs/render.md, проход 8): HDR-картинка кадра мира после сглаживания (история этого кадра, pc.a;
 // docs/aa.md) → ночная синева, тонмаппинг (post_color). Потом сюда же — виньетка, зерно, сканлайны, аберрация
 #include "post.glsl"
-layout(set = 0, binding = 11, rgba16f) uniform readonly image2D u_aa[2];
+layout(set = 0, binding = 13, rgba16f) uniform readonly image2D u_aa[2];
 layout(location = 0) out vec4 o_color;
 
 void main() {

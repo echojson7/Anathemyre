@@ -3,294 +3,15 @@
 #include "../core/math3.h"
 #include "../sim/collide.h"
 #include "../sim/ground.h"
+#include "lamps.h"
 #include "people.h"
 
 static constexpr f32 NEAR_M = 0.1f;
-static constexpr f32 PITCH_MIN = -1.45f, PITCH_MAX = 1.45f;
-static constexpr f32 DIST_MIN = 0.0f, DIST_MAX = 12000.0f;
-static constexpr f32 DIST_SNAP = 0.5f;          // ближе — сразу вид от глаз
-static constexpr f32 EYE_ABOVE_GROUND = 0.6f;  // глаз не ниже стольких метров над землёй
-static constexpr f32 PIVOT_ABOVE_GROUND = 1.7f;  // опора орбиты — на высоте глаз человека
-static constexpr f32 ARM_GROW = 6.0f;         // скорость, с которой штанга возвращается к длине, 1/с
-static constexpr f32 MOUSE_RAD_PER_PX = 0.005f;
-
-// Направление от опоры к глазу по yaw и pitch
-static Vec3 back_dir(const Camera &c) {
-    f32 cp = cos_f(c.pitch), sp = sin_f(c.pitch);
-    return {sin_f(c.yaw) * cp, sp, -cos_f(c.yaw) * cp};
-}
-
-static WPos offset(const WPos &p, Vec3 d) {
-    WPos q = p;
-    q.x += d.x;
-    q.y += d.y;
-    q.z += d.z;
-    wpos_rebase(q);
-    return q;
-}
 
 // Метры от a до b
 static Vec3 delta(const WPos &a, i32 cx, i32 cz, f32 x, f32 y, f32 z) {
     Vec2 d = wpos_delta_xz(a.cx, a.cz, a.x, a.z, cx, cz, x, z);
     return {d.x, y - a.y, d.y};
-}
-
-static f32 fov_rad(const Camera &c) { return f_clamp(c.settings.fov_deg, 20.0f, 120.0f) * (PI_F / 180.0f); }
-
-WPos view_pivot_at(const Terrain &ground, WPos p) {
-    p.y = ground_at(ground, p).height + PIVOT_ABOVE_GROUND;
-    return p;
-}
-
-// Точка ниже земли, но не в грунте: проём земли или подземная постройка (docs/camera.md, «Под землёй»)
-static bool open_below(const Terrain &ground, const Colliders *coll, const WPos &p) {
-    if (!coll) return false;
-    if (ground_hole(ground, p)) return true;
-    return p.y < ground_at(ground, p).height && underground_open(ground, *coll, p.cx, p.cz, p.x, p.z, p.y);
-}
-
-// Опора орбиты, когда она ушла под землю или стоит над проёмом: на высоте глаз над полом постройки. По ступеням —
-// как человек; не вышло — на уступ до CAM_STEP_M (край платформы). Пол годится, если над ним не грунт. Пола нет
-// (опора в стене) — высота прежняя; постройки нет — на землю
-static constexpr f32 CAM_STEP_M = 1.25f;
-static constexpr f32 CAM_BELOW_M = 1.0f;  // глубже — опора под землёй (склон за кадр столько не даёт)
-static WPos pivot_settle(const Terrain &ground, const Colliders *coll, WPos p) {
-    f32 g = ground_at(ground, p).height;
-    f32 feet = p.y - PIVOT_ABOVE_GROUND;
-    bool below = feet < g - CAM_BELOW_M;
-    if (coll && (below || ground_hole(ground, p))) {
-        const f32 steps[2] = {STEP_UP_M, CAM_STEP_M};
-        for (f32 step : steps) {
-            Support s = support_at(ground, *coll, p.cx, p.cz, p.x, p.z, feet + step - STEP_UP_M);
-            WPos q = p;
-            q.y = s.height + 0.1f;
-            if (s.kind && (s.height > g || open_below(ground, coll, q))) {
-                p.y = s.height + PIVOT_ABOVE_GROUND;
-                return p;
-            }
-        }
-        if (below && open_below(ground, coll, p)) return p;
-    }
-    p.y = g + PIVOT_ABOVE_GROUND;
-    return p;
-}
-
-WPos view_eye(const Camera &cam) {
-    if (cam.free) return cam.pivot;
-    return offset(cam.pivot, back_dir(cam) * (cam.arm < 0.0f ? cam.dist : cam.arm));
-}
-
-struct Basis {
-    Vec3 right, up, forward;
-};
-static Basis basis(const Camera &cam) {
-    Basis b;
-    b.forward = -back_dir(cam);
-    b.right = normalize(cross(Vec3{0, 1, 0}, b.forward));
-    b.up = cross(b.forward, b.right);
-    return b;
-}
-
-// Глаз не ниже EYE_ABOVE_GROUND над землёй и не ближе EYE_WALL_M к коробкам построек (coll может быть nullptr)
-static constexpr f32 EYE_WALL_M = 0.3f;
-static constexpr f32 FOLLOW_ARM_MIN = 1.2f;  // штанга за человеком не короче, м
-static bool eye_clear(const Terrain &ground, const WPos &p, const Colliders *coll = nullptr) {
-    if (p.y < ground_at(ground, p).height + EYE_ABOVE_GROUND && !open_below(ground, coll, p)) return false;
-    if (coll)
-        for (u16 k : colliders_near(*coll, p.cx, p.cz, p.x, p.z))
-            if (p.y > coll->y0[k] - EYE_WALL_M && p.y < coll->y1[k] + EYE_WALL_M &&
-                coll_touches(*coll, k, p.cx, p.cz, p.x, p.z, EYE_WALL_M))
-                return false;
-    return true;
-}
-
-// Сколько штанги помещается до земли (и построек, если coll): шагами от опоры наружу, последний свободный шаг
-static f32 arm_room(const Camera &cam, const Terrain &ground, const Colliders *coll = nullptr) {
-    if (cam.dist <= 0.0f) return 0.0f;
-    Vec3 d = back_dir(cam);
-    f32 step = coll ? 0.1f : f_max(0.25f, cam.dist / 64.0f), ok = 0.0f;
-    // Со стенами шаг мелкий (стена 0.2 м); дальше 20 м он растёт — длинная штанга не стоит тысяч проверок
-    for (f32 t = step;; t += (coll && t > 20.0f) ? t * 0.02f : step) {
-        f32 tt = f_min(t, cam.dist);
-        if (!eye_clear(ground, offset(cam.pivot, d * tt), coll)) return ok;
-        ok = tt;
-        if (tt >= cam.dist) return ok;
-    }
-}
-
-void view_camera_control(Camera &cam, const Input &in, f32 dt, const Terrain &ground, const Colliders *coll) {
-    if (in.key_pressed[KEY_F]) {
-        if (!cam.free) {
-            cam.pivot = view_eye(cam);
-            cam.free = true;
-        } else {
-            // Назад на орбиту: опора над точкой земли перед глазом, штанга — до глаза. Смотрим выше
-            // горизонта — опора впереди на прежнем расстоянии
-            WPos eye = cam.pivot, hit;
-            Basis b = basis(cam);
-            if (open_below(ground, coll, eye) && eye.y < ground_at(ground, eye).height) {
-                // Под землёй (подземная постройка): опора — на месте глаза, на пол её ставит pivot_settle ниже
-                cam.dist = f_min(cam.dist, 3.0f);
-            } else if (view_screen_to_ground(cam, 2, 2, 1.0f, 1.0f, ground, hit)) {
-                cam.dist = f_clamp(length(delta(eye, hit.cx, hit.cz, hit.x, hit.y, hit.z)), DIST_MIN, DIST_MAX);
-                cam.pivot = view_pivot_at(ground, hit);
-            } else {
-                cam.pivot = view_pivot_at(ground, offset(eye, normalize(Vec3{b.forward.x, 0.0f, b.forward.z}) * cam.dist));
-            }
-            cam.arm = -1.0f;
-            cam.free = false;
-        }
-    }
-    // Вращение взгляда: средняя кнопка или Alt + правая (правая — приказ), одинаково на орбите и в полёте
-    // (мышь вверх — взгляд вверх). Shift + средняя — двигать опору
-    bool rotate = (in.mouse_down[MOUSE_MIDDLE] && !in.key_down[KEY_SHIFT]) || (in.mouse_down[MOUSE_RIGHT] && in.key_down[KEY_ALT]);
-    if (rotate) {
-        f32 k = MOUSE_RAD_PER_PX * f_clamp(cam.settings.mouse_sens, 0.05f, 20.0f);
-        cam.yaw += in.mouse_dx * k;
-        cam.pitch += (cam.settings.invert_y ? -1.0f : 1.0f) * in.mouse_dy * k;
-    }
-    if (cam.yaw > PI_F) cam.yaw -= TAU_F;
-    if (cam.yaw < -PI_F) cam.yaw += TAU_F;
-    cam.pitch = f_clamp(cam.pitch, PITCH_MIN, PITCH_MAX);
-
-    Basis b = basis(cam);
-    Vec3 flat_fwd = normalize(Vec3{b.forward.x, 0.0f, b.forward.z});
-    Vec3 flat_right = b.right;
-    f32 fast = in.key_down[KEY_SHIFT] ? 4.0f : 1.0f;
-    Vec3 move{};
-    if (in.key_down[KEY_W]) move += cam.free ? b.forward : flat_fwd;
-    if (in.key_down[KEY_S]) move += -(cam.free ? b.forward : flat_fwd);
-    if (in.key_down[KEY_D]) move += flat_right;
-    if (in.key_down[KEY_A]) move += -flat_right;
-    if (in.key_down[KEY_E]) move += Vec3{0, 1, 0};
-    if (in.key_down[KEY_Q]) move += Vec3{0, -1, 0};
-
-    if (cam.free) {
-        // Высоко над землёй летать медленно скучно: скорость растёт с высотой
-        f32 above = cam.pivot.y - ground_at(ground, cam.pivot).height;
-        f32 speed = 12.0f * f_max(1.0f, above / 20.0f);
-        cam.pivot = offset(cam.pivot, move * (speed * fast * dt));
-        if (in.wheel != 0) cam.pivot = offset(cam.pivot, b.forward * (in.wheel * 2.0f * fast * f_max(1.0f, above / 20.0f)));
-        // Под землю — только в проём и в подземную постройку (там пол полёта — её низ не проверяется: стены
-        // полёт и так проходит насквозь)
-        f32 floor_y = ground_at(ground, cam.pivot).height + EYE_ABOVE_GROUND;
-        if (cam.pivot.y < floor_y && !open_below(ground, coll, cam.pivot)) cam.pivot.y = floor_y;
-        return;
-    }
-    // Орбита: WASD и Shift + средняя кнопка двигают опору над землёй (и снимают слежение за человеком), колесо —
-    // длина штанги (до вида от глаз). За человеком опору ставит view_camera_follow
-    f32 reach = f_max(cam.dist, 5.0f);
-    move.y = 0.0f;
-    bool pan = in.mouse_down[MOUSE_MIDDLE] && in.key_down[KEY_SHIFT];
-    if (cam.follow && (length(move) > 0.0f || pan)) cam.follow = false;
-    cam.pivot = offset(cam.pivot, move * (reach * 0.9f * fast * dt));
-    if (pan) {
-        f32 k = reach * 0.0018f;
-        cam.pivot = offset(cam.pivot, flat_right * (-in.mouse_dx * k) + flat_fwd * (in.mouse_dy * k));
-    }
-    for (f32 w = in.wheel; w > 0.5f; w -= 1.0f) cam.dist = cam.dist * 0.85f < DIST_SNAP ? 0.0f : cam.dist * 0.85f;
-    for (f32 w = in.wheel; w < -0.5f; w += 1.0f) cam.dist = cam.dist < DIST_SNAP ? DIST_SNAP : cam.dist / 0.85f;
-    cam.dist = f_clamp(cam.dist, DIST_MIN, DIST_MAX);
-    if (!cam.follow) {
-        cam.pivot = pivot_settle(ground, coll, cam.pivot);
-        if (cam.pivot_above > CAM_PIVOT_UNSET) cam.pivot.y = ground_at(ground, cam.pivot).height + cam.pivot_above;
-    }
-    // Штанга: земля укорачивает её сразу (глаз не уходит под склон), назад — плавно, чтобы на кочках
-    // не дёргалась. Взгляд при этом не меняется. Под землёй её держат стены постройки
-    bool below = cam.pivot.y < ground_at(ground, cam.pivot).height + EYE_ABOVE_GROUND;
-    f32 room = arm_room(cam, ground, below ? coll : nullptr);
-    if (cam.arm < 0.0f || room < cam.arm) cam.arm = room;
-    else cam.arm += (room - cam.arm) * f_min(1.0f, dt * ARM_GROW);
-}
-
-void view_camera_follow(Camera &cam, const WPos &head, f32 dt, const Terrain &ground, const Colliders *coll) {
-    cam.free = false;
-    cam.follow = true;
-    cam.pivot = head;
-    // Не ближе FOLLOW_ARM_MIN к голове: спиной к стене глаз лучше уйдёт за стену (её не видно изнутри), чем в голову
-    f32 room = f_max(arm_room(cam, ground, coll), f_min(cam.dist, FOLLOW_ARM_MIN));
-    if (cam.arm < 0.0f || room < cam.arm) cam.arm = room;
-    else cam.arm += (room - cam.arm) * f_min(1.0f, dt * ARM_GROW);
-}
-
-bool view_screen_ray(const Camera &cam, i32 width, i32 height, f32 px, f32 py, WPos &eye, Vec3 &dir) {
-    if (width <= 0 || height <= 0) return false;
-    Basis b = basis(cam);
-    f32 s, c;
-    sincos_turn(turn_from_rad(fov_rad(cam) * 0.5f), &s, &c);
-    f32 t = s / c, aspect = (f32)width / (f32)height;
-    f32 nx = (px / (f32)width) * 2.0f - 1.0f;
-    f32 ny = 1.0f - (py / (f32)height) * 2.0f;
-    dir = normalize(b.forward + b.right * (nx * t * aspect) + b.up * (ny * t));
-    eye = view_eye(cam);
-    return true;
-}
-
-// Точка внутри коробки постройки или под землёй
-static bool solid_at(const Terrain &ground, const Colliders *coll, const WPos &p, f32 *top) {
-    if (coll) {
-        for (u16 k : colliders_near(*coll, p.cx, p.cz, p.x, p.z)) {
-            if (p.y < coll->y0[k] || p.y > coll->y1[k] || !coll_covers(*coll, k, p.cx, p.cz, p.x, p.z)) continue;
-            *top = coll->y1[k];
-            return true;
-        }
-    }
-    if (p.y <= ground_at(ground, p).height && !open_below(ground, coll, p)) {
-        *top = -1e9f;
-        return true;
-    }
-    return false;
-}
-
-bool view_screen_to_support(const Camera &cam, i32 width, i32 height, f32 px, f32 py, const Terrain &ground,
-                            const Colliders *coll, WPos &out) {
-    WPos eye;
-    Vec3 dir;
-    if (!view_screen_ray(cam, width, height, px, py, eye, dir)) return false;
-    f32 k0 = 0.0f, k = 0.1f, top = 0.0f;
-    for (u32 i = 0; i < 4000 && k < 30000.0f; ++i) {
-        if (solid_at(ground, k < 2000.0f ? coll : nullptr, offset(eye, dir * k), &top)) {
-            for (u32 j = 0; j < 20; ++j) {
-                f32 m = (k0 + k) * 0.5f;
-                if (solid_at(ground, coll, offset(eye, dir * m), &top)) k = m;
-                else k0 = m;
-            }
-            solid_at(ground, coll, offset(eye, dir * k), &top);
-            out = offset(eye, dir * k);
-            // В коробку попал сверху (почти у верха) — точка на её верху; в бок — как есть, путь найдёт ближний пол
-            if (top > -1e8f && top - out.y < 0.15f) out.y = top;
-            else if (top <= -1e8f) out.y = ground_at(ground, out).height;
-            return true;
-        }
-        k0 = k;
-        k += k < 60.0f ? 0.1f : f_max(0.5f, k * 0.02f);
-    }
-    return false;
-}
-
-bool view_screen_to_ground(const Camera &cam, i32 width, i32 height, f32 px, f32 py, const Terrain &ground, WPos &out) {
-    WPos eye;
-    Vec3 dir;
-    if (!view_screen_ray(cam, width, height, px, py, eye, dir)) return false;
-    // Шаги растут с расстоянием, на пересечении — деление пополам
-    f32 k0 = 0.0f, k = 0.5f;
-    for (u32 i = 0; i < 400 && k < 30000.0f; ++i) {
-        WPos p = offset(eye, dir * k);
-        if (p.y <= ground_at(ground, p).height) {
-            for (u32 j = 0; j < 24; ++j) {
-                f32 m = (k0 + k) * 0.5f;
-                WPos q = offset(eye, dir * m);
-                if (q.y <= ground_at(ground, q).height) k = m;
-                else k0 = m;
-            }
-            out = offset(eye, dir * k);
-            out.y = ground_at(ground, out).height;
-            return true;
-        }
-        k0 = k;
-        k += f_max(0.5f, k * 0.02f);
-    }
-    return false;
 }
 
 static const ViewMesh *find_mesh(const ViewAssets &a, u64 name) {
@@ -346,47 +67,11 @@ static void build_decals(const Decals &d, const ViewAssets &assets, const WPos &
     out.decals = {dst, n};
 }
 
-// Тестовые огни (F3): по одному в клетке 8 м мира в круге TEST_LIGHTS_R м вокруг опоры камеры, место, высота,
-// радиус и цвет — из хеша клетки. Огни мира появятся с контентом; эти только проверяют списки froxels и дают
-// свету пользователя (этап 6) что освещать
-constexpr f32 TEST_LIGHT_CELL = 8.0f, TEST_LIGHTS_R = 44.0f;
-static void build_test_lights(const Camera &cam, const Terrain &t, const WPos &eye, Arena &frame, RenderFrame &out) {
-    const i32 per_chunk = (i32)(CHUNK_M / TEST_LIGHT_CELL), rc = (i32)(TEST_LIGHTS_R / TEST_LIGHT_CELL) + 1;
-    const WPos &c = cam.pivot;
-    i32 gx0 = c.cx * per_chunk + f_floor_i(c.x / TEST_LIGHT_CELL), gz0 = c.cz * per_chunk + f_floor_i(c.z / TEST_LIGHT_CELL);
-    RenderPointLight *ls = arena_push<RenderPointLight>(frame, (u32)((2 * rc + 1) * (2 * rc + 1)));
-    u32 n = 0;
-    for (i32 dz = -rc; dz <= rc; ++dz)
-        for (i32 dx = -rc; dx <= rc && n < RENDER_MAX_LIGHTS; ++dx) {
-            i32 gx = gx0 + dx, gz = gz0 + dz;
-            u64 h = hash_combine(hash_mix((u64)(u32)gx), (u64)(u32)gz);
-            auto u01 = [&](u32 k) { return (f32)((h >> (k * 12)) & 0xFFF) / 4095.0f; };
-            WPos p;
-            p.cx = gx >= 0 ? gx / per_chunk : -((-gx - 1) / per_chunk) - 1;
-            p.cz = gz >= 0 ? gz / per_chunk : -((-gz - 1) / per_chunk) - 1;
-            p.x = ((f32)(gx - p.cx * per_chunk) + 0.2f + 0.6f * u01(0)) * TEST_LIGHT_CELL;
-            p.z = ((f32)(gz - p.cz * per_chunk) + 0.2f + 0.6f * u01(1)) * TEST_LIGHT_CELL;
-            Vec2 d = wpos_delta_xz(c, p);
-            if (d.x * d.x + d.y * d.y > TEST_LIGHTS_R * TEST_LIGHTS_R) continue;
-            p.y = ground_at(t, p).height + 0.8f + 2.5f * u01(2);
-            Vec3 rel = delta(eye, p.cx, p.cz, p.x, p.y, p.z);
-            RenderPointLight &l = ls[n++];
-            l = RenderPointLight{rel.x, rel.y, rel.z, 5.0f + 7.0f * u01(3), 0, 0, 0, 0};
-            // Тёплые огни костров, реже — холодные
-            bool cold = u01(4) < 0.25f;
-            f32 k = 20.0f + 40.0f * u01(4);
-            l.r = k * (cold ? 0.45f : 1.0f);
-            l.g = k * (cold ? 0.6f : 0.55f);
-            l.b = k * (cold ? 1.0f : 0.2f);
-        }
-    out.lights = {ls, n};
-}
-
 void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in, Arena &frame, RenderFrame &out) {
     out = RenderFrame{};
 
     WPos eye = view_eye(cam);
-    Basis b = basis(cam);
+    CameraBasis b = view_camera_basis(cam);
     RenderView &v = out.view;
     v.cx = eye.cx;
     v.cz = eye.cz;
@@ -401,7 +86,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
         dst[i][2] = axes[i].z;
     }
     f32 s, c;
-    sincos_turn(turn_from_rad(fov_rad(cam) * 0.5f), &s, &c);
+    sincos_turn(turn_from_rad(view_camera_fov(cam) * 0.5f), &s, &c);
     v.tan_half_fov = s / c;
     v.near_m = NEAR_M;
     out.style.pixel = in.pixel;
@@ -413,6 +98,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.style.dt = in.dt;
     out.style.eye_snap = in.eye_snap;
     out.style.tonemap = in.tonemap;
+    out.style.scans = in.scans;
     out.style.light_quality = in.light_quality;
     out.style.aa = in.aa;
 
@@ -471,7 +157,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     }
     out.instances = {inst, ni};
     if (cur.decals) build_decals(*cur.decals, assets, eye, frame, out);
-    if (in.test_lights && cur.terrain) build_test_lights(cam, *cur.terrain, eye, frame, out);
+    lamps_build(in.lamps_off ? nullptr : cur.lamps, in.test_lights, cam, cur.terrain, eye, frame, out);
 
     u32 ndbg = in.dbg ? in.dbg->count : 0;
     if (ndbg || npl) {

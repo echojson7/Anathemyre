@@ -13,7 +13,9 @@ struct DebugState {
     bool lines = true;        // L — отладочные отрезки
     bool pixel = false;       // P — старое правило ячеек (свет раз на ячейку, docs/render.md); только для сравнения
     bool test_lights = false; // тестовые огни вокруг камеры (froxels)
+    bool lamps_off = false;   // лампы карты не светят (огни 6е, сравнение, не сохраняется)
     bool froxel_heat = false; // тепловая карта огней по клеткам froxels
+    bool scans = false;       // поверхности из сканов CC0 (docs/scans.md, --scans; не сохраняется)
     bool gcache_off = false;  // без кеша поверхности земли (сравнение, не сохраняется)
     u32 shadow_pages = 0;     // тени (docs/shadow.md): 0 — кадр, 1 — страницы поверх, 2 — только тень (не сохраняется)
     u32 sdf_view = 0;         // поле расстояний (docs/sdf.md): кадр, только небо, поле, выкл (RENDER_SDF_*, не сохраняется)

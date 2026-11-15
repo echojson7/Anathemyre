@@ -27,7 +27,9 @@ static void usage() {
     log_info("anathemyre [--seed N] [--novsync] [--validation | --gpuav] [--frames N] [--record файл.rec] [--cells] [--aa off|fxaa|taa] [--nohud]");
     log_info("           [--gpuav-skip a.comp,b.frag]                                 шейдеры без проверки на GPU");
     log_info("           [--lights] [--heat]                                          тестовые огни, огни по клеткам froxels");
+    log_info("           [--nolamps]                                                  лампы карты не светят (было/стало)");
     log_info("           [--nogcache]                                                 без кеша поверхности земли (сравнение)");
+    log_info("           [--scans]                                                    поверхности из сканов CC0, где есть (docs/scans.md)");
     log_info("           [--smpages] [--smonly]                                       страницы теней поверх кадра, только тень (docs/shadow.md)");
     log_info("           [--sdfsky] [--sdffield] [--nosdf]                            видимость неба, поле расстояний, свет без поля (docs/sdf.md)");
     log_info("           [--gionly] [--nogi]                                          только непрямой свет, свет без зондов (docs/gi.md)");
@@ -135,8 +137,10 @@ int main(int argc, char **argv) {
             i++;
         }
         else if (!strcmp(s, "--lights")) a.test_lights = true;
+        else if (!strcmp(s, "--nolamps")) a.lamps_off = true;
         else if (!strcmp(s, "--heat")) a.froxel_heat = true;
         else if (!strcmp(s, "--nogcache")) a.nogcache = true;
+        else if (!strcmp(s, "--scans")) a.scans = true;
         else if (!strcmp(s, "--smpages")) a.shadow_pages = 1;
         else if (!strcmp(s, "--smonly")) a.shadow_pages = 2;
         else if (!strcmp(s, "--sdfsky")) a.sdf_view = RENDER_SDF_SKY;
