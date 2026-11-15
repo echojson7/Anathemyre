@@ -153,6 +153,7 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_toggle(f, "тестовые огни", d.test_lights);
     ui_toggle(f, "огни по клеткам", d.froxel_heat);
     ui_toggle(f, "без кеша земли", d.gcache_off);
+    ui_toggle(f, "сканы CC0", d.scans);
     static const char *const SM_VIEWS[] = {"кадр", "страницы", "только тень"};
     ui_choice(f, "тени солнца", d.shadow_pages, SM_VIEWS, ANA_COUNTOF(SM_VIEWS));
     static const char *const SDF_VIEWS[] = {"кадр", "только небо", "поле", "выкл"};

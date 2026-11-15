@@ -16,6 +16,7 @@ Windows, ~2 ГБ архив LLVM для Linux, распаковывается т
 | `make check` | слои (`tools/layers.sh`) и запреты (`tools/forbid.sh`) |
 | `make sim-check` / `make sim-ref` | сверить / обновить эталонные хеши `--sim` в `tests/sim_hashes.txt` |
 | `make compdb` | `compile_commands.json` по исходным файлам для clangd |
+| `make scans` | сканы CC0 в `build/<цель>/data/scans.pak` (сеть, numpy, PIL; не в CI) — `docs/scans.md` |
 
 ## Если игра не запускается
 - `tools/run.sh` печатает код выхода, если он не 0, и путь к журналу. Журнал — `anathemyre.log` рядом с игрой

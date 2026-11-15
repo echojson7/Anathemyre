@@ -12,7 +12,7 @@ struct Vertex { float px, py, pz; uint normal; uint mats; uint misc; };
 struct Instance { int cx, cz; float x, y, z; uint rot_xy, rot_zw; float scale; uint mesh, material, seed, lod_min; };
 // Материал — RenderMaterial, 64 байта: p0 = color.rgb + rough, p1 = color2.rgb + texel, p2 = extra;
 // pad0 — биты f32 metal (0 — диэлектрик, 1 — металл)
-struct Material { uint kind, pad0, pad1, pad2; vec4 p0, p1, p2; };
+struct Material { uint kind, pad0, scan, pad2; vec4 p0, p1, p2, p3; };  // scan, p3 — сканы (docs/scans.md)
 struct LineVtx { float x, y, z; uint rgba; };
 // Декаль — RenderDecal (src/render/render.h), 48 байт
 struct Decal { vec3 c; float ux, uz; vec3 h; uint kind, material, seed, pad; };
@@ -146,7 +146,7 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec4 right, up, forward;
     float proj_x, proj_y, near_m, pixel_angle;
     float cell_min, cell_pixels;
-    uint pixel, pad1;
+    uint pixel, scans;
     vec4 sun_dir, sun_color;  // временный свет: главный источник (солнце или луна) и его цвет у камеры
     vec2 viewport, ndc_per_pixel;
     // Земля: как Terrain в src/sim/terrain.h

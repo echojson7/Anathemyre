@@ -268,6 +268,7 @@ int run_window(const Args &a, AppMemory &m) {
     TimeCtl tc;
     DebugState ds;
     if (a.tonemap >= 0) ds.tonemap = (u32)a.tonemap;
+    ds.scans = a.scans;
     u32 clock_speed = 0;  // номер в CLOCK_SPEEDS
     // Час дня → доля суток в оборотах (намерение часов)
     auto hour_turn = [](f64 h) { return (u64)(u32)(u64)(h / 24.0 * 4294967296.0); };
@@ -612,6 +613,7 @@ int run_window(const Args &a, AppMemory &m) {
         vi.dt = a.frames ? 1.0f / 30.0f : (f32)dt;
         vi.eye_snap = frames < 2 || a.timelapse || a.shot;
         vi.tonemap = ds.tonemap;
+        vi.scans = ds.scans;
         vi.shadow_pages = a.shadow_pages ? a.shadow_pages : ds.shadow_pages;
         vi.sdf_view = a.sdf_view ? a.sdf_view : ds.sdf_view;
         vi.light_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.light_quality;
