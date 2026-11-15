@@ -12,11 +12,6 @@ struct Extract {
     const ActionTable *actions;  // действия (клип, окна) — тоже
     u64 step;
     Clock clock;
-    u16 *gen;      // 0 — места нет или точка мертва
-    i32 *cx, *cz;
-    f32 *x, *y, *z;
-    u32 attract_on;
-    WPos attract_at;
     // Статичные объекты: места 0..props_count, gen 0 — места нет
     u32 props_count;
     u16 *prop_gen;

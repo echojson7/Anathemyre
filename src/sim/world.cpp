@@ -9,26 +9,6 @@ void world_init(World &w, Arena &arena, u64 seed, const TerrainDesc &terrain, Ar
     w.clock.day_ticks = CLOCK_DAY_TICKS_DEFAULT;
     w.clock.tick = (u64)CLOCK_DAY_TICKS_DEFAULT * 7 / 24;  // 7:00, сцена может задать своё
     w.clock.rate = 1;
-    Dots &d = w.dots;
-    d.gen = arena_push<u16>(arena, DOTS_CAPACITY);
-    d.alive = arena_push<u8>(arena, DOTS_CAPACITY);
-    d.cx = arena_push<i32>(arena, DOTS_CAPACITY);
-    d.cz = arena_push<i32>(arena, DOTS_CAPACITY);
-    d.x = arena_push<f32>(arena, DOTS_CAPACITY);
-    d.z = arena_push<f32>(arena, DOTS_CAPACITY);
-    d.y = arena_push<f32>(arena, DOTS_CAPACITY);
-    d.vx = arena_push<f32>(arena, DOTS_CAPACITY);
-    d.vz = arena_push<f32>(arena, DOTS_CAPACITY);
-    d.speed = arena_push<f32>(arena, DOTS_CAPACITY);
-    d.phase = arena_push<u32>(arena, DOTS_CAPACITY);
-    d.omega = arena_push<u32>(arena, DOTS_CAPACITY);
-    d.free = arena_push<u16>(arena, DOTS_CAPACITY);
-    // Свободные места со дна стека: первым родится место 0
-    d.free_count = DOTS_CAPACITY;
-    for (u32 i = 0; i < DOTS_CAPACITY; ++i) d.free[i] = (u16)(DOTS_CAPACITY - 1 - i);
-    d.live = 0;
-    for (u32 i = 0; i < DOTS_TARGET; ++i) dots_spawn(w, WPos{}, 40.0f);
-
     Props &p = w.props;
     p.gen = arena_push<u16>(arena, PROPS_CAPACITY);
     p.alive = arena_push<u8>(arena, PROPS_CAPACITY);
@@ -153,47 +133,7 @@ bool lamps_add(World &w, const WPos &at, const f32 axis[3], const f32 face[3], f
     return true;
 }
 
-bool dots_spawn(World &w, const WPos &center, f32 radius) {
-    Dots &d = w.dots;
-    if (d.free_count == 0) return false;
-    u32 s = d.free[--d.free_count];
-    d.gen[s] = (u16)(d.gen[s] + 1);
-    if (d.gen[s] == 0) d.gen[s] = 1;
-    d.alive[s] = 1;
-    // Точка в круге: отбор из квадрата, в среднем 1.27 попытки
-    f32 ox, oz;
-    do {
-        ox = rng_range(w.rng, -1.0f, 1.0f);
-        oz = rng_range(w.rng, -1.0f, 1.0f);
-    } while (ox * ox + oz * oz > 1.0f);
-    d.cx[s] = center.cx;
-    d.cz[s] = center.cz;
-    d.x[s] = center.x + ox * radius;
-    d.z[s] = center.z + oz * radius;
-    wpos_rebase(d.cx[s], d.x[s]);
-    wpos_rebase(d.cz[s], d.z[s]);
-    d.y[s] = ground_at(w.terrain, d.cx[s], d.cz[s], d.x[s], d.z[s]).height;
-    d.vx[s] = d.vz[s] = 0.0f;
-    d.speed[s] = rng_range(w.rng, 2.0f, 6.0f);
-    d.phase[s] = rng_u32(w.rng);
-    // Полный оборот курса за 2..8 с, в любую сторону
-    u32 om = (u32)(4294967296ull / (u64)(120 + rng_below(w.rng, 361)));
-    d.omega[s] = (rng_u32(w.rng) & 1u) ? om : (u32)(0u - om);
-    d.live++;
-    return true;
-}
-
-void dots_kill(World &w, u32 slot) {
-    Dots &d = w.dots;
-    ANA_ASSERT(slot < DOTS_CAPACITY && d.alive[slot]);
-    d.alive[slot] = 0;
-    d.free[d.free_count++] = (u16)slot;
-    d.live--;
-}
-
 u32 world_columns(const World &w, Column *out) {
-    const Dots &d = w.dots;
-    const u32 n = DOTS_CAPACITY;
     u32 k = 0;
     out[k++] = column("world.step", &w.step, 1);
     out[k++] = column("world.clock.tick", &w.clock.tick, 1);
@@ -201,24 +141,6 @@ u32 world_columns(const World &w, Column *out) {
     out[k++] = column("world.clock.rate", &w.clock.rate, 1);
     out[k++] = column("world.rng.state", &w.rng.state, 1);
     out[k++] = column("world.rng.inc", &w.rng.inc, 1);
-    out[k++] = column("world.attract_on", &w.attract_on, 1);
-    out[k++] = column("world.attract_at", &w.attract_at, 1);
-    out[k++] = column("world.attract_until", &w.attract_until, 1);
-    out[k++] = column("dots.gen", d.gen, n);
-    out[k++] = column("dots.alive", d.alive, n);
-    out[k++] = column("dots.cx", d.cx, n);
-    out[k++] = column("dots.cz", d.cz, n);
-    out[k++] = column("dots.x", d.x, n);
-    out[k++] = column("dots.z", d.z, n);
-    out[k++] = column("dots.y", d.y, n);
-    out[k++] = column("dots.vx", d.vx, n);
-    out[k++] = column("dots.vz", d.vz, n);
-    out[k++] = column("dots.speed", d.speed, n);
-    out[k++] = column("dots.phase", d.phase, n);
-    out[k++] = column("dots.omega", d.omega, n);
-    out[k++] = column("dots.free", d.free, n);
-    out[k++] = column("dots.free_count", &d.free_count, 1);
-    out[k++] = column("dots.live", &d.live, 1);
     const Props &p = w.props;
     const u32 np = PROPS_CAPACITY;
     out[k++] = column("props.gen", p.gen, np);

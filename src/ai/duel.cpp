@@ -9,12 +9,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static void duel_err(char *err, usize n, const char *what) {
-    usize o = 0;
-    for (const char *q = what; *q && o + 1 < n; ++q) err[o++] = *q;
-    if (n) err[o] = 0;
-}
-
 bool duel_parse(const u8 *data, usize size, DuelDesc &out, char *err, usize err_size) {
     TextReader r = text_reader(data, size);
     TextLine l;
@@ -36,12 +30,12 @@ bool duel_parse(const u8 *data, usize size, DuelDesc &out, char *err, usize err_
         else if (str_eq(k, "none") && one) { out.none = a; have |= 128; }
         else if (str_eq(k, "margin") && l.count == 2 && parse_u32(l.w[1], u) && u < 60) { out.margin = u; have |= 256; }
         else {
-            duel_err(err, err_size, "непонятная строка (think, notice, noise, attack, open, dodge, counter, none, margin)");
+            text_err(err, err_size, l.line, "непонятная строка (think, notice, noise, attack, open, dodge, counter, none, margin)");
             return false;
         }
     }
     if (have != 511) {
-        duel_err(err, err_size, "нужны все поля: think, notice, noise, attack, open, dodge, counter, none, margin");
+        text_err(err, err_size, 0, "нужны все поля: think, notice, noise, attack, open, dodge, counter, none, margin");
         return false;
     }
     out.hash = hash_bytes(&out, offsetof(DuelDesc, hash));
@@ -52,15 +46,18 @@ static f32 lerp2(const f32 v[2], f32 k) { return v[0] + (v[1] - v[0]) * k; }
 
 
 // Свой (не цель, не враг) впереди-сбоку ближе 1.8 м: широкий удар задел бы его
-static bool duel_ally_near(const World &w, u32 s, u32 t) {
+static bool duel_ally_near(const World &w, const FightView &v, u32 s, u32 t) {
     const People &p = w.people;
-    for (u32 a = 0; a < PEOPLE_CAPACITY; ++a) {
-        if (!p.alive[a] || a == s || a == t || people_foes(p, s, a)) continue;
+    PeopleSet near;
+    people_grid_near(v.grid, p.cx[s], p.cz[s], p.x[s], p.z[s], 1.8f, near);
+    bool any = false;
+    people_set_each(near, [&](u32 a) {
+        if (any || a == s || a == t || people_foes(p, s, a)) return;
         Vec2 d = wpos_delta_xz(p.cx[s], p.cz[s], p.x[s], p.z[s], p.cx[a], p.cz[a], p.x[a], p.z[a]);
-        if (dot(d, d) > 1.8f * 1.8f || dot(d, d) < 1e-6f) continue;
-        if (f_abs(turn_diff_rad(p.heading[s], turn_of_dir(d.x, d.y))) < 1.6f) return true;
-    }
-    return false;
+        if (dot(d, d) > 1.8f * 1.8f || dot(d, d) < 1e-6f) return;
+        any = f_abs(turn_diff_rad(p.heading[s], turn_of_dir(d.x, d.y))) < 1.6f;
+    });
+    return any;
 }
 
 void duel_think(const World &w, const DuelDesc &D, const GroupDesc &G, const FightView &v, u32 s, FixedArray<Intent> &out) {
@@ -123,7 +120,7 @@ void duel_think(const World &w, const DuelDesc &D, const GroupDesc &G, const Fig
         want = 0;
         if (ai_roll(w.step, id, 1000) < chance && fight_may_strike(w, G, v, s, t)) {
             // Свой рядом под клинком (впереди-сбоку ближе досягаемости) — не мести сбоку и по ногам, бить сверху
-            const bool ally = duel_ally_near(w, s, t);
+            const bool ally = duel_ally_near(w, v, s, t);
             f32 best = -1e9f;
             for (u32 k = 0; k < T.count; ++k) {
                 const ActionDesc &C = T.a[k];

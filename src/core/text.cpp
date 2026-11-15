@@ -94,6 +94,21 @@ bool parse_u32(Str s, u32 &out) {
     return true;
 }
 
+void text_err(char *err, usize cap, u32 line, const char *what) {
+    if (!cap) return;
+    usize n = 0;
+    if (line) {
+        for (const char *p = "строка "; *p && n + 1 < cap; ++p) err[n++] = *p;
+        char num[12];
+        u32 k = 0;
+        do { num[k++] = (char)('0' + line % 10); line /= 10; } while (line && k < sizeof num);
+        while (k && n + 1 < cap) err[n++] = num[--k];
+        if (n + 2 < cap) { err[n++] = ':'; err[n++] = ' '; }
+    }
+    for (const char *p = what; *p && n + 1 < cap; ++p) err[n++] = *p;
+    err[n] = 0;
+}
+
 u64 text_hash(const u8 *data, usize size) {
     u64 h = 0x51ED;
     u8 buf[256];
