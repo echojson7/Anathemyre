@@ -73,8 +73,9 @@ bool vk_gi_init() {
         if (!vk_create_buffer(fs.gi_jobs, (VkDeviceSize)GI_PROBES * GI_K * 4, ssbo)) return false;
         vk_buffer_name(fs.gi_jobs, "зонды: работы кадра");
     }
-    s.pipe_trace = vk_make_compute("gi_trace.comp");
-    s.pipe_blend = vk_make_compute("gi_blend.comp");
+    bool ok = true;
+    ok = vk_make_compute(&s.pipe_trace, "gi_trace.comp") && ok;
+    ok = vk_make_compute(&s.pipe_blend, "gi_blend.comp") && ok;
     s.rg_irr = rg_image("зонды: освещённость", VK_IMAGE_ASPECT_COLOR_BIT);
     s.rg_dep = rg_image("зонды: расстояния", VK_IMAGE_ASPECT_COLOR_BIT);
     s.rg_acc = rg_image("зонды: среднее круга", VK_IMAGE_ASPECT_COLOR_BIT);
@@ -105,7 +106,7 @@ bool vk_gi_init() {
                          (VkDeviceSize)GI_CHUNK * (GI_RAYS_MAX * 8 + 16);
     log_info("зонды: %u уровня по %u×%u×%u от %.0f м, %.0f МБ", GI_LEVELS, GI_NX, GI_NY, GI_NZ, 1.0,
              (f64)bytes / (1 << 20));
-    return s.pipe_trace && s.pipe_blend;
+    return ok;
 }
 
 static void gi_destroy_image(GpuImage &im) {

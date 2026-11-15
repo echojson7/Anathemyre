@@ -9,9 +9,8 @@ constexpr u32 H_ROWS = 64;     // строк узлов на вызов сбор
 
 bool vk_horizon_init() {
     HorizonGpu &h = g_vk.horizon;
-    h.pipe = vk_make_compute("horizon.comp");
     h.rg_map = rg_buffer("земля: горизонт");
-    return h.pipe != VK_NULL_HANDLE;
+    return vk_make_compute(&h.pipe, "horizon.comp");
 }
 
 void vk_horizon_shutdown() {

@@ -48,6 +48,15 @@ void platform_log_append(const char *line, usize len);
 void platform_log_flush();
 // Перед выходом из программы: дописать журнал, закрыть файл и SDL
 void platform_shutdown();
+// Потоки (docs/startup.md): только для работы при запуске — создание мира и конвейеры, не для шага мира.
+// start — job(user) в новом потоке (nullptr — поток не создан); join ждёт конца и освобождает поток; done —
+// закончил ли (не ждёт). cores — логических ядер
+struct PlatformThread;
+typedef void (*PlatformJob)(void *user);
+PlatformThread *platform_thread_start(const char *name, PlatformJob job, void *user);
+void platform_thread_join(PlatformThread *t);
+bool platform_thread_done(const PlatformThread *t);
+u32 platform_cpu_cores();
 // Папка исполняемого файла, с завершающим разделителем
 const char *platform_exe_dir();
 // Имена файлов в папке (без пути) с окончанием suffix, по одному в cb. false — папки нет

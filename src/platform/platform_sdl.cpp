@@ -32,6 +32,53 @@ void platform_preinit() {
 u64 platform_time_ns() { return SDL_GetTicksNS(); }
 void platform_sleep_ms(u32 ms) { SDL_Delay(ms); }
 
+// Потоки запуска: место под них — в статическом пуле, без кучи. Поток пула свободен после join
+struct PlatformThread {
+    SDL_Thread *t;
+    PlatformJob job;
+    void *user;
+    SDL_AtomicInt done;
+};
+static constexpr u32 THREAD_POOL = 32;
+static PlatformThread g_threads[THREAD_POOL];
+
+static int SDLCALL thread_main(void *p) {
+    PlatformThread *t = (PlatformThread *)p;
+    t->job(t->user);
+    SDL_SetAtomicInt(&t->done, 1);
+    return 0;
+}
+
+PlatformThread *platform_thread_start(const char *name, PlatformJob job, void *user) {
+    for (PlatformThread &t : g_threads) {
+        if (t.job) continue;
+        t.job = job;
+        t.user = user;
+        SDL_SetAtomicInt(&t.done, 0);
+        t.t = SDL_CreateThread(thread_main, name, &t);
+        if (t.t) return &t;
+        t.job = nullptr;
+        return nullptr;
+    }
+    return nullptr;
+}
+
+void platform_thread_join(PlatformThread *t) {
+    if (!t) return;
+    SDL_WaitThread(t->t, nullptr);
+    t->t = nullptr;
+    t->job = nullptr;
+}
+
+bool platform_thread_done(const PlatformThread *t) {
+    return !t || SDL_GetAtomicInt(const_cast<SDL_AtomicInt *>(&t->done)) != 0;
+}
+
+u32 platform_cpu_cores() {
+    int n = SDL_GetNumLogicalCPUCores();
+    return n > 0 ? (u32)n : 1;
+}
+
 void *platform_alloc(usize size) { return SDL_calloc(1, size); }
 void platform_free(void *p) { SDL_free(p); }
 
