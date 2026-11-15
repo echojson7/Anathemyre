@@ -15,7 +15,7 @@ static bool numbers(const TextLine &l, f32 *dst, u32 n) {
 }
 
 // material <имя> <вид>
-//     color r g b | rough k | color2 r g b | texel м | extra a b c d
+//     color r g b | rough k | color2 r g b | texel м | extra a b c d | metal k | scan <слой> <м> [r g b]
 bool material_table_parse(const u8 *kinds_text, usize kinds_size, const u8 *text, usize size, Arena &arena,
                           MaterialTable &out, char *err, usize err_cap) {
     out = MaterialTable{};
@@ -65,6 +65,18 @@ bool material_table_parse(const u8 *kinds_text, usize kinds_size, const u8 *text
         else if (str_eq(k, "texel")) ok = numbers(l, cur->p + 7, 1) && cur->p[7] > 0.0f;
         else if (str_eq(k, "extra")) ok = numbers(l, cur->p + 8, 4);
         else if (str_eq(k, "metal")) ok = numbers(l, &cur->metal, 1) && cur->metal >= 0.0f && cur->metal <= 1.0f;
+        else if (str_eq(k, "scan")) {
+            // Плитка должна делить 256 м нацело, иначе скан сдвинется на границе чанка камеры (docs/scans.md)
+            ok = (l.count == 3 || l.count == 6) && parse_f32(l.w[2], cur->scan_tile) && cur->scan_tile > 0.0f &&
+                 cur->scan_tile <= 256.0f;
+            if (ok) {
+                f32 per = 256.0f / cur->scan_tile;
+                ok = per == (f32)(i32)per;
+            }
+            cur->scan = l.w[1];
+            cur->scan_tint[0] = cur->scan_tint[1] = cur->scan_tint[2] = 1.0f;
+            for (u32 c = 0; ok && l.count == 6 && c < 3; ++c) ok = parse_f32(l.w[3 + c], cur->scan_tint[c]);
+        }
         else return fail(err, err_cap, l.line, "неизвестный параметр");
         if (!ok) return fail(err, err_cap, l.line, "не те числа у параметра");
     }

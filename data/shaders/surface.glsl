@@ -100,6 +100,7 @@ float surf_toksvig(float rough, float nvar) {
 }
 
 #include "materials.glsl"
+#include "scan.glsl"
 
 Surface surface(uint id, vec3 p, vec3 n, float cell, float foot, uint seed) {
     SurfIn i;
@@ -110,6 +111,7 @@ Surface surface(uint id, vec3 p, vec3 n, float cell, float foot, uint seed) {
     i.seed = seed;
     i.m = pc.frame.materials.v[id];
     Surface s = surface_kind(i.m.kind, i);
+    if (pc.frame.scans != 0u && i.m.scan != 0u) scan_apply(i, s);
     s.normal = normalize(s.normal);
     s.metal = clamp(s.metal * uintBitsToFloat(i.m.pad0), 0.0, 1.0);
     s.rough = surf_toksvig(s.rough, s.nvar);

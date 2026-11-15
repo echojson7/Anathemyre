@@ -52,10 +52,12 @@ static_assert(sizeof(RenderPointLight) == 64, "RenderPointLight — 64 байт�
 struct RenderMaterial {
     u32 kind;
     f32 metal;  // 0 — диэлектрик, 1 — металл (docs/materials.md)
-    u32 pad[2];
+    u32 scan;   // слой сканов + 1 (docs/scans.md); 0 — нет, только узор
+    u32 pad;
     f32 p[12];  // смысл — asset/material.h
+    f32 scan_tint[3], scan_tile;  // множитель цвета скана; сторона плитки скана, м (делит 256 нацело)
 };
-static_assert(sizeof(RenderMaterial) == 64, "RenderMaterial — 64 байта");
+static_assert(sizeof(RenderMaterial) == 80, "RenderMaterial — 80 байт");
 
 // Отладочные отрезки и точки — метры относительно камеры
 struct RenderLineVertex {
@@ -91,6 +93,7 @@ enum RenderLightQuality : u32 { RENDER_LIGHT_LOW, RENDER_LIGHT_MEDIUM, RENDER_LI
 struct RenderStyle {
     bool pixel = true;     // выключается клавишей P
     bool froxel_heat = false;  // тепловая карта числа огней в клетке froxels поверх кадра (F3)
+    bool scans = false;        // поверхности из сканов CC0 вместо узора, где они есть (docs/scans.md, --scans, F3)
     bool gcache = true;        // кеш поверхности земли (docs/gcache.md); выкл — земля на пиксель (F3, --nogcache)
     u32 shadow_pages = 0;      // F3 (docs/shadow.md): 1 — страницы теней поверх кадра, 2 — только тень светила
     u32 sdf_view = RENDER_SDF_FRAME;  // F3 (docs/sdf.md): поле расстояний мира
@@ -243,6 +246,14 @@ struct RenderSkinned {
 };
 // Таблица материалов целиком (номер = место). Ждёт, пока GPU закончит кадры: только при загрузке
 bool render_set_materials(Span<const RenderMaterial> materials);
+// Сканы CC0 (docs/scans.md): слои size × size, мипы до 1, RGBA8 — цвет sRGB + AO и нормаль + шероховатость; внутри
+// мипа слои подряд. Номер слоя материала (RenderMaterial::scan) — по этому порядку
+struct RenderScans {
+    u32 layers, size, mips;
+    const u8 *albedo, *normal;
+    usize array_bytes;
+};
+bool render_set_scans(const RenderScans &s);
 
 // Земля (docs/terrain.md): сетка высот и маски копируются в видеопамять один раз, числа — как Terrain
 // в src/sim/terrain.h (рендер шаг мира не видит, их передаёт app). Рисуется clipmap'ом вокруг камеры
