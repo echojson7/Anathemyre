@@ -1,4 +1,4 @@
-// Приказы игрока в окне: выбор человека, «идти», «атаковать», притяжение точек и приказы командной строки
+// Приказы игрока в окне: выбор человека, «идти», «атаковать» и приказы командной строки
 #include "orders.h"
 #include "../core/log.h"
 #include "../debug/debug.h"
@@ -39,9 +39,9 @@ void orders_frame(const Args &a, const WindowOrders &o, const OrdersFrame &f, co
     const Extract &seen = *f.seen;
     Camera &cam = *f.cam;
     PeopleView &pv = *f.pv;
-    // Мышь (docs/ui.md, «Управление»): левая — выбрать человека; мимо — снять выбор и притянуть точки (с Ctrl —
-    // вспышка). Правая — приказ выбранному «идти» (Shift — бег, Ctrl — трусца), по другому человеку — «атаковать»,
-    // Alt + правая — вращать камеру. C — камера за выбранным. R — отпустить точки
+    // Мышь (docs/ui.md, «Управление»): левая — выбрать человека, мимо — снять выбор. Правая — приказ выбранному
+    // «идти» (Shift — бег, Ctrl — трусца), по другому человеку — «атаковать», Alt + правая — вращать камеру.
+    // C — камера за выбранным
     WPos at;
     if (win.mouse_pressed[MOUSE_LEFT]) {
         i32 hit = f.inspecting ? -1 : people_view_pick(pv, seen, cam, f.ww, f.wh, in.mouse_x, in.mouse_y);
@@ -53,7 +53,6 @@ void orders_frame(const Args &a, const WindowOrders &o, const OrdersFrame &f, co
             else {
                 pv.sel = -1;
                 cam.follow = false;
-                pending.push_back({0, win.key_down[KEY_CTRL] ? (u32)INTENT_BURST : (u32)INTENT_ATTRACT, at, 0});
             }
         }
     }
@@ -100,5 +99,4 @@ void orders_frame(const Args &a, const WindowOrders &o, const OrdersFrame &f, co
             continue;
         pending.push_back({0, INTENT_ATTACK, WPos{}, person_id(seen, k.slot) | (person_id(seen, k.foe) << 32)});
     }
-    if (win.key_pressed[KEY_R]) pending.push_back({0, INTENT_RELEASE, WPos{}, 0});
 }

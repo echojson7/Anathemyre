@@ -88,8 +88,8 @@ int run_sim(const Args &a, AppMemory &m) {
     }
     f64 total_ms = (f64)(platform_time_ns() - t0) / 1e6;
     char hex[17];
-    log_info("--sim: %" PRIu64 " шагов за %.1f мс, шаг в среднем %.1f мкс, макс %.1f мкс (шаг %" PRIu64 "); точек %u; хеш %s",
-             a.sim_steps, total_ms, total_ms * 1000.0 / (f64)a.sim_steps, max_us, max_at, w.dots.live,
+    log_info("--sim: %" PRIu64 " шагов за %.1f мс, шаг в среднем %.1f мкс, макс %.1f мкс (шаг %" PRIu64 "); хеш %s",
+             a.sim_steps, total_ms, total_ms * 1000.0 / (f64)a.sim_steps, max_us, max_at,
              hex_u64(world_hash(w), hex));
     // Шаг по системам (docs/sim.md «Замер шага»): среднее на шаг за весь прогон; ИИ боя — до шага, вне sim_step
     {

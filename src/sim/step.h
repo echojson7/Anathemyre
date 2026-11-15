@@ -3,9 +3,9 @@
 #include "intent.h"
 #include "world.h"
 
-// Системы шага для замера по частям (бенч --sim, docs/sim.md «Замер шага»): точки — три системы заглушки этапа 0
+// Системы шага для замера по частям (бенч --sim, docs/sim.md «Замер шага»)
 enum StepSysId : u32 {
-    SYS_INTENTS, SYS_DOTS, SYS_ACT, SYS_PATHS, SYS_STEER, SYS_SEPARATE, SYS_SETTLE, SYS_REST, SYS_COUNT
+    SYS_INTENTS, SYS_ACT, SYS_PATHS, SYS_STEER, SYS_SEPARATE, SYS_SETTLE, SYS_REST, SYS_COUNT
 };
 extern const char *const STEP_SYS_NAMES[SYS_COUNT];
 constexpr u32 SYS_PEOPLE_FIRST = SYS_ACT, SYS_PEOPLE_LAST = SYS_SETTLE;  // системы людей — подряд

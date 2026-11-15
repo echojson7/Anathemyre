@@ -37,9 +37,9 @@ struct OrdersFrame {
     WorldInspect *inspect;
     i32 ww, wh;
     u64 frame;
-    bool inspecting;  // вкладка «Мир» панели: левая кнопка выбирает строку точки, а не приказывает
+    bool inspecting;  // вкладка «Мир» панели: левая кнопка выбирает строку человека, а не приказывает
 };
-// Мышь (in — для координат, win — кнопки и клавиши миру), C — камера за выбранным, R — отпустить точки,
+// Мышь (in — для координат, win — кнопки и клавиши миру), C — камера за выбранным,
 // приказы командной строки этого кадра → pending
 void orders_frame(const Args &a, const WindowOrders &o, const OrdersFrame &f, const Input &in, const Input &win,
                   FixedArray<Intent> &pending);
