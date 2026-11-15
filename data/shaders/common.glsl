@@ -136,6 +136,11 @@ layout(buffer_reference, scalar) readonly buffer SkinJobs { SkinJob v[]; };
 layout(buffer_reference, scalar) readonly buffer Bones { vec4 v[]; };
 layout(buffer_reference, scalar) buffer VerticesW { Vertex v[]; };
 layout(buffer_reference, scalar) buffer ClustersW { Cluster v[]; };
+// Сглаживание (docs/aa.md): прошлые положения вершин людей (xyz половинками, пишет skin.comp перед новым) и прошлый
+// экземпляр динамической сетки — как Instance без сетки и материала; frame — кадр, для которого он прошлый
+layout(buffer_reference, scalar) buffer SkinPrev { uvec2 v[]; };
+struct MeshPrev { int cx, cz; float x, y, z; uint rot_xy, rot_zw; float scale; uint frame, pad0, pad1, pad2; };
+layout(buffer_reference, scalar) readonly buffer MeshPrevs { MeshPrev v[]; };
 layout(buffer_reference, scalar) buffer CullData { uint draw_count, pad0, pad1, pad2; uint count[65536]; uint offset[65536]; };
 
 // Не readonly: через него compute-шейдеры неба пишут свои таблицы (sky_*), сам буфер кадра никто не пишет
@@ -274,6 +279,14 @@ layout(buffer_reference, scalar) buffer FrameData {
     float gi_hyst, gi_pad1, gi_pad2, gi_pad3;  // доля старого значения при смешении
     vec4 t_hole[4];           // проёмы земли (docs/terrain.md): x0, z0, x1, z1 от камеры, м
     uint t_hole_n, t_hole_pad0, t_hole_pad1, t_hole_pad2;
+    // Сглаживание (docs/aa.md, vk_aa.cpp): режим (AA_*), дрожание точки пикселя этого кадра (пиксели, ±0.5),
+    // вид камеры прошлого кадра для векторов движения: оси, проекция, сдвиг камеры (сейчас − тогда, м)
+    uint aa_mode, aa_frame, aa_hist, aa_pad;  // aa_hist: 1 — прошлый кадр годен как история
+    vec2 jitter, prev_proj;
+    vec4 prev_right, prev_up, prev_forward;
+    vec4 prev_delta;
+    SkinPrev skin_prev;       // прошлое положение вершин людей (на вершину общего буфера, половинками)
+    MeshPrevs mesh_prev;      // прошлый экземпляр динамической сетки (по номеру сетки), годен при frame == aa_frame
 };
 
 layout(push_constant, scalar) uniform Push {
@@ -295,11 +308,20 @@ const int SKY_OUT_EYE = 4, SKY_OUT_EYE2 = 5;
 #define ORIGIN_CHUNK pc.frame.cam_chunk
 #endif
 
+const uint AA_OFF = 0u, AA_FXAA = 1u, AA_TAA = 2u;
+
 // Точка относительно камеры → клип. Обратная глубина до бесконечности: z = near, w = глубина вдоль взгляда
 vec4 to_clip(vec3 rel) {
     FrameData f = pc.frame;
     float vx = dot(rel, f.right.xyz), vy = dot(rel, f.up.xyz), vz = dot(rel, f.forward.xyz);
     return vec4(vx * f.proj_x, -vy * f.proj_y, f.near_m, vz);
+}
+// То же с дрожанием TAA (docs/aa.md): visibility buffer. Отладочные отрезки и точки рисуются поверх уже
+// сглаженного кадра — им дрожание не нужно (to_clip)
+vec4 to_clip_jittered(vec3 rel) {
+    vec4 c = to_clip(rel);
+    c.xy += pc.frame.jitter * pc.frame.ndc_per_pixel * c.w;
+    return c;
 }
 
 // Чанк + смещение → метры относительно камеры: сначала целая разность чанков, потом смещения

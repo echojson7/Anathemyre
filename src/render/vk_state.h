@@ -113,6 +113,13 @@ struct FrameGpu {
     // Проёмы земли: x0, z0, x1, z1 от камеры, м (vis_ground.frag в них землю не рисует); t_hole_n — сколько
     f32 t_hole[4][4];
     u32 t_hole_n, t_hole_pad[3];
+    // Сглаживание (vk_aa.cpp, docs/aa.md): режим, кадр (фаза дрожания, годность прошлых экземпляров), дрожание,
+    // прошлый вид камеры: оси, проекция, сдвиг камеры (сейчас − тогда, м); прошлые вершины людей и экземпляры
+    u32 aa_mode, aa_frame, aa_hist, aa_pad;  // aa_hist: 1 — прошлый кадр годен как история
+    f32 jitter[2], prev_proj[2];
+    f32 prev_right[4], prev_up[4], prev_forward[4];
+    f32 prev_delta[4];
+    VkDeviceAddress skin_prev, mesh_prev;
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -192,6 +199,7 @@ struct FrameSlot {
     GpuBuffer sm_inval;     // сферы сброса страниц теней (vk_shadow.cpp)
     GpuBuffer sdf_jobs, sdf_bricks, sdf_bits;  // засыпка, кирпичи и их биты поля расстояний (vk_sdf.cpp)
     GpuBuffer gi_jobs;      // работы зондов кадра (vk_gi.cpp)
+    GpuBuffer mesh_prev;    // прошлые экземпляры динамических сеток (MeshPrevGpu на номер сетки, vk_skin.cpp)
     u32 sm_frame = 0;       // кадр теней, чьи счётчики придут в readback (vk_shadow_read)
     u8 rg_readback = 0;     // он же в графе кадра
     bool stats_pending = false;  // readback заполнит отправленный кадр
@@ -427,6 +435,32 @@ struct SkinGpu {
     u32 touched[RENDER_MAX_SKINNED] = {};           // экземпляры с lod_min этого кадра (обнулить в следующем)
     u32 touched_count = 0;
     u8 rg_vertices = 0, rg_clusters = 0;            // общие буферы вершин и кластеров в графе кадра
+    // Векторы движения TAA (docs/aa.md): прошлые положения вершин (пишет skin.comp); прошлый экземпляр и кадр
+    // скиннинга каждой сетки человека — в vk_skin.cpp (большие, не на стек при сбросе состояния)
+    GpuBuffer prev;
+    u8 rg_prev = 0;
+};
+// Прошлый экземпляр сетки человека (MeshPrev в common.glsl): годен, если frame — кадр сглаживания этого кадра
+struct MeshPrevGpu {
+    i32 cx, cz;
+    f32 x, y, z;
+    u32 rot_xy, rot_zw;
+    f32 scale;
+    u32 frame, pad[3];
+};
+// Сглаживание (vk_aa.cpp, docs/aa.md): векторы движения (пишет освещение), две истории по очереди (одну пишет
+// проход сглаживания, другую читает), прошлый вид камеры
+struct AaGpu {
+    GpuImage motion, hist[2];
+    VkPipeline pipe = VK_NULL_HANDLE;
+    u8 rg_motion = 0, rg_hist[2] = {};
+    u32 cur = 0;          // история, которую пишет этот кадр
+    u32 frame = 0;        // кадр сглаживания: фаза дрожания и годность прошлых экземпляров
+    u32 mode = 0;         // режим этого кадра (RENDER_AA_*)
+    bool valid = false;   // история годна (не первый кадр, тот же размер, тот же режим)
+    bool have_prev = false;
+    i32 cx = 0, cz = 0;
+    f32 x = 0, y = 0, z = 0, right[3] = {}, up[3] = {}, forward[3] = {}, proj[2] = {};
 };
 struct PendingFree {
     u32 mesh;
@@ -504,6 +538,7 @@ struct VkState {
     u8 rg_froxels = 0, rg_media = 0;
     DiagGpu diag;
     SkinGpu skin;
+    AaGpu aa;
     // Время проходов на GPU за прошлый кадр слота (render_gpu_passes)
     u32 pass_count = 0;
     const char *pass_names[GPU_MAX_MARKS] = {};
@@ -631,6 +666,12 @@ void vk_froxel_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
 bool vk_skin_init();
 void vk_skin_shutdown();
 void vk_skin_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
+// Сглаживание (vk_aa.cpp, docs/aa.md): конвейер; картинки под размер кадра и их места в наборе кадра мира;
+// режим, дрожание и прошлый вид камеры в кадр (до vk_skin_fill — кадр сглаживания нужен прошлым экземплярам)
+bool vk_aa_init();
+void vk_aa_shutdown();
+bool vk_aa_images(VkDescriptorSet set);
+void vk_aa_fill(FrameGpu &g, const RenderFrame &f);
 // Интерфейс поверх кадра (vk_ui.cpp): свой конвейер без глубины; проход — в vk_graph.h
 bool vk_ui_init();
 void vk_ui_shutdown();

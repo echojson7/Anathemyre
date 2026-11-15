@@ -1,7 +1,7 @@
 // Монолитный бетон по концепту руины (docs/ostov.md): щиты опалубки рядами, у каждого щита свой оттенок, швы
 // между щитами, ряды анкерных отверстий посередине щитов, поры, тёмные пятна сырости и светлые выцветшие
 // пятна. Ржавчины нет. Потёки и грязь — декали (data/shaders/decal.glsl), не узор материала.
-// color — бетон, color2 — пятна сырости и грязь; texel — зерно (квадрат узора, м).
+// color — бетон, color2 — пятна сырости и грязь; texel — размер зерна (м).
 // extra.x — высота щита опалубки (м, 0 — без опалубки: низ плиты, излом), extra.y — ширина щита (м),
 // extra.z — шаг анкерных отверстий в ряду (м, 0 — без них), extra.w — сила пятен.
 // Ряды щитов и анкеров — по мировым метрам: детали стоят на сетке 1 м, площадка — на высоте, кратной 0.5 м
@@ -18,7 +18,6 @@ vec3 concrete_plane(SurfIn i, bool vert, vec3 an) {
 
 Surface surf_concrete(SurfIn i) {
     float t = i.m.p1.a;
-    vec3 q = snap(i.p, t);
     vec3 an = abs(i.n);
     bool vert = an.y < 0.7;
     // Мировые метры для рядов щитов: x, z — от начала карты чанков; y — высота
@@ -26,13 +25,12 @@ Surface surf_concrete(SurfIn i) {
     float wh = (an.x > an.z ? i.p.z + wc.y : i.p.x + wc.x);  // вдоль грани
     float wv = i.p.y;                                       // по высоте
 
-    // Тон: крупные пятна 2 м и 0.5 м, зерно по квадратам texel
+    // Тон: крупные пятна 2 м и 0.5 м, зерно texel (плавное, гаснет мельче пикселя)
     vec3 fp = concrete_plane(i, vert, an);
     float big = fbm_n(fp, 2.0, 2, 31u) - 0.5;
     float mid = value_noise(i.p, 0.5, 32u) - 0.5;
-    float grain = cell_noise(q, t, 33u) - 0.5;
-    float fine_fade = 1.0 - smoothstep(t * 0.6, t * 2.0, i.foot);
-    vec3 c = i.m.p0.rgb * (1.0 + big * 0.22 + mid * 0.10 + grain * 0.10 * fine_fade);
+    float grain = grain_noise(i.p, t, i.foot, 33u);
+    vec3 c = i.m.p0.rgb * (1.0 + big * 0.22 + mid * 0.10 + grain * 0.10);
 
     float ph = i.m.p2.x, pw = i.m.p2.y;
     if (vert && ph > 0.0) {
@@ -42,13 +40,13 @@ Surface surf_concrete(SurfIn i) {
         float tone = hash3(ivec3(int(col), int(row), 7), 34u) - 0.5;
         float lift = fract(wv / ph);
         c *= 1.0 + tone * 0.10 + (0.5 - lift) * 0.05;
-        // Швы: горизонтальный — тёмная полоса и светлый наплыв над ней, вертикальный — слабее
-        float sw = max(t, i.cell);
-        float fade = 1.0 - smoothstep(sw * 1.5, sw * 4.0, i.foot);
+        // Швы: горизонтальный — тёмная линия 1.2 см и светлый наплыв 2 см над ней, вертикальный — слабее.
+        // Линии сглажены по пикселю: тоньше пикселя — бледнее, без лесенки и ряби
         float dv = lift * ph, dh = fract(wh / pw) * pw;
-        if (dv < sw) c *= mix(1.0, 0.84, fade);
-        else if (dv < sw * 2.0) c *= mix(1.0, 1.04, fade);
-        if (dh < sw) c *= mix(1.0, 0.93, fade);
+        float sv = aa_line(min(dv, ph - dv), 0.012, i.foot);
+        float ridge = aa_line(dv - 0.022, 0.02, i.foot);
+        float sh = aa_line(min(dh, pw - dh), 0.008, i.foot);
+        c *= (1.0 - 0.16 * sv) * (1.0 + 0.04 * ridge) * (1.0 - 0.07 * sh);
         // Анкерные отверстия (следы стяжек опалубки): по одному посередине щита с шагом extra.z, сдвиг по хешу.
         // Неглубокая воронка: середина темнее на треть, не чёрная; больше половины заделаны раствором (светлее).
         // Гаснут, когда пиксель крупнее отверстия: иначе издали ряды отверстий рябят точками (было до 2026-11-11)
@@ -63,12 +61,13 @@ Surface surf_concrete(SurfIn i) {
             float hfade = 1.0 - smoothstep(r * 0.5, r * 1.5, i.foot);
             float kind = hash3(hk, 37u);
             float cone = 1.0 - smoothstep(0.0, r, l);
-            if (kind < 0.55) c *= mix(1.0, 1.0 + 0.06 * step(l, r * 1.2), hfade);   // заделано — светлое пятно
+            float disk = 1.0 - aa_step(r * 1.2, l, 1.0, i.foot);
+            if (kind < 0.55) c *= mix(1.0, 1.0 + 0.06 * disk, hfade);              // заделано — светлое пятно
             else if (kind < 0.92) c *= mix(1.0, 1.0 - 0.38 * cone, hfade);          // открыто — мягкая воронка
         }
     }
-    // Поры (раковины от воздуха у опалубки): редкие тёмные точки на стенах
-    if (vert && cell_noise(q, t, 38u) > 0.996) c *= mix(1.0, 0.72, fine_fade);
+    // Поры (раковины от воздуха у опалубки): редкие тёмные круглые точки на стенах
+    if (vert) c *= 1.0 - 0.28 * spot_noise(i.p, i.n, t * 2.0, 0.016, t * 0.3, i.foot, 38u);
     // Пятна: тёмные (сырость, грязь) и светлые (выцветшие, высолы)
     float bs = i.m.p2.w;
     float wet = fbm_n(fp, 4.0, 3, 39u);

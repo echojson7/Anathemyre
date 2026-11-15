@@ -1,5 +1,5 @@
-// Травяной покров (без травинок-объектов): color — зелёная трава, color2 — сухая, выгоревшая. texel — квадрат
-// мелкого узора. extra.x — размер пятен сухой травы (м, степень двойки), extra.y — доля сухой,
+// Травяной покров (без травинок-объектов): color — зелёная трава, color2 — сухая, выгоревшая. texel — размер
+// мелкого узора (м). extra.x — размер пятен сухой травы (м, степень двойки), extra.y — доля сухой,
 // extra.z — размер кочки (м, степень двойки), extra.w — наклон нормали на кочке.
 // Издали — массы зелёного и соломенного, вблизи — кочки двух размеров разного оттенка с тенью у основания,
 // между ними проглядывает земля
@@ -27,7 +27,6 @@ float grass_tufts(SurfIn i, float sz, uint seed, out vec2 dir, out float tone) {
 
 Surface surf_grass(SurfIn i) {
     float t = i.m.p1.a;
-    vec3 q = snap(i.p, t);
     float ps = max(i.m.p2.x, 1.0);
     // Сухие пятна: крупные и рваные
     float dry = fbm_n(i.p, ps * 4.0, 5, 81u);
@@ -62,16 +61,16 @@ Surface surf_grass(SurfIn i) {
         n = normalize(i.n + (tx * dir.x - tz * dir.y) * (i.m.p2.w * kf * tuft));
         height += tuft * 0.55 * kf;
     }
-    // Пряди: штрихи, вытянутые в своём направлении на каждом пятне (полёгшая трава); гаснут мельче пикселя
-    float bf = 1.0 - smoothstep(t * 0.5, t * 2.0, i.foot);
+    // Пряди: штрихи, вытянутые в своём направлении на каждом пятне (полёгшая трава) — плавный шум, растянутый
+    // вдоль пряди втрое; гаснут, когда поперечник пряди мельче пикселя
+    float bf = px_fade(t * 0.5, i.foot);
     if (bf > 0.0) {
         float ang = fbm_n(i.p, 2.0, 2, 89u) * 6.2831853;
         vec2 ax = vec2(cos(ang), sin(ang));
         vec2 wp = vec2(ORIGIN_CHUNK) * CHUNK_M + i.p.xz;  // мировые метры: узор не прыгает со сменой чанка
         vec2 r = vec2(dot(wp, ax), dot(wp, vec2(-ax.y, ax.x)));
-        vec2 cl = floor(r / vec2(t * 3.0, t * 0.5));
-        float blade = hash3(ivec3(int(cl.x), 0, int(cl.y)), 88u) - 0.5;
-        c *= 1.0 + blade * 0.45 * bf;
+        float blade = value_noise2(r / vec2(t * 3.0, t * 0.5), 88u) - 0.5;
+        c *= 1.0 + blade * 0.7 * bf;
     }
     Surface s;
     s.albedo = max(c, vec3(0.0));

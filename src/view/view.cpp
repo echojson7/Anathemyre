@@ -100,6 +100,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.style.tonemap = in.tonemap;
     out.style.scans = in.scans;
     out.style.light_quality = in.light_quality;
+    out.style.aa = in.aa;
 
     // Небо, светила и временный главный свет — из часов мира (docs/sky.md). Воздух пустыни (пыль, тёплая
     // дымка) — по маске пустыни под камерой, на перевале — плавно

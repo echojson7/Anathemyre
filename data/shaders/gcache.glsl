@@ -14,15 +14,12 @@
 const int GC_LEVELS = 13;          // уровни 0..12: ячейка до cell_min·4096 (51.2 м при 1/80 м)
 const int GC_PAGE = 8;             // текселей в стороне страницы
 const uint GC_REQ = 0x80000000u;   // запись окна: заявка кадра (младшие биты — кадр); иначе физическая + 1
-const uint GC_NONE = 0xFFFFFFFFu;  // GcCell.kt: у пикселя нет текселя кеша (крутой склон, правило выключено)
+const uint GC_NONE = 0xFFFFFFFFu;  // GcCell.kt: у пикселя нет текселя кеша (крутой склон)
 const uint GC_AGE = 120u;          // страница без чтения дольше стольких кадров — «старая», отдаётся первой
 
 // Уровень ячейки по глубине — как cell_size() (surface.glsl), только номер степени
-int gc_level(float depth) {
-    FrameData f = pc.frame;
-    float foot = max(depth, 0.0) * f.pixel_angle * f.cell_pixels;
-    return min(int(ceil(log2(max(foot / f.cell_min, 1.0)))), GC_LEVELS - 1);
-}
+int gc_level_foot(float foot) { return min(int(ceil(log2(max(foot / pc.frame.cell_min, 1.0)))), GC_LEVELS - 1); }
+int gc_level(float depth) { return gc_level_foot(max(depth, 0.0) * pc.frame.pixel_angle * pc.frame.cell_pixels); }
 
 float gc_cell(int k) { return ldexp(pc.frame.cell_min, k); }
 
@@ -159,9 +156,54 @@ Surface gc_surface(uvec4 v, int k, ivec2 t, vec3 rel) {
     return s;
 }
 
-// Пиксель земли → тексель кеша: уровень по глубине, номер текселя; GC_NONE — мимо кеша (плоскость ячейки не
-// горизонтальна: крутой склон, или правило пиксельности выключено). Та же плоскость, что у cell_snap()
-GcCell gc_cell_of(vec3 rel, vec3 ng) {
+// На пиксель (правило ячеек выключено — по умолчанию, docs/gcache.md «На пиксель»): пиксель смешивает четыре
+// соседних текселя (билинейно), без ступенек текселя. Нижний из них (номер со сдвигом чанка) и доля между ними
+ivec2 gc_bilinear(vec3 rel, int k, out vec2 fr) {
+    FrameData f = pc.frame;
+    vec2 q = (f.cam_off.xz + rel.xz) / gc_cell(k) - 0.5;
+    vec2 b = floor(q);
+    fr = q - b;
+    return ivec2(b) + (f.cam_chunk - ivec2(f.t_chunk0)) * (f.gc_tpc0 >> k);
+}
+
+// Поверхность пикселя из четырёх текселей b…b+1; phys0 — страница текселя b. Тексель без страницы (пул кончился)
+// выпадает из смеси, остальные делят его долю. pos — точка пикселя (на 2 мм внутрь, как у текселя)
+Surface gc_surface_px(int k, ivec2 b, vec2 fr, vec3 rel, int phys0) {
+    FrameData f = pc.frame;
+    float c = gc_cell(k);
+    float foot = max(dot(rel, f.forward.xyz), 0.0) * f.pixel_angle * f.cell_pixels;
+    float wv = clamp(log2(max(foot, 1e-9) / c) + 1.0, 0.0, 1.0);
+    vec3 alb = vec3(0.0), nrm = vec3(0.0);
+    float rough = 0.0, ao = 0.0, wsum = 0.0;
+    ivec2 page0 = b >> 3;
+    [[unroll]] for (int j = 0; j < 4; ++j) {
+        ivec2 o = ivec2(j & 1, j >> 1);
+        float w = (o.x == 1 ? fr.x : 1.0 - fr.x) * (o.y == 1 ? fr.y : 1.0 - fr.y);
+        ivec2 t = b + o;
+        int phys = (t >> 3) == page0 ? phys0 : gc_find(k, t);
+        if (phys < 0) continue;
+        uvec4 v = gc_read(phys, t);
+        Surface lo = gc_unpack(v.xy), hi = gc_unpack(v.zw);
+        alb += mix(lo.albedo, hi.albedo, wv) * w;
+        rough += mix(lo.rough, hi.rough, wv) * w;
+        nrm += mix(lo.normal, hi.normal, wv) * w;
+        ao += mix(lo.ao, hi.ao, wv) * w;
+        wsum += w;
+    }
+    Surface s = gc_unpack(uvec2(0u));
+    float inv = 1.0 / max(wsum, 1e-6);
+    s.albedo = alb * inv;
+    s.rough = rough * inv;
+    s.normal = normalize(nrm + vec3(0.0, 1e-6, 0.0));
+    s.ao = ao * inv;
+    s.pos = vec3(rel.x, rel.y - 0.002, rel.z);
+    return s;
+}
+
+// Пиксель земли → тексель кеша: уровень по следу пикселя foot (м; правило ячеек — по глубине), номер текселя (на
+// пиксель — нижний из четырёх смешиваемых); GC_NONE — мимо кеша (плоскость ячейки не горизонтальна: крутой
+// склон). Та же плоскость, что у cell_snap()
+GcCell gc_cell_of(vec3 rel, vec3 ng, float foot) {
     FrameData f = pc.frame;
     GcCell c;
     c.kt = GC_NONE;
@@ -169,9 +211,10 @@ GcCell gc_cell_of(vec3 rel, vec3 ng) {
     c.depth = dot(rel, f.forward.xyz);
     vec3 a = abs(ng);
     bool flat_ = !(a.x >= a.y && a.x >= a.z) && a.y >= a.z;
-    if (f.gc_on == 0u || f.pixel == 0u || !flat_) return c;
-    int k = gc_level(c.depth);
-    ivec2 t = gc_texel(f.cam_off + rel, k);
+    if (f.gc_on == 0u || !flat_) return c;
+    int k = f.pixel != 0u ? gc_level(c.depth) : gc_level_foot(foot);
+    vec2 fr;
+    ivec2 t = f.pixel != 0u ? gc_texel(f.cam_off + rel, k) : gc_bilinear(rel, k, fr);
     c.kt = uint(k) << 24 | (uint(t.x) & 0xFFFFFFu);
     c.tz = t.y;
     return c;

@@ -62,6 +62,17 @@ float value_noise(vec3 p, float size, uint seed) {
                mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
 }
 
+// Плавный шум значений по плоскости в единицах решётки (x — уже мировые метры / шаг; вызывающий сам отвечает за
+// то, чтобы x не зависел от чанка камеры). Для узоров, вытянутых по своему направлению (пряди травы, полосы ветра)
+float value_noise2(vec2 x, uint seed) {
+    vec2 c = floor(x), f = x - c;
+    f = f * f * (3.0 - 2.0 * f);
+    ivec3 k = ivec3(int(c.x), 0, int(c.y));
+    float a = hash3(k, seed), b = hash3(k + ivec3(1, 0, 0), seed);
+    float d = hash3(k + ivec3(0, 0, 1), seed), e = hash3(k + ivec3(1, 0, 1), seed);
+    return mix(mix(a, b, f.x), mix(d, e, f.x), f.y);
+}
+
 // Градиентный шум по плоскости xz на решётке size → [0, 1]. Пятна круглые, без квадратов шума значений
 float grad_noise(vec3 p, float size, uint seed) {
     ivec3 c = world_cell(vec3(p.x, 0.0, p.z), size);
@@ -88,8 +99,50 @@ float fbm_n(vec3 p, float size, int octaves, uint seed) {
     return s / norm;
 }
 
-// Точка в центр квадрата size: узор как текстура низкого разрешения
+// Точка в центр квадрата size (привязка к ячейке правила, F3 «ячейки»; узор материалов ею не пользуется)
 vec3 snap(vec3 p, float size) { return (floor(p / size) + 0.5) * size; }
+
+// Узор свет считает на пиксель (docs/render.md, «На пиксель»): квадратов узора нет, всё плавное, а деталь мельче
+// пикселя гаснет к среднему по следу пикселя foot (м) — иначе она рябит, и никакое сглаживание её не спасёт.
+// Доля, с которой виден узор размера size: 1 — крупнее пикселя в четыре раза, 0 — с пиксель и мельче
+float px_fade(float size, float foot) { return 1.0 - smoothstep(size * 0.25, size, foot); }
+
+// Зерно без среднего, около −0.5..0.5: плавный шум на решётке size и вдвое мельче, каждая октава гаснет сама.
+// Разброс — как у прежнего зерна квадратами (×1.6: у плавного шума он меньше, чем у шума ячеек)
+float grain_noise(vec3 p, float size, float foot, uint seed) {
+    float a = (value_noise(p, size, seed) - 0.5) * px_fade(size, foot);
+    float b = (value_noise(p, size * 0.5, seed + 7u) - 0.5) * px_fade(size * 0.5, foot);
+    return (a + b * 0.7) * 1.6;
+}
+
+// Плавная ступень на краю edge, ширина — пиксель: x меняется на dx за метр (сколько единиц x на метр). Край
+// пятна, порога шума или линии без лесенки и без мерцания
+float aa_step(float edge, float x, float dx, float foot) {
+    float w = max(dx * foot, 1e-4);
+    return smoothstep(edge - w, edge + w, x);
+}
+
+// Редкие круглые пятна (поры, камешки, крупинки): в квадрате size на плоскости грани (поперёк главной оси нормали n,
+// трипланарно) с вероятностью dens — круг радиуса до r м в случайном месте. 0..1 с краем в пиксель; пятно мельче
+// пикселя гаснет (в средний цвет вносит мало, а рябит сильно). Круг не выходит из своего квадрата — соседей не нужно
+float spot_noise(vec3 p, vec3 n, float size, float dens, float r, float foot, uint seed) {
+    vec3 an = abs(n);
+    vec3 mask = an.x >= an.y && an.x >= an.z ? vec3(0.0, 1.0, 1.0) : an.y >= an.z ? vec3(1.0, 0.0, 1.0) : vec3(1.0, 1.0, 0.0);
+    ivec3 c = world_cell(p, size) * ivec3(mask);
+    if (hash3(c, seed) >= dens) return 0.0;
+    float m = min(r / size, 0.45);
+    vec3 ctr = (vec3(hash3(c, seed + 1u), hash3(c, seed + 2u), hash3(c, seed + 3u)) * (1.0 - 2.0 * m) + m) * size;
+    float rad = r * (0.6 + 0.4 * hash3(c, seed + 4u));
+    float d = length((fract(p / size) * size - ctr) * mask);
+    return (1.0 - aa_step(rad, d, 1.0, foot)) * px_fade(rad * 2.0, foot);
+}
+
+// Линия ширины w (м): d — расстояние до её середины, м. Доля линии в пикселе; линия тоньше пикселя бледнеет по
+// своей доле в нём, а не пропадает и не рябит
+float aa_line(float d, float w, float foot) {
+    float hw = w * 0.5;
+    return (1.0 - aa_step(hw, abs(d), 1.0, foot)) * min(1.0, w / max(foot, 1e-6));
+}
 
 // Против искр без TAA (docs/light.md, «Искры»): узор, погашенный мельче пикселя, не пропадает, а уходит в
 // шероховатость — блик ячейки шире на столько, сколько нормалей она усреднила (Токсвиг, Капланян 2016):

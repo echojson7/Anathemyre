@@ -80,8 +80,8 @@ struct TimeCtl {
 struct MouseOwner {
     bool world[MOUSE_COUNT] = {};
 };
-// Отладочные режимы, с которыми к/с и мс нельзя сравнивать с бюджетом (docs/budget.md): без ячеек кеш земли не
-// работает и вся земля считается на пиксель; vsync упирает к/с в частоту экрана; слои проверки и отладочная
+// Отладочные режимы, с которыми к/с и мс нельзя сравнивать с бюджетом (docs/budget.md): старое правило ячеек
+// считает свет реже, чем игра; vsync упирает к/с в частоту экрана; слои проверки и отладочная
 // сборка медленнее в разы. Пусто — замер честный
 static void unfair_modes(char *out, usize cap, bool pixel, bool nogcache, bool lights, bool heat, bool validation,
                          bool vsync, bool sm_pages, bool sdf_view, bool gi_view) {
@@ -92,7 +92,7 @@ static void unfair_modes(char *out, usize cap, bool pixel, bool nogcache, bool l
         int k = snprintf(out + n, cap - n, "%s%s", n ? ", " : "", what);
         if (k > 0) n = (usize)k + n < cap ? n + (usize)k : cap - 1;
     };
-    add(!pixel, "без ячеек (P)");
+    add(pixel, "ячейки (P)");
     add(nogcache, "без кеша земли");
     add(lights, "тестовые огни");
     add(heat, "огни по клеткам");
@@ -354,7 +354,6 @@ int run_window(const Args &a, AppMemory &m) {
         if (in.key_pressed[KEY_ESCAPE] && !hud_on) break;  // без интерфейса Esc по-прежнему закрывает окно
         if (in.key_pressed[KEY_F11]) set.fullscreen = !set.fullscreen;
         ds.lines = set.lines;
-        ds.pixel = set.pixel;
         if (set.debug && !menu.open) {
             if (in.key_pressed[KEY_SPACE]) ds.pause_toggle = true;
             if (in.key_pressed[KEY_MINUS] && tc.speed > 0) ds.speed_set = (i32)tc.speed - 1;
@@ -449,7 +448,6 @@ int run_window(const Args &a, AppMemory &m) {
         prof_part(*prof, FP_UI, platform_time_ns());
         if (set.debug) {
             set.lines = ds.lines;
-            set.pixel = ds.pixel;
         }
         if (menu_was && !menu.open && menu.changed && save_settings) {
             settings_save(set, settings_path());
@@ -463,7 +461,7 @@ int run_window(const Args &a, AppMemory &m) {
             vsync_applied = vs;
         }
         cam.settings = CameraSettings{set.mouse_sens, set.invert_y, set.fov_deg, set.invert_x, set.cam_smooth};
-        bool pixel = set.pixel && !a.nopixel;
+        bool pixel = ds.pixel || a.cells;
         unfair_modes(unfair, sizeof unfair, pixel, a.nogcache || ds.gcache_off, a.test_lights || ds.test_lights,
                      a.froxel_heat || ds.froxel_heat, a.validation || a.gpu_validation, vsync_applied,
                      a.shadow_pages || ds.shadow_pages, a.sdf_view || ds.sdf_view, a.gi_view || ds.gi_view);
@@ -588,6 +586,7 @@ int run_window(const Args &a, AppMemory &m) {
         vi.sdf_view = a.sdf_view ? a.sdf_view : ds.sdf_view;
         vi.gi_view = a.gi_view ? a.gi_view : ds.gi_view;
         vi.light_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.light_quality;
+        vi.aa = a.aa >= 0 ? (u32)a.aa : set.aa;
         if (!ds.lines) vi.dbg = nullptr;
         vi.people_debug = vi.dbg && ds.people_lines;
         RenderFrame rf;

@@ -1,12 +1,11 @@
-// Сухая земля: color — земля, color2 — пыль пятнами. texel — квадрат узора,
+// Сухая земля: color — земля, color2 — пыль пятнами. texel — размер зерна (м),
 // extra.x — размер крупных пятен (м, степень двойки), extra.y — доля пятен пыли, extra.z — сила мелкого разброса,
 // extra.w — сила трещин (такыр: сетка трещин ~0.4 м)
 Surface surf_ground(SurfIn i) {
     float t = i.m.p1.a;
-    vec3 q = snap(i.p, t);
     float big = fbm_n(i.p, max(i.m.p2.x, 1.0), 4, 11u);
     float dust = smoothstep(i.m.p2.y - 0.12, i.m.p2.y + 0.12, big);
-    float grain = cell_noise(q, t, 13u) - 0.5;
+    float grain = grain_noise(i.p, t, i.foot, 13u);
     float clump = value_noise(i.p, t * 4.0, 14u) - 0.5;
     vec3 c = mix(i.m.p0.rgb, i.m.p1.rgb, dust);
     c *= 1.0 + (grain * 0.6 + clump * 0.8) * i.m.p2.z;
@@ -29,8 +28,8 @@ Surface surf_ground(SurfIn i) {
         crack = (1.0 - smoothstep(0.03, 0.07, f2 - f1)) * i.m.p2.w * takyr * kf;
         c *= 1.0 - crack * 0.5;
     }
-    // Редкие камешки: тёмные квадраты узора, гаснут, когда квадрат мельче пары пикселей
-    if (cell_noise(q, t, 15u) > 0.985) c *= mix(1.0, 0.7, 1.0 - smoothstep(t * 0.25, t * 0.5, i.foot));
+    // Редкие камешки: тёмные круглые пятна до texel/2, гаснут мельче пикселя
+    c *= 1.0 - 0.3 * spot_noise(i.p, i.n, t * 4.0, 0.24, t * 0.5, i.foot, 15u);
     Surface s;
     s.albedo = max(c, vec3(0.0));
     s.rough = i.m.p0.a;

@@ -2,7 +2,8 @@
 #extension GL_GOOGLE_include_directive : require
 // Скиннинг людей (docs/people.md, «Скиннинг»): поток на вершину префикса LOD, группа по y — человек кадра.
 // Вершина бинд-позы источника + морфы (сдвиг положения и нормали, веса экземпляра) → 4 кости палитры → копия
-// человека в общем буфере вершин. Материалы и затенение вершины переписываются как есть
+// человека в общем буфере вершин. Материалы и затенение вершины переписываются как есть; прошлое положение — в
+// skin_prev (векторы движения TAA)
 #include "common.glsl"
 layout(local_size_x = 64) in;
 
@@ -60,5 +61,8 @@ void main() {
     vec3 q = vec3(dot(r0, ph), dot(r1, ph), dot(r2, ph));
     n = normalize(n);
     vec3 m = normalize(vec3(dot(r0.xyz, n), dot(r1.xyz, n), dot(r2.xyz, n)));
+    // Прошлое положение вершины — для векторов движения TAA (docs/aa.md): то, что лежит в копии с прошлого кадра
+    Vertex old = f.vertices_w.v[j.dst_vertex + i];
+    f.skin_prev.v[j.dst_vertex + i] = uvec2(packHalf2x16(vec2(old.px, old.py)), packHalf2x16(vec2(old.pz, 0.0)));
     f.vertices_w.v[j.dst_vertex + i] = Vertex(q.x, q.y, q.z, oct_encode(m), v.mats, v.misc);
 }
