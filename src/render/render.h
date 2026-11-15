@@ -34,15 +34,20 @@ struct RenderDecal {
 };
 static_assert(sizeof(RenderDecal) == 48, "RenderDecal — 48 байт");
 
-// Огонь (вход света пользователя, docs/frame.md «Froxels»): шар относительно камеры, цвет. 32 байта, как Light
-// в data/shaders/common.glsl. Каркас огни только раскладывает по клеткам, светит ими light.glsl (этап 6)
+// Огонь (огни 6е, docs/lamps.md): колба (шар) или трубка (отрезок) относительно камеры. 64 байта, как Light в
+// data/shaders/common.glsl. Каркас раскладывает огни по клеткам (froxels), светит ими light.glsl
+constexpr u32 LIGHT_SHADOW = 1;  // flags: тень по полю расстояний мира
 struct RenderPointLight {
-    f32 x, y, z;       // метры от камеры
-    f32 radius;        // дальше света нет, м
-    f32 r, g, b;       // линейный цвет × сила
-    u32 pad;
+    f32 x, y, z;       // середина тела света, м от камеры
+    f32 radius;        // дальше света нет (от отрезка трубки), м
+    f32 r, g, b;       // линейный цвет × сила света, кд (яркость цвета — 1)
+    f32 size;          // радиус тела света, м: ширина блика и мягкость тени
+    f32 ax, ay, az;    // полуось трубки, м; нули — колба
+    f32 back;          // доля света назад от face
+    f32 fx, fy, fz;    // куда светит (единичный); нули — во все стороны
+    u32 flags;         // LIGHT_*
 };
-static_assert(sizeof(RenderPointLight) == 32, "RenderPointLight — 32 байта");
+static_assert(sizeof(RenderPointLight) == 64, "RenderPointLight — 64 байта");
 
 struct RenderMaterial {
     u32 kind;

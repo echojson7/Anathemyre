@@ -69,10 +69,17 @@ class Body:
 
     def __init__(self):
         self.faces = []
+        self.lights = []  # лампы тела (огни 6е, docs/lamps.md): строки light заготовки пишет lights.py
 
     def extend(self, other):
         self.faces += other.faces
+        self.lights += other.lights
         return self
+
+    def light(self, c, axis, face, back, lm, kelvin, size):
+        """Лампа: середина тела света c, полуось трубки axis (нули — колба), куда светит face (нули — во все
+        стороны), доля света назад back, поток lm, цвет kelvin, радиус тела size. В сетку не идёт."""
+        self.lights.append((c, axis, face, back, lm, kelvin, size))
 
     def _closed(self, faces):
         """Добавить одно замкнутое тело с согласованным обходом: развернуть наружу по знаку объёма."""

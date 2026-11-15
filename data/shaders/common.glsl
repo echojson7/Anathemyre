@@ -16,8 +16,10 @@ struct Material { uint kind, pad0, pad1, pad2; vec4 p0, p1, p2; };
 struct LineVtx { float x, y, z; uint rgba; };
 // Декаль — RenderDecal (src/render/render.h), 48 байт
 struct Decal { vec3 c; float ux, uz; vec3 h; uint kind, material, seed, pad; };
-// Огонь — RenderPointLight (src/render/render.h), 32 байта: шар относительно камеры, линейный цвет × сила
-struct Light { vec3 c; float radius; vec3 color; uint pad; };
+// Огонь — RenderPointLight (src/render/render.h), 64 байта: колба или трубка относительно камеры, цвет × сила, кд
+// (docs/lamps.md); axis — полуось трубки, face — куда светит (нули — во все стороны), back — доля света назад
+struct Light { vec3 c; float radius; vec3 color; float size; vec3 axis; float back; vec3 face; uint flags; };
+const uint LIGHT_SHADOW = 1u;  // тень по полю расстояний мира
 struct PointVtx { float x, y, z, size; uint rgba, pad0, pad1, pad2; };
 
 layout(buffer_reference, scalar) readonly buffer Vertices { Vertex v[]; };

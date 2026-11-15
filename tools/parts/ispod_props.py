@@ -1,6 +1,7 @@
 """Детали Исподи (docs/ispod.md): трубы, проводка, перила, светильники, путь. Всё — рецепты kit.py: каждое
 тело замкнуто, расстановка — правилами (хомут через полтора метра, крюк под каждым пролётом кабеля), не руками.
-Свет от светильников появится с шагом света 6е; пока стекло только светится само (материал вида glow).
+Стекло светильников светится само (материал вида glow), а свет на стены дают лампы b.light (огни 6е,
+docs/lamps.md): их строки в заготовке пишет lights.py.
 """
 import math
 
@@ -10,6 +11,11 @@ from kit import Body, add, mat_mul, mul, rnd, rot_x, rot_y, rot_z, sag, uniform,
 
 IRON, PAINT, GALV, RUBBER, WOOD, RAIL = "iron_cast", "steel_paint", "steel_galv", "rubber_black", "wood_tar", "rust_metal"
 LAMP, RED = "lamp_glass", "lamp_red"
+# Лампы (docs/lamps.md): поток, лм, и цвет, К. Старые и пыльные: трубка 36 Вт ~1800 лм, колба 60 Вт ~600 лм,
+# колба 40 Вт в сетке тоннеля ~400 лм
+TUBE_LM, TUBE_K = 1800.0, 4000.0
+BULB_LM, BULB_K = 600.0, 2700.0
+CAGE_LM, CAGE_K = 400.0, 2900.0
 SLOPE = RISE / RUN
 ANG = math.atan2(RISE, RUN)
 
@@ -44,6 +50,7 @@ def bulb(b, o, down=(0.0, -1.0, 0.0)):
     """Лампа в патроне: патрон на потолке или стене, колба светится."""
     b.lathe(o, down, [(0.07, 0), (0.07, 0.03), (0.035, 0.05), (0.035, 0.08)], GALV, seg=14)
     b.lathe(add(o, mul(down, 0.08)), down, [(0.02, 0), (0.045, 0.03), (0.05, 0.06), (0.035, 0.1), (0.01, 0.115)], LAMP, seg=14)
+    b.light(add(o, mul(down, 0.14)), (0.0, 0.0, 0.0), down, 0.5, BULB_LM, BULB_K, 0.05)
 
 
 def tube_lamp(b, c, tilt=0.0, wall=-1.0):
@@ -52,6 +59,7 @@ def tube_lamp(b, c, tilt=0.0, wall=-1.0):
     d = (0.0, math.sin(tilt) * 0.6, math.cos(tilt) * 0.6)
     o = add(c, (-wall * 0.055, 0.0, 0.0))
     b.tube([add(o, mul(d, -1.0)), add(o, d)], 0.017, LAMP, seg=8)
+    b.light(o, d, (-wall, 0.0, 0.0), 0.1, TUBE_LM, TUBE_K, 0.017)
     for s in (-1.0, 1.0):
         b.box(add(o, mul(d, s * 1.02)), (0.05, 0.05, 0.03), GALV, bevel=0.004, rot=rot_x(-tilt))
 
@@ -376,6 +384,7 @@ def track():
     for z in [33.0 + 6.0 * i for i in range(6)] + [-4.5, -10.5]:
         b.box((xl + 0.03, BED + 2.6, z), (0.06, 0.16, 0.16), GALV, bevel=0.006)
         b.lathe((xl + 0.06, BED + 2.6, z), (1.0, 0.0, 0.0), [(0.03, 0), (0.05, 0.03), (0.05, 0.1), (0.03, 0.13)], LAMP, seg=10)
+        b.light((xl + 0.13, BED + 2.6, z), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 0.1, CAGE_LM, CAGE_K, 0.05)
         for a in range(4):       # решётка лампы
             t = math.pi / 4 + math.pi / 2 * a
             dy, dz = 0.062 * math.cos(t), 0.062 * math.sin(t)
