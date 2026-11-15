@@ -45,6 +45,7 @@ void sim_extract(const World &w, Extract &e) {
     const Dots &d = w.dots;
     e.terrain = &w.terrain;
     e.decals = &w.decals;
+    e.lamps = &w.lamps;
     e.coll = &w.coll;
     e.gait = &w.gait;
     e.actions = &w.actions;

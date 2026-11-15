@@ -35,7 +35,7 @@ void main() {
     uint n = 0u;
     for (uint i = 0u; i < f.light_count; ++i) {
         Light l = f.lights.v[i];
-        if (!sphere_box(to_view(l.c), l.radius, lo, hi)) continue;
+        if (!sphere_box(to_view(l.c), l.radius + length(l.axis), lo, hi)) continue;
         if (n < FROXEL_LIGHTS) f.froxels.v[base + 1u + n] = i;
         n++;
     }

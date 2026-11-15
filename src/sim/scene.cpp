@@ -82,9 +82,38 @@ static WPos offset_pos(const WPos &o, f32 dx, f32 dy, f32 dz) {
     return q;
 }
 
+// Лампа заготовки (огни 6е, docs/lamps.md), все числа — в осях заготовки:
+//   light <x> <y> <z> <ax> <ay> <az> <fx> <fy> <fz> <назад> <лм> <К> <радиус>
+// a — полуось трубки (нули — колба), f — куда светит (нули — во все стороны), назад — доля света к стене
+static bool prefab_lamp(World &w, const TextLine &l, const WPos &o, u32 quarter, char *err, usize err_cap) {
+    if (l.count != 14) {
+        scene_err(err, err_cap, l.line, "light <x> <y> <z> <ax> <ay> <az> <fx> <fy> <fz> <назад> <лм> <К> <радиус>");
+        return false;
+    }
+    f32 v[13];
+    for (u32 i = 0; i < 13; ++i)
+        if (!parse_f32(l.w[1 + i], v[i])) { scene_err(err, err_cap, l.line, "у light только числа"); return false; }
+    if (v[9] < 0 || v[9] > 1 || v[10] <= 0 || v[11] < 1000 || v[11] > 20000 || v[12] <= 0) {
+        scene_err(err, err_cap, l.line, "light: назад 0..1, лм > 0, К 1000..20000, радиус > 0");
+        return false;
+    }
+    f32 fl = v[6] * v[6] + v[7] * v[7] + v[8] * v[8];
+    if (fl != 0 && (fl < 0.98f || fl > 1.02f)) { scene_err(err, err_cap, l.line, "light: f — единичный или нули"); return false; }
+    quarter_rotate(quarter, v[0], v[2]);
+    quarter_rotate(quarter, v[3], v[5]);
+    quarter_rotate(quarter, v[6], v[8]);
+    WPos q = offset_pos(o, v[0], v[1], v[2]);
+    if (!lamps_add(w, q, v + 3, v + 6, v[9], v[10], v[11], v[12])) {
+        scene_err(err, err_cap, l.line, "таблица ламп полна");
+        return false;
+    }
+    return true;
+}
+
 // Заготовка (data/prefabs/<имя>.txt, docs/text.md) в точке o (с высотой земли), повёрнутая на quarter четвертей:
 //   part <сетка> <x> <y> <z> [yaw градусы] [material имя] [seed n]
 //   decal <вид> <материал> <x> <y> <z> <sx> <sy> <sz> [yaw градусы] [seed n]
+//   light … (prefab_lamp)
 static bool prefab_load(World &w, const u8 *text, usize size, const WPos &o, u32 quarter, u32 seed0, char *err,
                         usize err_cap) {
     const u32 turn0 = quarter * 0x40000000u;
@@ -92,8 +121,12 @@ static bool prefab_load(World &w, const u8 *text, usize size, const WPos &o, u32
     TextLine l;
     while (text_next(r, l)) {
         if (l.count > TEXT_MAX_WORDS) { scene_err(err, err_cap, l.line, "слишком много слов"); return false; }
+        if (str_eq(l.w[0], "light")) {
+            if (!prefab_lamp(w, l, o, quarter, err, err_cap)) return false;
+            continue;
+        }
         bool part = str_eq(l.w[0], "part"), decal = str_eq(l.w[0], "decal");
-        if (!part && !decal) { scene_err(err, err_cap, l.line, "заготовка: ожидается part или decal"); return false; }
+        if (!part && !decal) { scene_err(err, err_cap, l.line, "заготовка: ожидается part, decal или light"); return false; }
         u32 need = part ? 5 : 9;
         if (l.count < need) {
             scene_err(err, err_cap, l.line, part ? "part <сетка> <x> <y> <z>" : "decal <вид> <материал> <x> <y> <z> <sx> <sy> <sz>");

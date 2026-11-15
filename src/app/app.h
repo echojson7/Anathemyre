@@ -29,6 +29,7 @@ struct Args {
     f32 cam[5] = {};
     bool nopixel = false;           // --nopixel: без правила ячейки
     bool test_lights = false;       // --lights: тестовые огни вокруг камеры
+    bool lamps_off = false;         // --nolamps: лампы карты не светят
     bool froxel_heat = false;       // --heat: тепловая карта огней по клеткам froxels
     bool nogcache = false;          // --nogcache: без кеша поверхности земли (сравнение)
     u32 shadow_pages = 0;           // --smpages: страницы теней поверх кадра, --smonly: только тень (docs/shadow.md)
