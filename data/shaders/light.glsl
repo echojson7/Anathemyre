@@ -115,7 +115,8 @@ vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, v
     float sky_y = max(dot(irr, Y), 1e-6);
     lit = 0.0;
     if (g.cov < 1.0) {
-        float vis = sdf_sky(s.pos, n).x;
+        // Под грунтом неба нет, что бы ни видели конусы (gi_buried)
+        float vis = sdf_sky(s.pos, n).x * (1.0 - gi_buried(s.pos + pc.frame.sdf_cam.xyz));
         lit = vis * (1.0 - g.cov);
         float ao = s.ao * vis;
         float so = spec_occlusion(nv, ao, a);
@@ -136,7 +137,7 @@ vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, v
 vec3 light_indirect_view(Surface s) {
     GiSample g = gi_sample(s.pos, s.normal, s.normal, false);
     vec3 irr = atmo_ambient(s.normal);
-    vec3 fb = irr * (s.ao * (g.cov < 1.0 ? sdf_sky(s.pos, s.normal).x : 1.0));
+    vec3 fb = irr * (s.ao * (g.cov < 1.0 ? sdf_sky(s.pos, s.normal).x * (1.0 - gi_buried(s.pos + pc.frame.sdf_cam.xyz)) : 1.0));
     vec3 gi = g.cov > 0.0 ? g.irr * (s.ao * sdf_ao(s.pos, s.normal)) : vec3(0.0);
     return 0.5 * mix(fb, gi, g.cov);
 }
