@@ -57,3 +57,14 @@ inline GroundSample ground_at(const Terrain &t, i32 cx, i32 cz, f32 x, f32 z) {
     return s;
 }
 inline GroundSample ground_at(const Terrain &t, const WPos &p) { return ground_at(t, p.cx, p.cz, p.x, p.z); }
+
+// Точка в проёме земли (штамп hole, docs/terrain.md): земли здесь нет — опору дают только коробки построек
+inline bool ground_hole(const Terrain &t, i32 cx, i32 cz, f32 x, f32 z) {
+    if (!t.hole_count) return false;
+    i32 px = (cx - t.chunk0) * 25600 + f_floor_i(x * 100.0f);
+    i32 pz = (cz - t.chunk0) * 25600 + f_floor_i(z * 100.0f);
+    for (u32 k = 0; k < t.hole_count; ++k)
+        if (px >= t.hole[k].x0 && px < t.hole[k].x1 && pz >= t.hole[k].z0 && pz < t.hole[k].z1) return true;
+    return false;
+}
+inline bool ground_hole(const Terrain &t, const WPos &p) { return ground_hole(t, p.cx, p.cz, p.x, p.z); }

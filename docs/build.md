@@ -65,6 +65,8 @@ Windows, ~2 ГБ архив LLVM для Linux, распаковывается т
 Людей пересобирает `tools/humanconv/fetch.sh`: качает исходники MakeHuman (~38 МБ, sha256 закреплены) в
 `~/.cache/anathemyre/makehuman`, нужен Python 3 с numpy (`apt install python3-numpy`), пишет `data/meshes/human_*.mesh`
 и `data/people/*.skel` (`docs/people.md`). Байты одни на numpy 1.26 и 2.x.
+`make parts PYTHON=<python с bpy>` — детали фабрики (`docs/parts.md`, сетки `ispod_*`): нужен Blender как модуль
+(`pip install bpy==5.3.0`), поэтому отдельно от `make meshes` и не в CI.
 
 ## CI (`.github/workflows/ci.yml`)
 - **linux** (ubuntu-24.04): слои и запреты; сетки в git совпадают с генератором; сборки релиз, Windows, отладка, gcc, без debug — все с `-Werror`;

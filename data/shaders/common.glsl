@@ -253,6 +253,8 @@ layout(buffer_reference, scalar) buffer FrameData {
     uint sdf_jobs_n, sdf_bricks_n, sdf_pad0, sdf_pad1;
     vec4 sdf_cam;             // камера от якоря, м; w — воксель уровня 0, м
     ivec4 sdf_lo[8], sdf_hi[8];  // рамка грязных вокселей уровня этого кадра
+    vec4 t_hole[4];           // проёмы земли (docs/terrain.md): x0, z0, x1, z1 от камеры, м
+    uint t_hole_n, t_hole_pad0, t_hole_pad1, t_hole_pad2;
 };
 
 layout(push_constant, scalar) uniform Push {

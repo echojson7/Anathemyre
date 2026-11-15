@@ -230,7 +230,15 @@ void vk_terrain_fill(FrameGpu &g, const RenderFrame &f) {
     g.clip_levels = CLIP_LEVELS;
     g.clip_morph = CLIP_MORPH;
     for (u32 k = 0; k < 8; ++k) g.ground_layers[k] = k < RENDER_GROUND_LAYERS ? f.ground_layers[k] : 0;
+    g.t_hole_n = 0;
     if (!t.on) return;
+    // Проёмы — от камеры: сначала целая разность в сантиметрах, потом смещение камеры в чанке
+    for (u32 k = 0; k < d.hole_count && k < 4; ++k)
+        for (u32 a = 0; a < 4; ++a) {
+            i32 cam_cm = ((a & 1 ? f.view.cz : f.view.cx) - d.chunk0) * 25600;
+            g.t_hole[k][a] = (f32)(d.hole[k][a] - cam_cm) * 0.01f - (a & 1 ? f.view.z : f.view.x);
+        }
+    g.t_hole_n = d.hole_count < 4 ? d.hole_count : 4;
     // Камера в полуметрах от угла карты. Начало кольца — на решётке следующего кольца (шаг 2·2^L),
     // тогда край кольца ложится на вершины следующего, а дыра следующего сдвинута на n/2 или n/2+1
     const RenderView &v = f.view;

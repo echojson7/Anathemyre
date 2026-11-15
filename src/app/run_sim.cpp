@@ -94,17 +94,19 @@ int run_sim(const Args &a, AppMemory &m) {
     // Бенч людей (docs/people.md, цель шага мира ≤ 2 мс на 512 в бою): средний шаг с людьми и работа поиска пути
     if (people_steps) {
         const People &p = w.people;
-        u32 on_box = 0, high = 0, going = 0;
+        u32 on_box = 0, high = 0, going = 0, below = 0;
         for (u32 s = 0; s < PEOPLE_CAPACITY; ++s) {
             if (!p.alive[s]) continue;
+            f32 g = ground_at(w.terrain, p.cx[s], p.cz[s], p.x[s], p.z[s]).height;
             on_box += p.support[s] != 0;
-            high += p.support[s] && p.y[s] > ground_at(w.terrain, p.cx[s], p.cz[s], p.x[s], p.z[s]).height + 3.0f;
+            high += p.support[s] && p.y[s] > g + 3.0f;
+            below += p.support[s] && p.y[s] < g - 3.0f;
             going += p.state[s] != MOVE_STAND;
         }
-        log_info("--sim люди: %u живых (на постройках %u, из них выше 3 м %u; в пути %u), шаг с людьми в среднем %.1f мкс, "
+        log_info("--sim люди: %u живых (на постройках %u, из них выше 3 м %u, под землёй %u; в пути %u), шаг с людьми в среднем %.1f мкс, "
                  "из них системы людей %.1f мкс; ИИ боя %.1f мкс; путей %u, раскрыто узлов %" PRIu64 " (%.0f на путь); ударов %u, попаданий %u, "
                  "отбито %u, защит %u, по своим %u",
-                 p.live, on_box, high, going, people_us / (f64)people_steps, (f64)stats.people_ns / 1000.0 / (f64)people_steps,
+                 p.live, on_box, high, below, going, people_us / (f64)people_steps, (f64)stats.people_ns / 1000.0 / (f64)people_steps,
                  (f64)ai_ns / 1000.0 / (f64)people_steps,
                  stats.paths, stats.expanded,
                  stats.paths ? (f64)stats.expanded / (f64)stats.paths : 0.0, stats.strikes, stats.hits, stats.blocks, stats.defends, stats.friendly);

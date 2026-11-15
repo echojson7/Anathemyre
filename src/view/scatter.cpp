@@ -73,7 +73,7 @@ void scatter_update(ScatterCache &c, const Terrain &t, const WPos &eye, const u3
             p.z = z;
             wpos_rebase(p);
             GroundSample g = ground_at(t, p);
-            if (g.kind == GROUND_WATER) continue;
+            if (g.kind == GROUND_WATER || ground_hole(t, p)) continue;
             RenderInstance &it = c.items[c.count];
             it.cx = p.cx;
             it.cz = p.cz;

@@ -10,6 +10,9 @@ prop cube    1  14   lift 0.4 scale 0.5 yaw 45 material ochre_paint
 # prefab <имя> <x> <z> [yaw 0|90|180|270]: заготовка data/prefabs/<имя>.txt, высота — земля под серединой
 # Остов — закрытое бетонное здание для проверки света (docs/ostov.md), на площадке в пустыне (pad в data/terrain.txt)
 prefab ostov 11704 -2336
+# Исподь — подземная станция с лестницей на поверхность (docs/ispod.md), в 50 м к востоку от Остова; площадка и
+# проём земли над лестницей — pad и hole в data/terrain.txt
+prefab ispod 11763 -2365
 # start <x> <z> [yaw град] [pitch град] [dist м] [people n] [radius м]: точка старта окна — камера и люди окна
 # (docs/text.md). Основное место тестов и разработки — у входа в Остов в пустыне
 start 11707 -2352 yaw 20 pitch 14 dist 22 people 6 radius 3
