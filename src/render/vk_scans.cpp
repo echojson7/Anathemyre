@@ -83,7 +83,7 @@ static void record_scans_upload(VkCommandBuffer cmd, void *user) {
     vkCmdPipelineBarrier2(cmd, &di);
 }
 
-// Новые картинки в набор кадра мира: 4 — цвет, 5 — нормаль (сэмплер неизменный, vk_world_layout)
+// Новые картинки в набор кадра мира: 9 — цвет, 10 — нормаль (сэмплер неизменный, vk_world_layout)
 static void scans_bind() {
     VkDescriptorImageInfo ii[2] = {{VK_NULL_HANDLE, g_vk.scans.albedo.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                                    {VK_NULL_HANDLE, g_vk.scans.normal.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
@@ -91,7 +91,7 @@ static void scans_bind() {
     for (u32 i = 0; i < 2; ++i) {
         wr[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         wr[i].dstSet = g_vk.world.set;
-        wr[i].dstBinding = 4 + i;
+        wr[i].dstBinding = 9 + i;
         wr[i].descriptorCount = 1;
         wr[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         wr[i].pImageInfo = &ii[i];

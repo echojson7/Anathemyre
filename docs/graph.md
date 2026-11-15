@@ -75,8 +75,10 @@ F3 показывает переполнения прошлой секунды �
   (`VK_KHRONOS_VALIDATION_SELECT_INSTRUMENTED_SHADERS`), проверку получает каждый модуль, кроме пропущенных.
 - **Пределы lavapipe** (замер 7.11, шейдеры по одному): с GPU-AV lavapipe падает на `light_cells.comp` и
   `cull_scan.comp`, `ground_bake.comp` съедает ~14 ГБ; остальные проходят (~1.4 ГБ на процесс). Сборка карты
-  горизонта (`horizon.comp`, ~9 с на lavapipe без проверки) под GPU-AV заняла бы минуты. CI проверяет кадр мира
-  без этих четырёх: `--gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp`.
+  горизонта (`horizon.comp`, ~9 с на lavapipe без проверки) под GPU-AV заняла бы минуты, лучи зондов (`gi_trace.comp`,
+  снимок 4 × 49 152 зонда, 6г) — больше 10 мин. CI проверяет кадр мира без этих пяти:
+  `--gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp`
+  (смешение зондов и глаз с выборкой зондов — под проверкой, 11.11 без ошибок).
   Шейдеры forward (`ground.*`, `mesh.*`) удалены вместе с ним (7.11).
 - **Циклы с буфером** (6б-1): lavapipe под GPU-AV падает и на доступе к буферу в цикле шейдера с `barrier()`
   или во вложенном цикле. Обход — читать буфер в локальные до цикла или развернуть цикл (`docs/shadow.md`).

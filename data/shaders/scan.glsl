@@ -5,8 +5,8 @@
 #ifndef SCAN_GLSL
 #define SCAN_GLSL
 
-layout(set = 0, binding = 4) uniform sampler2DArray u_scan_albedo;  // sRGB: цвет, AO
-layout(set = 0, binding = 5) uniform sampler2DArray u_scan_normal;  // нормаль OpenGL · 0.5 + 0.5, шероховатость
+layout(set = 0, binding = 9) uniform sampler2DArray u_scan_albedo;   // sRGB: цвет, AO
+layout(set = 0, binding = 10) uniform sampler2DArray u_scan_normal;  // нормаль OpenGL · 0.5 + 0.5, шероховатость
 
 // Оси плоскостей: u вправо по картинке, v вниз (строки). Зелёный нормали OpenGL смотрит к верху картинки (−v).
 // Стены (x, z): верх картинки — вверх по миру; пол и потолок (y): u по x, v по z

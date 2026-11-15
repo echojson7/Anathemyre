@@ -439,10 +439,15 @@ void vk_sdf_passes() {
         rg_use(s.rg_field, RG_IMG_CS_WRITE);
         rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
     }
-    // Глаз (eye.comp): экспозиция по свету у камеры с заслонкой полем — после сборки, до освещения
+}
+
+// Глаз (eye.comp): экспозиция по свету у камеры с заслонкой полем и по зондам — после сборки и смешения, до освещения
+void vk_sdf_eye_pass() {
+    if (!g_vk.sdf.on) return;
     rg_pass("глаз: экспозиция", "небо", sdf_record_eye, nullptr);
-    rg_use(s.rg_field, RG_IMG_CS_SAMPLE);
+    rg_use(g_vk.sdf.rg_field, RG_IMG_CS_SAMPLE);
     rg_use(g_vk.sky.rg_out, RG_CS_WRITE);
+    vk_gi_reads();
 }
 
 void vk_sdf_reads() {
