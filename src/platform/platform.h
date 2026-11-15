@@ -57,6 +57,8 @@ bool platform_list_dir(const char *dir, const char *suffix, void (*cb)(const cha
 bool platform_window_open(const char *title, i32 width, i32 height);
 void platform_window_close();
 void platform_poll(Input &in);
+// Спрятать курсор и не выпускать его из окна (мышь крутит камеру): сдвиги приходят без упора в край экрана
+void platform_mouse_grab(bool on);
 void platform_window_size(i32 *w, i32 *h);   // в пикселях кадра
 void platform_set_title(const char *title);
 void platform_toggle_fullscreen();
