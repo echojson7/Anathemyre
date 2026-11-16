@@ -1,4 +1,6 @@
 // Режимы без окна и GPU: --sim (шаг мира, хеши, бенч) и --replay (повтор записи с поиском расхождения)
+#include "../view/mech.h"
+#include "../asset/skel.h"
 #include "app.h"
 #include "../core/log.h"
 #include "../debug/debug.h"
@@ -224,4 +226,33 @@ int run_walk_map(const Args &a, AppMemory &m) {
     World w;
     if (!app_world_create(w, m, a.seed, nullptr)) return 1;
     return debug_write_walk_map(w, a.walk_map, m.load) ? 0 : 1;
+}
+
+// След движения шагающей турели без окна (docs/vezha.md, «Отладка движения»): мир как у --sim, жизнь машины —
+// кадрами по 1/30 с, на кадр строка чисел (mech_view_trace). Люди стоят, где их поставила сцена
+int run_mech_trace(const Args &a, AppMemory &m) {
+    World w;
+    if (!app_world_create(w, m, a.seed, nullptr)) return 1;
+    Extract e;
+    extract_init(e, m.world);
+    sim_extract(w, e);
+    Skel skel;
+    if (!app_skel_load("people/vezha.vezha.skel", m, skel)) return 1;
+    MechView *mv = arena_push<MechView>(m.world, 1);
+    mech_view_init(*mv);
+    if (a.mech) mech_view_demo(*mv, a.mech);
+    for (u32 i = 0; i < e.props_count; ++i)
+        if (e.prop_gen[i] && mech_view_is(e.prop_mesh[i]))
+            mech_view_place(*mv, i, WPos{e.prop_cx[i], e.prop_cz[i], e.prop_x[i], e.prop_y[i], e.prop_z[i]}, e.prop_yaw[i]);
+    u64 frames = a.frames ? a.frames : 300;
+    usize cap = frames * 1024 + 64, len = 0;
+    char *text = arena_push<char>(m.load, cap);
+    for (u64 f = 0; f < frames; ++f) {
+        if (!mech_view_trace(*mv, skel, e, 1.0f / 30.0f, text + len, cap - len - 2)) { log_error("след: машины нет в сцене"); return 1; }
+        len += strlen(text + len);
+        text[len++] = '\n';
+    }
+    if (!platform_write_file(a.mech_trace, text, len)) { log_error("не записать %s", a.mech_trace); return 1; }
+    log_info("след машины: %s, кадров %" PRIu64, a.mech_trace, frames);
+    return 0;
 }

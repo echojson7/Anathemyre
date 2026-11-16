@@ -4,6 +4,7 @@
 #include "../sim/collide.h"
 #include "../sim/ground.h"
 #include "lamps.h"
+#include "mech.h"
 #include "people.h"
 
 static constexpr f32 NEAR_M = 0.1f;
@@ -124,10 +125,16 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     u32 n = cur.props_count;
     if (in.scatter && cur.terrain) scatter_update(*in.scatter, *cur.terrain, eye, assets.rocks);
     u32 nscat = in.scatter ? in.scatter->count : 0;
-    RenderInstance *inst = arena_push<RenderInstance>(frame, n + nscat + 1 + (in.people ? 2 * VIEW_BODIES_MAX : 0));  // тело и меч
+    RenderInstance *inst = arena_push<RenderInstance>(frame, n + nscat + 1 + (in.people ? 2 * VIEW_BODIES_MAX : 0) + MECH_MAX);  // тело и меч; машины
     u32 ni = 0;
     for (u32 i = 0; i < n && ni < RENDER_MAX_INSTANCES; ++i) {
         if (!cur.prop_gen[i]) continue;
+        // Шагающая турель (docs/vezha.md): объект сцены — её место, ведёт и рисует её вид
+        if (mech_view_is(cur.prop_mesh[i])) {
+            if (in.mech) mech_view_place(*in.mech, i, WPos{cur.prop_cx[i], cur.prop_cz[i], cur.prop_x[i], cur.prop_y[i], cur.prop_z[i]},
+                                         cur.prop_yaw[i]);
+            continue;
+        }
         const ViewMesh *vm = find_mesh(assets, cur.prop_mesh[i]);
         if (!vm) continue;
         u32 mesh = vm->id;
@@ -158,6 +165,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
         plines = arena_push<RenderLineVertex>(frame, VIEW_PEOPLE_LINES);
         people_view_build(*in.people, assets, in, eye, frame, inst, ni, out, plines, npl, in.people_debug);
     }
+    if (in.mech) mech_view_build(*in.mech, assets, in, frame, inst, ni, out);
     out.instances = {inst, ni};
     if (cur.decals) build_decals(*cur.decals, assets, eye, frame, out);
     lamps_build(in.lamps_off ? nullptr : cur.lamps, in.test_lights, cam, cur.terrain, eye, frame, out);
