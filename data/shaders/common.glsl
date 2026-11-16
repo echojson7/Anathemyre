@@ -245,6 +245,8 @@ layout(buffer_reference, scalar) buffer FrameData {
     // тонмаппинг (TONEMAP_*), качество света (LIGHT_Q_*)
     float dt;
     uint eye_snap, tonemap, light_q;
+    // Местная экспозиция (docs/light.md): колено, стопы; наклон в свет; наклон в тень; w — включена (F3, --nolocal)
+    vec4 local_tone;
     // Тени солнца страницами (docs/shadow.md, shadow.glsl): окна страниц уровней, страницы, тексели, заявки,
     // вызовы и список отрисовки страниц, сферы сброса кадра
     SmTable sm_table;

@@ -31,6 +31,7 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"halo_g", &d.halo_g, 1},         {"night_dark", &d.night_dark, 1}, {"milky", &d.milky, 1},
         {"twinkle", &d.twinkle, 1},       {"adapt_night", &d.adapt_night, 1},
         {"night_fill", &d.night_fill, 1},
+        {"local_tone", d.local_tone, 3},
     };
     TextReader r = text_reader(text, size);
     TextLine l;
@@ -60,6 +61,10 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
     if (d.sun_size < 0.1f || d.sun_size > 5.0f || d.moon_size < 0.1f || d.moon_size > 5.0f || d.halo < 0.0f || d.halo > 0.9f ||
         d.halo_g < 0.5f || d.halo_g > 0.995f) {
         snprintf(err, err_cap, "sun_size и moon_size 0.1–5, halo 0–0.9, halo_g 0.5–0.995");
+        return false;
+    }
+    if (d.local_tone[0] < 0.0f || d.local_tone[1] <= 0.0f || d.local_tone[1] > 1.0f || d.local_tone[2] <= 0.0f || d.local_tone[2] > 1.0f) {
+        snprintf(err, err_cap, "local_tone: колено ≥ 0, наклоны в (0, 1]");
         return false;
     }
     return true;
