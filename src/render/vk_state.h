@@ -443,6 +443,7 @@ struct LcGpu {
 // Диагностика GPU (vk_diag.cpp): что умеет драйвер для разбора сбоя, буфер меток AMD, счётчики GPU
 struct DiagGpu {
     bool nv_checkpoints = false, amd_marker = false, device_fault = false;
+    bool amd_marker1 = false;  // метки AMD старым вызовом: драйвер не дал vkCmdWriteBufferMarker2AMD
     GpuBuffer markers;  // метки AMD: последний начатый и последний законченный проход
     GpuBuffer stats;    // счётчики GPU (STAT_COUNT u32)
     u8 rg_stats = 0;
