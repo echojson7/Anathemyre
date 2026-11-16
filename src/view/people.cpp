@@ -98,10 +98,7 @@ static bool bind(PeopleView &pv, const ViewAssets &a) {
         const SkelBone &fb = s.bones.data[pv.bones[B_FOOT + f]];
         pv.rest_foot[f] = Vec3{fb.pos[0], fb.pos[1], fb.pos[2] - pel.pos[2]};
     }
-    for (u32 i = 0; i < a.mesh_count; ++i)
-        if (a.meshes[i].name == hash_str("sword")) pv.sword = a.meshes[i].id;
-    if (!pv.sword) log_warn("люди: нет сетки sword — меча в руках не будет");
-    else render_mesh_moving(pv.sword);  // ходит с рукой каждый кадр: иначе страницы теней под ним рисуются заново
+    if (a.weapons.issue_sum <= 0.0f) log_warn("люди: нет оружия в data/weapons.txt — в руках пусто");
     pv.body = 0;
     pv.skin = k;
     pv.failed = false;
@@ -198,7 +195,8 @@ static u32 body_snorm2(f32 a, f32 b) {
 // Поза одного человека: повороты костей → палитра, корень экземпляра. Возвращает высоту корня экземпляра
 struct PoseOut {
     WPos base;  // корень экземпляра (с опусканием таза)
-    bool sword; // меч в руках: место хвата и поворот в мире
+    bool sword; // оружие в руках: место хвата и поворот в мире
+    u32 weapon_mesh;
     WPos sword_at;
     Quat sword_q;
 };
@@ -537,7 +535,10 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
         out.base = pose_feet(pw, aw.any, debug);
     }
     pose_palette_world(s, wr, wp, palette);
-    out.sword = pv.sword != 0;
+    // Оружие — по зерну внешности (вид, docs/weapons.md); хват пока общий двуручный, как у прежнего меча
+    i32 wi = weapon_pick(assets.weapons, c.person_seed[i]);
+    out.sword = wi >= 0;
+    out.weapon_mesh = out.sword ? assets.weapons.w[wi].mesh : 0;
     if (out.sword) pose_sword(pw, aw, out);
     L.root = out.base;
     L.yaw = r.yaw;
@@ -660,7 +661,7 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
             sw.rot_xy = body_snorm2(po.sword_q.x, po.sword_q.y);
             sw.rot_zw = body_snorm2(po.sword_q.z, po.sword_q.w);
             sw.scale = 1.0f;
-            sw.mesh = pv.sword;
+            sw.mesh = po.weapon_mesh;
             sw.material = RENDER_NO_MATERIAL;
             sw.seed = c.person_seed[i];
         }

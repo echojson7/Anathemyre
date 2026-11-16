@@ -116,7 +116,7 @@ SHADER_SPV := $(patsubst data/shaders/%,$(OUT)/shaders/%.spv,$(SHADER_SRC))
 $(shell ./tools/matgen.sh $(OUT))
 
 # Данные рядом с исполняемым файлом: описания и сетки (.mesh пишет tools/meshgen.py, лежат в data/meshes)
-DATA_SRC := data/materials.txt data/scene.txt data/sky.txt data/terrain.txt data/ui/plex.font $(sort $(wildcard data/meshes/*.mesh)) \
+DATA_SRC := data/materials.txt data/scene.txt data/sky.txt data/terrain.txt data/weapons.txt data/ui/plex.font $(sort $(wildcard data/meshes/*.mesh)) \
             $(sort $(wildcard data/dunes/*.dun)) $(sort $(wildcard data/prefabs/*.txt)) $(sort $(wildcard data/people/*.skel)) \
             $(sort $(wildcard data/anims/*.anim data/anims/*.trk data/anims/*.txt)) \
             $(sort $(wildcard data/actions/*.txt)) data/duel.txt data/group.txt
@@ -145,6 +145,7 @@ $(HOST_TC)/.ok:
 endif
 meshes: $(MESHPACK)
 	python3 tools/meshgen.py data/meshes $(MESHPACK)
+	python3 tools/weapons/build.py data $(MESHPACK)
 	./tools/humanconv/fetch.sh $(MESHPACK)
 # Сканы CC0 (docs/scans.md): картинки Poly Haven по sha256 в кеш и пакет в данные сборки. Нужна сеть, не в CI:
 # без пакета материалы остаются узором
