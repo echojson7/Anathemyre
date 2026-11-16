@@ -33,6 +33,7 @@ void extract_init(Extract &e, Arena &arena) {
     e.person_react_t = arena_push<u16>(arena, np);
     e.person_react_yaw = arena_push<u32>(arena, np);
     e.person_react_part = arena_push<u8>(arena, np);
+    e.person_target = arena_push<u32>(arena, np);
 }
 
 void sim_extract(const World &w, Extract &e) {
@@ -80,6 +81,7 @@ void sim_extract(const World &w, Extract &e) {
     memcpy(e.person_react_t, q.react_t, np * sizeof *e.person_react_t);
     memcpy(e.person_react_yaw, q.react_yaw, np * sizeof *e.person_react_yaw);
     memcpy(e.person_react_part, q.react_part, np * sizeof *e.person_react_part);
+    memcpy(e.person_target, q.target, np * sizeof *e.person_target);
 }
 
 void ring_init(ExtractRing &r, Arena &arena) {

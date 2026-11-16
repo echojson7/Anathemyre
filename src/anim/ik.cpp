@@ -29,6 +29,25 @@ void ik_two_bone(Quat *rot, const Quat *wr, const Vec3 *wp, u32 ia, u32 ib, u32 
     pose_turn_world(rot, wr, ib, r1);
 }
 
+void ik_arm(Quat *rot, const Quat *wr, const Vec3 *wp, u32 ia, u32 ib, u32 ic, Vec3 t, Vec3 pole) {
+    Vec3 a = wp[ia], b = wp[ib], c = wp[ic];
+    f32 lab = length(b - a), lbc = length(c - b);
+    if (lab < 1e-4f || lbc < 1e-4f || length(t - a) < 1e-4f) return;
+    Vec3 d = normalize(t - a);
+    f32 lat = f_clamp(length(t - a), f_abs(lab - lbc) + 0.01f, (lab + lbc) * 0.999f);
+    Vec3 side = pole - d * dot(pole, d);
+    if (length(side) < 1e-4f) return;
+    // Локоть: вдоль «плечо — цель» на x и в сторону pole на h (закон косинусов)
+    f32 x = (lab * lab - lbc * lbc + lat * lat) / (2.0f * lat);
+    f32 hh = lab * lab - x * x;
+    Vec3 e = a + d * x + normalize(side) * (hh > 0.0f ? f_sqrt(hh) : 0.0f);
+    Quat q1 = quat_between(normalize(b - a), normalize(e - a));
+    Quat q2 = quat_between(normalize(quat_rotate(q1, c - b)), normalize(a + d * lat - e));
+    pose_turn_world(rot, wr, ia, q1);
+    Quat wb = quat_mul(q1, wr[ib]);  // предплечье после поворота плеча
+    rot[ib] = quat_mul(rot[ib], quat_mul(quat_conj(wb), quat_mul(q2, wb)));
+}
+
 void ik_foot_align(Quat *rot, const Quat *wr, u32 c, Vec3 n, f32 max_rad, f32 weight) {
     Vec3 up{0, 1, 0};
     f32 ang = angle_between(up, n);
