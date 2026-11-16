@@ -14,7 +14,7 @@ const float CIRRUS_FAR = 280e3;      // перистых
 const int CLOUD_SH_N = 512;          // карта тени: тексели по кругу (окно вокруг камеры)
 const float CLOUD_SH_M = 64.0;       // её тексель, м
 const float CLOUD_TILE = 7200.0;     // куб шума формы, м
-const float CLOUD_DETAIL = 1350.0;   // куб шума мелочи, м
+const float CLOUD_DETAIL = 1100.0;   // куб шума мелочи, м
 const float CLOUD_LMAX = 16.0;       // предел яркости текселя карты, в нормах слота
 const float CLOUD_DMAX = 300e3;      // предел расстояния в текселе карты, м
 
@@ -87,9 +87,9 @@ float cloud_density(vec3 p, float tev, bool fine) {
     if (d <= 0.0) return 0.0;
     if (fine) {
         vec4 m = cloud_noise(p * (1.0 / CLOUD_DETAIL) + vec3(0.004, -0.003, 0.002) * tev);
-        float hf = m.g * 0.625 + m.b * 0.25 + m.a * 0.125;
+        float hf = m.g * 0.5 + m.b * 0.3 + m.a * 0.2;
         // У низа края рваные (клочья), выше — клубы
-        d = cl_remap(d, mix(1.0 - hf, hf, clamp(h * 4.0, 0.0, 1.0)) * 0.6, 1.0);
+        d = cl_remap(d, mix(1.0 - hf, hf, clamp(h * 4.0, 0.0, 1.0)) * 0.75, 1.0);
     } else {
         d = cl_remap(d, 0.25, 1.0);
     }
@@ -107,12 +107,14 @@ float cirrus_tau(vec2 q) {
     float field = cl_fbm(p * (1.0 / 70000.0) + vec2(3.1, 9.7), 3);
     float cov = clamp(k + (field - 0.5) * 1.6, 0.0, 1.0);
     if (cov <= 0.02) return 0.0;
-    vec2 s = vec2(p.x / 16000.0, p.y / 3800.0);
-    s += (vec2(cl_vnoise(s * 0.6 + 11.0), cl_vnoise(s * 0.6 + 37.0)) - 0.5) * 1.4;  // волокна гнутся
-    float v = cl_fbm(s, 4);
-    float fib = cl_fbm(vec2(p.x / 9000.0, p.y / 1100.0) + s * 0.9, 3);  // нити
-    float d = cl_remap(v * 0.7 + fib * 0.3, 1.0 - cov * 0.9, 1.0 - cov * 0.9 + 0.35);
-    return d * d * 0.8;
+    vec2 s = vec2(p.x / 15000.0, p.y / 5500.0);
+    s += (vec2(cl_fbm(s * 0.7 + 11.0, 2), cl_fbm(s * 0.7 + 37.0, 2)) - 0.5) * 2.2;  // пряди гнутся
+    float v = cl_fbm(s, 5);
+    float d = cl_remap(v, 1.0 - cov * 0.85, 1.0 - cov * 0.85 + 0.4);
+    if (d <= 0.0) return 0.0;
+    // Нити вдоль ветра только рябят толщину пряди: сами по себе они читаются царапинами
+    float fib = cl_fbm(vec2(p.x / 7000.0, p.y / 900.0) + s * 1.3, 3);
+    return d * (0.35 + 0.9 * fib) * 0.5;
 }
 
 float cl_hg(float c, float g) {
@@ -230,7 +232,7 @@ float cloud_shadow(vec3 rel) {
     vec2 c = cl_shadow_center(l);
     vec2 q = c + rel.xz - l.xz * (rel.y / cl_sun_y(l));
     vec2 e = abs(q - c) / (0.5 * float(CLOUD_SH_N) * CLOUD_SH_M);
-    float w = (1.0 - smoothstep(0.75, 0.95, max(e.x, e.y))) * smoothstep(0.04, 0.1, l.y);
+    float w = (1.0 - smoothstep(0.75, 0.95, max(e.x, e.y))) * smoothstep(0.06, 0.18, l.y);
     if (w <= 0.0) return f.cl_mean_t;
     vec2 u = q / CLOUD_SH_M - 0.5;
     vec2 fl = floor(u);

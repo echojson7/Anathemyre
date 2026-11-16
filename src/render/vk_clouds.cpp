@@ -11,7 +11,6 @@
 // Как в data/shaders/clouds.glsl
 static constexpr u32 CLOUD_N = 128, CLOUD_SH_N = 512;
 static constexpr u32 CLOUD_PHASES = 64, CLOUD_SH_PHASES = 16;
-static constexpr u32 CLOUD_SIZE_MAX = 2048;
 static constexpr u32 CLOUD_SIZES[RENDER_LIGHT_QUALITIES] = {768, 1024, 1536, 2048};
 static constexpr u32 CLOUD_STEPS[RENDER_LIGHT_QUALITIES] = {64, 96, 128, 160};
 static constexpr u32 CLOUD_RATE[RENDER_LIGHT_QUALITIES] = {1, 1, 1, 2};  // фаз карты за кадр: вся карта — за 64 или 32 кадра
@@ -19,8 +18,8 @@ static constexpr u32 CLOUD_RATE[RENDER_LIGHT_QUALITIES] = {1, 1, 1, 2};  // фа
 bool vk_clouds_init() {
     CloudGpu &c = g_vk.clouds;
     const VkBufferUsageFlags ssbo = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    if (!vk_create_buffer(c.map, (VkDeviceSize)CLOUD_SIZE_MAX * CLOUD_SIZE_MAX * 3 * 8, ssbo, true) ||
-        !vk_create_buffer(c.noise, (VkDeviceSize)CLOUD_N * CLOUD_N * CLOUD_N * 4, ssbo, true) ||
+    // Карта купола — по ступени света, при первом кадре с облаками (vk_clouds_fill): 14…100 МБ
+    if (!vk_create_buffer(c.noise, (VkDeviceSize)CLOUD_N * CLOUD_N * CLOUD_N * 4, ssbo, true) ||
         !vk_create_buffer(c.shadow, (VkDeviceSize)CLOUD_SH_N * CLOUD_SH_N * 4, ssbo, true) ||
         !vk_create_buffer(c.info, 3 * 4 * 16, ssbo, true))
         return false;
@@ -28,7 +27,7 @@ bool vk_clouds_init() {
     GpuBuffer *bs[] = {&c.map, &c.noise, &c.shadow, &c.info};
     u8 *rs[] = {&c.rg_map, &c.rg_noise, &c.rg_shadow, &c.rg_info};
     for (u32 i = 0; i < 4; ++i) {
-        vk_buffer_name(*bs[i], names[i]);
+        if (bs[i]->buffer) vk_buffer_name(*bs[i], names[i]);
         *rs[i] = rg_buffer(names[i]);
     }
     bool ok = vk_make_compute(&c.pipe_noise, "cloud_noise.comp");
@@ -71,14 +70,24 @@ void vk_clouds_fill(FrameGpu &g, const RenderFrame &f) {
     g.cl_info = c.info.address;
     const RenderSky &s = f.sky;
     c.job_on = false;
-    bool on = c.pipe_map && c.map.buffer && (s.cloud_shape[2] > 0.0f || s.cloud_cirrus[1] > 0.0f);
+    g.cl_mean_t = 1.0f;
+    bool on = c.pipe_map && (s.cloud_shape[2] > 0.0f || s.cloud_cirrus[1] > 0.0f);
     if (!on) {
         c.ready = false;
-        g.cl_mean_t = 1.0f;
         return;
     }
     u32 q = f.style.light_quality < RENDER_LIGHT_QUALITIES ? f.style.light_quality : RENDER_LIGHT_HIGH;
     u32 size = CLOUD_SIZES[q];
+    if (!c.map.buffer || size != c.size) {
+        // Новая ступень света (или первые облака): карта другого размера. Редко — подождать кадры в полёте
+        vkDeviceWaitIdle(g_vk.device);
+        vk_destroy_buffer(c.map);
+        c.ready = false;
+        if (!vk_create_buffer(c.map, (VkDeviceSize)size * size * 3 * 8, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true)) return;
+        vk_buffer_name(c.map, "облака: карта");
+        rg_reset(c.rg_map);
+        g.cl_map = c.map.address;
+    }
     const RenderView &v = f.view;
     CloudSnap now;
     now.cam[0] = (f64)v.cx * 256.0 + (f64)v.x;
