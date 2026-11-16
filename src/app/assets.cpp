@@ -90,7 +90,7 @@ static void load_coll(const char *name, void *user) {
     static constexpr usize MESH_BOXES_MAX = 1024;
     MeshBox tmp[MESH_BOXES_MAX];
     if (n > MESH_BOXES_MAX) { log_error("сетка %s: коробок коллайдера больше %u", name, (u32)MESH_BOXES_MAX); L.failed++; n = 0; }
-    memcpy(tmp, md.collider.data, n * sizeof(MeshBox));
+    if (n) memcpy(tmp, md.collider.data, n * sizeof(MeshBox));   // сетка без коллайдера (машина): data — nullptr
     arena_restore(L.m->load, mark);
     MeshBox *keep = arena_push<MeshBox>(L.m->load, n + 1);
     memcpy(keep, tmp, n * sizeof(MeshBox));
