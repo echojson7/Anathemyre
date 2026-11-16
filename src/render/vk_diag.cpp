@@ -297,6 +297,13 @@ bool render_work(RenderWork &out) {
     out.gi_probes = w.work[STAT_GI_PROBES];
     out.gi_rays = w.work[STAT_GI_RAYS];
     out.gi_taps = w.work[STAT_GI_TAPS];
+    out.lc_live = w.work[STAT_LC_LIVE];
+    out.lc_new = w.work[STAT_LC_NEW];
+    out.lc_jobs = w.work[STAT_LC_JOBS];
+    out.lc_rays = w.work[STAT_LC_RAYS];
+    out.lc_over = w.work[STAT_LC_OVER];
+    out.lc_taps = w.work[STAT_LC_TAPS];
+    out.lc_wait = w.work[STAT_LC_WAIT];
     out.sm_blend = vk_shadow_blend();
     out.gc_off = g_vk.gcache.off;
     return true;

@@ -12,6 +12,7 @@
 #include "gi.glsl"
 #include "lamps.glsl"
 #include "atmosphere.glsl"
+#include "lcache.glsl"
 
 // 1 — освещается поверхность самой земли (ставит light_cells.comp до light_surface): под грунтом она не бывает,
 // какой бы ни была грубая высота земли у зондов (gi_buried)
@@ -152,12 +153,20 @@ vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, v
 
 // F3 «только непрямой» (docs/gi.md): серая карта 50 % под рассеянным непрямым светом, как его видит свет кадра
 vec3 light_indirect_view(Surface s) {
+    // F3 «ячейки» (docs/lcache.md): свет ближайшей ячейки главной стороны нормали, края ячеек темнее; где ячейки
+    // нет (люди, дальше ячеек, не посчитана) — свет зондов, красноватый
+    if (pc.frame.gi_view == GI_VIEW_CELLS) {
+        bool ok;
+        vec3 c = lc_view(s.pos, s.normal, g_ground != 0.0, ok);
+        if (ok) return c;
+    }
     GiSample g = gi_sample(s.pos, s.normal, s.normal, false);
     vec3 irr = atmo_ambient(s.normal);
     float bury = g_ground == 0.0 ? gi_buried(s.pos + pc.frame.sdf_cam.xyz) : 0.0;
     vec3 fb = irr * (s.ao * (g.cov < 1.0 ? sdf_sky(s.pos, s.normal).x * (1.0 - bury) : 1.0));
     vec3 gi = g.cov > 0.0 ? g.irr * (s.ao * sdf_ao(s.pos, s.normal)) : vec3(0.0);
-    return 0.5 * mix(fb, gi, g.cov);
+    vec3 c = 0.5 * mix(fb, gi, g.cov);
+    return pc.frame.gi_view == GI_VIEW_CELLS ? c * vec3(1.0, 0.45, 0.45) : c;
 }
 
 vec3 light_surface(Surface s) {

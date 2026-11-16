@@ -119,7 +119,7 @@ bool vk_world_init() {
         ok = vk_make_compute(&w.pipe_light[k], "light_cells.comp", &si) && ok;
     }
     return ok && vk_gcache_init() && vk_shadow_init() && vk_sdf_init() &&
-           vk_gi_init() && vk_scans_init() && vk_aa_init();
+           vk_gi_init() && vk_lcache_init() && vk_scans_init() && vk_aa_init();
 }
 
 static void destroy_image(GpuImage &im) {
@@ -149,6 +149,7 @@ void vk_world_shutdown() {
     vk_shadow_shutdown();
     vk_sdf_shutdown();
     vk_gi_shutdown();
+    vk_lcache_shutdown();
     vk_aa_shutdown();
     vk_scans_shutdown();
     if (w.pool) vkDestroyDescriptorPool(g_vk.device, w.pool, nullptr);
@@ -280,6 +281,7 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     vk_shadow_fill(g, f, fs, images);
     vk_sdf_fill(g, f, fs, images);
     vk_gi_fill(g, f, fs);
+    vk_lcache_fill(g, f);
 }
 
 static void dispatch(VkCommandBuffer cmd, VkPipeline p, VkDeviceAddress frame, u32 gx, u32 gy) {
@@ -483,6 +485,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     // запекаются до освещения (docs/gcache.md)
     vk_gcache_begin(g_wf.frame);
     vk_shadow_begin(g_wf.frame);
+    vk_lcache_begin(g_wf.frame);
     rg_pass("плитки: обнулить", "плитки", record_tiles_clear, nullptr);
     rg_use(w.rg_tiles, RG_COPY_WRITE);
     rg_pass("плитки: разбор", "плитки", record_tiles, nullptr);
@@ -495,8 +498,11 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
     vk_gcache_tiles_uses();
     vk_shadow_tiles_uses();
+    vk_lcache_tiles_uses();
     vk_gcache_bake_passes();
     vk_shadow_passes();
+    // Ячейки света (docs/lcache.md): заявки поставил разбор плиток; работы и лучи — до освещения
+    vk_lcache_passes();
     static const char *const light_names[TILE_KINDS] = {"освещение: небо", "освещение: земля", "освещение: сетки",
                                                         "освещение: смесь", "освещение: земля на пиксель"};
     for (u32 k = 0; k < TILE_KINDS; ++k) {
@@ -518,6 +524,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         vk_shadow_reads();
         vk_sdf_reads();
         vk_gi_reads();
+        vk_lcache_reads();
         vk_skin_prev_read();
         vk_aa_light_uses(k == 0);
     }

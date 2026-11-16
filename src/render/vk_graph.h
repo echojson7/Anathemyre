@@ -5,7 +5,7 @@
 #pragma once
 #include "vk_state.h"
 
-constexpr u32 RG_MAX_RES = 64, RG_MAX_PASSES = 96, RG_MAX_USES = 32;
+constexpr u32 RG_MAX_RES = 64, RG_MAX_PASSES = 96, RG_MAX_USES = 40;
 
 // Как проход трогает ресурс. Запись включает чтение тем же проходом (атомики, чтение-запись)
 enum RgUse : u8 {
@@ -94,6 +94,10 @@ void vk_sdf_eye_pass();
 // Зонды непрямого света (vk_gi.cpp, docs/gi.md): лучи и смешение работ кадра — после сборки поля; что читает свет
 void vk_gi_passes();
 void vk_gi_reads();
+void vk_lcache_begin(VkDeviceAddress frame);
+void vk_lcache_tiles_uses();
+void vk_lcache_passes();
+void vk_lcache_reads();
 // Скиннинг людей (vk_skin.cpp): вершины копий и сферы их кластеров — до отсечения; кто читает общие вершины
 // (u — стадия) и таблицу кластеров (отсечение)
 void vk_skin_passes(const VkDeviceAddress *frame);

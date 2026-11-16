@@ -434,6 +434,12 @@ int run_window(const Args &a, AppMemory &m) {
                 di.work_gi[0] = work.gi_probes;
                 di.work_gi[1] = work.gi_rays;
                 di.work_gi[2] = work.gi_taps;
+                di.work_lc[0] = work.lc_live;
+                di.work_lc[1] = work.lc_new;
+                di.work_lc[2] = work.lc_jobs;
+                di.work_lc[3] = work.lc_rays;
+                di.work_lc[4] = work.lc_over;
+                di.work_lc[5] = work.lc_wait;
                 di.gc_off = work.gc_off;
                 di.light = eye_have;
                 di.lux_key = eye_info.lux_key;
@@ -760,19 +766,21 @@ int run_window(const Args &a, AppMemory &m) {
     if (a.shot && !debug_write_shot(a.shot, m.load)) rc_exit = 1;
     if (a.work) {
         // Счётчики работы для сверки CI (tools/work_check.sh): «имя значение» по строке
-        char t[768];
+        char t[1024];
         i32 n = snprintf(t, sizeof t,
                          "tiles_sky %u\ntiles_ground %u\ntiles_mesh %u\ntiles_mix %u\ntiles_ground_px %u\npx_sky %u\n"
                          "px_ground %u\n"
                          "px_mesh %u\nsurf_ground %u\nsurf_mesh %u\nshadow_taps %u\ngc_used %u\ngc_baked %u\n"
                          "gc_over %u\ngc_direct %u\nskin_verts %u\nsm_used %u\nsm_new %u\nsm_over %u\nsm_miss %u\n"
                          "sm_draws %u\nsm_taps %u\nsm_wait %u\nsdf_taps %u\nsdf_bricks %u\ngi_probes %u\ngi_rays %u\n"
-                         "gi_taps %u\n",
+                         "gi_taps %u\nlc_live %u\nlc_new %u\nlc_jobs %u\nlc_rays %u\nlc_over %u\nlc_taps %u\n"
+                         "lc_wait %u\n",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
                          work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts, work.sm_used, work.sm_new,
                          work.sm_over, work.sm_miss, work.sm_draws, work.sm_taps, work.sm_wait,
-                         work.sdf_taps, work.sdf_bricks, work.gi_probes, work.gi_rays, work.gi_taps);
+                         work.sdf_taps, work.sdf_bricks, work.gi_probes, work.gi_rays, work.gi_taps,
+                         work.lc_live, work.lc_new, work.lc_jobs, work.lc_rays, work.lc_over, work.lc_taps, work.lc_wait);
         if (!work_have) log_error("--work: кадр мира не прочитан (мало кадров)");
         if (!work_have || n <= 0 || !platform_write_file(a.work, t, (usize)n)) rc_exit = 1;
     }

@@ -173,10 +173,11 @@ jobs:
           . tools/ci_par.sh
           # чтение и запись мимо буферов по адресам, кадр мира (docs/graph.md «Проверки»).
           # Пять шейдеров lavapipe под GPU-AV не тянет (падает, съедает ~14 ГБ или считает минуты) — без проверки;
-          # лучи зондов (gi_trace) — снимок 4 × 49 152 зонда под GPU-AV идёт дольше 10 мин
+          # лучи зондов (gi_trace) — снимок 4 × 49 152 зонда под GPU-AV идёт дольше 10 мин; лучи ячеек света
+          # (lcache_trace) — тот же луч
           # Камера у стенда людей с согнутой костью и морфом: скиннинг и сферы кластеров тоже под проверкой
           par gpuav 540 xvfb-run -n 92 -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 4 --window 640 360 \
-            --gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp \
+            --gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp,lcache_trace.comp \
             --cam 45 5 6 11698 -2348.5 --stand elbow,morph1
           par_wait 5
       - name: Снимок сцены
