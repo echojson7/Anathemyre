@@ -122,6 +122,7 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.eye_snap = f.style.eye_snap ? 1u : 0u;
     g.tonemap = f.style.tonemap < RENDER_TONEMAPS ? f.style.tonemap : RENDER_TONEMAP_AGX;
     g.light_q = f.style.light_quality < RENDER_LIGHT_QUALITIES ? f.style.light_quality : RENDER_LIGHT_HIGH;
+    for (u32 k = 0; k < 4; ++k) g.local_tone[k] = f.style.local_tone[k];
     g.viewport[0] = w;
     g.viewport[1] = h;
     g.ndc_per_pixel[0] = 2.0f / (w > 0 ? w : 1.0f);

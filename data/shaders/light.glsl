@@ -17,6 +17,15 @@
 // какой бы ни была грубая высота земли у зондов (gi_buried)
 float g_ground = 0.0;
 
+// Свет места для местной экспозиции (docs/light.md, «Местная экспозиция»; light_cells.comp): освещённость, лк,
+// какую намерил бы экспонометр глаза, встань он в этой точке, — непрямой свет по нормали, светило в доле
+// открытости небу и огни без тени. Тени светила и огней в него не входят: поле гладкое, поэтому свет и тень
+// одного места сдвигаются вместе и контраст между ними цел. Копит light_surface() своими частями, читать после неё
+float g_e_local = 0.0;
+// Свет места у пикселя неба и у открытой земли — один и тот же: небо и светило на открытую землю.
+// Один на всё небо: градиент неба, облака и диск светила между собой не сжимаются
+float local_sky_e() { return pc.frame.sky_out.v[SKY_OUT_EYE].y; }
+
 // Видимость главного светила: 1 — свет, 0 — тень, всегда мягко (docs/light.md, правило 5). Земля — карта
 // горизонта (docs/horizon.md), сетки — карта теней страницами (docs/shadow.md, 6б-1)
 float sun_visibility(Surface s, vec3 l) {
@@ -100,6 +109,7 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
         }
         float sh = lamp_shadow(s.pos, n, l, q, steps);
         c += (kd * (e / A_PI) + spec) * l.color * sh;
+        g_e_local += e * dot(l.color, vec3(0.2126, 0.7152, 0.0722));
     }
     return c;
 }
@@ -123,12 +133,14 @@ vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, v
         float vis = sdf_sky(s.pos, n).x;
         if (g_ground == 0.0) vis *= 1.0 - gi_buried(s.pos + pc.frame.sdf_cam.xyz);
         lit = vis * (1.0 - g.cov);
+        g_e_local += A_PI * sky_y * lit;
         float ao = s.ao * vis;
         float so = spec_occlusion(nv, ao, a);
         c = (kd * irr * ao + (fss_ess * env + fms_ems * irr) * so) * (1.0 - g.cov);
     }
     if (g.cov > 0.0) {
         lit += clamp(dot(g.irr, Y) / sky_y, 0.0, 1.0) * g.cov;
+        g_e_local += A_PI * max(dot(g.irr, Y), 0.0) * g.cov;
         float ao = s.ao * sdf_ao(s.pos, n);
         float so = spec_occlusion(nv, ao, a);
         vec3 bounce = max(g.refl.rgb - atmo_ambient(rd) * g.refl.a, vec3(0.0));
@@ -176,6 +188,7 @@ vec3 light_surface(Surface s) {
     // Главный свет: освещённость E (лк) на перпендикулярную площадку у камеры
     vec3 c = vec3(0.0);
     float vis = nl > 0.0 ? sun_visibility(s, l) : 0.0;
+    g_e_local = 0.0;
     if (vis > 0.0) {
         vec3 h = normalize(l + v);
         float nh = max(dot(n, h), 0.0), vh = max(dot(v, h), 0.0);
@@ -200,5 +213,10 @@ vec3 light_surface(Surface s) {
     c += s.emissive;
     // Воздух отрезка освещён как у точки вдали и как у глаза вблизи (глаз — eye.comp, sky_out [5].w)
     float lc = clamp(f.sky_out.v[SKY_OUT_EYE2].w, 0.0, 1.0);
+    // Свет места: к непрямому свету и огням — светило на землю в доле открытости небу (lit: под открытым небом
+    // весь, в зале — ничего). Вдали пиксель — уже не поверхность, а воздух перед ней: свет места сходит к небу
+    g_e_local += f.sky_out.v[SKY_OUT_EYE2].x * smoothstep(0.25, 0.75, lit);
+    float air = 1.0 - dot(exp(-atmo_depth(s.pos)), vec3(1.0 / 3.0));
+    g_e_local = exp2(mix(log2(max(g_e_local, 1e-6)), log2(max(local_sky_e(), 1e-6)), air));
     return atmo_fog_lit(c, s.pos, mix(lit, lc, exp(-dist / 32.0)));
 }
