@@ -26,7 +26,7 @@ bool vk_create_pipelines() {
     // Заявки модулей, потом сборка пачкой (vk_pipes.cpp). Сборка — и после отказа: она же освобождает шейдеры
     bool ok = vk_make_pipeline(&g_vk.pipe_points, points);
     ok = vk_make_pipeline(&g_vk.pipe_lines, lines) && ok;
-    ok = ok && vk_sky_init() && vk_horizon_init() && vk_world_init() && vk_froxel_init() && vk_skin_init() && vk_ui_init();
+    ok = ok && vk_sky_init() && vk_clouds_init() && vk_glare_init() && vk_horizon_init() && vk_world_init() && vk_froxel_init() && vk_skin_init() && vk_ui_init();
     u32 n = 0, threads = 0;
     const char *slow = "";
     f64 slow_ms = 0;
@@ -41,6 +41,8 @@ void vk_destroy_pipelines() {
     vk_world_shutdown();
     vk_froxel_shutdown();
     vk_sky_shutdown();
+    vk_clouds_shutdown();
+    vk_glare_shutdown();
     vk_horizon_shutdown();
     VkPipeline ps[] = {g_vk.pipe_points, g_vk.pipe_lines};
     for (VkPipeline p : ps)
@@ -129,6 +131,8 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.ndc_per_pixel[1] = 2.0f / (h > 0 ? h : 1.0f);
     vk_terrain_fill(g, f);
     vk_sky_fill(g, f);
+    vk_clouds_fill(g, f);
+    vk_glare_fill(g, f);
     vk_horizon_fill(g, f);
     vk_aa_fill(g, f);        // до vk_skin_fill: кадр сглаживания нужен прошлым экземплярам людей
     vk_skin_fill(g, f, fs);  // до vk_world_fill: LOD людей идёт в их экземпляры

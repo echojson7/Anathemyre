@@ -1,0 +1,137 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Карта купола облаков (docs/clouds.md): тексель — луч от камеры сборки сквозь слой кучевых и слой перистых.
+// Поток — блок 8×8 текселей, в нём один тексель фазы pc.b (раскладка Байера: соседние фазы далеко друг от
+// друга). pc.a — слот | первая фаза слота << 8. Камера, ветер, время формы и светило слота застыли на его
+// первой фазе (cl_build, cl_build_light), постоянные слота (норма яркости, свет неба сверху и снизу) пишет
+// первая фаза в cl_info, остальные читают: все тексели слота согласованы, хотя собраны в разных кадрах
+#include "clouds.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+
+const vec3 CL_Y = vec3(0.2126, 0.7152, 0.0722);
+
+ivec2 phase_px(uint p) {
+    uint x = 0u, y = 0u;
+    for (int i = 0; i < 3; ++i) {
+        x = (x << 1) | ((p >> (2 * i)) & 1u);
+        y = (y << 1) | ((p >> (2 * i + 1)) & 1u);
+    }
+    return ivec2(x, y);
+}
+
+void main() {
+    FrameData f = pc.frame;
+    uint slot = pc.a & 0xFFu;
+    bool first = (pc.a >> 8) != 0u;
+    int size = int(f.cl_size);
+    ivec2 blk = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 px = blk * 8 + phase_px(pc.b);
+    vec3 lt = f.cl_build_light.xyz;
+    float E = f.cl_build_light.w;
+    float alt = f.cl_build.y, tev = f.cl_build.w;
+    float base = f.cl_shape.x, top = f.cl_shape.y;
+
+    // Постоянные слота: свет неба на облако сверху (среднее таблицы неба по пяти направлениям) и снизу (отсвет
+    // земли), норма яркости — чтобы тексель хранил доли, а не канделы: днём и ночью одна точность
+    vec3 a_top, a_bot;
+    float norm;
+    if (first) {
+        vec2 lh = normalize(lt.xz + vec2(1e-5, 0.0)) * 0.866;
+        a_top = (atmo_sky_lut(vec3(0.0, 1.0, 0.0)).rgb + atmo_sky_lut(vec3(lh.x, 0.5, lh.y)).rgb + atmo_sky_lut(vec3(-lh.x, 0.5, -lh.y)).rgb +
+                 atmo_sky_lut(vec3(-lh.y, 0.5, lh.x)).rgb + atmo_sky_lut(vec3(lh.y, 0.5, -lh.x)).rgb) * 0.2;
+        vec3 e_gr = E * atmo_trans(R_GROUND + alt, lt.y) * max(lt.y, 0.0);
+        a_bot = f.a_ground.rgb * (a_top + e_gr * (0.8 / A_PI));
+        vec3 e_top = E * atmo_trans(R_GROUND + top, lt.y);
+        norm = max(0.25 * dot(e_top, CL_Y) + 2.0 * dot(a_top, CL_Y), 1e-9);
+        if (blk == ivec2(0)) {
+            f.cl_info.v[slot * 4u] = vec4(norm, 0.0, 0.0, 0.0);
+            f.cl_info.v[slot * 4u + 1u] = vec4(a_top, 0.0);
+            f.cl_info.v[slot * 4u + 2u] = vec4(a_bot, 0.0);
+        }
+    } else {
+        norm = f.cl_info.v[slot * 4u].x;
+        a_top = f.cl_info.v[slot * 4u + 1u].rgb;
+        a_bot = f.cl_info.v[slot * 4u + 2u].rgb;
+    }
+    if (px.x >= size || px.y >= size) return;
+    uint at = (slot * uint(size * size) + uint(px.y * size + px.x)) * 2u;
+    vec2 uv = (vec2(px) + 0.5) / float(size);
+    vec2 pc2 = (uv - 0.5) * 2.0;
+    vec3 d = cl_dir(uv);
+    float r0 = R_GROUND + alt;
+    if (dot(pc2, pc2) > 1.04 || hits_ground(r0, d.y)) {
+        f.cl_map.v[at] = 0u;
+        f.cl_map.v[at + 1u] = 255u << 16;
+        return;
+    }
+    float gain = f.cl_wind.w;
+    float cs = dot(d, lt);
+    vec3 L = vec3(0.0);
+    float T = 1.0, wsum = 0.0, dsum = 0.0;
+
+    // Кучевые: шаги по лучу сквозь слой; у горизонта путь длинный — шаг крупнее, мелочь не нужна
+    if (f.cl_shape.z > 0.0) {
+        float t0 = alt < base ? ray_sphere(r0, d.y, R_GROUND + base) : 0.0;
+        float t1 = min(ray_sphere(r0, d.y, R_GROUND + top), CLOUD_FAR);
+        if (t1 > t0) {
+            float len = t1 - t0;
+            int n = int(clamp(ceil(len / 50.0), 40.0, float(f.cl_steps)));
+            float dt = len / float(n);
+            bool fine = dt < 150.0;
+            // Свет светила на высоте низа и верха слоя (в середине пути луча): закат красит облака, тень планеты гасит
+            vec3 pm = vec3(0.0, r0, 0.0) + d * (0.5 * (t0 + t1));
+            float mus = dot(normalize(pm), lt);
+            vec3 e_lo = E * atmo_trans(R_GROUND + base, mus), e_hi = E * atmo_trans(R_GROUND + top, mus);
+            float t = t0 + 0.5 * dt;
+            for (int i = 0; i < n && T > 0.004; ++i, t += dt) {
+                vec3 pw = d * t;
+                float ha = length(vec3(pw.x, r0 + pw.y, pw.z)) - R_GROUND;
+                vec3 p = vec3(f.cl_build.x + pw.x, ha, f.cl_build.z + pw.z);
+                float rho = cloud_density(p, tev, fine);
+                if (rho <= 0.0) continue;
+                rho *= smoothstep(CLOUD_FAR, 0.7 * CLOUD_FAR, t);
+                // Толщина облака к светилу: пять шагов, каждый вдвое длиннее; первые два — с мелочью (клубы
+                // затеняют друг друга)
+                float tau = 0.0, sl = 70.0, sd = 0.0;
+                for (int j = 0; j < 5; ++j) {
+                    vec3 q = p + lt * (sd + 0.5 * sl);
+                    tau += cloud_density(q, tev, fine && j < 2) * sl;
+                    sd += sl;
+                    sl *= 2.0;
+                }
+                float h = clamp((ha - base) / (top - base), 0.0, 1.0);
+                vec3 S = mix(e_lo, e_hi, h) * cloud_sun(tau, cs) + a_top * (0.25 + 0.45 * h) + a_bot * (0.4 * (1.0 - h));
+                float tr = exp(-rho * dt);
+                float w = T * (1.0 - tr);
+                L += S * (w * gain);
+                wsum += w;
+                dsum += w * t;
+                T *= tr;
+            }
+        }
+    }
+    // Перистые: тонкий слой, одна точка на луч; светятся вперёд (лёд), после заката ещё освещены
+    if (f.cl_cirrus.y > 0.0) {
+        float rc = R_GROUND + f.cl_cirrus.x;
+        float tc = ray_sphere(r0, d.y, rc);
+        if (tc > 0.0 && tc < CIRRUS_FAR) {
+            vec3 pw = d * tc;
+            float cosn = (r0 * d.y + tc) / rc;  // косинус луча к вертикали в слое
+            float tau = cirrus_tau(f.cl_build.xz + pw.xz) / max(cosn, 0.12) * smoothstep(CIRRUS_FAR, 0.6 * CIRRUS_FAR, tc);
+            if (tau > 0.0005) {
+                float mus = dot(normalize(vec3(pw.x, r0 + pw.y, pw.z)), lt);
+                vec3 e = E * atmo_trans(rc, mus);
+                float ph = mix(cl_hg(cs, 0.7), cl_hg(cs, -0.2), 0.3) + 0.04;
+                float a = 1.0 - exp(-tau);
+                float w = T * a;
+                L += (e * ph + a_top * 0.9) * (w * gain);
+                wsum += w;
+                dsum += w * tc;
+                T *= 1.0 - a;
+            }
+        }
+    }
+    uvec2 o = cl_pack(L / norm, T, wsum > 1e-6 ? dsum / wsum : 0.0);
+    f.cl_map.v[at] = o.x;
+    f.cl_map.v[at + 1u] = o.y;
+}

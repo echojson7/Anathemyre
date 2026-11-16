@@ -41,6 +41,17 @@ struct SkyDesc {
     f32 adapt_night = 0.3f;    // степень привыкания ниже света полной луны: темнее луны — заметно темнее в кадре
     f32 milky = 1.0f;          // яркость Млечного пути
     f32 twinkle = 1.0f;        // мерцание звёзд
+    f32 glare = 0.0f;          // блеск: доля света ярких мест, что глаз рассеивает вокруг (docs/glare.md)
+    // Облака (docs/clouds.md)
+    f32 clouds = 0.0f;         // доля неба под кучевыми: 0 — нет
+    f32 cloud_base = 2400.0f;  // низ кучевых, м над уровнем моря
+    f32 cloud_top = 4200.0f;   // верх самых высоких
+    f32 cloud_density = 1.0f;  // плотность (1 — как у кучевых хорошей погоды)
+    f32 cloud_light = 1.0f;    // яркость облаков (множитель рассеянного в них света)
+    f32 cirrus = 0.0f;         // доля неба под перистыми: 0 — нет
+    f32 cirrus_height = 9500.0f;
+    f32 wind = 8.0f;           // ветер на высоте облаков, м/с
+    f32 wind_dir = 250.0f;     // куда он несёт облака, градусы от севера по часовой
     // Воздух пустыни: те же величины, вид смешивает их с воздухом выше по маске пустыни под камерой
     f32 desert_mie = 1.0f;
     f32 desert_haze = 0.10f;
@@ -59,4 +70,6 @@ f32 sky_hour(const Clock &c, f64 ticks);
 
 // Небо кадра и временный главный свет (солнце или луна). desert — доля воздуха пустыни 0..1 (маска под
 // камерой), cam_y — высота глаза от нуля карты, м
-void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f32 cam_y, RenderSky &out, RenderLight &key);
+// cloud_time — время облаков, с (ветер и смена формы; время кадра, не часы мира)
+void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f32 cam_y, f64 cloud_time, RenderSky &out,
+               RenderLight &key);
