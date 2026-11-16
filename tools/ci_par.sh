@@ -12,8 +12,8 @@ par() {
     shift 2
     (
         t0=$SECONDS
-        timeout -k 20 "$limit" "$@" > "$name.log" 2>&1
-        rc=$?
+        rc=0  # «|| rc=$?»: под bash -e упавшая команда сняла бы подоболочку до записи .rc
+        timeout -k 20 "$limit" "$@" > "$name.log" 2>&1 || rc=$?
         echo "$rc $((SECONDS - t0))" > "$name.rc"
         exit "$rc"
     ) &
