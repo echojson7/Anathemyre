@@ -159,6 +159,8 @@ jobs:
         if: matrix.kind == 'asan'
         env:
           LSAN_OPTIONS: suppressions=${{ github.workspace }}/tools/lsan.supp
+          # SIGILL без этого убивает молча («Illegal instruction», код 132): так ASan печатает стек и поток
+          ASAN_OPTIONS: handle_sigill=1
         run: |
           . tools/ci_par.sh
           . tools/versions.sh
