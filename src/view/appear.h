@@ -40,6 +40,14 @@ void appear_bind(AppearBind &b, const ViewBody &body);
 // Веса морфов в порядке сетки: out — RENDER_MAX_MORPHS чисел
 void appear_weights(const AppearBind &b, const Appear &a, f32 *out);
 
+// Насколько сложение отодвигает поверхность тела от кости у мест ношения оружия (src/view/arms.cpp, carry_place): у
+// левого бедра наружу и за спиной назад, м в осях сетки. Полный или широкобёдрый носит меч дальше от кости, иначе
+// клинок уходит в тело; одежда добавит сюда свою толщину
+struct AppearCarry {
+    f32 hip, back;
+};
+AppearCarry appear_carry(const Appear &a);
+
 // Скелет одного человека: бинд тела со сдвигами суставов его морфов. scale — рост к росту сетки (масштаб
 // экземпляра), pelvis — высота таза к высоте таза сетки (на неё множится высота таза из клипа)
 constexpr u32 APPEAR_MAX_BONES = 64;
@@ -47,6 +55,7 @@ struct AppearFit {
     SkelBone bones[APPEAR_MAX_BONES];
     Skel skel;
     f32 scale, pelvis;
+    AppearCarry carry;  // appear_carry его внешности
 };
 // joints — сдвиги суставов тела [морф сетки][кость][4] (ViewBody::joints), nullptr — скелет как у тела
 void appear_fit(AppearFit &f, const Skel &base, const f32 *joints, u32 morph_count, const f32 *weights, f32 height,

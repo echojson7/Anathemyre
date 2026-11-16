@@ -6,6 +6,7 @@
 #pragma once
 #include "appear.h"
 #include "../anim/gait.h"
+#include "arms.h"
 #include "../render/render.h"
 #include "../sim/extract.h"
 
@@ -42,6 +43,7 @@ struct PersonLook {
     // Действие в прошлом кадре и гаснущее (сорванное или сменённое): номер + 1, время клипа, вес
     u8 last_act, fade_act;
     f32 last_t, last_w, fade_t, fade_w;
+    ArmsLook arms;      // оружие: убрано, достаёт, в руке (docs/arms.md)
     WPos root;          // корень в кадре (для выбора и камеры)
     Turn yaw;
     // След касаний стоп (отладка): точки стоп на опоре
@@ -63,10 +65,11 @@ struct PeopleView {
     bool bound, failed;
     u32 body, skin;                   // тело (ViewAssets::bodies) и его скелет game_engine
     GaitSet gait;
-    i32 bones[19];                    // таз, позвонок 1, бёдра, голени, стопы, носки л/п; руки и верх (меч, реакция)
+    i32 bones[13];                    // таз, позвонок 1, бёдра, голени, стопы, носки л/п; грудь, шея, голова (реакция)
+    ArmsBind arms;                    // руки и оружие (docs/arms.md)
     ActClip act[ACTIONS_MAX];         // клипы действий по номеру действия (clip = nullptr — нет)
     bool act_bound;
-    u32 sword;                        // сетка меча-заглушки (0 — нет)
+    bool armed;                       // руки привязаны и оружие есть (иначе у людей пусто)
     Vec3 rest_foot[2];                // стопы в покое (оси тела, вдоль хода — от таза)
     // Выбор и приказ
     i32 sel;                          // место, −1 — никого
@@ -78,7 +81,7 @@ struct PeopleView {
 };
 
 void people_view_init(PeopleView &pv);
-// Тела людей кадра: экземпляры (inst, ni — дописывает, места — 2 · VIEW_BODIES_MAX: тело и меч), палитры и скиннинг в out;
+// Тела людей кадра: экземпляры (inst, ni — дописывает, места — 2 · VIEW_BODIES_MAX: тело и оружие), палитры и скиннинг в out;
 // линии метки и следа — в lines (ln — дописывает, места — VIEW_PEOPLE_LINES вершин)
 constexpr u32 VIEW_PEOPLE_LINES = 4096;
 void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput &in, const WPos &eye, Arena &frame,

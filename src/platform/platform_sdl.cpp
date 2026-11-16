@@ -8,6 +8,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -228,7 +229,7 @@ static void log_close() {
 // записать, пропали бы — а с ними и то, на чём игра упала. Обработчик сам дописывает хвост кольца, строку
 // «падение: …» и адреса стека в stderr и anathemyre.log, на Windows ещё окно с сообщением. Без блокировок:
 // упасть могли и под мьютексом журнала; лучше редкая повторная строка, чем зависание при падении
-static SDL_AtomicInt g_crashing;  // второе падение (в самом обработчике) — сразу выход
+static SDL_AtomicInt g_crashing;  // второе падение: в самом обработчике — сразу выход, в другом потоке — ждёт отчёта
 
 static void crash_out(const char *s, usize n) {
     fwrite(s, 1, n, stderr);
@@ -335,21 +336,86 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep) {
 }
 #endif
 
-// abort() из ana_fail и CRT: строка «проверка не прошла» уже в журнале, здесь только дописать кольцо
-static void crash_signal(int sig) {
-    if (SDL_AddAtomicInt(&g_crashing, 1)) _exit(128 + sig);
+#ifndef _WIN32
+static thread_local bool t_crashing;  // отчёт о падении пишет этот поток
+
+// Недопустимая инструкция: её байты, участок памяти и процессор. По ним видно, чей это код (игра, библиотека или
+// шейдер, собранный драйвером на лету) и какой инструкции этому процессору не хватает
+static void crash_where(const void *addr) {
+    const uintptr_t a = (uintptr_t)addr;
+    unsigned long lo = 0, hi = 0;
+    char map[400] = "", perms[8] = "";
+    if (FILE *f = fopen("/proc/self/maps", "r")) {
+        char line[400];
+        while (fgets(line, sizeof line, f)) {
+            if (sscanf(line, "%lx-%lx %7s", &lo, &hi, perms) != 3 || a < lo || a >= hi) continue;
+            snprintf(map, sizeof map, "%s", line);
+            break;
+        }
+        fclose(f);
+    }
+    usize len = strlen(map);
+    if (len && map[len - 1] == '\n') map[len - 1] = 0;
+    if (!len) {
+        crash_line("  инструкция по адресу %p: вне памяти процесса", addr);
+    } else {
+        char hex[16 * 3 + 1] = "";
+        usize n = perms[0] == 'r' ? (hi - a < 16 ? (usize)(hi - a) : 16) : 0;  // не дальше конца участка
+        for (usize i = 0; i < n; ++i) snprintf(hex + i * 3, 4, "%02x ", ((const unsigned char *)a)[i]);
+        bool named = strchr(map, '/') || strchr(map, '[');
+        crash_line("  инструкция по адресу %p: %s", addr, n ? hex : "участок не читается");
+        crash_line("  участок памяти: %s%s", map, named ? "" : " (без файла: код, собранный на лету, — шейдеры драйвера)");
+    }
+    if (FILE *f = fopen("/proc/cpuinfo", "r")) {
+        char line[400];
+        while (fgets(line, sizeof line, f)) {
+            if (strncmp(line, "model name", 10) != 0) continue;
+            const char *v = strchr(line, ':');
+            usize l = strlen(line);
+            if (l && line[l - 1] == '\n') line[l - 1] = 0;
+            if (v) crash_line("  процессор:%s", v + 1);
+            break;
+        }
+        fclose(f);
+    }
+}
+#endif
+
+// abort() из ana_fail и CRT: строка «проверка не прошла» уже в журнале, здесь только дописать кольцо.
+// addr — адрес сбоя (Linux, для недопустимой инструкции), иначе nullptr
+static void crash_report(int sig, const void *addr) {
+    if (SDL_AddAtomicInt(&g_crashing, 1)) {
+#ifndef _WIN32
+        // Другой поток упал, пока первый пишет отчёт (код шейдеров lavapipe идёт во всех его потоках разом, и
+        // недопустимую инструкцию встречают сразу несколько): подождать его, иначе отчёт оборвётся, не начавшись
+        for (int i = 0; i < 50 && !t_crashing; ++i) usleep(100000);
+#endif
+        _exit(128 + sig);
+    }
+#ifndef _WIN32
+    t_crashing = true;
+#endif
     crash_flush_ring();
     const char *what = sig == SIGSEGV ? "обращение к чужой памяти" : sig == SIGABRT ? "аварийный выход (abort)"
                      : sig == SIGFPE ? "ошибка арифметики" : sig == SIGILL ? "недопустимая инструкция (процессор без AVX2?)" : "сигнал";
     crash_line("падение: %s, сигнал %d", what, sig);
 #ifndef _WIN32
+    if (sig == SIGILL && addr) crash_where(addr);
     void *pcs[32];
     int n = backtrace(pcs, 32);
     char **names = n > 0 ? backtrace_symbols(pcs, n) : nullptr;  // malloc в умирающем процессе: худшее — без стека
     for (int i = 0; names && i < n; ++i) crash_line("  %2d %s", i, names[i]);
+#else
+    (void)addr;
 #endif
     _exit(128 + sig);
 }
+
+#ifdef _WIN32
+static void crash_signal(int sig) { crash_report(sig, nullptr); }
+#else
+static void crash_signal(int sig, siginfo_t *si, void *) { crash_report(sig, si ? si->si_addr : nullptr); }
+#endif
 
 static void crash_guard() {
 #if defined(__has_feature)
@@ -370,8 +436,9 @@ static void crash_guard() {
     ss.ss_size = sizeof alt;
     sigaltstack(&ss, nullptr);
     struct sigaction sa{};
-    sa.sa_handler = crash_signal;
-    sa.sa_flags = SA_ONSTACK | SA_RESETHAND;
+    sa.sa_sigaction = crash_signal;
+    // Без SA_RESETHAND: тот же сигнал в другом потоке должен дождаться отчёта, а не убить процесс молча
+    sa.sa_flags = SA_ONSTACK | SA_SIGINFO;
     const int sigs[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT};
     for (int sig : sigs) sigaction(sig, &sa, nullptr);
 #endif

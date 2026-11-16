@@ -33,8 +33,25 @@ layout(set = 0, binding = 0, r32ui) uniform readonly uimage2D u_vis;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D u_hdr;
 layout(set = 0, binding = 11, rgba16f) uniform writeonly image2D u_motion;  // векторы движения TAA (motion.glsl)
 
-// Цвет в HDR кадра: × экспозиция глаза этого кадра (sky_sum.comp), предел — запас до края f16
-vec3 pre_exposed(vec3 c) { return min(c * pc.frame.sky_out.v[SKY_OUT_EYE].x, vec3(60000.0)); }
+// Местная экспозиция (docs/light.md): глаз привык к свету у камеры, а место освещено иначе — небо и пустыня в
+// проёме из тёмного зала, зал в проёме с улицы. Серая карта под светом места e (лк, g_e_local) при экспозиции
+// кадра выходит на d стопов от среднего серого; до колена ±local_tone.x — как есть, дальше в свет — с наклоном
+// .y, в тень — с наклоном .z (переход за LOCAL_W стопов, без излома). Множитель — от гладкого света места, не
+// от соседних пикселей и не от тени в точке: ореолов нет, фактура, форма и тени внутри места не меняются
+const float LOCAL_W = 0.5;
+float local_gain(float e) {
+    vec4 p = pc.frame.local_tone;
+    if (p.w == 0.0) return 1.0;
+    float d = log2(max(e * pc.frame.sky_out.v[SKY_OUT_EYE].x / A_PI, 1e-9));
+    float x = abs(d) - p.x;
+    if (x <= 0.0) return 1.0;
+    float s = d > 0.0 ? p.y : p.z;
+    float g = p.x + s * x + (1.0 - s) * LOCAL_W * (1.0 - exp(-x / LOCAL_W));
+    return exp2(sign(d) * g - d);
+}
+// Цвет в HDR кадра: × экспозиция глаза этого кадра (sky_sum.comp) × местная экспозиция по свету точки e, лк;
+// предел — запас до края f16
+vec3 pre_exposed(vec3 c, float e) { return min(c * (pc.frame.sky_out.v[SKY_OUT_EYE].x * local_gain(e)), vec3(60000.0)); }
 
 shared Hit s_hit[64];
 shared uint s_id[64];
@@ -74,7 +91,10 @@ vec3 froxel_heat(vec3 c, vec3 rel) {
 // функцией, что запекание, и через ту же упаковку — картинка та же) или крутой склон на пиксель. Оба пути
 // считают слои одним ground_eval(): код слоёв и материалов в конвейере — одна копия
 vec3 shade_hit(Hit h, int phys) {
-    if (h.kind == HIT_SKY) return sky_radiance(normalize(h.rel));
+    if (h.kind == HIT_SKY) {
+        g_e_local = local_sky_e();
+        return sky_radiance(normalize(h.rel));
+    }
     Surface s;
     bool gc = GC_KIND && h.kind == HIT_GCACHE;
     int k = int(h.level);
@@ -98,7 +118,7 @@ vec3 shade_hit(Hit h, int phys) {
             s.pos = g.p - pc.frame.cam_off;
         }
     } else if (RESOLVE_MESH) {
-        s = mesh_surface(h.rel, normalize(h.n), h.m0, h.m1, h.blend, h.ao, h.seed);
+        s = mesh_surface(h.rel, normalize(h.n), h.m0, h.m1, h.blend, h.ao, h.seed, h.dyn, h.obj, h.obj_n);
     } else {
         s = gc_unpack(uvec2(0u));  // вид «земля»: других попаданий нет
         s.pos = h.rel;
@@ -135,7 +155,7 @@ void main() {
     bool inside = px.x < int(f.viewport.x) && px.y < int(f.viewport.y);
     if (TILE_KIND == TILE_SKY) {
         // Только небо: то же, что shade_hit() пустого пикселя
-        if (inside) imageStore(u_hdr, px, vec4(pre_exposed(sky_radiance(normalize(pixel_ray(px)))), 1.0));
+        if (inside) imageStore(u_hdr, px, vec4(pre_exposed(sky_radiance(normalize(pixel_ray(px))), local_sky_e()), 1.0));
         if (inside && f.aa_mode == AA_TAA) {
             Hit hs;
             hs.kind = HIT_SKY;
@@ -225,7 +245,8 @@ void main() {
         return;
     }
     if (t < nlead) {
-        s_color[t] = pre_exposed(shade_hit(hl, phys));
+        vec3 col = shade_hit(hl, phys);
+        s_color[t] = pre_exposed(col, g_e_local);
         if (g_steps != 0u) atomicAdd(s_work[5], g_steps);
         if (g_sm_taps != 0u) atomicAdd(s_work[7], g_sm_taps);
         if (g_sm_miss != 0u) atomicAdd(s_work[8], g_sm_miss);

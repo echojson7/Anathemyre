@@ -4,6 +4,7 @@
 #include "../sim/collide.h"
 #include "../sim/ground.h"
 #include "lamps.h"
+#include "mech.h"
 #include "people.h"
 
 static constexpr f32 NEAR_M = 0.1f;
@@ -98,6 +99,8 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.style.dt = in.dt;
     out.style.eye_snap = in.eye_snap;
     out.style.tonemap = in.tonemap;
+    for (u32 k = 0; k < 3; ++k) out.style.local_tone[k] = assets.sky.local_tone[k];
+    out.style.local_tone[3] = in.local_off ? 0.0f : 1.0f;
     out.style.scans = in.scans;
     out.style.light_quality = in.light_quality;
     out.style.aa = in.aa;
@@ -112,7 +115,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
         desert = (f32)terrain_masks2(t, gx, gz).desert / 255.0f;
     }
     f64 ticks = sky_clock_ticks(in.prev->clock, in.cur->clock, in.alpha);
-    sky_build(assets.sky, desert, in.cur->clock, ticks, eye.y, out.sky, out.light);
+    sky_build(assets.sky, desert, in.cur->clock, ticks, eye.y, in.cloud_time, out.sky, out.light);
     out.sky.time = in.time;
     out.ground = in.cur->terrain != nullptr;
     for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) out.ground_layers[k] = assets.ground_layers[k];
@@ -122,10 +125,16 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     u32 n = cur.props_count;
     if (in.scatter && cur.terrain) scatter_update(*in.scatter, *cur.terrain, eye, assets.rocks);
     u32 nscat = in.scatter ? in.scatter->count : 0;
-    RenderInstance *inst = arena_push<RenderInstance>(frame, n + nscat + 1 + (in.people ? 2 * VIEW_BODIES_MAX : 0));  // тело и меч
+    RenderInstance *inst = arena_push<RenderInstance>(frame, n + nscat + 1 + (in.people ? 2 * VIEW_BODIES_MAX : 0) + MECH_MAX);  // тело и меч; машины
     u32 ni = 0;
     for (u32 i = 0; i < n && ni < RENDER_MAX_INSTANCES; ++i) {
         if (!cur.prop_gen[i]) continue;
+        // Шагающая турель (docs/vezha.md): объект сцены — её место, ведёт и рисует её вид
+        if (mech_view_is(cur.prop_mesh[i])) {
+            if (in.mech) mech_view_place(*in.mech, i, WPos{cur.prop_cx[i], cur.prop_cz[i], cur.prop_x[i], cur.prop_y[i], cur.prop_z[i]},
+                                         cur.prop_yaw[i]);
+            continue;
+        }
         const ViewMesh *vm = find_mesh(assets, cur.prop_mesh[i]);
         if (!vm) continue;
         u32 mesh = vm->id;
@@ -156,6 +165,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
         plines = arena_push<RenderLineVertex>(frame, VIEW_PEOPLE_LINES);
         people_view_build(*in.people, assets, in, eye, frame, inst, ni, out, plines, npl, in.people_debug);
     }
+    if (in.mech) mech_view_build(*in.mech, assets, in, frame, inst, ni, out);
     out.instances = {inst, ni};
     if (cur.decals) build_decals(*cur.decals, assets, eye, frame, out);
     lamps_build(in.lamps_off ? nullptr : cur.lamps, in.test_lights, cam, cur.terrain, eye, frame, out);
