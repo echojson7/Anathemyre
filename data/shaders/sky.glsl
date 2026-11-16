@@ -183,12 +183,9 @@ vec3 sky_sun_disc(vec3 dir, float ex) {
     // Часть света диска ушла в ореол (узкий лепесток пыли)
     vec3 e0 = f.a_sun.w / (A_PI * rs * rs) * exp(-f.a_sun_halo.rgb);
     vec3 L = e0 * T * limb * edge;
-    // Предел: высокое солнце — белое, в 64 раза ярче белого кадра; низкое, покрасневшее (зелёного меньше
-    // красного) — тусклее, чтобы цвет дожил до экрана. Множитель — по центру диска: потемнение к краю и перепад
-    // цвета по высоте остаются
-    vec3 Tc = f.a_sun_t.rgb;
-    float cap = mix(4.0, 64.0, smoothstep(0.55, 0.95, Tc.g / max(Tc.r, 1e-6)));
-    float peak = sky_max3(e0 * Tc) * 1.2 * ex;
+    // Предел (atmo_sun_cap): множитель — по центру диска, потемнение к краю и перепад цвета по высоте остаются
+    float cap = atmo_sun_cap();
+    float peak = sky_max3(e0 * f.a_sun_t.rgb) * 1.2 * ex;
     return L * min(1.0, cap / max(peak, 1e-9));
 }
 

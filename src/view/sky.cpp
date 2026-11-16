@@ -34,7 +34,7 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"cloud_density", &d.cloud_density, 1}, {"cloud_light", &d.cloud_light, 1},
         {"cirrus", &d.cirrus, 1},         {"cirrus_height", &d.cirrus_height, 1},
         {"wind", &d.wind, 1},             {"wind_dir", &d.wind_dir, 1},
-        {"night_fill", &d.night_fill, 1},
+        {"night_fill", &d.night_fill, 1}, {"glare", &d.glare, 1},
     };
     TextReader r = text_reader(text, size);
     TextLine l;
@@ -64,6 +64,10 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
     if (d.sun_size < 0.1f || d.sun_size > 5.0f || d.moon_size < 0.1f || d.moon_size > 5.0f || d.halo < 0.0f || d.halo > 0.9f ||
         d.halo_g < 0.5f || d.halo_g > 0.995f) {
         snprintf(err, err_cap, "sun_size и moon_size 0.1–5, halo 0–0.9, halo_g 0.5–0.995");
+        return false;
+    }
+    if (d.glare < 0.0f || d.glare > 0.3f) {
+        snprintf(err, err_cap, "glare 0–0.3");
         return false;
     }
     if (d.clouds < 0.0f || d.clouds > 1.0f || d.cirrus < 0.0f || d.cirrus > 1.0f || d.cloud_base < 500.0f ||
@@ -224,6 +228,7 @@ void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f
     o.night_dark = d.night_dark;
     o.adapt_night = d.adapt_night;
     o.night_fill = d.night_fill;
+    o.glare = d.glare;
     o.milky = d.milky;
     o.twinkle = d.twinkle;
 

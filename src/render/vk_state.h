@@ -127,6 +127,10 @@ struct FrameGpu {
     u32 cl_steps, cl_pad;
     f32 cl_off_a[4], cl_off_b[4];
     f32 cl_build[4], cl_build_light[4], cl_cam[4];
+    // Блеск (vk_glare.cpp)
+    VkDeviceAddress gr_buf;
+    u32 gr_on, gr_n, gr_pad0, gr_pad1;
+    i32 gr_lv[8][4];
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -282,6 +286,16 @@ struct CloudGpu {
     // Работа этого кадра (vk_clouds_fill → vk_clouds_passes)
     bool job_on = false, job_first = false, job_sh_full = false;
     u32 job_slot = 0, job_phase = 0, job_n = 0;
+};
+
+// Блеск (vk_glare.cpp, docs/glare.md): пирамида кадра после сглаживания — уровни вниз и вверх в одном буфере
+struct GlareGpu {
+    GpuBuffer buf;
+    VkPipeline pipe = VK_NULL_HANDLE;
+    u8 rg_buf = 0;
+    u32 w = 0, h = 0, n = 0;  // кадр, под который собран буфер; уровней
+    i32 lv[8][4] = {};
+    bool on = false;
 };
 
 // Карта горизонта земли (vk_horizon.cpp, docs/horizon.md): H_DIRS/2 слов u32 на узел сетки 8 м. Собирается
@@ -557,6 +571,7 @@ struct VkState {
     GcacheGpu gcache;
     HorizonGpu horizon;
     CloudGpu clouds;
+    GlareGpu glare;
     ShadowGpu shadow;
     SdfGpu sdf;
     GiGpu gi;
@@ -631,6 +646,10 @@ void vk_sky_fill(FrameGpu &g, const RenderFrame &f);
 bool vk_clouds_init();
 void vk_clouds_shutdown();
 void vk_clouds_fill(FrameGpu &g, const RenderFrame &f);
+// Блеск (vk_glare.cpp): конвейер; буфер под размер кадра и данные кадра
+bool vk_glare_init();
+void vk_glare_shutdown();
+void vk_glare_fill(FrameGpu &g, const RenderFrame &f);
 void vk_destroy_pipelines();
 // Compute-конвейер общей раскладки из шейдера name (.spv); spec — константы специализации или nullptr.
 // VK_NULL_HANDLE — ошибка

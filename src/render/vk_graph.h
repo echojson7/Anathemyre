@@ -109,6 +109,9 @@ void vk_skin_prev_read();
 void vk_aa_pass(const VkDeviceAddress *frame);
 void vk_aa_light_uses(bool first);
 void vk_aa_style_reads();
+// Блеск (vk_glare.cpp, docs/glare.md): пирамида после сглаживания; что читает стиль
+void vk_glare_pass(const VkDeviceAddress *frame);
+void vk_glare_style_reads();
 u32 vk_aa_cur();
 void vk_skin_clusters_read();
 // Интерфейс поверх кадра (vk_ui.cpp)
