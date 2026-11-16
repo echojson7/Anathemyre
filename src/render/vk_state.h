@@ -111,6 +111,12 @@ struct FrameGpu {
     i32 gi_lo[4][4];
     u32 gi_on, gi_view, gi_rays_n, gi_pad0;
     f32 gi_hyst, gi_pad1, gi_pad2, gi_pad3;
+    // Ячейки света (vk_lcache.cpp, docs/lcache.md): ключи (они же по 4), места, показанный свет, сумма круга,
+    // работы кадра; ступень
+    VkDeviceAddress lc_keys, lc_keys4, lc_meta, lc_show, lc_filt, lc_acc, lc_jobs;
+    u32 lc_on, lc_frame, lc_rays_n, lc_period;
+    u32 lc_cap_new, lc_cap_ref, lc_snap, lc_pad0;
+    f32 lc_angle, lc_far, lc_hyst, lc_pad1;
     // Проёмы земли: x0, z0, x1, z1 от камеры, м (vis_ground.frag в них землю не рисует); t_hole_n — сколько
     f32 t_hole[4][4];
     u32 t_hole_n, t_hole_pad[3];
@@ -156,7 +162,11 @@ constexpr u32 STAT_SM_WAIT = 25;  // страниц нового шага све
 constexpr u32 STAT_SDF_TAPS = 26, STAT_SDF_TRIS = 27, STAT_SDF_BRICKS = 28;
 // Зонды непрямого света (docs/gi.md): зондов с лучами, лучей, выборок поля лучами и сдвигом зондов
 constexpr u32 STAT_GI_PROBES = 29, STAT_GI_RAYS = 30, STAT_GI_TAPS = 31;
-constexpr u32 STAT_COUNT = 32;
+// Ячейки света (docs/lcache.md): живых, заявленных заново, посчитанных, их лучей, заявок без места, выборок поля
+// лучами и поиском поверхности, молодых, отложенных до следующего кадра
+constexpr u32 STAT_LC_LIVE = 32, STAT_LC_NEW = 33, STAT_LC_JOBS = 34, STAT_LC_RAYS = 35, STAT_LC_OVER = 36,
+              STAT_LC_TAPS = 37, STAT_LC_WAIT = 38;
+constexpr u32 STAT_COUNT = 39;
 // Виды плиток кадра мира (TILE_* в common.glsl): небо, земля из кеша (и небо), сетки (и небо), смесь земли и
 // сеток, земля на пиксель (и небо)
 constexpr u32 TILE_KINDS = 5;
@@ -410,7 +420,25 @@ struct GiGpu {
     u32 cursor = 0;            // следующее место очереди обновления
     f32 snap_sun[3] = {};      // светило последнего снимка
     u32 jobs_n = 0, rays_n = 0, chunks = 0;  // работ кадра, лучей на зонд, частей (лучи и смешение)
+    bool snapped = false;      // этот кадр — снимок (ячейки света считаются так же: docs/lcache.md)
     u8 rg_irr = 0, rg_dep = 0, rg_acc = 0, rg_probes = 0, rg_rays = 0, rg_pos = 0;
+};
+// Ячейки света на поверхностях (vk_lcache.cpp, docs/lcache.md): таблица ключей, места, показанный свет, сумма
+// круга, работы кадра. Размеры — LC_* в lcache.glsl
+constexpr u32 LC_CAP = 65536;
+struct LcGpu {
+    GpuBuffer keys;   // u32 на место (корзины по 8)
+    GpuBuffer meta;   // LcMeta, 40 байт
+    GpuBuffer show;   // LcSh, 24 байта
+    GpuBuffer filt;   // LcSh, сглаженный по соседям
+    GpuBuffer acc;    // LcAcc, 48 байт
+    GpuBuffer jobs;   // LcJobs: счёт, dispatch, молодые и на обновление
+    VkPipeline pipe_list = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE, pipe_trace = VK_NULL_HANDLE, pipe_filter = VK_NULL_HANDLE;
+    bool on = false;
+    bool clear = true;  // таблица с нуля (первый кадр, новый якорь поля, включили снова)
+    i32 anchor[2] = {};
+    u32 frame = 0;      // кадр таблицы: с 1
+    u8 rg_keys = 0, rg_meta = 0, rg_show = 0, rg_filt = 0, rg_acc = 0, rg_jobs = 0;
 };
 // Диагностика GPU (vk_diag.cpp): что умеет драйвер для разбора сбоя, буфер меток AMD, счётчики GPU
 struct DiagGpu {
@@ -581,6 +609,7 @@ struct VkState {
     ShadowGpu shadow;
     SdfGpu sdf;
     GiGpu gi;
+    LcGpu lc;
     ScansGpu scans;
     // Froxels (vk_froxel.cpp): клетки 64×64 пикселя × FROXEL_Z слоёв глубины
     GpuBuffer froxels;     // списки на клетку, FROXEL_STRIDE u32
@@ -712,6 +741,9 @@ void vk_sdf_mesh_clusters(u32 first, const ClusterGpu *cls, u32 n);
 bool vk_gi_init();
 void vk_gi_shutdown();
 void vk_gi_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
+bool vk_lcache_init();
+void vk_lcache_shutdown();
+void vk_lcache_fill(FrameGpu &g, const RenderFrame &f);
 bool vk_gcache_init();
 void vk_gcache_shutdown();
 void vk_gcache_fill(FrameGpu &g, const RenderFrame &f, bool images);

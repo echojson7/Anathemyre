@@ -1,0 +1,63 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Ячейки света: сглаживание по соседям (docs/lcache.md). Поток — место таблицы; видимая в этом кадре посчитанная
+// ячейка смешивает свой показанный свет с 8 соседями той же стороны и уровня в своей плоскости (веса 4 / 2 / 1).
+// Сосед берётся, если его точка лучей в той же плоскости (ступенька, край плиты — нет) и между точками нет заслонки
+// по полю (соседний зал за стеной — нет). Сосед поперёк плоскости — тот же номер или ±1 (пол на границе кубиков).
+// Шум лучей уходит втрое, а значение остаётся функцией мировых номеров: камера его не меняет
+#include "gi.glsl"
+#include "lcache.glsl"
+layout(local_size_x = 64) in;
+
+void main() {
+    FrameData f = pc.frame;
+    uint e = gl_GlobalInvocationID.x;
+    if (e >= LC_CAP) return;
+    uint key = f.lc_keys.v[e];
+    if (key == 0u) return;
+    LcMeta m = f.lc_meta.v[e];
+    if (m.seen != f.lc_frame || m.key != key || (m.state & (LC_LIT | LC_EMPTY)) != LC_LIT) return;
+    int k = lc_key_level(key), a = lc_key_axis(key);
+    bool ground = (key & LC_GROUND) != 0u;
+    float s = lc_size(k);
+    vec3 N = lc_axis_n(a);
+    int i0 = a >> 1, i1 = (i0 + 1) % 3, i2 = (i0 + 2) % 3;
+    bool soil = gi_under(m.org);
+    vec3 s0, sx, sy, sz;
+    lc_unpack(f.lc_show.v[e], s0, sx, sy, sz);
+    s0 *= 4.0;
+    sx *= 4.0;
+    sy *= 4.0;
+    sz *= 4.0;
+    float ws = 4.0;
+    for (int j = 0; j < 9; ++j) {
+        int du = j % 3 - 1, dv = j / 3 - 1;
+        if (du == 0 && dv == 0) continue;
+        int ne = -1;
+        for (int q = 0; q < 3 && ne < 0; ++q) {
+            ivec3 h = m.home;
+            h[i1] += du;
+            h[i2] += dv;
+            h[i0] += q == 0 ? 0 : q == 1 ? -1 : 1;
+            ne = lc_lookup(lc_key(k, a, h, ground), h);
+        }
+        if (ne < 0) continue;
+        vec3 o2 = f.lc_meta.v[ne].org;
+        float wp = 1.0 - smoothstep(0.15 * s, 0.4 * s, abs(dot(o2 - m.org, N)));
+        if (wp <= 0.0) continue;
+        // Заслонка между точками: три выборки поля на отрезке
+        bool open = gi_dist(mix(m.org, o2, 0.25), 0, soil) > 0.02 && gi_dist(mix(m.org, o2, 0.5), 0, soil) > 0.02 &&
+                    gi_dist(mix(m.org, o2, 0.75), 0, soil) > 0.02;
+        if (!open) continue;
+        float w = (du == 0 || dv == 0 ? 2.0 : 1.0) * wp;
+        vec3 n0, nx, ny, nz;
+        lc_unpack(f.lc_show.v[ne], n0, nx, ny, nz);
+        s0 += n0 * w;
+        sx += nx * w;
+        sy += ny * w;
+        sz += nz * w;
+        ws += w;
+    }
+    float inv = 1.0 / ws;
+    f.lc_filt.v[e] = lc_pack(s0 * inv, sx * inv, sy * inv, sz * inv);
+}

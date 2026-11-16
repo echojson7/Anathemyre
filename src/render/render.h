@@ -88,7 +88,7 @@ enum RenderTonemap : u32 { RENDER_TONEMAP_AGX, RENDER_TONEMAP_ACES, RENDER_TONEM
 // Поле расстояний мира (docs/sdf.md), режим F3: кадр, только видимость неба, поле изолиниями, свет без поля
 enum RenderSdfView : u32 { RENDER_SDF_FRAME, RENDER_SDF_SKY, RENDER_SDF_FIELD, RENDER_SDF_OFF, RENDER_SDF_VIEWS };
 // Зонды непрямого света (docs/gi.md), режим F3: кадр, только непрямой свет, без зондов
-enum RenderGiView : u32 { RENDER_GI_FRAME, RENDER_GI_ONLY, RENDER_GI_OFF, RENDER_GI_VIEWS };
+enum RenderGiView : u32 { RENDER_GI_FRAME, RENDER_GI_ONLY, RENDER_GI_OFF, RENDER_GI_CELLS, RENDER_GI_VIEWS };
 enum RenderLightQuality : u32 { RENDER_LIGHT_LOW, RENDER_LIGHT_MEDIUM, RENDER_LIGHT_HIGH, RENDER_LIGHT_ULTRA, RENDER_LIGHT_QUALITIES };
 // Сглаживание краёв (docs/aa.md): номера — как AA_* в common.glsl
 enum RenderAa : u32 { RENDER_AA_OFF, RENDER_AA_FXAA, RENDER_AA_TAA, RENDER_AAS };
@@ -338,6 +338,9 @@ struct RenderWork {
     u32 sdf_taps, sdf_tris, sdf_bricks;
     // Зонды непрямого света (docs/gi.md): зондов с лучами, лучей, выборок поля лучами
     u32 gi_probes, gi_rays, gi_taps;
+    // Ячейки света (docs/lcache.md): живых, заявлено заново, посчитано, их лучей, заявок без места, выборок поля,
+    // отложено до следующего кадра
+    u32 lc_live, lc_new, lc_jobs, lc_rays, lc_over, lc_taps, lc_wait;
     u32 sm_blend;  // перетекание шага светила: % нового набора, 100 — один набор (в --work не пишется)
     const char *gc_off;  // почему кеш земли выключен (nullptr — включён); в --work не пишется
 };
