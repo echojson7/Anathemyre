@@ -22,3 +22,14 @@ struct ErodeParams {
 // быть nullptr, nx·nz, обнулены вызывающим) копят отложенный грунт и воду, прошедшую через узел. Временная
 // память — scratch
 void terrain_erode(f32 *h, u32 nx, u32 nz, const ErodeParams &p, f32 *deposit, f32 *flow, Arena &scratch);
+
+// Кеш эрозии (docs/startup.md): капли идут строго по порядку и занимают почти всё создание земли (~3 с), а
+// результат зависит только от входной сетки, её размера, параметров и кода эрозии. Ключ — хеш всего этого;
+// код — хеш исходника эрозии ANA_ERODE_SRC (Makefile); без него ключ 0 — кеш не берётся. Файлы читает и пишет
+// app: load отдаёт h, deposit, flow по n узлов (true — нашёл и сошлось), save кладёт посчитанное
+struct ErodeCache {
+    bool (*load)(void *user, u64 key, f32 *h, f32 *deposit, f32 *flow, usize n);
+    void (*save)(void *user, u64 key, const f32 *h, const f32 *deposit, const f32 *flow, usize n);
+    void *user;
+};
+u64 terrain_erode_key(const f32 *h, u32 nx, u32 nz, const ErodeParams &p);
