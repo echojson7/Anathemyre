@@ -12,7 +12,7 @@
 `docs/gcache.md`, люди, шаг мира и путь `docs/people.md`, клипы захвата
 движения `docs/anim.md`, свет (этап 6) `docs/light.md`, тени солнца страницами `docs/shadow.md`, поле расстояний мира `docs/sdf.md`,
 зонды непрямого света `docs/gi.md`, огни и их тени `docs/lamps.md`,
-фабрика деталей (здания и предметы) `docs/parts.md`, подземная станция (Исподь) `docs/ispod.md`, сканы CC0 (проба) `docs/scans.md`,
+фабрика деталей (здания и предметы) `docs/parts.md`, оружие `docs/weapons.md`, подземная станция (Исподь) `docs/ispod.md`, сканы CC0 (проба) `docs/scans.md`,
 сглаживание краёв `docs/aa.md`, блеск ярких мест `docs/glare.md`, запуск до первого кадра `docs/startup.md`.
 
 ## Что это за ветка
