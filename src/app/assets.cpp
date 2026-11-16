@@ -26,6 +26,15 @@ static bool read_data(const char *rel, Arena &a, u8 **data, usize *size) {
     return false;
 }
 
+bool app_skel_load(const char *rel, AppMemory &m, Skel &out) {
+    u8 *data = nullptr;
+    usize size = 0;
+    const char *err = "";
+    if (!read_data(rel, m.load, &data, &size)) return false;
+    if (!skel_parse(data, size, m.world, out, &err)) { log_error("скелет %s: %s", rel, err); return false; }
+    return true;
+}
+
 // Заготовки сцены (data/prefabs/<имя>.txt): текст в арене загрузки, хеш — в хеш описаний
 struct PrefabLoad {
     AppMemory *m;
@@ -81,7 +90,7 @@ static void load_coll(const char *name, void *user) {
     static constexpr usize MESH_BOXES_MAX = 1024;
     MeshBox tmp[MESH_BOXES_MAX];
     if (n > MESH_BOXES_MAX) { log_error("сетка %s: коробок коллайдера больше %u", name, (u32)MESH_BOXES_MAX); L.failed++; n = 0; }
-    memcpy(tmp, md.collider.data, n * sizeof(MeshBox));
+    if (n) memcpy(tmp, md.collider.data, n * sizeof(MeshBox));   // сетка без коллайдера (машина): data — nullptr
     arena_restore(L.m->load, mark);
     MeshBox *keep = arena_push<MeshBox>(L.m->load, n + 1);
     memcpy(keep, tmp, n * sizeof(MeshBox));
@@ -640,6 +649,20 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
     if (!platform_list_dir(dir, ".mesh", load_mesh, &L)) {
         log_error("нет папки %s (собери: make)", dir);
         return false;
+    }
+    // Тело людей — первым: люди и стенд берут bodies[0], а порядок файлов в папке у каждой машины свой
+    // (с «Вежей» тел стало два, и там, где её сетка читалась первой, люди пропадали)
+    const u64 people_skel = hash_str("game_engine");
+    auto human = [&](const ViewBody &b) {
+        for (u32 k = 0; k < b.skin_count; ++k)
+            if (b.skel_name[k] == people_skel) return true;
+        return false;
+    };
+    for (u32 i = 1; i < view.body_count && !human(view.bodies[0]); ++i) {
+        if (!human(view.bodies[i])) continue;
+        ViewBody t = view.bodies[0];
+        view.bodies[0] = view.bodies[i];
+        view.bodies[i] = t;
     }
     const char *rocks[SCATTER_MESHES] = {"rock_a", "rock_b", "rock_c"};
     for (u32 k = 0; k < SCATTER_MESHES; ++k) {

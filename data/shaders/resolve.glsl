@@ -23,6 +23,10 @@ struct Hit {
     vec3 ng;       // нормаль треугольника (земля — вверх)
     float ao;      // сетка: запечённое затенение
     uint m0, m1, seed, level;  // сетка: материалы и зерно; земля: кольцо
+    // Движущаяся сетка (скиннинг, меч): точка и нормаль в её собственных осях до позы — узор материала привязан
+    // к детали и не плывёт по ней, когда она едет через мир
+    vec3 obj, obj_n;
+    bool dyn;
 };
 
 // Луч пикселя относительно камеры, его проекция на взгляд = 1: точка = dir · глубина. Через центр пикселя со
@@ -58,6 +62,8 @@ Hit resolve(ivec2 px, uint id) {
     h.n = h.ng = vec3(0.0, 1.0, 0.0);
     h.blend = h.ao = 0.0;
     h.m0 = h.m1 = h.seed = h.level = 0u;
+    h.obj = h.obj_n = vec3(0.0);
+    h.dyn = false;
     if (id == 0u) return h;
     vec3 dir = h.rel;
     if ((id & VIS_GROUND) != 0u) {
@@ -107,6 +113,20 @@ Hit resolve(ivec2 px, uint id) {
     h.m1 = va.mats >> 16;
     if (it.material != 0xFFFFFFFFu) h.m0 = h.m1 = it.material;
     h.seed = it.seed;
+    if ((m.flags & MESH_DYNAMIC) != 0u) {
+        // Копия со скиннингом — те же номера вершин у источника в бинд-позе; жёсткая движущаяся сетка — свои вершины
+        h.dyn = true;
+        h.obj = vec3(va.px, va.py, va.pz) * w.x + vec3(vb.px, vb.py, vb.pz) * w.y + vec3(vcx.px, vcx.py, vcx.pz) * w.z;
+        h.obj_n = oct_decode(va.normal) * w.x + oct_decode(vb.normal) * w.y + oct_decode(vcx.normal) * w.z;
+        uint bind = m.lods[0].w;
+        if (bind != 0u) {
+            Vertex ba = f.vertices.v[f.indices.v[base] + bind - 1u];
+            Vertex bb = f.vertices.v[f.indices.v[base + 1u] + bind - 1u];
+            Vertex bc = f.vertices.v[f.indices.v[base + 2u] + bind - 1u];
+            h.obj = vec3(ba.px, ba.py, ba.pz) * w.x + vec3(bb.px, bb.py, bb.pz) * w.y + vec3(bc.px, bc.py, bc.pz) * w.z;
+            h.obj_n = oct_decode(ba.normal) * w.x + oct_decode(bb.normal) * w.y + oct_decode(bc.normal) * w.z;
+        }
+    }
     return h;
 }
 #endif

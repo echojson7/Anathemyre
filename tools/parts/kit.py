@@ -214,6 +214,45 @@ class Body:
         faces.append((tuple(r1), mat, False))
         self._closed(faces)
 
+    def loft(self, rings, mat, smooth=False):
+        """Тело по сечениям: rings — кольца с одинаковым числом точек (обход один и тот же), соседние кольца
+        соединены боками, торцы закрыты. Литой гранёный корпус, клин, балка переменного сечения."""
+        n = len(rings[0])
+        faces = []
+        for r0, r1 in zip(rings, rings[1:]):
+            for k in range(n):
+                faces.append(((r0[k], r0[(k + 1) % n], r1[(k + 1) % n], r1[k]), mat, smooth))
+        faces.append((tuple(reversed(rings[0])), mat, False))
+        faces.append((tuple(rings[-1]), mat, False))
+        self._closed(faces)
+
+    def torus(self, c, axis, big, small, mat, seg=14, tseg=8):
+        """Кольцо (тор): середина c, ось axis, радиус кольца big, радиус прутка small. Рым, скоба, манжета."""
+        axis = unit(axis)
+        n, b = _side(axis)
+        faces = []
+        rings = []
+        for i in range(seg):
+            a = 2 * math.pi * i / seg
+            d = add(mul(n, math.cos(a)), mul(b, math.sin(a)))
+            o = add(c, mul(d, big))
+            rings.append([add(o, add(mul(d, small * math.cos(2 * math.pi * k / tseg)),
+                                     mul(axis, small * math.sin(2 * math.pi * k / tseg)))) for k in range(tseg)])
+        for i in range(seg):
+            r0, r1 = rings[i], rings[(i + 1) % seg]
+            for k in range(tseg):
+                faces.append(((r0[k], r0[(k + 1) % tseg], r1[(k + 1) % tseg], r1[k]), mat, True))
+        self._closed(faces)
+
+    def placed(self, rot=None, off=(0.0, 0.0, 0.0)):
+        """Копия тела, повёрнутая матрицей rot (вокруг начала координат) и сдвинутая на off."""
+        out = Body()
+        for pts, m, s in self.faces:
+            if rot is not None:
+                pts = tuple(mat_vec(rot, p) for p in pts)
+            out.faces.append((tuple(add(p, off) for p in pts), m, s))
+        return out
+
     def blob(self, c, r, mat, seed, squash=(1.0, 1.0, 1.0)):
         """Неровный ком (икосаэдр с одним делением, узлы сдвинуты хешем): скол, камень, обломок."""
         t = (1.0 + 5.0 ** 0.5) / 2.0

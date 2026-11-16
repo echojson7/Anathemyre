@@ -430,7 +430,7 @@ struct MeshGpu {
     struct Lod {
         u32 first_cluster, cluster_count;  // номера в общей таблице кластеров
         f32 error;
-        u32 pad;
+        u32 pad;  // у lods[0] копии со скиннингом — первая вершина бинд-позы источника + 1 (0 — нет)
     } lods[8];
 };
 static_assert(sizeof(MeshGpu) == 160, "MeshGpu — как MeshInfo в common.glsl");
