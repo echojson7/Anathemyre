@@ -115,19 +115,25 @@ float gi_ground_dist(vec3 pa, bool soil) {
     return d * 0.85;
 }
 bool gi_under(vec3 pa) { return pc.frame.t_on != 0u && pa.y < gi_ground_h(pa); }
-// Грунт над точкой pa (м от якоря): 0 — на поверхности и под проёмом земли, 1 — глубже GI_SOIL + 1.5 м под землёй.
+// Грунт над точкой pa (м от якоря): 0 — на поверхности и под проёмом земли, 1 — глубже GI_BURY + 1.5 м под землёй.
 // Запасной свет неба (где зондов нет) под грунтом не светит: конусы видимости неба идут не дальше 16–32 м и вдоль
-// длинного тоннеля или коридора заслонки не находят — днём тоннель Исподи светился небом (разбор 2026-11-15)
+// длинного тоннеля или коридора заслонки не находят — днём тоннель Исподи светился небом (разбор 2026-11-15).
+// Только у проёмов земли (ближе GI_BURY_NEAR…GI_BURY_FAR м): под землёй бывают лишь постройки в проёмах, а высота
+// земли здесь — сетка 8 м без деталей и дюн, и вдали от проёмов «под грунтом» оказывались склоны самих гор.
+// Поверхность самой земли сюда не носят (light.glsl, g_ground)
+const float GI_BURY = 3.0, GI_BURY_NEAR = 100.0, GI_BURY_FAR = 140.0;
 float gi_buried(vec3 pa) {
     FrameData f = pc.frame;
-    if (f.t_on == 0u) return 0.0;
-    float d = gi_ground_h(pa) - pa.y;
+    if (f.t_on == 0u || f.t_hole_n == 0u) return 0.0;
     vec2 q = pa.xz - f.sdf_cam.xz;
+    float inside = -1e9;  // до края ближайшего проёма: больше нуля — внутри него
     for (uint k = 0u; k < f.t_hole_n; ++k) {
         vec4 h = f.t_hole[k];
-        d = min(d, -min(min(q.x - h.x, h.z - q.x), min(q.y - h.y, h.w - q.y)));
+        inside = max(inside, min(min(q.x - h.x, h.z - q.x), min(q.y - h.y, h.w - q.y)));
     }
-    return smoothstep(GI_SOIL, GI_SOIL + 1.5, d);
+    float reach = 1.0 - smoothstep(GI_BURY_NEAR, GI_BURY_FAR, -inside);
+    if (reach <= 0.0) return 0.0;
+    return smoothstep(GI_BURY, GI_BURY + 1.5, min(gi_ground_h(pa) - pa.y, -inside)) * reach;
 }
 // Расстояние до мира: поле (уровень не мельче L) и земля
 float gi_dist(vec3 pa, int L, bool soil) { return min(sdf_dist(pa, L), gi_ground_dist(pa, soil)); }

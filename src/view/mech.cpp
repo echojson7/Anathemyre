@@ -302,6 +302,15 @@ void mech_view_build(MechView &mv, const ViewAssets &assets, const ViewInput &in
     out.skinned = {sk, nso};
 }
 
+void mech_view_follow(const MechView &mv, WPos &pivot, f32 dt) {
+    if (!mv.mech[0].live) return;
+    Vec2 d = wpos_delta_xz(pivot, mv.mech[0].at);   // место машины — с прошлого кадра
+    f32 k = f_min(1.0f, 3.0f * dt);
+    pivot.x += d.x * k;
+    pivot.z += d.y * k;
+    wpos_rebase(pivot);
+}
+
 bool mech_view_trace(MechView &mv, const Skel &s, const Extract &c, f32 dt, char *line, usize cap) {
     if (!mv.bound) {
         mv.bound = true;

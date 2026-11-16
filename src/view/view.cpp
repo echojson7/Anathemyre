@@ -114,6 +114,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     }
     f64 ticks = sky_clock_ticks(in.prev->clock, in.cur->clock, in.alpha);
     sky_build(assets.sky, desert, in.cur->clock, ticks, eye.y, out.sky, out.light);
+    out.sky.time = in.time;
     out.ground = in.cur->terrain != nullptr;
     for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) out.ground_layers[k] = assets.ground_layers[k];
 

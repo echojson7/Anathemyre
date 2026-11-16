@@ -129,6 +129,7 @@ struct WorldJob {
     AppMemory *m;
     u64 seed;
     u64 *desc;
+    const char *erode_cache;
     bool ok;
     u64 ns;
 };
@@ -137,7 +138,7 @@ static void world_job(void *user) {
     WorldJob &j = *(WorldJob *)user;
     fpu_enter_sim();
     u64 t0 = platform_time_ns();
-    j.ok = app_world_create(*j.w, *j.m, j.seed, j.desc);
+    j.ok = app_world_create(*j.w, *j.m, j.seed, j.desc, j.erode_cache);
     j.ns = platform_time_ns() - t0;
 }
 
@@ -164,7 +165,12 @@ int run_window(const Args &a, AppMemory &m) {
     MechView *mechs = arena_push<MechView>(m.world, 1);
     mech_view_init(*mechs);
     if (a.mech) mech_view_demo(*mechs, a.mech);
-    WorldJob wj{&w, &m, a.seed, &desc, false, 0};
+    // Кеш эрозии рядом с игрой (docs/startup.md); снимки и запись повтора (--frames, --record) считают землю
+    // заново, как --sim и CI
+    char erode_path[1024];
+    snprintf(erode_path, sizeof erode_path, "%serosion.cache", platform_exe_dir());
+    const bool erode_cached = !a.frames && !a.record;
+    WorldJob wj{&w, &m, a.seed, &desc, erode_cached ? erode_path : nullptr, false, 0};
     PlatformThread *world_thread = platform_thread_start("world", world_job, &wj);
     if (!world_thread) world_job(&wj);  // поток не создан — по порядку, как раньше
     u64 t_phase = platform_time_ns();
@@ -333,6 +339,7 @@ int run_window(const Args &a, AppMemory &m) {
     int rc_exit = 0;
     debug_print_help();
     const u64 t_loop = platform_time_ns();
+    f64 sky_time = 0.0;
     const f64 ms_setup = ms_since(t_phase);  // после земли в видеопамять: бои, перемотка, интерфейс
 
     for (;;) {
@@ -582,6 +589,10 @@ int run_window(const Args &a, AppMemory &m) {
         // Глаз привыкает по времени кадра; в видео — ровно 1/30 с. Сразу — первые два кадра (час из --hour
         // мир ставит после первого), снимок и --timelapse (кадр — свой час)
         vi.dt = a.frames ? 1.0f / 30.0f : (f32)dt;
+        // Время неба (мерцание звёзд): в снимках — по номеру кадра, по кругу в ~17 минут (f32 не теряет доли секунды)
+        sky_time = a.frames ? (f64)frames / 30.0 : sky_time + dt;
+        if (sky_time > 1024.0) sky_time -= 1024.0;
+        vi.time = (f32)sky_time;
         vi.eye_snap = frames < 2 || a.timelapse || a.shot;
         vi.tonemap = ds.tonemap;
         vi.scans = ds.scans;
@@ -607,13 +618,14 @@ int run_window(const Args &a, AppMemory &m) {
             if (people_view_head(*pv, *vi.prev, *vi.cur, vi.alpha, head)) view_camera_follow(cam, head, (f32)dt, w.terrain, &w.coll);
             else if (pv->sel < 0) cam.follow = false;  // выбран, но тела ещё не было — подождать кадр
         }
-        if (a.mech_follow && mechs->mech[0].live) {
-            // Опора камеры плавно идёт за машиной (место — с прошлого кадра); высоту опоры держит сама камера
-            Vec2 d = wpos_delta_xz(cam.pivot, mechs->mech[0].at);
-            f32 k = f_min(1.0f, 3.0f * (f32)(a.frames ? 1.0 / 30.0 : dt));
-            cam.pivot.x += d.x * k;
-            cam.pivot.z += d.y * k;
-            wpos_rebase(cam.pivot);
+        if (a.mech_follow) mech_view_follow(*mechs, cam.pivot, vi.dt);
+        if (a.look) {
+            // --look: взгляд по азимуту светила этого кадра (кадры неба по часам суток)
+            RenderSky ls;
+            RenderLight ll;
+            sky_build(assets->sky, 0.0f, vi.cur->clock, sky_clock_ticks(vi.prev->clock, vi.cur->clock, vi.alpha), 0.0f, ls, ll);
+            const f32 *ld = a.look == 1 ? ls.sun_dir : ls.moon_dir;
+            cam.yaw = cam.yaw_now = __builtin_atan2f(-ld[0], ld[2]) + a.look_yaw * (3.14159265f / 180.0f);
         }
         view_build(cam, *assets, vi, m.frame, rf);
         if (set.debug) debug_stand(ds, *assets, m.frame, rf);

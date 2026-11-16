@@ -41,6 +41,10 @@ void platform_free(void *p);
 struct Arena;
 bool platform_read_file(const char *path, Arena &arena, u8 **data, usize *size);
 bool platform_write_file(const char *path, const void *data, usize size);
+// Файл из частей подряд, без общей копии (кеш эрозии, docs/startup.md). read — только если размер файла ровно
+// сумма частей; write пишет во временный файл и переименовывает: оборванная запись не оставит полфайла
+bool platform_read_parts(const char *path, void *const *parts, const usize *sizes, u32 count);
+bool platform_write_parts(const char *path, const void *const *parts, const usize *sizes, u32 count);
 // Журнал: строка уходит в stderr и файл своим потоком, вызывающий не ждёт диска и консоли (docs/frame_time.md).
 // open — один раз при запуске (false — потока нет, строки пишутся сразу); flush ждёт, пока всё записано
 bool platform_log_open(const char *path);

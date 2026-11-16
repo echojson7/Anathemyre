@@ -103,6 +103,7 @@ vec3 shade_hit(Hit h, int phys) {
         s = gc_unpack(uvec2(0u));  // вид «земля»: других попаданий нет
         s.pos = h.rel;
     }
+    g_ground = h.kind == HIT_MESH ? 0.0 : 1.0;
     vec3 c = light_surface(s);
     // F3: страницы теней поверх кадра; «только тень» — серая карта 50 % под светилом с его видимостью
     if (pc.frame.sm_debug == 1u) c = sm_debug_tint(c, s.pos);

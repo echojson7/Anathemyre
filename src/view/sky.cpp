@@ -27,6 +27,10 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"sky_gain", &d.sky_gain, 1},     {"desert_mie", &d.desert_mie, 1}, {"desert_haze", &d.desert_haze, 1},
         {"desert_haze_height", &d.desert_haze_height, 1}, {"desert_haze_tint", d.desert_haze_tint, 3},
         {"desert_ground", d.desert_ground, 3},
+        {"sun_size", &d.sun_size, 1},     {"moon_size", &d.moon_size, 1}, {"halo", &d.halo, 1},
+        {"halo_g", &d.halo_g, 1},         {"night_dark", &d.night_dark, 1}, {"milky", &d.milky, 1},
+        {"twinkle", &d.twinkle, 1},       {"adapt_night", &d.adapt_night, 1},
+        {"night_fill", &d.night_fill, 1},
     };
     TextReader r = text_reader(text, size);
     TextLine l;
@@ -51,6 +55,11 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
     if (d.haze_height < 10.0f || d.desert_haze_height < 10.0f || d.mie_g <= -0.99f || d.mie_g >= 0.99f || d.sun <= 0.0f || d.exposure_ref <= 0.0f ||
         d.adapt_dark <= 0.0f || d.adapt_light <= 0.0f) {
         snprintf(err, err_cap, "haze_height и desert_haze_height ≥ 10, |mie_g| < 0.99, sun > 0, exposure_ref > 0, adapt_dark и adapt_light > 0");
+        return false;
+    }
+    if (d.sun_size < 0.1f || d.sun_size > 5.0f || d.moon_size < 0.1f || d.moon_size > 5.0f || d.halo < 0.0f || d.halo > 0.9f ||
+        d.halo_g < 0.5f || d.halo_g > 0.995f) {
+        snprintf(err, err_cap, "sun_size и moon_size 0.1–5, halo 0–0.9, halo_g 0.5–0.995");
         return false;
     }
     return true;
@@ -78,6 +87,7 @@ static void celestial(f64 h, f64 dec, f64 lat, f32 out[3]) {
 
 struct Air {
     f32 rayleigh[3], mie[3], mie_abs[3], haze[3], haze_abs[3], ozone[3];
+    f32 mie_n[3], haze_n[3];  // узкий лепесток пыли (ореол): в ослабление не входит, толщина копится отдельно
     f32 hr, hm, hh;
 };
 
@@ -91,13 +101,14 @@ static void ext_at(const Air &a, f32 h, f32 out[3]) {
 }
 
 // Пропускание от глаза (высота alt) до края атмосферы к направлению dir. Светило у горизонта уходит за
-// планету плавно, по своему угловому радиусу
-static void transmittance(const Air &a, f32 alt, const f32 dir[3], f32 radius, f32 out[3]) {
+// планету плавно, по своему угловому радиусу. halo — толщина узкого лепестка пыли на том же пути
+static void transmittance(const Air &a, f32 alt, const f32 dir[3], f32 radius, f32 out[3], f32 halo[3]) {
     f32 r = R_GROUND + alt, mu = dir[1];
     f32 hz = -acosf(R_GROUND / r);  // наклон горизонта
     f32 el = asinf(mu);
     f32 vis = (el - hz + radius) / (2.0f * radius);
     vis = vis < 0 ? 0 : (vis > 1 ? 1 : vis);
+    halo[0] = halo[1] = halo[2] = 0;
     if (vis <= 0) {
         out[0] = out[1] = out[2] = 0;
         return;
@@ -114,7 +125,12 @@ static void transmittance(const Air &a, f32 alt, const f32 dir[3], f32 radius, f
         f32 h = sqrtf(r * r + t * t + 2.0f * r * mu_c * t) - R_GROUND;
         f32 e[3];
         ext_at(a, h, e);
-        for (u32 k = 0; k < 3; ++k) tau[k] += e[k] * dt;
+        f32 hc = h > 0 ? h : 0;
+        f32 dm = expf(-hc / a.hm), dh = expf(-hc / a.hh);
+        for (u32 k = 0; k < 3; ++k) {
+            tau[k] += e[k] * dt;
+            halo[k] += (a.mie_n[k] * dm + a.haze_n[k] * dh) * dt;
+        }
     }
     for (u32 k = 0; k < 3; ++k) out[k] = expf(-tau[k]) * vis;
 }
@@ -164,12 +180,20 @@ void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f
     // Воздух: единицы файла → 1/м
     Air a;
     const f32 ray[3] = {5.802e-6f, 13.558e-6f, 33.1e-6f};
-    const f32 oz[3] = {0.650e-6f, 1.881e-6f, 0.085e-6f};
+    // Озон (полоса Шаппюи, пик ~600 нм): поглощение, усреднённое по красному, зелёному и синему основным цветам.
+    // Таблицы на длинах волн 680/550/440 нм (0.650, 1.881, 0.085) занижают красный: полоса лежит в оранжево-красном,
+    // 680 нм — её край. С ними зелёного в сумерках уходит больше красного, и небо над головой сиреневое, а не синее
+    const f32 oz[3] = {2.45e-6f, 1.881e-6f, 0.14e-6f};
+    // Пыль светит вперёд двумя лепестками. Узкий (доля halo) идёт почти по лучу: в таблицах он не рассеяние
+    // (свет «как прямой», приближение дельта-Эддингтона), а в кадре — ореол у диска (sky.glsl)
+    const f32 wide = 1.0f - d.halo;
     for (u32 k = 0; k < 3; ++k) {
         a.rayleigh[k] = o.rayleigh[k] = ray[k] * d.rayleigh;
-        a.mie[k] = o.mie[k] = 3.996e-6f * d.mie;
+        a.mie[k] = o.mie[k] = 3.996e-6f * d.mie * wide;
+        a.mie_n[k] = 3.996e-6f * d.mie * d.halo;
         a.mie_abs[k] = o.mie_abs[k] = 4.40e-6f * d.mie;
-        a.haze[k] = o.haze[k] = d.haze * 1e-3f * d.haze_tint[k];
+        a.haze[k] = o.haze[k] = d.haze * 1e-3f * d.haze_tint[k] * wide;
+        a.haze_n[k] = d.haze * 1e-3f * d.haze_tint[k] * d.halo;
         a.haze_abs[k] = o.haze_abs[k] = d.haze * 1e-3f * (1.0f - d.haze_tint[k]);
         a.ozone[k] = o.ozone[k] = oz[k] * d.ozone;
         o.ground[k] = d.ground[k];
@@ -183,6 +207,14 @@ void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f
     o.night_glow = d.night_glow * 1e-6f;
     o.sun_radius = SUN_RADIUS;
     o.moon_radius = MOON_RADIUS;
+    o.sun_size = d.sun_size * 0.5f * (f32)deg;
+    o.moon_size = d.moon_size * 0.5f * (f32)deg;
+    o.halo_g = d.halo_g;
+    o.night_dark = d.night_dark;
+    o.adapt_night = d.adapt_night;
+    o.night_fill = d.night_fill;
+    o.milky = d.milky;
+    o.twinkle = d.twinkle;
 
     o.sun_e = d.sun;
     // Луна — ламбертов шар: освещённость = солнце · альбедо · телесный угол / π · фаза
@@ -193,8 +225,8 @@ void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f
 
     f32 alt = cam_y + d.alt0;
     alt = alt > 1.0f ? alt : 1.0f;
-    transmittance(a, alt, o.sun_dir, SUN_RADIUS, o.sun_t);
-    transmittance(a, alt, o.moon_dir, MOON_RADIUS, o.moon_t);
+    transmittance(a, alt, o.sun_dir, SUN_RADIUS, o.sun_t, o.sun_halo);
+    transmittance(a, alt, o.moon_dir, MOON_RADIUS, o.moon_t, o.moon_halo);
     // Глаз (docs/light.md, «Экспозиция»): «норма» — EV100 освещённости exposure_ref (лк)
     o.post[0] = d.exposure_ev;
     o.post[1] = d.adapt;

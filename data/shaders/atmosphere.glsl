@@ -123,7 +123,40 @@ vec4 atmo_sky_lut(vec3 dir) {
     vec3 glow = vec3(0.55, 0.65, 1.0) * f.a_ground.w * f.a_sun.w * smoothstep(-0.2, 0.3, dir.y);
     return vec4((s.rgb * f.a_sun.w + m * f.a_moon.w) * f.a_misc.x + glow, s.a);
 }
-vec3 atmo_sky(vec3 dir) { return atmo_sky_lut(dir).rgb; }
+// Яркость неба для света (отражения, лучи зондов): ночное свечение — с добавкой night_fill, как у
+// atmo_ambient(); в кадре и дымке (atmo_sky_lut) небо остаётся тёмным
+vec3 atmo_sky(vec3 dir) {
+    FrameData f = pc.frame;
+    vec3 fill = vec3(0.55, 0.65, 1.0) * ((f.a_night2.y - 1.0) * f.a_ground.w * f.a_sun.w * smoothstep(-0.2, 0.3, dir.y));
+    return atmo_sky_lut(dir).rgb + fill;
+}
+
+// Ореол у светил: узкий лепесток пыли вперёд (Хеньи–Гринстейн, g ~0.96). В таблицы он не идёт (их сетка его
+// не держит, а лучи зондов ловили бы его искрами): свет лепестка считается прямым (sky.cpp), а здесь он
+// размазан вокруг диска. one_minus_c — 1 − cos угла от светила
+float phase_narrow(float one_minus_c, float g) {
+    float k = (1.0 - g) * (1.0 - g) + 2.0 * g * one_minus_c;
+    return (1.0 - g * g) / (4.0 * A_PI * k * sqrt(k));
+}
+// Свет узкого лепестка от одного светила: e — его свет у камеры, tau — толщина лепестка на пути. На длинном
+// пути (низкое светило) свет рассеивается вперёд много раз, и ореол расплывается: n рассеяний Хеньи–Гринстейна
+// — тот же лепесток с g^n, n — среднее число рассеяний. Мягкий предел cap (в долях белого кадра, тон
+// сохраняется): у низкого солнца глаз привык к сумеркам, и ореол без предела — белое пятно, где не видно диска
+vec3 atmo_halo_one(vec3 dir, vec3 light, vec3 e, vec3 tau, float cap) {
+    FrameData f = pc.frame;
+    float t = max(tau.g, 1e-4);
+    float n = t / (1.0 - exp(-t));
+    vec3 d = dir - light;
+    vec3 L = e * (1.0 - exp(-tau)) * phase_narrow(0.5 * dot(d, d), pow(f.a_night.x, n));
+    float m = max(L.r, max(L.g, L.b)) * f.sky_out.v[SKY_OUT_EYE].x;
+    return L / (1.0 + m / cap);
+}
+// У луны ореол вдвое слабее и с низким пределом: в тёмном небе он иначе читается белым пятном
+vec3 atmo_halo(vec3 dir) {
+    FrameData f = pc.frame;
+    return atmo_halo_one(dir, f.a_sun.xyz, f.a_sun.w * f.a_sun_t.rgb, f.a_sun_halo.rgb, 2.5) +
+           atmo_halo_one(dir, f.a_moon.xyz, 0.5 * f.a_moon.w * f.a_moon_t.rgb, f.a_moon_halo.rgb, 0.35);
+}
 
 // Освещённость от всего неба на плоскость с нормалью n, делённая на π (яркость ламбертовой поверхности
 // с альбедо 1). Считает sky_sum.comp сферическими гармониками первого порядка, вместе с отсветом земли
@@ -166,7 +199,7 @@ vec3 atmo_fog_lit(vec3 c, vec3 rel, float lit) {
     vec4 sky = atmo_sky_lut(dir);
     vec3 t = exp(-atmo_depth(rel));
     vec3 k = clamp((1.0 - t) / max(1.0 - sky.a, 0.02), 0.0, 1.0);
-    return c * t + sky.rgb * (k * lit);
+    return c * t + (sky.rgb + atmo_halo(dir)) * (k * lit);
 }
 vec3 atmo_fog(vec3 c, vec3 rel) { return atmo_fog_lit(c, rel, 1.0); }
 #endif

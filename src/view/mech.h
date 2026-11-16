@@ -82,6 +82,8 @@ void mech_view_init(MechView &mv);
 bool mech_view_demo(MechView &mv, const char *name);
 // Объект сцены с этой сеткой — место машины, а не статичная деталь
 bool mech_view_is(u64 mesh_name);
+// Опора камеры плавно идёт за первой машиной (--mech-follow): только x и z, высоту держит камера
+void mech_view_follow(const MechView &mv, WPos &pivot, f32 dt);
 // Сообщить место (каждый кадр, из выписки объектов): prop — номер места объекта
 void mech_view_place(MechView &mv, u32 prop, const WPos &at, Turn yaw);
 // Машины кадра: экземпляры (inst, ni — дописывает, места — MECH_MAX), палитры и скиннинг — в out
