@@ -335,7 +335,7 @@ int run_window(const Args &a, AppMemory &m) {
     int rc_exit = 0;
     debug_print_help();
     const u64 t_loop = platform_time_ns();
-    f64 sky_time = 0.0;
+    f64 sky_time = 0.0, cloud_time = 0.0;
     const f64 ms_setup = ms_since(t_phase);  // после земли в видеопамять: бои, перемотка, интерфейс
 
     for (;;) {
@@ -589,8 +589,11 @@ int run_window(const Args &a, AppMemory &m) {
         sky_time = a.frames ? (f64)frames / 30.0 : sky_time + dt;
         if (sky_time > 1024.0) sky_time -= 1024.0;
         vi.time = (f32)sky_time;
+        cloud_time = a.frames ? (f64)frames / 30.0 : cloud_time + dt;
+        vi.cloud_time = cloud_time;
         vi.eye_snap = frames < 2 || a.timelapse || a.shot;
         vi.tonemap = ds.tonemap;
+        vi.local_off = a.local_off || ds.local_off;
         vi.scans = ds.scans;
         vi.lamps_off = a.lamps_off || ds.lamps_off;
         vi.shadow_pages = a.shadow_pages ? a.shadow_pages : ds.shadow_pages;
@@ -617,7 +620,7 @@ int run_window(const Args &a, AppMemory &m) {
             // --look: взгляд по азимуту светила этого кадра (кадры неба по часам суток)
             RenderSky ls;
             RenderLight ll;
-            sky_build(assets->sky, 0.0f, vi.cur->clock, sky_clock_ticks(vi.prev->clock, vi.cur->clock, vi.alpha), 0.0f, ls, ll);
+            sky_build(assets->sky, 0.0f, vi.cur->clock, sky_clock_ticks(vi.prev->clock, vi.cur->clock, vi.alpha), 0.0f, 0.0, ls, ll);
             const f32 *ld = a.look == 1 ? ls.sun_dir : ls.moon_dir;
             cam.yaw = cam.yaw_now = __builtin_atan2f(-ld[0], ld[2]) + a.look_yaw * (3.14159265f / 180.0f);
         }

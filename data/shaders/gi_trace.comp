@@ -9,7 +9,7 @@
 // переносит смешение (gi_blend.comp)
 #include "gi.glsl"
 #include "horizon.glsl"
-#include "atmosphere.glsl"
+#include "clouds.glsl"
 #include "lamps.glsl"
 layout(local_size_x = 64) in;
 
@@ -25,7 +25,7 @@ float gi_sun_vis(vec3 pa, vec3 n, vec3 l, float vox) {
     float v = h_sun_shadow(pa - f.sdf_cam.xyz, l);
     if (v <= 0.0) return 0.0;
     v *= sdf_cone(pa + n * vox, l, 0.03, vox, GI_TMAX, 24u).x;
-    return v;
+    return v * cloud_shadow(pa - f.sdf_cam.xyz);
 }
 
 // Яркость луча из o по d: rgb, w — расстояние до попадания (−1 — небо). back — попал в обратную сторону грани

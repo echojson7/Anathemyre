@@ -76,8 +76,10 @@ struct ViewInput {
     // Свет (docs/light.md): секунды кадра и «привыкнуть сразу» для глаза, тонмаппинг (F3), качество (меню)
     f32 dt = 0.0f;
     f32 time = 0.0f;  // время от запуска, с (мерцание звёзд, docs/sky.md); в снимках — номер кадра / 30
+    f64 cloud_time = 0.0;  // то же без круга: ветер и смена формы облаков (docs/clouds.md)
     bool eye_snap = true;
     u32 tonemap = RENDER_TONEMAP_AGX;
+    bool local_off = false;  // без местной экспозиции (F3, --nolocal): сравнение было/стало
     bool scans = false;  // поверхности из сканов CC0 (docs/scans.md), F3 и --scans
     u32 light_quality = RENDER_LIGHT_HIGH;
     u32 aa = RENDER_AA_TAA;
