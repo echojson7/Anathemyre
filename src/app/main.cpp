@@ -41,6 +41,7 @@ static void usage() {
     log_info("           [--stand off|elbow|knee|mixamo|morphN|both|move|nocaps|clip=…|blend=…|w=…|speed=…|t=…,…]  стенд людей (docs/anim.md)");
     log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
+    log_info("           --look sun|moon град                                          взгляд по азимуту светила + поворот (с --cam: кадры неба)");
     log_info("           --frames N --video префикс                                   каждый кадр → префикс_0000.bmp… (стенд: 1/30 с на кадр)");
     log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines] [--sides]  выбрать, камера за ним, приказы, отладка");
     log_info("           [--attack \"кадр место цель; …\"] [--slow кадр]  приказы «атаковать» по кадрам, замедление ×0.25 (видео удара)");
@@ -174,6 +175,12 @@ int main(int argc, char **argv) {
             ok = next && parse_f32(Str{next, (u32)strlen(next)}, a.hour) && a.hour >= 0 && a.hour < 24;
             a.hour_set = true;
             i++;
+        }
+        else if (!strcmp(s, "--look")) {
+            a.look = next && !strcmp(next, "sun") ? 1u : (next && !strcmp(next, "moon") ? 2u : 0u);
+            const char *v = i + 2 < argc ? argv[i + 2] : nullptr;
+            ok = a.look && v && parse_f32(Str{v, (u32)strlen(v)}, a.look_yaw);
+            i += 2;
         }
         else if (!strcmp(s, "--timelapse")) {
             a.timelapse = next;

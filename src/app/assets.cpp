@@ -13,6 +13,7 @@
 #include "../render/render.h"
 #include "../sim/dune_map.h"
 #include "../sim/scene.h"
+#include "../sim/terrain_erode.h"
 #include "../sim/world.h"
 #include "../view/view.h"
 #include <stdio.h>
@@ -314,7 +315,74 @@ static bool world_static_load(World &w, AppMemory &m) {
     return ok;
 }
 
-bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash) {
+// Кеш эрозии на диске (docs/startup.md): заголовок и три сетки подряд — высоты после эрозии, отложения, сток.
+// Файл подходит, только если совпали метка, ключ (вход, параметры, код эрозии), число узлов и хеш данных;
+// иначе эрозия считается, а файл переписывается. Мир с кешем и без — один и тот же бит в бит
+namespace {
+struct ErodeFile {
+    char magic[4];  // "AER1"
+    u32 zero;
+    u64 key;
+    u64 nodes;
+    u64 hash;  // erode_data_hash
+};
+static_assert(sizeof(ErodeFile) == 32, "ErodeFile — 32 байта");
+struct ErodeCacheCtx {
+    const char *path;
+    u64 ns;  // чтение или запись
+};
+}  // namespace
+
+static u64 erode_data_hash(const f32 *h, const f32 *dep, const f32 *flw, usize n) {
+    const usize b = n * sizeof(f32);
+    return hash_combine(hash_combine(hash_bytes(h, b), hash_bytes(dep, b)), hash_bytes(flw, b));
+}
+
+static bool erode_load(void *user, u64 key, f32 *h, f32 *dep, f32 *flw, usize n) {
+    ErodeCacheCtx &c = *(ErodeCacheCtx *)user;
+    u64 t0 = platform_time_ns();
+    // Во временную память, а не сразу в h: h — вход эрозии, неподошедший файл не должен его испортить
+    const usize b = n * sizeof(f32);
+    f32 *tmp = (f32 *)platform_alloc(3 * b);
+    if (!tmp) return false;
+    ErodeFile ef{};
+    void *parts[] = {&ef, tmp};
+    usize sizes[] = {sizeof ef, 3 * b};
+    const char *why = nullptr;
+    if (!platform_read_parts(c.path, parts, sizes, 2)) why = "нет или другой размер";
+    else if (memcmp(ef.magic, "AER1", 4) || ef.nodes != n) why = "чужой файл";
+    else if (ef.key != key) why = "другая земля или код эрозии";
+    else if (erode_data_hash(tmp, tmp + n, tmp + 2 * n, n) != ef.hash) why = "битый";
+    if (!why) {
+        memcpy(h, tmp, b);
+        memcpy(dep, tmp + n, b);
+        memcpy(flw, tmp + 2 * n, b);
+    }
+    platform_free(tmp);
+    c.ns = platform_time_ns() - t0;
+    if (why) log_info("эрозия: кеш не подошёл (%s) — считаю", why);
+    else log_info("эрозия: из кеша, %.0f мс (%s)", (f64)c.ns / 1e6, c.path);
+    return !why;
+}
+
+static void erode_save(void *user, u64 key, const f32 *h, const f32 *dep, const f32 *flw, usize n) {
+    ErodeCacheCtx &c = *(ErodeCacheCtx *)user;
+    u64 t0 = platform_time_ns();
+    ErodeFile ef{};
+    memcpy(ef.magic, "AER1", 4);
+    ef.key = key;
+    ef.nodes = n;
+    ef.hash = erode_data_hash(h, dep, flw, n);
+    const usize b = n * sizeof(f32);
+    const void *parts[] = {&ef, h, dep, flw};
+    usize sizes[] = {sizeof ef, b, b, b};
+    bool ok = platform_write_parts(c.path, parts, sizes, 4);
+    c.ns = platform_time_ns() - t0;
+    if (ok) log_info("эрозия: кеш записан, %.0f МБ за %.0f мс", (f64)(3 * b) / (1 << 20), (f64)c.ns / 1e6);
+    else log_warn("эрозия: кеш не записан (%s)", c.path);
+}
+
+bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash, const char *erode_cache) {
     usize mark = arena_mark(m.load);
     u8 *text = nullptr;
     usize size = 0;
@@ -342,6 +410,9 @@ bool app_world_create(World &w, AppMemory &m, u64 seed, u64 *desc_hash) {
         td.dune_data[loc] = dd;
         td.dune_size[loc] = ds;
     }
+    ErodeCacheCtx ecc{erode_cache, 0};
+    const ErodeCache ec{erode_load, erode_save, &ecc};
+    if (erode_cache) td.erode_cache = &ec;
     u64 t0 = platform_time_ns();
     world_init(w, m.world, seed, td, m.load);
     char hex[17];

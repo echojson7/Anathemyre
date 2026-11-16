@@ -105,6 +105,33 @@ bool platform_write_file(const char *path, const void *data, usize size) {
     return ok;
 }
 
+bool platform_read_parts(const char *path, void *const *parts, const usize *sizes, u32 count) {
+    SDL_IOStream *f = SDL_IOFromFile(path, "rb");
+    if (!f) return false;
+    usize total = 0;
+    for (u32 i = 0; i < count; ++i) total += sizes[i];
+    bool ok = SDL_GetIOSize(f) == (Sint64)total;
+    for (u32 i = 0; ok && i < count; ++i) ok = SDL_ReadIO(f, parts[i], sizes[i]) == sizes[i];
+    SDL_CloseIO(f);
+    return ok;
+}
+
+bool platform_write_parts(const char *path, const void *const *parts, const usize *sizes, u32 count) {
+    char tmp[1100];
+    if (snprintf(tmp, sizeof tmp, "%s.tmp", path) >= (int)sizeof tmp) return false;
+    SDL_IOStream *f = SDL_IOFromFile(tmp, "wb");
+    if (!f) return false;
+    bool ok = true;
+    for (u32 i = 0; ok && i < count; ++i) ok = SDL_WriteIO(f, parts[i], sizes[i]) == sizes[i];
+    ok = SDL_CloseIO(f) && ok;
+    if (ok) {
+        SDL_RemovePath(path);  // Windows не переименовывает поверх существующего
+        ok = SDL_RenamePath(tmp, path);
+    }
+    if (!ok) SDL_RemovePath(tmp);
+    return ok;
+}
+
 // Журнал (docs/frame_time.md, «Журнал»): строки копируются в кольцо, а пишет их в stderr и файл свой поток.
 // Запись в файл с SDL_FlushIO — это FlushFileBuffers на Windows и fdatasync на Linux, то есть ожидание диска,
 // и консоль Windows тоже бывает медленной: в потоке кадра это рывок на каждой строке
