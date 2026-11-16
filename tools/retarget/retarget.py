@@ -164,7 +164,9 @@ def retarget(data, nkeys, sk, skname, face_hands):
     tidx = {c: sk.index[tmap[c]] for c in CANON}
     canon_of = {i: c for c, i in tidx.items() if not data[c].get('skip')}
     # Покой цели под покой источника: конечности бинда (A-поза) доворачиваются наименьшим поворотом, чтобы
-    # кость смотрела туда же, куда в покое источника (T-поза); туловище и голова — как в бинде
+    # кость смотрела туда же, куда в покое источника (T-поза); туловище, голова и ключицы — как в бинде.
+    # Ключицы не доворачиваются: у CMU «ключица» идёт от верха позвоночника вверх к плечу (+14°), у MakeHuman — от
+    # грудины вниз (−10°), и доворот поднимал плечи на 6–9 см во всех клипах (у CMU она к тому же не движется)
     W = np.empty((sk.n, 3, 3))
     P = np.empty((sk.n, 3))
     for i in range(sk.n):
@@ -172,7 +174,7 @@ def retarget(data, nkeys, sk, skname, face_hands):
         W[i] = sk.local[i] if p < 0 else W[p] @ sk.local[i]
         P[i] = sk.lpos[i] if p < 0 else P[p] + W[p] @ sk.lpos[i]
         c = canon_of.get(i)
-        if c and 'rest_tip' in data[c]:
+        if c and 'rest_tip' in data[c] and not c.endswith('Shoulder'):
             tn = tip_name('tgt', c, skname)
             j = sk.index[tn] if tn else tidx[TIP[c]]
             dloc = sk.bind[i].T @ (sk.pos[j] - sk.pos[i])
