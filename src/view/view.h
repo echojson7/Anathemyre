@@ -14,6 +14,7 @@
 #include "camera.h"
 #include "scatter.h"
 #include "sky.h"
+#include "weapon.h"
 
 struct PeopleView;
 
@@ -55,6 +56,7 @@ struct ViewAssets {
     ViewClip clips[VIEW_MAX_CLIPS];                 // клипы людей: имя × скелет
     u32 clip_count = 0;
     SkyDesc sky;                                    // небо и воздух (data/sky.txt)
+    WeaponTable weapons;                            // оружие (data/weapons.txt), сетки — weapon_<имя>
 };
 
 struct ViewInput {

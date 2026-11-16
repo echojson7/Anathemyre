@@ -556,6 +556,12 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
         log_error("data/sky.txt: %s", err);
         return false;
     }
+    // Оружие (data/weapons.txt, docs/weapons.md): только кадр, в хеш описаний не входит
+    if (!read_data("weapons.txt", m.world, &text, &size)) return false;
+    if (!weapon_parse(view.weapons, text, size, err, sizeof err)) {
+        log_error("data/weapons.txt: %s", err);
+        return false;
+    }
 
     char dir[1024];
     snprintf(dir, sizeof dir, "%sdata/meshes", platform_exe_dir());
@@ -570,6 +576,16 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
         for (u32 i = 0; i < view.mesh_count; ++i)
             if (view.meshes[i].name == hname) view.rocks[k] = view.meshes[i].id;
         if (!view.rocks[k]) log_warn("нет сетки %s для рассыпки камней", rocks[k]);
+    }
+    for (u32 k = 0; k < view.weapons.count; ++k) {
+        WeaponDesc &wd = view.weapons.w[k];
+        char mname[40];
+        snprintf(mname, sizeof mname, "weapon_%s", wd.name);
+        u64 hname = hash_str(mname);
+        for (u32 i = 0; i < view.mesh_count; ++i)
+            if (view.meshes[i].name == hname) wd.mesh = view.meshes[i].id;
+        if (!wd.mesh) log_warn("нет сетки %s: этого оружия в руках не будет", mname);
+        else render_mesh_moving(wd.mesh);  // ходит с рукой каждый кадр: иначе страницы теней под ним рисуются заново
     }
     snprintf(dir, sizeof dir, "%sdata/anims", platform_exe_dir());
     if (!platform_list_dir(dir, ".anim", load_clip, &L)) log_warn("нет папки %s: клипов людей нет", dir);

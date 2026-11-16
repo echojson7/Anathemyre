@@ -1,0 +1,147 @@
+# Оружие (docs/weapons.md). Файл пишет tools/weapons/build.py (make meshes) из своей таблицы и границ сеток:
+# править там, CI сверяет. Только вид: шаг мира оружия пока не знает, человеку его выбирает вид по зерну.
+#
+# weapon <имя>          сетка meshes/weapon_<имя>.mesh. Оси сетки: начало — середина кулака верхней руки (у гарды
+#                       или выше по древку), остриё по +Y, лезвие по +X, толщина по Z
+#   family <слово>      семейство-навык (справка, бой его пока не читает)
+#   hands 1|2|pole      одна рука, две на рукояти, древко
+#   grip2 <y>           где вторая кисть по оси, м (0 — одна рука)
+#   carry <место> <y>   где носят (hip_l — пояс слева, back — за спиной, back_pole — древко за спиной) и точка
+#                       подвеса на оси, м
+#   tip <y>  butt <y>   остриё (или верх) и торец рукояти по оси, м
+#   issue <вес>         вес в выборе оружия по зерну человека, 0 — не выдаётся
+
+weapon zatochka
+    family ШИЛО
+    hands 1
+    grip2 0
+    carry hip_l 0.05
+    tip 0.275
+    butt -0.095
+    issue 1
+
+weapon rezak
+    family ШИЛО
+    hands 1
+    grip2 0
+    carry hip_l 0.06
+    tip 0.349
+    butt -0.06
+    issue 1
+
+weapon ressora
+    family ЛИСТ
+    hands 1
+    grip2 0
+    carry hip_l 0.06
+    tip 0.809
+    butt -0.094
+    issue 1
+
+weapon polosa
+    family ЛИСТ
+    hands 1
+    grip2 0
+    carry hip_l 0.06
+    tip 0.839
+    butt -0.1
+    issue 1
+
+weapon lopast
+    family ЛИСТ
+    hands 1
+    grip2 0
+    carry hip_l 0.075
+    tip 0.813
+    butt -0.205
+    issue 0.3
+
+weapon sekach
+    family КОЛУН
+    hands 1
+    grip2 0
+    carry hip_l 0.08
+    tip 0.83
+    butt -0.17
+    issue 1
+
+weapon teslo
+    family КОЛУН
+    hands 1
+    grip2 0
+    carry hip_l 0.52
+    tip 0.835
+    butt -0.07
+    issue 1
+
+weapon dolgaya
+    family ДВУХВАТ
+    hands 2
+    grip2 -0.17
+    carry back 0.07
+    tip 1.069
+    butt -0.268
+    issue 1
+
+weapon balka
+    family ДВУХВАТ
+    hands 2
+    grip2 -0.14
+    carry back 0.1
+    tip 1.149
+    butt -0.232
+    issue 1
+
+weapon otval
+    family ГНЁТ
+    hands 2
+    grip2 -0.2
+    carry back 0.1
+    tip 1.319
+    butt -0.38
+    issue 1
+
+weapon resheto
+    family ГНЁТ
+    hands 2
+    grip2 -0.15
+    carry back 0.1
+    tip 1.205
+    butt -0.285
+    issue 0.3
+
+weapon bagor
+    family ЖЕРДЬ
+    hands pole
+    grip2 -0.62
+    carry back_pole 0.101
+    tip 1.13
+    butt -0.928
+    issue 1
+
+weapon kosa
+    family ЖЕРДЬ
+    hands pole
+    grip2 -0.62
+    carry back_pole 0.494
+    tip 1.919
+    butt -0.932
+    issue 1
+
+weapon truba
+    family ЖЕРДЬ
+    hands pole
+    grip2 -0.62
+    carry back_pole 0.18
+    tip 1.279
+    butt -0.92
+    issue 1
+
+weapon vereteno
+    family ЖЕРДЬ
+    hands pole
+    grip2 -0.4
+    carry back_pole 0.29
+    tip 1.479
+    butt -0.899
+    issue 0.3
