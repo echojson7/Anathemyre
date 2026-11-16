@@ -32,7 +32,7 @@ static void usage() {
     log_info("           [--scans]                                                    поверхности из сканов CC0, где есть (docs/scans.md)");
     log_info("           [--smpages] [--smonly]                                       страницы теней поверх кадра, только тень (docs/shadow.md)");
     log_info("           [--sdfsky] [--sdffield] [--nosdf]                            видимость неба, поле расстояний, свет без поля (docs/sdf.md)");
-    log_info("           [--gionly] [--nogi] [--gicells]                              только непрямой свет, без зондов, ячейки света (docs/gi.md, docs/lcache.md)");
+    log_info("           [--gionly] [--nogi] [--gicells] [--nocells]                  только непрямой свет, без зондов, ячейки света, кадр без ячеек (docs/gi.md, docs/lcache.md)");
     log_info("           [--tonemap agx|aces] [--light low|medium|high|ultra]         тонмаппинг, качество света (docs/light.md)");
     log_info("           [--nolocal]                                                  без местной экспозиции (было/стало, docs/light.md)");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
@@ -154,6 +154,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--gionly")) a.gi_view = RENDER_GI_ONLY;
         else if (!strcmp(s, "--nogi")) a.gi_view = RENDER_GI_OFF;
         else if (!strcmp(s, "--gicells")) a.gi_view = RENDER_GI_CELLS;
+        else if (!strcmp(s, "--nocells")) a.gi_view = RENDER_GI_PROBES;
         else if (!strcmp(s, "--nolocal")) a.local_off = true;
         else if (!strcmp(s, "--tonemap")) {
             a.tonemap = next && !strcmp(next, "agx") ? (i32)RENDER_TONEMAP_AGX : next && !strcmp(next, "aces") ? (i32)RENDER_TONEMAP_ACES : -1;

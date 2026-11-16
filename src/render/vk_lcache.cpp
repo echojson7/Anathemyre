@@ -187,7 +187,7 @@ void vk_lcache_passes() {
     vk_sdf_reads();
 }
 
-// Освещение читает сглаженный свет (F3 «ячейки», с PR 2 — сбор на пиксель)
+// Освещение читает сглаженный свет и точки лучей: сбор на пиксель (lc_gather) и F3 «ячейки»
 void vk_lcache_reads() {
     const LcGpu &s = g_vk.lc;
     if (!s.on) return;

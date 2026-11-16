@@ -88,7 +88,7 @@ enum RenderTonemap : u32 { RENDER_TONEMAP_AGX, RENDER_TONEMAP_ACES, RENDER_TONEM
 // Поле расстояний мира (docs/sdf.md), режим F3: кадр, только видимость неба, поле изолиниями, свет без поля
 enum RenderSdfView : u32 { RENDER_SDF_FRAME, RENDER_SDF_SKY, RENDER_SDF_FIELD, RENDER_SDF_OFF, RENDER_SDF_VIEWS };
 // Зонды непрямого света (docs/gi.md), режим F3: кадр, только непрямой свет, без зондов
-enum RenderGiView : u32 { RENDER_GI_FRAME, RENDER_GI_ONLY, RENDER_GI_OFF, RENDER_GI_CELLS, RENDER_GI_VIEWS };
+enum RenderGiView : u32 { RENDER_GI_FRAME, RENDER_GI_ONLY, RENDER_GI_OFF, RENDER_GI_CELLS, RENDER_GI_PROBES, RENDER_GI_VIEWS };
 enum RenderLightQuality : u32 { RENDER_LIGHT_LOW, RENDER_LIGHT_MEDIUM, RENDER_LIGHT_HIGH, RENDER_LIGHT_ULTRA, RENDER_LIGHT_QUALITIES };
 // Сглаживание краёв (docs/aa.md): номера — как AA_* в common.glsl
 enum RenderAa : u32 { RENDER_AA_OFF, RENDER_AA_FXAA, RENDER_AA_TAA, RENDER_AAS };
