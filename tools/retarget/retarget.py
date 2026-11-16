@@ -158,13 +158,15 @@ def read_source(path, t0, t1):
     return data, nkeys, src.kind
 
 
-def retarget(data, nkeys, sk, skname, face_hands):
+def retarget(data, nkeys, sk, skname, face_hands, head_fix=None):
     """Повороты костей цели после бинда (ключ × кость), голова кости переноса (мм), корень."""
     tmap = TGT[skname]
     tidx = {c: sk.index[tmap[c]] for c in CANON}
     canon_of = {i: c for c, i in tidx.items() if not data[c].get('skip')}
     # Покой цели под покой источника: конечности бинда (A-поза) доворачиваются наименьшим поворотом, чтобы
-    # кость смотрела туда же, куда в покое источника (T-поза); туловище и голова — как в бинде
+    # кость смотрела туда же, куда в покое источника (T-поза); туловище, голова и ключицы — как в бинде.
+    # Ключицы не доворачиваются: у CMU «ключица» идёт от верха позвоночника вверх к плечу (+14°), у MakeHuman — от
+    # грудины вниз (−10°), и доворот поднимал плечи на 6–9 см во всех клипах (у CMU она к тому же не движется)
     W = np.empty((sk.n, 3, 3))
     P = np.empty((sk.n, 3))
     for i in range(sk.n):
@@ -172,13 +174,16 @@ def retarget(data, nkeys, sk, skname, face_hands):
         W[i] = sk.local[i] if p < 0 else W[p] @ sk.local[i]
         P[i] = sk.lpos[i] if p < 0 else P[p] + W[p] @ sk.lpos[i]
         c = canon_of.get(i)
-        if c and 'rest_tip' in data[c]:
+        if c and 'rest_tip' in data[c] and not c.endswith('Shoulder'):
             tn = tip_name('tgt', c, skname)
             j = sk.index[tn] if tn else tidx[TIP[c]]
             dloc = sk.bind[i].T @ (sk.pos[j] - sk.pos[i])
             want = data[c]['rest_tip'] - data[c]['rest_p']
             W[i] = rot_between(W[i] @ dloc, want) @ W[i]
     off = {c: data[c]['rest_r'].T @ W[tidx[c]] for c in CANON}
+    if head_fix is not None:
+        # Поправка головы актёра (строка level в clips.txt): поворот в осях самой кости головы
+        off['Head'] = off['Head'] @ head_fix
 
     # Масштаб — по длине ног (покой у части файлов CMU стоит не на земле, высота таза в нём ненадёжна).
     # Перенос — середина голов бёдер источника в масштабе; таз цели — от середины своих бёдер, как в бинде
@@ -250,19 +255,45 @@ def best_loop(data, k0, k1, span=10):
     return bk
 
 
+def head_bias(sk, skname, rot, trans, hb):
+    """Обратный среднему повороту головы от бинда (оси корня), в осях кости головы: после него голова в среднем
+    стоит как в бинде."""
+    W, _ = sk.fk(rot, hb, trans / 1000.0)
+    i = sk.index[TGT[skname]['Head']]
+    mean = ortho(np.mean(W[:, i] @ sk.bind[i].T, axis=0))
+    return sk.bind[i].T @ mean.T @ sk.bind[i]
+
+
+_level_cache = {}
+
+
+def head_level(level, sources, sk, skname):
+    """Поправка головы для источника: средний поворот головы на отрезке эталона (актёр смотрит прямо) — ноль."""
+    ref, t0, t1 = level
+    key = (ref, t0, t1, skname)
+    if key not in _level_cache:
+        data, nkeys, _ = read_source(os.path.join(RAW, sources[ref]), t0, t1)
+        rot, trans, _, hb = retarget(data, nkeys, sk, skname, False)
+        _level_cache[key] = head_bias(sk, skname, rot, trans, hb)
+    return _level_cache[key]
+
+
 def read_clips():
     path = os.path.join(os.path.dirname(__file__), 'clips.txt')
-    sources, clips = {}, []
+    sources, clips, levels = {}, [], {}
     for line in open(path, encoding='utf-8'):
         w = line.split('#', 1)[0].split()
         if not w:
             continue
         if w[0] == 'source':
             sources[w[1]] = w[2]
+        elif w[0] == 'level':
+            for src in w[4:]:
+                levels[src] = (w[1], float(w[2]), float(w[3]))
         elif w[0] == 'clip':
             clips.append({'name': w[1], 'src': w[2], 't0': float(w[3]), 't1': float(w[4]), 'flags': w[5:],
                           'note': line.split('#', 1)[1].strip() if '#' in line else ''})
-    return sources, clips
+    return sources, clips, levels
 
 
 def write_labels(clip, src_file, kind, nkeys):
@@ -285,7 +316,7 @@ def write_labels(clip, src_file, kind, nkeys):
             f.write('weapon sword2\n')
 
 
-def run_clip(clip, sources):
+def run_clip(clip, sources, levels):
     rel = sources[clip['src']]
     path = os.path.join(RAW, rel)
     if not os.path.exists(path):
@@ -302,7 +333,8 @@ def run_clip(clip, sources):
     os.makedirs(OUT, exist_ok=True)
     for skname in SKELS:
         sk = Skel(os.path.join(ROOT, 'data', 'people', f'{BODY}.{skname}.skel'))
-        rot, trans, root, hb = retarget(data, nkeys, sk, skname, any(f.startswith('sword') for f in clip['flags']))
+        fix = head_level(levels[clip['src']], sources, sk, skname) if clip['src'] in levels else None
+        rot, trans, root, hb = retarget(data, nkeys, sk, skname, any(f.startswith('sword') for f in clip['flags']), fix)
         a = Anim()
         a.skel, a.flags, a.bones, a.trans_bone = skname, LOOP if loop else 0, sk.names, hb
         a.rot, a.trans, a.root = rot, trans, root
@@ -336,11 +368,11 @@ def main():
     if args and args[0] == '--probe':
         probe(args[1], *(float(x) for x in args[2:4] if x != '--short'))
         return
-    sources, clips = read_clips()
+    sources, clips, levels = read_clips()
     ok = True
     for c in clips:
         if not args or c['name'] in args:
-            ok &= run_clip(c, sources)
+            ok &= run_clip(c, sources, levels)
     sys.exit(0 if ok else 1)
 
 

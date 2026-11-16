@@ -12,8 +12,8 @@ par() {
     shift 2
     (
         t0=$SECONDS
-        timeout -k 20 "$limit" "$@" > "$name.log" 2>&1
-        rc=$?
+        rc=0  # «|| rc=$?»: под bash -e упавшая команда сняла бы подоболочку до записи .rc
+        timeout -k 20 "$limit" "$@" > "$name.log" 2>&1 || rc=$?
         echo "$rc $((SECONDS - t0))" > "$name.rc"
         exit "$rc"
     ) &
@@ -25,7 +25,7 @@ par_wait() {
     local keep=${1:-5} fail=0 i n rc sec
     for i in "${!_par_pids[@]}"; do
         n=${_par_names[$i]}
-        wait "${_par_pids[$i]}"
+        wait "${_par_pids[$i]}" || true  # код читаем из .rc: под bash -e упавший wait снял бы шаг без журнала
         read -r rc sec < "$n.rc"
         if [ "$rc" = 0 ]; then
             echo "=== $n: ок, $sec с"

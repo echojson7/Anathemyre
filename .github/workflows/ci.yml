@@ -46,7 +46,7 @@ jobs:
         run: |
           # люди: исходники MakeHuman качает tools/humanconv/fetch.sh в кеш (sha256), docs/people.md
           make -s meshes
-          git diff --exit-code data/meshes data/people
+          git diff --exit-code data/meshes data/people data/weapons.txt
       - name: Дорожки клипов в git совпадают с запеканием
         run: |
           # ретаргет (bpy, сырые BVH/FBX) в CI не гоняем: запекание читает закоммиченные .anim (docs/anim.md)
@@ -145,12 +145,18 @@ jobs:
             ~/.cache/anathemyre
             build/third_party
           key: tc-window-${{ runner.os }}-${{ hashFiles('tools/versions.sh', 'tools/toolchain.sh', 'tools/third_party.sh') }}
+      # Ключ со своим номером прогона, сохраняется и после падения или снятия по пределу: иначе упавшая задача кеш
+      # не сохраняла, следующая снова шла с холодным (вдвое дольше) и снова падала. Берётся последний с теми же
+      # шейдерами, иначе последний вообще (неизменные шейдеры в нём есть)
       - name: Кеш шейдеров Mesa
-        uses: actions/cache@v4
+        id: mesa
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/mesa_shader_cache
-          key: mesa-${{ matrix.kind }}-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}
-          restore-keys: mesa-${{ matrix.kind }}-
+          key: lvp-${{ matrix.kind }}-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}-${{ github.run_id }}
+          restore-keys: |
+            lvp-${{ matrix.kind }}-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}-
+            lvp-${{ matrix.kind }}-
       - name: Компиляторы и SDL3
         run: make toolchain third_party TARGET=linux
       - name: Сборка
@@ -159,6 +165,8 @@ jobs:
         if: matrix.kind == 'asan'
         env:
           LSAN_OPTIONS: suppressions=${{ github.workspace }}/tools/lsan.supp
+          # SIGILL без этого убивает молча («Illegal instruction», код 132): так ASan печатает стек и поток
+          ASAN_OPTIONS: handle_sigill=1
         run: |
           . tools/ci_par.sh
           . tools/versions.sh
@@ -176,9 +184,12 @@ jobs:
           # лучи зондов (gi_trace) — снимок 4 × 49 152 зонда под GPU-AV идёт дольше 10 мин; лучи ячеек света
           # (lcache_trace) — тот же луч
           # Камера у стенда людей с согнутой костью и морфом: скиннинг и сферы кластеров тоже под проверкой
-          par gpuav 540 xvfb-run -n 92 -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 4 --window 640 360 \
+          # Свет «Средне»: шейдеры и ветки те же, что на «Высоко», меньше лишь размеры (карта облаков 1024² вместо
+          # 1536², зондов за кадр 1024 вместо 1536). Первый кадр собирает всю карту облаков, под GPU-AV это была
+          # половина прогона (docs/graph.md, «Проверки»). «Высоко» идёт в окнах asan, shot и same
+          par gpuav 720 xvfb-run -n 92 -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 4 --window 640 360 \
             --gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp,lcache_trace.comp \
-            --cam 45 5 6 11698 -2348.5 --stand elbow,morph1
+            --cam 45 5 6 11698 -2348.5 --stand elbow,morph1 --light medium
           par_wait 5
       - name: Снимок сцены
         if: matrix.kind == 'shot'
@@ -203,8 +214,10 @@ jobs:
           # шаг мира, а не сколько успело по часам. Оба запуска разом на одной машине: кадр от этого не зависит
           # Первый запуск пишет и счётчики работы освещения (docs/tiles.md): сверка с эталоном ловит «стало делать
           # больше работы» без видеокарты
+          # Предел 540 с — с запасом на холодный кеш шейдеров Mesa: с ним первый кадр вдвое дольше (локально
+          # 205 с вместо 112 на весь прогон), а упавшая задача кеш не сохраняет и следующая снова холодная
           for k in 1 2; do
-            par same_$k 360 xvfb-run -n 9$((3 + k)) -s "-screen 0 1600x900x24" build/linux-release/anathemyre --nohud \
+            par same_$k 540 xvfb-run -n 9$((3 + k)) -s "-screen 0 1600x900x24" build/linux-release/anathemyre --nohud \
               --frames 4 --window 800 450 --lights --heat --cam 315 14 34 11704 -2336 --timelapse same_$k 15.5 15.5 \
               --work work_$k.txt
           done
@@ -217,6 +230,12 @@ jobs:
           # кеш земли в обычной сцене включён и не пуст (docs/gcache.md, «Когда кеш выключен»): выключенный кеш
           # молча уводит всю землю на пиксель, а кадр при этом верный — ловим по счётчику, отдельно от допуска эталона
           awk '$1 == "gc_used" { ok = $2 > 0 } END { if (!ok) { print "кеш земли пуст: gc_used = 0"; exit 1 } }' work_1.txt
+      - name: Сохранить кеш шейдеров Mesa
+        if: always() && steps.mesa.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/mesa_shader_cache
+          key: lvp-${{ matrix.kind }}-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: matrix.kind == 'same'
         with:

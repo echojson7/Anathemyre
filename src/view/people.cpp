@@ -11,15 +11,14 @@
 // прямой), стопы ставит IK на ширину бинда (ноги из этого ключа — на полушаге)
 static const char *const IDLE_CLIP = "walk";
 constexpr f32 IDLE_T = 1.0f;
-static const char *const BONE_NAMES[] = {"pelvis",  "spine_01",    "thigh_l",     "thigh_r",     "calf_l",
-                                         "calf_r",  "foot_l",      "foot_r",      "ball_l",      "ball_r",
-                                         "hand_l",  "hand_r",      "middle_01_r", "index_01_r",  "pinky_01_r",
-                                         "lowerarm_r", "spine_03", "neck_01",     "head"};
-enum {
-    B_PELVIS, B_SPINE, B_THIGH, B_CALF = 4, B_FOOT = 6, B_BALL = 8,
-    B_HAND_L = 10, B_HAND_R, B_MIDDLE_R, B_INDEX_R, B_PINKY_R, B_FOREARM_R, B_SPINE3, B_NECK, B_HEAD, B_COUNT
-};
+// Стойка с оружием вне действий (docs/arms.md): верх тела из начала клипа выпада — меч двумя руками перед грудью
+static const char *const STANCE_CLIP = "lunge";
+constexpr f32 STANCE_T = 0.0f;
+static const char *const BONE_NAMES[] = {"pelvis", "spine_01", "thigh_l", "thigh_r", "calf_l",   "calf_r", "foot_l",
+                                         "foot_r", "ball_l",   "ball_r",  "spine_03", "neck_01", "head"};
+enum { B_PELVIS, B_SPINE, B_THIGH, B_CALF = 4, B_FOOT = 6, B_BALL = 8, B_SPINE3 = 10, B_NECK, B_HEAD, B_COUNT };
 static_assert(B_COUNT == ANA_COUNTOF(BONE_NAMES), "кости вида");
+static_assert(B_COUNT == ANA_COUNTOF(PeopleView{}.bones), "кости вида: размер PeopleView::bones");
 
 // Удар (этап 10, docs/people.md «Удар»): вход в клип действия и выход из него, реакция задетого
 constexpr f32 ACT_BLEND_IN = 0.15f;  // с
@@ -63,6 +62,12 @@ static void world_to_body(Turn yaw, f32 wx, f32 wz, f32 *x, f32 *z) {
     *x = c * wx - s * wz;
     *z = s * wx + c * wz;
 }
+// Точка в осях сетки человека (кисть, место ношения оружия) → мир: единственное место этого перевода
+static WPos body_point(const WPos &base, Turn yaw, Vec3 p) {
+    f32 wx, wz;
+    body_to_world(yaw, p.x, p.z, &wx, &wz);
+    return add(base, wx, p.y, wz);
+}
 
 static const ViewClip *find_clip(const ViewAssets &a, const char *name, u64 skel) {
     u64 h = hash_bytes(name, strlen(name));
@@ -98,10 +103,13 @@ static bool bind(PeopleView &pv, const ViewAssets &a) {
         const SkelBone &fb = s.bones.data[pv.bones[B_FOOT + f]];
         pv.rest_foot[f] = Vec3{fb.pos[0], fb.pos[1], fb.pos[2] - pel.pos[2]};
     }
-    for (u32 i = 0; i < a.mesh_count; ++i)
-        if (a.meshes[i].name == hash_str("sword")) pv.sword = a.meshes[i].id;
-    if (!pv.sword) log_warn("люди: нет сетки sword — меча в руках не будет");
-    else render_mesh_moving(pv.sword);  // ходит с рукой каждый кадр: иначе страницы теней под ним рисуются заново
+    const ViewClip *stance = find_clip(a, STANCE_CLIP, ge);
+    pv.armed = a.weapons.issue_sum > 0.0f;
+    if (!pv.armed) log_warn("люди: нет оружия в data/weapons.txt — в руках пусто");
+    else if (!(stance && arms_bind(pv.arms, s, stance->clip, STANCE_T, idle->clip, IDLE_T))) {
+        log_warn("люди: нет клипа %s или костей рук — оружия у людей не будет", STANCE_CLIP);
+        pv.armed = false;
+    }
     pv.body = 0;
     pv.skin = k;
     pv.failed = false;
@@ -198,7 +206,8 @@ static u32 body_snorm2(f32 a, f32 b) {
 // Поза одного человека: повороты костей → палитра, корень экземпляра. Возвращает высоту корня экземпляра
 struct PoseOut {
     WPos base;  // корень экземпляра (с опусканием таза)
-    bool sword; // меч в руках: место хвата и поворот в мире
+    bool sword; // оружие (в руке или на теле): начало сетки и поворот в мире
+    u32 weapon_mesh;
     WPos sword_at;
     Quat sword_q;
 };
@@ -456,33 +465,6 @@ static WPos pose_feet(PoseWork &pw, f32 any, bool debug) {
     return base;
 }
 
-// Меч: в действии — двуручный хват как в дорожках (от левой кисти у гарды, по линии кистей), иначе — в правой
-// кисти (середина кисти, от мизинца к указательному); ребро клинка — вдоль предплечья
-static void pose_sword(const PoseWork &pw, const ActWeights &aw, PoseOut &out) {
-    const Root &r = pw.r;
-    const i32 *B = pw.B;
-    const Vec3 *wp = pw.wp;
-    const f32 guard = aw.guard, grip2 = aw.grip2;
-    // Вне удара клинок опущен вперёд-вниз (~40°): кисть открыта (хвата нет), по одной оси пальцев он торчал бы
-    // вперёд горизонтально
-    Vec3 g1 = (wp[B[B_HAND_R]] + wp[B[B_MIDDLE_R]]) * 0.5f;
-    Vec3 d1 = normalize(normalize(wp[B[B_INDEX_R]] - wp[B[B_PINKY_R]]) + Vec3{0, -0.85f, 0});
-    // Блок (клип бокса, хвата нет): клинок вверх и через тело влево, перед лицом
-    d1 = normalize(d1 + (Vec3{-0.45f, 0.85f, 0.3f} - d1) * guard);
-    Vec3 g2 = wp[B[B_HAND_L]], d2 = normalize(wp[B[B_HAND_L]] - wp[B[B_HAND_R]]);
-    Vec3 g = g1 + (g2 - g1) * grip2, d = normalize(d1 + (d2 - d1) * grip2);
-    Vec3 fa = wp[B[B_HAND_R]] - wp[B[B_FOREARM_R]];
-    Vec3 e = fa - d * dot(fa, d);
-    if (dot(e, e) < 1e-6f) e = Vec3{1, 0, 0} - d * d.x;
-    e = normalize(e);
-    Quat q1 = quat_between(Vec3{0, 1, 0}, d);
-    Quat q2 = quat_between(quat_rotate(q1, Vec3{1, 0, 0}), e);
-    out.sword_q = quat_mul(quat_yaw(r.yaw), quat_mul(q2, q1));
-    f32 wx, wz;
-    body_to_world(r.yaw, g.x, g.z, &wx, &wz);
-    out.sword_at = add(out.base, wx, g.y, wz);
-}
-
 static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewInput &in, u32 i, const Root &r, f32 dist,
                            PoseMatrix *palette, bool debug) {
     const Extract &c = *in.cur;
@@ -511,6 +493,25 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
     const i32 tb = pw.tb;
     Vec3 &trans = pw.trans;
 
+    // Оружие (docs/arms.md): в бою (цель, действие, реакция) — в руках, иначе на теле. Стойка и рука с оружием —
+    // поверх ходьбы, до клипов действий: клип действия их перекрывает
+    // Как держать и носить — из записи оружия по зерну внешности (docs/weapons.md); hands там с 0, здесь с 1
+    const i32 wi = pv.armed ? weapon_pick(assets.weapons, c.person_seed[i]) : -1;
+    WeaponHold hold{};
+    if (wi >= 0) {
+        const WeaponDesc &wd = assets.weapons.w[wi];
+        hold = WeaponHold{(u8)(wd.hands + 1), wd.carry, wd.grip2, wd.carry_at, wd.tip, wd.butt};
+    }
+    ArmsState arms{};
+    if (wi >= 0) {
+        const bool fight = c.person_target[i] || c.person_act[i] || c.person_react_t[i];
+        arms = arms_update(L.arms, hold, fight, c.person_act[i] != 0, r.v, dt, fresh);
+        if (arms.two > 0.0f || arms.one > 0.0f) {
+            pose_world(s, rot, tb, &trans, wr, wp);
+            arms_pose_hold(pv.arms, arms, rot, wr);
+        }
+    }
+
     // Действие (этапы 10–11): клип поверх ходьбы, вход 0.15 с от тика start, выход 0.25 с к концу действия. Сорванное
     // или сменённое действие (попадание, отбит, отмена в другое) гаснет за ACT_FADE с позы, где его оборвали
     const ActWeights aw = pose_actions(pw);
@@ -536,9 +537,14 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
     } else {
         out.base = pose_feet(pw, aw.any, debug);
     }
+    out.sword = wi >= 0;
+    if (out.sword) {
+        out.weapon_mesh = assets.weapons.w[wi].mesh;
+        const ArmsWeapon w = arms_pose_weapon(pv.arms, s, hold, arms, aw.any, aw.grip2, aw.guard, tb, &trans, rot, wr, wp);
+        out.sword_at = body_point(out.base, r.yaw, w.at);
+        out.sword_q = quat_mul(quat_yaw(r.yaw), w.q);
+    }
     pose_palette_world(s, wr, wp, palette);
-    out.sword = pv.sword != 0;
-    if (out.sword) pose_sword(pw, aw, out);
     L.root = out.base;
     L.yaw = r.yaw;
     return out;
@@ -660,7 +666,7 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
             sw.rot_xy = body_snorm2(po.sword_q.x, po.sword_q.y);
             sw.rot_zw = body_snorm2(po.sword_q.z, po.sword_q.w);
             sw.scale = 1.0f;
-            sw.mesh = pv.sword;
+            sw.mesh = po.weapon_mesh;
             sw.material = RENDER_NO_MATERIAL;
             sw.seed = c.person_seed[i];
         }

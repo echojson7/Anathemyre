@@ -20,6 +20,7 @@ const float GI_BIAS = 0.25;          // сдвиг точки по нормал�
 const uint GI_RAYS_MAX = 256u;
 const uint GI_FRESH = 0x10000u;      // работа: зонд новый — без смешения со старым
 const uint GI_SHOW = 0x80000u;       // работа: показать среднее круга (конец круга или молодой зонд)
+const uint GI_EASE = 0x100000u;      // работа: быстрое светило — показанное идёт к среднему круга каждый счёт
 const uint GI_K = 4u;                // поворотов лучей в круге; поворот работы — биты 17–18
 const uint GI_NONE = 0u, GI_ACTIVE = 1u, GI_INACTIVE = 2u;  // состояние: не посчитан, в деле, в стене
 const uint GI_VIEW_FRAME = 0u, GI_VIEW_ONLY = 1u, GI_VIEW_OFF = 2u, GI_VIEW_CELLS = 3u;  // ячейки — docs/lcache.md

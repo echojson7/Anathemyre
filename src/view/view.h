@@ -14,8 +14,10 @@
 #include "camera.h"
 #include "scatter.h"
 #include "sky.h"
+#include "weapon.h"
 
 struct PeopleView;
+struct MechView;
 
 // Сетки и материалы, загруженные для кадра: имя (хеш) → номер в рендере
 struct ViewMesh {
@@ -50,11 +52,12 @@ struct ViewAssets {
     const MaterialTable *materials = nullptr;
     u32 ground_layers[RENDER_GROUND_LAYERS] = {};  // материалы слоёв земли по GroundKind
     u32 rocks[SCATTER_MESHES] = {};                 // сетки камней рассыпки
-    ViewBody bodies[VIEW_MAX_BODIES];               // люди: тела с весами (стенд, потом таблица людей)
+    ViewBody bodies[VIEW_MAX_BODIES];               // тела с весами; [0] — тело людей (скелет game_engine), дальше машины
     u32 body_count = 0;
     ViewClip clips[VIEW_MAX_CLIPS];                 // клипы людей: имя × скелет
     u32 clip_count = 0;
     SkyDesc sky;                                    // небо и воздух (data/sky.txt)
+    WeaponTable weapons;                            // оружие (data/weapons.txt), сетки — weapon_<имя>
 };
 
 struct ViewInput {
@@ -70,6 +73,7 @@ struct ViewInput {
     ScatterCache *scatter;  // рассыпка камней (кеш между кадрами), может быть nullptr
     PeopleView *people = nullptr;  // тела людей (состояние вида между кадрами, docs/people.md), может быть nullptr
     bool people_debug = false;     // след касаний стоп (отладка)
+    MechView *mech = nullptr;      // шагающие турели (состояние вида между кадрами, docs/vezha.md), может быть nullptr
     bool lamps_off = false;        // лампы карты не светят (F3 «лампы карты», --nolamps): сравнение было/стало
     // Свет (docs/light.md): секунды кадра и «привыкнуть сразу» для глаза, тонмаппинг (F3), качество (меню)
     f32 dt = 0.0f;

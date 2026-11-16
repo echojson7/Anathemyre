@@ -118,7 +118,7 @@ vec3 shade_hit(Hit h, int phys) {
             s.pos = g.p - pc.frame.cam_off;
         }
     } else if (RESOLVE_MESH) {
-        s = mesh_surface(h.rel, normalize(h.n), h.m0, h.m1, h.blend, h.ao, h.seed);
+        s = mesh_surface(h.rel, normalize(h.n), h.m0, h.m1, h.blend, h.ao, h.seed, h.dyn, h.obj, h.obj_n);
     } else {
         s = gc_unpack(uvec2(0u));  // вид «земля»: других попаданий нет
         s.pos = h.rel;

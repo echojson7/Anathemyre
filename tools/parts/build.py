@@ -16,6 +16,19 @@ def main():
         sys.exit("использование: build.py <папка> <meshpack> [имена сеток]")
     out_dir, meshpack, only = sys.argv[1], sys.argv[2], sys.argv[3:]
     import ispod_meshes
+    import rig
+    import vezha
+    # Машины на костях (docs/vezha.md): сетка с весами и скелет
+    for name, make, lods in (("vezha", vezha.make, vezha.LODS),):
+        if only and name not in only:
+            continue
+        t0 = time.time()
+        r = make()
+        built = rig.build(r)
+        if built["open"]:
+            sys.exit("сетка %s не замкнута: незакрытых рёбер %d" % (name, built["open"]))
+        rig.write(r, built, os.path.dirname(os.path.abspath(out_dir)), meshpack, lods)
+        print("%-16s треугольников %7d  костей %d  %.1f с" % (name, len(built["tris"]), len(r.bones), time.time() - t0))
     for name, make in ispod_meshes.MESHES.items():
         if only and name not in only:
             continue
