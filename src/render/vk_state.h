@@ -291,6 +291,10 @@ struct ShadowGpu {
     bool clear_cur = false;  // окна нового набора с нуля в начале кадра (новый шаг)
     u32 build_frame = 0;     // кадр, с которого строится новый набор
     f32 mix = 1;             // вес нового набора
+    // Скорость светила (vk_shadow_fill): направление начала окна замера, его длина, с; быстрое — шаги сразу
+    f32 sun_ref[3] = {};
+    f32 sun_t = -1;          // меньше нуля — замера ещё не было
+    bool sun_fast = false;   // светило идёт быстрее SM_FAST (ускоренное время): тени и зонды без перетекания
     u32 inval_n = 0;         // сфер сброса этого кадра
     VkPipeline pipe_inval = VK_NULL_HANDLE, pipe_scan = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE,
                pipe_alloc = VK_NULL_HANDLE, pipe_cull = VK_NULL_HANDLE, pipe_draw = VK_NULL_HANDLE;
@@ -342,7 +346,8 @@ constexpr u32 GI_CHUNK = 12288;      // работ на проход лучей 
 constexpr u32 GI_MAX_CHUNKS = 16;    // проходов лучей и смешения в кадре
 constexpr u32 GI_K = 4;              // поворотов лучей в круге
 // Работа: место | GI_FRESH (новый: без старого) | поворот << 17 | GI_SHOW (показать среднее: конец круга, молодой)
-constexpr u32 GI_FRESH = 0x10000, GI_SHOW = 0x80000;
+// GI_EASE (быстрое светило): показанное идёт к среднему круга каждый счёт, а не в конце круга
+constexpr u32 GI_FRESH = 0x10000, GI_SHOW = 0x80000, GI_EASE = 0x100000;
 struct GiGpu {
     GpuImage irr, dep, acc;  // показанная освещённость, расстояния, среднее круга
     GpuBuffer probes;   // GiProbe (common.glsl), 32 байта на место

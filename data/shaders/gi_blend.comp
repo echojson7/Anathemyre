@@ -81,9 +81,13 @@ void main() {
         if (k > 0u) v = mix(imageLoad(u_acc_w, at), v, 1.0 / float(k + 1u));
         imageStore(u_acc_w, at, v);
         if (show) {
-            // Молодой зонд показывает среднее как есть (оно ещё растёт), старый — мешает с прошлым показанным
-            bool young = fresh || k < GI_K - 1u;
-            if (!young && h > 0.0) v = mix(v, imageLoad(u_irr_w, at), h);
+            // Молодой зонд показывает среднее как есть (оно ещё растёт), старый — мешает с прошлым показанным.
+            // Быстрое светило (GI_EASE): старый зонд идёт к среднему круга каждый счёт — доля нового меньше, пока
+            // в среднем мало поворотов (за круг выходит тот же сдвиг, что одним шагом в его конце)
+            bool ease = (word & GI_EASE) != 0u;
+            bool young = !ease && (fresh || k < GI_K - 1u);
+            float keep = ease ? 1.0 - (1.0 - h) / float(GI_K) * 1.5 : h;
+            if (!young && keep > 0.0) v = mix(v, imageLoad(u_irr_w, at), keep);
             imageStore(u_irr_w, at, v);
         }
         s_irr[t] = v;

@@ -302,6 +302,10 @@ int run_window(const Args &a, AppMemory &m) {
     auto hour_turn = [](f64 h) { return (u64)(u32)(u64)(h / 24.0 * 4294967296.0); };
     if (a.hour_set) pending.push_back({0, INTENT_CLOCK_SET, WPos{}, hour_turn(a.hour)});
     if (a.timelapse) pending.push_back({0, INTENT_CLOCK_RATE, WPos{}, 0});
+    if (a.clock >= 0 && !a.timelapse) {
+        clock_speed = (u32)a.clock;
+        pending.push_back({0, INTENT_CLOCK_RATE, WPos{}, CLOCK_SPEEDS[clock_speed]});
+    }
     // Люди окна у точки старта: намерение первого шага, поэтому запись окна их повторяет, а --sim не трогает
     const bool brawl = a.brawl[0] && a.brawl[1];
     if (w.start.set && w.start.people && !brawl) {
