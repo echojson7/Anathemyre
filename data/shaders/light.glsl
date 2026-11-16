@@ -11,7 +11,7 @@
 #include "shadow.glsl"
 #include "gi.glsl"
 #include "lamps.glsl"
-#include "atmosphere.glsl"
+#include "clouds.glsl"
 #include "lcache.glsl"
 
 // 1 — освещается поверхность самой земли (ставит light_cells.comp до light_surface): под грунтом она не бывает,
@@ -28,10 +28,11 @@ float g_e_local = 0.0;
 float local_sky_e() { return pc.frame.sky_out.v[SKY_OUT_EYE].y; }
 
 // Видимость главного светила: 1 — свет, 0 — тень, всегда мягко (docs/light.md, правило 5). Земля — карта
-// горизонта (docs/horizon.md), сетки — карта теней страницами (docs/shadow.md, 6б-1)
+// горизонта (docs/horizon.md), сетки — карта теней страницами (docs/shadow.md, 6б-1), облака — их карта тени
+// (docs/clouds.md)
 float sun_visibility(Surface s, vec3 l) {
     float v = h_sun_shadow(s.pos, l);
-    return v > 0.0 ? v * sm_visibility(s.pos, s.normal) : 0.0;
+    return v > 0.0 ? v * sm_visibility(s.pos, s.normal) * cloud_shadow(s.pos) : 0.0;
 }
 
 // GGX (Trowbridge–Reitz), a2 = α²

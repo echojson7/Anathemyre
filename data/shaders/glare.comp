@@ -1,0 +1,54 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Пирамида блеска (docs/glare.md). pc.a — что делать: 0 — уровень 0 «вниз» из кадра после сглаживания (история
+// pc.b), 1 — уровень pc.b «вниз» из уровня ниже, 2 — уровень pc.b «вверх»: свой «вниз» плюс размытый «вверх»
+// уровня крупнее. Вниз — фильтр 4×4 с весами (1 3 3 1)/8 по осям (без ступенек и мерцания при сдвиге), вверх —
+// четыре билинейные выборки крупного уровня (шатёр)
+#include "glare.glsl"
+layout(set = 0, binding = 13, rgba16f) uniform readonly image2D u_aa[2];
+layout(local_size_x = 8, local_size_y = 8) in;
+
+const float W4[4] = float[4](0.125, 0.375, 0.375, 0.125);
+
+void gr_put(int off, ivec2 sz, ivec2 p, vec3 c) {
+    pc.frame.gr_buf.v[off + p.y * sz.x + p.x] = uvec2(packHalf2x16(c.rg), packHalf2x16(vec2(c.b, 0.0)));
+}
+
+vec3 src_px(ivec2 p, ivec2 sz) {
+    p = clamp(p, ivec2(0), sz - 1);
+    vec3 c = pc.b == 0u ? imageLoad(u_aa[0], p).rgb : imageLoad(u_aa[1], p).rgb;
+    // Предел: единичный блик в f16 не должен залить полкадра
+    float m = max(c.r, max(c.g, c.b));
+    return max(c, vec3(0.0)) * min(1.0, 4000.0 / max(m, 1e-6));
+}
+
+void main() {
+    FrameData f = pc.frame;
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    uint mode = pc.a;
+    int k = mode == 0u ? 0 : int(pc.b);
+    ivec4 l = f.gr_lv[k];
+    if (p.x >= l.x || p.y >= l.y) return;
+    vec3 c = vec3(0.0);
+    if (mode == 0u) {
+        ivec2 sz = imageSize(u_aa[0]);
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 4; ++x) c += src_px(p * 2 + ivec2(x - 1, y - 1), sz) * (W4[x] * W4[y]);
+        gr_put(l.z, l.xy, p, c);
+    } else if (mode == 1u) {
+        ivec4 s = f.gr_lv[k - 1];
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 4; ++x) c += gr_get(s.z, s.xy, p * 2 + ivec2(x - 1, y - 1)) * (W4[x] * W4[y]);
+        gr_put(l.z, l.xy, p, c);
+    } else {
+        c = gr_get(l.z, l.xy, p);
+        if (k + 1 < int(f.gr_n)) {
+            ivec4 u = f.gr_lv[k + 1];
+            vec2 q = (vec2(p) + 0.5) * 0.5;
+            vec3 t = gr_lerp(u.w, u.xy, q + vec2(-0.5, -0.5)) + gr_lerp(u.w, u.xy, q + vec2(0.5, -0.5)) +
+                     gr_lerp(u.w, u.xy, q + vec2(-0.5, 0.5)) + gr_lerp(u.w, u.xy, q + vec2(0.5, 0.5));
+            c += t * (0.25 * GLARE_FALL);
+        }
+        gr_put(l.w, l.xy, p, c);
+    }
+}

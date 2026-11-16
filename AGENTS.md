@@ -6,14 +6,14 @@
 `docs/decisions.md`, облик игры `docs/vision.md`, склад беты `docs/legacy.md`, новый компьютер `docs/setup-new-pc.md`,
 сборка и CI `docs/build.md`, хребет симуляции и повтор `docs/sim.md`, швы кадра `docs/frame.md`, формат сеток
 `docs/mesh.md`, материалы `docs/materials.md`, текстовый формат и сцена `docs/text.md`, камера `docs/camera.md`,
-земля `docs/terrain.md`, небо и сутки `docs/sky.md`, интерфейс и настройки `docs/ui.md`, здание (Остов) `docs/ostov.md`,
+земля `docs/terrain.md`, небо и сутки `docs/sky.md`, облака `docs/clouds.md`, интерфейс и настройки `docs/ui.md`, здание (Остов) `docs/ostov.md`,
 граф кадра, сбой GPU и проверки `docs/graph.md`, время кадра по частям, журнал и кеш конвейеров
 `docs/frame_time.md`, плитки кадра по видам и счётчики работы `docs/tiles.md`, кеш поверхности земли
 `docs/gcache.md`, люди, шаг мира и путь `docs/people.md`, клипы захвата
 движения `docs/anim.md`, свет (этап 6) `docs/light.md`, тени солнца страницами `docs/shadow.md`, поле расстояний мира `docs/sdf.md`,
 зонды непрямого света `docs/gi.md`, ячейки отражённого света на поверхностях `docs/lcache.md`, огни и их тени `docs/lamps.md`,
 фабрика деталей (здания и предметы) `docs/parts.md`, подземная станция (Исподь) `docs/ispod.md`, сканы CC0 (проба) `docs/scans.md`,
-сглаживание краёв `docs/aa.md`, запуск до первого кадра `docs/startup.md`.
+сглаживание краёв `docs/aa.md`, блеск ярких мест `docs/glare.md`, запуск до первого кадра `docs/startup.md`.
 
 ## Что это за ветка
 Чистый старт игры Anathemyre на более высоком уровне качества. Старый проект (ветка `stage0/test-room`) — **склад
