@@ -134,7 +134,7 @@ static void lc_record_trace(VkCommandBuffer cmd, void *) {
 }
 static void lc_record_filter(VkCommandBuffer cmd, void *) {
     lc_bind(cmd, g_vk.lc.pipe_filter);
-    vkCmdDispatch(cmd, LC_CAP / 64, 1, 1);
+    vkCmdDispatchIndirect(cmd, g_vk.lc.jobs.buffer, 16);  // группа на работу, как у лучей: работают первые
 }
 
 // До разбора плиток: таблица с нуля, если надо (заявки пишут в неё)
@@ -181,6 +181,8 @@ void vk_lcache_passes() {
     vk_sky_reads(RG_CS_READ);
     vk_horizon_reads(RG_CS_READ);
     rg_pass("ячейки света: сглаживание", "ячейки света", lc_record_filter, nullptr);
+    rg_use(s.rg_jobs, RG_INDIRECT);
+    rg_use(s.rg_jobs, RG_CS_READ);
     rg_use(s.rg_keys, RG_CS_READ);
     rg_use(s.rg_meta, RG_CS_READ);
     rg_use(s.rg_show, RG_CS_READ);
