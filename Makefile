@@ -178,6 +178,12 @@ third_party: $(SDL_STAMP)
 $(OUT)/unity_%.o: $(OUT)/unity_%.cpp | $(SDL_STAMP)
 	$(CXX) $(CXXFLAGS) $(OPT) -c $< -o $@
 
+# Ключ кеша эрозии (docs/startup.md): хеш исходника эрозии, флагов float и компилятора. Правка эрозии меняет
+# ключ сама, и старый кеш не подойдёт. Нет sha256sum — пусто, и кеш выключен
+ERODE_SRC := $(shell { cat src/sim/terrain_erode.cpp src/sim/terrain_erode.h src/core/mathf.h; \
+  echo '$(ARCH) $(COMPILER) $(LLVM_VER) $(LLVM_MINGW_VER)'; } | sha256sum 2>/dev/null | cut -c1-16)
+$(OUT)/unity_sim.o: CXXFLAGS += $(if $(ERODE_SRC),-DANA_ERODE_SRC=0x$(ERODE_SRC)ull)
+
 $(OUT)/tp_volk.o: third_party/volk/volk.c | $(SDL_STAMP)
 	$(CC) $(CFLAGS) $(OPT_TP) -c $< -o $@
 $(OUT)/tp_vma.o: third_party/vma_impl.cpp | $(SDL_STAMP)
