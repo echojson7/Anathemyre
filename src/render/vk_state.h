@@ -115,7 +115,7 @@ struct FrameGpu {
     // работы кадра; ступень
     VkDeviceAddress lc_keys, lc_keys4, lc_meta, lc_show, lc_filt, lc_acc, lc_jobs;
     u32 lc_on, lc_frame, lc_rays_n, lc_period;
-    u32 lc_cap_new, lc_cap_ref, lc_snap, lc_pad0;
+    u32 lc_cap_new, lc_cap_ref, lc_snap, lc_ease;
     f32 lc_angle, lc_far, lc_hyst, lc_pad1;
     // Проёмы земли: x0, z0, x1, z1 от камеры, м (vis_ground.frag в них землю не рисует); t_hole_n — сколько
     f32 t_hole[4][4];

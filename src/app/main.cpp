@@ -45,6 +45,7 @@ static void usage() {
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
     log_info("           --look sun|moon град                                          взгляд по азимуту светила + поворот (с --cam: кадры неба)");
     log_info("           --frames N --video префикс                                   каждый кадр → префикс_0000.bmp… (стенд: 1/30 с на кадр)");
+    log_info("           [--spin град/с]                                              камера поворачивается сама (видео мерцания при повороте)");
     log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines] [--sides]  выбрать, камера за ним, приказы, отладка");
     log_info("           [--mech pack|stand|walk|show] [--mech-follow]                шагающая турель: лежит, стоит, обходит, показ всего по порядку; камера за ней (docs/vezha.md)");
     log_info("           --frames N --mech-trace файл.txt                             след её движения без окна: N кадров по 1/30 с, строка чисел на кадр");
@@ -188,6 +189,10 @@ int main(int argc, char **argv) {
             for (u32 k = 0; next && k < ANA_COUNTOF(CLOCKS); ++k)
                 if (!strcmp(next, CLOCKS[k])) a.clock = (i32)k;
             ok = a.clock >= 0;
+            i++;
+        }
+        else if (!strcmp(s, "--spin")) {
+            ok = next && parse_f32(Str{next, (u32)strlen(next)}, a.spin);
             i++;
         }
         else if (!strcmp(s, "--look")) {

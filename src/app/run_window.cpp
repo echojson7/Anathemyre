@@ -492,6 +492,7 @@ int run_window(const Args &a, AppMemory &m) {
         if (ds.flight_toggle) win.key_pressed[KEY_F] = true;  // кнопка панели — как клавиша F
         if (ds.pause_toggle) tc.paused = !tc.paused;
         if (ds.speed_set >= 0 && (u32)ds.speed_set < ANA_COUNTOF(SPEEDS)) tc.speed = (u32)ds.speed_set;
+        if (a.spin != 0.0f) cam.yaw += a.spin * (3.14159265f / 180.0f) * (f32)dt;
         view_camera_control(cam, win, (f32)dt, w.terrain, &w.coll);
         // Пока игрок крутит или тащит камеру, курсор спрятан и не упирается в край экрана
         if (cam.grab != mouse_grab && !a.frames) platform_mouse_grab(mouse_grab = cam.grab);

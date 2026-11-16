@@ -103,6 +103,7 @@ void vk_lcache_fill(FrameGpu &g, const RenderFrame &f) {
     g.lc_cap_new = LC_Q_NEW[q];
     g.lc_cap_ref = LC_Q_REF[q];
     g.lc_snap = gi.snapped || s.clear ? 1 : 0;
+    g.lc_ease = g_vk.shadow.sun_fast ? 1 : 0;  // ускоренное время: как зонды (vk_gi.cpp, GI_EASE)
     g.lc_angle = LC_Q_TAN[q];
     g.lc_far = LC_FAR;
     g.lc_hyst = LC_HYST;

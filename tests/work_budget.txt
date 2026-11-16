@@ -8,3 +8,6 @@ tiles_ground_px 0.05 плитку
 gc_baked 0.001
 sdf_taps 25
 sdf_bricks 0
+lc_rays 0.4
+lc_taps 8
+lc_over 0

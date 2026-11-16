@@ -317,7 +317,8 @@ layout(buffer_reference, scalar) buffer FrameData {
     LcAccs lc_acc;
     LcJobs lc_jobs;
     uint lc_on, lc_frame, lc_rays_n, lc_period;  // ячейки есть; кадр таблицы (с 1); лучей на счёт; кадров между счётами
-    uint lc_cap_new, lc_cap_ref, lc_snap, lc_pad0;  // пределы работ кадра; 1 — снимок: все видимые полным кругом
+    uint lc_cap_new, lc_cap_ref, lc_snap, lc_ease;  // пределы работ кадра; 1 — снимок: все видимые полным кругом;
+                                                    // 1 — быстрое светило: показ каждый счёт (как у зондов)
     float lc_angle, lc_far, lc_hyst, lc_pad1;       // тангенс угла ячейки; дальность, м; доля старого в конце круга
     vec4 t_hole[4];           // проёмы земли (docs/terrain.md): x0, z0, x1, z1 от камеры, м
     uint t_hole_n, t_hole_pad0, t_hole_pad1, t_hole_pad2;
