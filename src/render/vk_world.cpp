@@ -523,10 +523,12 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     }
     // 5. Сглаживание (docs/aa.md): HDR → история этого кадра
     vk_aa_pass(&fs.frame.address);
+    vk_glare_pass(&fs.frame.address);
     // 6. Стиль, отрезки, точки
     rg_pass("стиль", "стиль", record_style, nullptr);
     rg_use(g_vk.rg_swap, RG_COLOR, RG_DISCARD);
     vk_aa_style_reads();
+    vk_glare_style_reads();
     rg_use(g_vk.rg_depth, RG_DEPTH);
     vk_sky_reads(RG_FS_READ);
     return true;

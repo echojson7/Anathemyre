@@ -449,6 +449,7 @@ void vk_sdf_eye_pass() {
     rg_use(g_vk.sdf.rg_field, RG_IMG_CS_SAMPLE);
     rg_use(g_vk.sky.rg_out, RG_CS_WRITE);
     vk_gi_reads();
+    vk_clouds_reads(RG_CS_READ);  // тень облаков над камерой
 }
 
 void vk_sdf_reads() {
