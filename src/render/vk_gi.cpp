@@ -206,11 +206,15 @@ void vk_gi_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
         for (u32 a = 0; a < 3; ++a) s.snap_sun[a] = sun[a];
     } else {
         // Очередь: GI_Q_PROBES мест по кругу (новые пропускаются — они ниже, без повтора в кадре), потом новые
+        // Быстрое светило (ускоренное время, vk_shadow_fill): показанное идёт к среднему круга каждый счёт —
+        // четыре малых шага за круг вместо одного большого в его конце
+        bool ease = g_vk.shadow.sun_fast;
         auto job = [&](u32 i, bool fresh) {
             if (fresh) s.turn[i] = s.age[i] = 0;
             u32 k = s.turn[i];
-            bool show = k == GI_K - 1 || s.age[i] < GI_K;
-            jobs[n++] = i | (fresh ? GI_FRESH : 0) | k << 17 | (show ? GI_SHOW : 0);
+            bool young = s.age[i] < GI_K;
+            bool show = k == GI_K - 1 || young || ease;
+            jobs[n++] = i | (fresh ? GI_FRESH : 0) | k << 17 | (show ? GI_SHOW : 0) | (ease && !young ? GI_EASE : 0);
             s.turn[i] = (u8)((k + 1) % GI_K);
             if (s.age[i] < GI_K) ++s.age[i];
         };

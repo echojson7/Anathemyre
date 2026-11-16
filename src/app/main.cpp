@@ -34,12 +34,14 @@ static void usage() {
     log_info("           [--sdfsky] [--sdffield] [--nosdf]                            видимость неба, поле расстояний, свет без поля (docs/sdf.md)");
     log_info("           [--gionly] [--nogi]                                          только непрямой свет, свет без зондов (docs/gi.md)");
     log_info("           [--tonemap agx|aces] [--light low|medium|high|ultra]         тонмаппинг, качество света (docs/light.md)");
+    log_info("           [--nolocal]                                                  без местной экспозиции (было/стало, docs/light.md)");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z] [--pivot м]   снимок (градусы, метры; опора над землёй)");
     log_info("           [--work файл.txt]                                            счётчики работы освещения в файл (с --frames)");
     log_info("           [--nohud] [--open menu|keys|debug|frame|world]               без интерфейса; открыть меню или панель");
     log_info("           [--stand off|elbow|knee|mixamo|morphN|both|move|nocaps|clip=…|blend=…|w=…|speed=…|t=…,…]  стенд людей (docs/anim.md)");
     log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
+    log_info("           [--clock 1|20|120|0]                                         скорость суток с начала, как T (видео ускоренного времени)");
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
     log_info("           --look sun|moon град                                          взгляд по азимуту светила + поворот (с --cam: кадры неба)");
     log_info("           --frames N --video префикс                                   каждый кадр → префикс_0000.bmp… (стенд: 1/30 с на кадр)");
@@ -151,6 +153,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--nosdf")) a.sdf_view = RENDER_SDF_OFF;
         else if (!strcmp(s, "--gionly")) a.gi_view = RENDER_GI_ONLY;
         else if (!strcmp(s, "--nogi")) a.gi_view = RENDER_GI_OFF;
+        else if (!strcmp(s, "--nolocal")) a.local_off = true;
         else if (!strcmp(s, "--tonemap")) {
             a.tonemap = next && !strcmp(next, "agx") ? (i32)RENDER_TONEMAP_AGX : next && !strcmp(next, "aces") ? (i32)RENDER_TONEMAP_ACES : -1;
             ok = a.tonemap >= 0;
@@ -174,6 +177,15 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--hour")) {
             ok = next && parse_f32(Str{next, (u32)strlen(next)}, a.hour) && a.hour >= 0 && a.hour < 24;
             a.hour_set = true;
+            i++;
+        }
+        else if (!strcmp(s, "--clock")) {
+            a.clock = -1;
+            // Номера — как CLOCK_SPEEDS в debug/debug.h: 1, 20, 120, стоп
+            static const char *const CLOCKS[] = {"1", "20", "120", "0"};
+            for (u32 k = 0; next && k < ANA_COUNTOF(CLOCKS); ++k)
+                if (!strcmp(next, CLOCKS[k])) a.clock = (i32)k;
+            ok = a.clock >= 0;
             i++;
         }
         else if (!strcmp(s, "--look")) {

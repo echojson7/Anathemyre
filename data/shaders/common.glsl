@@ -34,6 +34,8 @@ layout(buffer_reference, scalar) buffer Froxels { uint v[]; };  // списки 
 struct GroundVert { vec3 rel; float wdepth; vec3 normal; uint pad; };  // вершина земли кадра (ground_bake.comp)
 layout(buffer_reference, scalar) buffer GroundVerts { GroundVert v[]; };
 layout(buffer_reference, scalar) buffer Vec4s { vec4 v[]; };  // таблицы неба (пишут sky_*.comp)
+layout(buffer_reference, scalar) buffer CloudWords { uint v[]; };
+layout(buffer_reference, scalar) buffer GlareTexels { uvec2 v[]; };  // блеск (glare.glsl): rgb половинками  // облака (clouds.glsl): карта купола, шум, карта тени
 // Счётчики GPU кадра (docs/graph.md «Переполнения»): сколько не влезло; номера — как STAT_* в vk_state.h
 layout(buffer_reference, scalar) buffer Stats { uint v[]; };
 layout(buffer_reference, scalar) buffer HMap { uint v[]; };  // карта горизонта (horizon.glsl), пишет horizon.comp
@@ -198,7 +200,12 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec4 a_sun_halo;   // rgb — толщина узкого лепестка пыли к солнцу (ореол), w — видимый радиус диска солнца, рад
     vec4 a_moon_halo;  // то же к луне
     vec4 a_night;      // x — g узкого лепестка, y — время кадра, с, z — яркость Млечного пути, w — мерцание звёзд
-    vec4 a_night2;     // x — степень привыкания глаза ниже света полной луны, y — во сколько раз свечение ночного неба светит на землю сильнее видимого
+    vec4 a_night2;     // x — степень привыкания глаза ниже света полной луны, y — во сколько раз свечение ночного неба светит на землю сильнее видимого, z — блеск (docs/glare.md)
+    // Облака (docs/clouds.md): параметры из data/sky.txt
+    vec4 cl_shape;     // x, y — низ и верх кучевых, м над уровнем моря; z — доля неба под ними; w — плотность, 1/м
+    vec4 cl_wind;      // xy — сдвиг облаков ветром к этому кадру (x, z), м; z — время формы, с; w — яркость облаков
+    vec4 cl_cirrus;    // x — высота перистых, м; y — доля неба под ними; zw — направление ветра (x, z)
+    vec4 cl_light;     // xyz — к светилу облаков, w — его освещённость над атмосферой
     Decals decals;     // декали (docs/ostov.md), decal_count подряд
     uint decal_count, decal_pad;
     // Кадр мира (этап 5): сетки, кластеры, постоянные экземпляры на GPU, видимые кластеры, вызовы, индексы
@@ -246,6 +253,8 @@ layout(buffer_reference, scalar) buffer FrameData {
     // тонмаппинг (TONEMAP_*), качество света (LIGHT_Q_*)
     float dt;
     uint eye_snap, tonemap, light_q;
+    // Местная экспозиция (docs/light.md): колено, стопы; наклон в свет; наклон в тень; w — включена (F3, --nolocal)
+    vec4 local_tone;
     // Тени солнца страницами (docs/shadow.md, shadow.glsl): окна страниц уровней, страницы, тексели, заявки,
     // вызовы и список отрисовки страниц, сферы сброса кадра
     SmTable sm_table;
@@ -292,6 +301,23 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec4 prev_delta;
     SkinPrev skin_prev;       // прошлое положение вершин людей (на вершину общего буфера, половинками)
     MeshPrevs mesh_prev;      // прошлый экземпляр динамической сетки (по номеру сетки), годен при frame == aa_frame
+    // Облака (docs/clouds.md, clouds.glsl, vk_clouds.cpp): карта купола — три слота по cl_size² текселей в два
+    // слова; шум CLOUD_N³; карта тени CLOUD_SH_N²; постоянные слота (4 vec4 на слот)
+    CloudWords cl_map;
+    CloudWords cl_noise;
+    CloudWords cl_shadow;
+    Vec4s cl_info;
+    uint cl_on, cl_size, cl_slot_a, cl_slot_b;  // в кадре показаны слоты a и b, перетекание cl_mix: 0 — a, 1 — b
+    float cl_mix, cl_mean_t;                    // cl_mean_t — средняя тень облаков (за окном карты тени)
+    uint cl_steps, cl_pad;                      // шагов луча сборки (по ступени света)
+    vec4 cl_off_a, cl_off_b;  // перенос слота к этому кадру: сдвиг камеры минус снос ветром с его сборки, м
+    vec4 cl_build;            // сборка: xz — камера в осях облаков (мир − снос ветром), y — её высота над морем, w — время формы
+    vec4 cl_build_light;      // сборка: светило облаков (как cl_light)
+    vec4 cl_cam;              // этот кадр: то же, что cl_build (тень на землю)
+    // Блеск (docs/glare.md, glare.glsl, vk_glare.cpp): пирамида кадра, уровни вниз и вверх в одном буфере
+    GlareTexels gr_buf;
+    uint gr_on, gr_n, gr_pad0, gr_pad1;  // gr_n — уровней
+    ivec4 gr_lv[8];           // уровень: ширина, высота, начало «вниз», начало «вверх» (в текселях)
 };
 
 layout(push_constant, scalar) uniform Push {

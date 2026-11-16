@@ -17,6 +17,9 @@ constexpr u32 SM_REQ_HEAD = 16 + 16 + 32 * 4 + 32 * 32 * 4;  // SmReq до за�
 constexpr f32 SM_FAR = 3000.0f;   // дальше тени сеток нет (карта горизонта остаётся), м
 constexpr f32 SM_STEP = 512.0f;   // шаг светила: доля октаэдра (~0.11–0.22°)
 constexpr f32 SM_BLEND = 1.0f;    // перетекание со старого шага на новый, с
+// Светило быстрее стольких рад/с (0.5°/с; обычные сутки — 0.125°/с) — ускоренное время: шаг сразу, без перетекания
+constexpr f32 SM_FAST = 0.0087f;
+constexpr f32 SM_FAST_WINDOW = 0.1f;  // окно замера скорости, с
 constexpr u32 SM_BUILD_PAGES = 192;  // страниц нового набора за кадр, пока он строится в фоне
 
 bool vk_shadow_init() {
@@ -267,6 +270,21 @@ void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool image
     s.on = images && f.style.cell_min > 0 && sm_ensure(g_vk.extent.width, g_vk.extent.height);
     s.inval_n = 0;
     fs.sm_frame = 0;
+    // Скорость светила: угол за окно SM_FAST_WINDOW (за один кадр не меряем: кадр бывает короче шага часов).
+    // Нужна и без теней — зондам (vk_gi_fill идёт следом)
+    const f32 *sl = f.light.sun_dir;
+    if (s.sun_t < 0) {
+        for (u32 a = 0; a < 3; ++a) s.sun_ref[a] = sl[a];
+        s.sun_t = 0;
+    } else {
+        s.sun_t += f.style.dt > 0 ? f.style.dt : 0;
+        if (s.sun_t >= SM_FAST_WINDOW) {
+            f32 c = sl[0] * s.sun_ref[0] + sl[1] * s.sun_ref[1] + sl[2] * s.sun_ref[2];
+            s.sun_fast = __builtin_acosf(c < -1 ? -1 : (c > 1 ? 1 : c)) > SM_FAST * s.sun_t;
+            for (u32 a = 0; a < 3; ++a) s.sun_ref[a] = sl[a];
+            s.sun_t = 0;
+        }
+    }
     if (!s.on) return;
     f64 cam[3] = {(f64)f.view.cx * 256.0 + f.view.x, f.view.y, (f64)f.view.cz * 256.0 + f.view.z};
     // Размер текселя, сетки: сменились — оба набора с нуля
@@ -282,14 +300,16 @@ void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool image
         s.reset = true;
     }
     if (++s.frame == 0) s.frame = 1;
-    // Шаг светила. Сброс или «сразу» (первые кадры, снимок, --timelapse) — один набор, без перетекания. Иначе
-    // новый шаг строит новый набор, пока старый показан; шаг, пришедший во время стройки или перетекания, ждёт
-    // их конца (тень отстаёт от светила не больше чем на SM_BLEND и несколько кадров)
+    // Шаг светила. Сброс, «сразу» (первые кадры, снимок, --timelapse) или быстрое светило (ускоренное время) —
+    // один набор, без перетекания: при быстром светиле шаг с ожиданием стройки и перетекания отставал на
+    // градусы, и пятно солнца шло скачками раз в секунду. Иначе новый шаг строит новый набор, пока старый
+    // показан; шаг, пришедший во время стройки или перетекания, ждёт их конца (тень отстаёт от светила не
+    // больше чем на SM_BLEND и несколько кадров)
     i32 key[2];
     sm_sun_key(f.light.sun_dir, key);
     ShadowSet &c = s.set[s.cur];
     bool step = key[0] != c.key[0] || key[1] != c.key[1];
-    if (s.reset || (step && f.style.eye_snap)) {
+    if (s.reset || (step && (f.style.eye_snap || s.sun_fast))) {
         s.reset = true;
         s.old_on = s.building = s.clear_cur = false;
         s.mix = 1;
