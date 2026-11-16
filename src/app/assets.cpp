@@ -644,6 +644,20 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
         log_error("нет папки %s (собери: make)", dir);
         return false;
     }
+    // Тело людей — первым: люди и стенд берут bodies[0], а порядок файлов в папке у каждой машины свой
+    // (с «Вежей» тел стало два, и там, где её сетка читалась первой, люди пропадали)
+    const u64 people_skel = hash_str("game_engine");
+    auto human = [&](const ViewBody &b) {
+        for (u32 k = 0; k < b.skin_count; ++k)
+            if (b.skel_name[k] == people_skel) return true;
+        return false;
+    };
+    for (u32 i = 1; i < view.body_count && !human(view.bodies[0]); ++i) {
+        if (!human(view.bodies[i])) continue;
+        ViewBody t = view.bodies[0];
+        view.bodies[0] = view.bodies[i];
+        view.bodies[i] = t;
+    }
     const char *rocks[SCATTER_MESHES] = {"rock_a", "rock_b", "rock_c"};
     for (u32 k = 0; k < SCATTER_MESHES; ++k) {
         u64 hname = hash_str(rocks[k]);

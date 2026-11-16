@@ -51,7 +51,7 @@ struct ViewAssets {
     const MaterialTable *materials = nullptr;
     u32 ground_layers[RENDER_GROUND_LAYERS] = {};  // материалы слоёв земли по GroundKind
     u32 rocks[SCATTER_MESHES] = {};                 // сетки камней рассыпки
-    ViewBody bodies[VIEW_MAX_BODIES];               // люди: тела с весами (стенд, потом таблица людей)
+    ViewBody bodies[VIEW_MAX_BODIES];               // тела с весами; [0] — тело людей (скелет game_engine), дальше машины
     u32 body_count = 0;
     ViewClip clips[VIEW_MAX_CLIPS];                 // клипы людей: имя × скелет
     u32 clip_count = 0;

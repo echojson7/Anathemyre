@@ -12,8 +12,8 @@ par() {
     shift 2
     (
         t0=$SECONDS
-        timeout -k 20 "$limit" "$@" > "$name.log" 2>&1
-        rc=$?
+        rc=0
+        timeout -k 20 "$limit" "$@" > "$name.log" 2>&1 || rc=$?   # под bash -e иначе код и время не записались бы
         echo "$rc $((SECONDS - t0))" > "$name.rc"
         exit "$rc"
     ) &
@@ -25,7 +25,7 @@ par_wait() {
     local keep=${1:-5} fail=0 i n rc sec
     for i in "${!_par_pids[@]}"; do
         n=${_par_names[$i]}
-        wait "${_par_pids[$i]}"
+        wait "${_par_pids[$i]}" || true   # под bash -e упавшая задача иначе роняет оболочку раньше, чем печатается её журнал
         read -r rc sec < "$n.rc"
         if [ "$rc" = 0 ]; then
             echo "=== $n: ок, $sec с"
