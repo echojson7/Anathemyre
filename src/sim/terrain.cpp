@@ -544,7 +544,12 @@ void terrain_generate(Terrain &t, const TerrainDesc &d, Arena &world, Arena &scr
     ep.seed = sd(40);
     ep.radius = 2;
     ep.lifetime = 40;
-    terrain_erode(H, nx, nz, ep, dep, flw, scratch);
+    const ErodeCache *ec = d.erode_cache;
+    u64 ekey = ec ? terrain_erode_key(H, nx, nz, ep) : 0;
+    if (!ekey || !ec->load(ec->user, ekey, H, dep, flw, nodes)) {
+        terrain_erode(H, nx, nz, ep, dep, flw, scratch);
+        if (ekey) ec->save(ec->user, ekey, H, dep, flw, nodes);
+    }
 
     // 4. После эрозии: середина дна низины снова ровная и не ниже уровня воды; протоки прорезаны
     for (u32 j = 0; j < nz; ++j) {

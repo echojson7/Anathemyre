@@ -128,6 +128,7 @@ struct WorldJob {
     AppMemory *m;
     u64 seed;
     u64 *desc;
+    const char *erode_cache;
     bool ok;
     u64 ns;
 };
@@ -136,7 +137,7 @@ static void world_job(void *user) {
     WorldJob &j = *(WorldJob *)user;
     fpu_enter_sim();
     u64 t0 = platform_time_ns();
-    j.ok = app_world_create(*j.w, *j.m, j.seed, j.desc);
+    j.ok = app_world_create(*j.w, *j.m, j.seed, j.desc, j.erode_cache);
     j.ns = platform_time_ns() - t0;
 }
 
@@ -160,7 +161,12 @@ int run_window(const Args &a, AppMemory &m) {
     scatter_init(*scatter, m.world);
     PeopleView *pv = arena_push<PeopleView>(m.world, 1);  // ~1.3 МБ: не на стек
     people_view_init(*pv);
-    WorldJob wj{&w, &m, a.seed, &desc, false, 0};
+    // Кеш эрозии рядом с игрой (docs/startup.md); снимки и запись повтора (--frames, --record) считают землю
+    // заново, как --sim и CI
+    char erode_path[1024];
+    snprintf(erode_path, sizeof erode_path, "%serosion.cache", platform_exe_dir());
+    const bool erode_cached = !a.frames && !a.record;
+    WorldJob wj{&w, &m, a.seed, &desc, erode_cached ? erode_path : nullptr, false, 0};
     PlatformThread *world_thread = platform_thread_start("world", world_job, &wj);
     if (!world_thread) world_job(&wj);  // поток не создан — по порядку, как раньше
     u64 t_phase = platform_time_ns();

@@ -49,6 +49,8 @@ struct TerrainDesc {
     u32 pad_count = 0;
     TerrainHole hole[TERRAIN_MAX_HOLES] = {};
     u32 hole_count = 0;
+    // Кеш эрозии (terrain_erode.h): ставит app у окна, nullptr — всегда считать (--sim, повтор, CI)
+    const struct ErodeCache *erode_cache = nullptr;
 };
 // Карта дюн: узлы 2 м на всю локацию (сторона loc_m / 2 + 1), единицы 1/640 м
 constexpr i32 TERRAIN_FINE_SHIFT = 1;

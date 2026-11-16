@@ -3,6 +3,7 @@
 // конусы выноса — то, чего нет у шума. Float без FMA, только + − × / и sqrt (docs/invariants.md): капли идут
 // строго по порядку, поэтому сетка одна и та же на любой цели
 #include "terrain_erode.h"
+#include "../core/hash.h"
 #include "../core/mathf.h"
 
 static inline u32 eh(u32 v) {
@@ -21,6 +22,18 @@ static inline void sample(const f32 *h, u32 n, f32 x, f32 z, f32 *hgt, f32 *gx, 
     *gx = (h10 - h00) * (1.0f - v) + (h11 - h01) * v;
     *gz = (h01 - h00) * (1.0f - u) + (h11 - h10) * u;
     *hgt = (h00 * (1.0f - u) + h10 * u) * (1.0f - v) + (h01 * (1.0f - u) + h11 * u) * v;
+}
+
+u64 terrain_erode_key(const f32 *h, u32 nx, u32 nz, const ErodeParams &p) {
+#ifdef ANA_ERODE_SRC
+    static_assert(sizeof(ErodeParams) == 13 * 4, "ErodeParams без дыр: хешируется побайтно");
+    u64 k = hash_combine(ANA_ERODE_SRC, ((u64)nx << 32) | nz);
+    k = hash_combine(k, hash_bytes(&p, sizeof p));
+    return hash_combine(k, hash_bytes(h, (usize)nx * nz * sizeof(f32))) | 1;  // не 0
+#else
+    (void)h, (void)nx, (void)nz, (void)p;
+    return 0;
+#endif
 }
 
 void terrain_erode(f32 *h, u32 nx, u32 nz, const ErodeParams &prm, f32 *deposit, f32 *flow, Arena &scratch) {

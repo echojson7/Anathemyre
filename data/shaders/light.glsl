@@ -13,6 +13,10 @@
 #include "lamps.glsl"
 #include "clouds.glsl"
 
+// 1 — освещается поверхность самой земли (ставит light_cells.comp до light_surface): под грунтом она не бывает,
+// какой бы ни была грубая высота земли у зондов (gi_buried)
+float g_ground = 0.0;
+
 // Видимость главного светила: 1 — свет, 0 — тень, всегда мягко (docs/light.md, правило 5). Земля — карта
 // горизонта (docs/horizon.md), сетки — карта теней страницами (docs/shadow.md, 6б-1), облака — их карта тени
 // (docs/clouds.md)
@@ -117,7 +121,8 @@ vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, v
     lit = 0.0;
     if (g.cov < 1.0) {
         // Под грунтом неба нет, что бы ни видели конусы (gi_buried)
-        float vis = sdf_sky(s.pos, n).x * (1.0 - gi_buried(s.pos + pc.frame.sdf_cam.xyz));
+        float vis = sdf_sky(s.pos, n).x;
+        if (g_ground == 0.0) vis *= 1.0 - gi_buried(s.pos + pc.frame.sdf_cam.xyz);
         lit = vis * (1.0 - g.cov);
         float ao = s.ao * vis;
         float so = spec_occlusion(nv, ao, a);
@@ -138,7 +143,8 @@ vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, v
 vec3 light_indirect_view(Surface s) {
     GiSample g = gi_sample(s.pos, s.normal, s.normal, false);
     vec3 irr = atmo_ambient(s.normal);
-    vec3 fb = irr * (s.ao * (g.cov < 1.0 ? sdf_sky(s.pos, s.normal).x * (1.0 - gi_buried(s.pos + pc.frame.sdf_cam.xyz)) : 1.0));
+    float bury = g_ground == 0.0 ? gi_buried(s.pos + pc.frame.sdf_cam.xyz) : 0.0;
+    vec3 fb = irr * (s.ao * (g.cov < 1.0 ? sdf_sky(s.pos, s.normal).x * (1.0 - bury) : 1.0));
     vec3 gi = g.cov > 0.0 ? g.irr * (s.ao * sdf_ao(s.pos, s.normal)) : vec3(0.0);
     return 0.5 * mix(fb, gi, g.cov);
 }
