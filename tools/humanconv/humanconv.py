@@ -26,8 +26,10 @@ HEIGHT = 1.80  # все тела этого роста, в игре — масш
 # LOD 1..4 — треугольников (LOD 0 — вся сетка MakeHuman). Каждый — упрощение предыдущего (meshpack)
 LOD_TRIS = (9000, 2400, 700, 300)
 SKELETONS = ("game_engine", "mixamo")  # оба пишутся, выбор — этап 8 (docs/people.md)
-MATERIALS = ("human_skin", "human_linen", "human_band", "human_eye", "human_iris")
-SKIN, LINEN, BAND, EYE, IRIS = range(5)
+# human_bra — лиф: у женщин холст, у мужчин кожа (вид skin, бит женщины в зерне экземпляра, src/view/appear.h)
+MATERIALS = ("human_skin", "human_linen", "human_band", "human_eye", "human_iris", "human_bra")
+SKIN, LINEN, BAND, EYE, IRIS, BRA = range(6)
+CUP = "breast/female-young-averagemuscle-averageweight-maxcup-averagefirmness"  # область груди — по этой цели
 
 # Тело стенда: мужчина средних лет, сложение чуть крепче среднего (макро-морфы MakeHuman)
 PEOPLE = [
@@ -359,19 +361,83 @@ def name_bytes(s):
     return struct.pack("<B", len(b)) + b
 
 
-def face_materials(v, quads, J):
-    # Материал грани по её середине: бельё (трусы до середины бедра) с тёмной резинкой поверх кожи.
-    # Высоты — от суставов скелета game_engine, поэтому морфы сложения бельё не сдвигают
-    c = v[quads].mean(1)
+def fields(v, J, Z):
+    # Поля областей белья на вершинах MakeHuman (> 0 — внутри, ~ метры до края): трусы, резинка, лиф. Высоты — от
+    # суставов скелета game_engine, поэтому морфы сложения бельё не сдвигают. Грани режутся по нулю поля (cut): край
+    # ровный, а не лесенкой по граням
+    y, ax = v[:, 1], np.abs(v[:, 0])
     hip = (J["thigh_l"][1] + J["thigh_r"][1]) * 0.5
     knee = (J["calf_l"][1] + J["calf_r"][1]) * 0.5
     top = J["pelvis"][1] + 0.075
     leg = hip - (hip - knee) * 0.30
-    trunk = np.abs(c[:, 0]) < np.abs(J["thigh_l"][0]) + 0.13  # кисти в A-позе висят сбоку, не задевать
-    mat = np.full(len(quads), SKIN)
-    mat[(c[:, 1] < top) & (c[:, 1] > leg) & trunk] = LINEN
-    mat[(c[:, 1] < top) & (c[:, 1] > top - 0.025) & trunk] = BAND
-    return mat
+    trunk = ax < np.abs(J["thigh_l"][0]) + 0.13  # кисти в A-позе висят сбоку, не задевать
+    # Каждое поле — одна граница (почти линейное): тонкая полоса из двух границ одним полем min() потерялась бы между
+    # вершинами ребра. Внутри области — все её поля > 0
+    out = dict(top=top - y, leg=y - leg, band=y - (top - 0.025))
+    # Лиф: чашки — где цель груди MakeHuman двигает вершины заметно (по топологии, форма тела не важна), под ними —
+    # пояс вокруг груди 3.5 см; между чашками край спускается к поясу
+    i, d = Z["targets/" + CUP + ".index"], np.linalg.norm(Z["targets/" + CUP + ".vector"].astype(np.float64), axis=1)
+    cup = np.full(len(v), -0.12)
+    cup[i] = d / d.max() - 0.12
+    out["cup"] = cup * 0.06
+    low = y[out["cup"] > 0].min()
+    out["ring_lo"] = y - (low - 0.012)
+    out["ring_hi"] = (low + 0.035) - y
+    masks = dict(trunk=trunk, chest=(ax < np.abs(J["upperarm_l"][0]) - 0.01) & (y < J["spine_03"][1] + 0.2))
+    return out, masks
+
+
+def ext_eval(X, EI, EW):
+    # Значение на вершинах сетки: вершина — смесь до 8 вершин MakeHuman (EI — номера, EW — доли)
+    w = EW.reshape(EW.shape + (1,) * (X.ndim - 1))
+    return (X[EI] * w).sum(1)
+
+
+def cut(T, f, EI, EW):
+    # Треугольники T (вершины сетки) режутся по нулю поля f (на вершинах сетки): новые вершины — точки рёбер, общие
+    # для соседних треугольников. Возвращает T, поле, EI, EW с новыми вершинами в конце
+    f = np.where(np.abs(f) < 1e-7, 1e-7, f)
+    ins = f > 0
+    k = ins[T].sum(1)
+    made, nI, nW, nf, out = {}, [], [], [], []
+    nv = len(f)
+
+    def pt(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in made:
+            p, q = key
+            t = float(grid(f[p] / (f[p] - f[q]), 20))
+            idx = np.concatenate([EI[p], EI[q]])
+            w = np.concatenate([EW[p] * (1 - t), EW[q] * t])
+            acc = {}
+            for x, y in zip(idx.tolist(), w.tolist()):
+                if y > 0:
+                    acc[x] = acc.get(x, 0.0) + y
+            top = sorted(acc.items(), key=lambda e: (-e[1], e[0]))[:EI.shape[1]]
+            ii = np.zeros(EI.shape[1], np.int64)
+            ww = np.zeros(EI.shape[1])
+            for j, (x, y) in enumerate(top):
+                ii[j], ww[j] = x, y
+            ww /= ww.sum()
+            made[key] = nv + len(nI)
+            nI.append(ii)
+            nW.append(ww)
+            nf.append(0.0)
+        return made[key]
+
+    for tri_, kk in zip(T.tolist(), k.tolist()):
+        if kk in (0, 3):
+            out.append(tri_)
+            continue
+        # Одинокая вершина по свою сторону: у неё треугольник, у другой стороны четырёхугольник (два треугольника)
+        r = [ins[x] for x in tri_].index(kk == 1)
+        a, b, c = tri_[r], tri_[(r + 1) % 3], tri_[(r + 2) % 3]
+        p1, p2 = pt(a, b), pt(a, c)
+        out += [[a, p1, p2], [p1, b, c], [p1, c, p2]]
+    if nI:
+        EI, EW = np.concatenate([EI, np.array(nI)]), np.concatenate([EW, np.array(nW)])
+        f = np.concatenate([f, np.array(nf)])
+    return np.array(out, np.int64), f, EI, EW
 
 
 def build(p, base, groups, Z, rigs, weights, data_dir, meshpack):
@@ -394,7 +460,6 @@ def build(p, base, groups, Z, rigs, weights, data_dir, meshpack):
     # Треугольники; зеркало по x меняет обход — вершины граней в обратном порядке (лицом наружу против часовой)
     quads = np.concatenate([body_q, eye_q])[:, ::-1]
     nbody = len(body_q)
-    qmat = face_materials(v, quads, J)
     n = normals(v, tri(quads[:nbody]))
     # Глаза: нормали шаром от середины глазного яблока, радужка — грани, смотрящие вперёд
     for gname in ("helper-l-eye", "helper-r-eye"):
@@ -402,18 +467,42 @@ def build(p, base, groups, Z, rigs, weights, data_dir, meshpack):
         d = v[ix] - (v[ix].min(0) + v[ix].max(0)) / 2
         n[ix] = d / np.linalg.norm(d, axis=1, keepdims=True)
     eye_c = n[quads[nbody:]].mean(1)
-    qmat[nbody:] = np.where(eye_c[:, 2] > 0.85, IRIS, EYE)
+    eye_mat = np.where(eye_c[:, 2] > 0.85, IRIS, EYE)
 
-    # Вершины делятся по материалу граней: край белья резкий. Вершина сетки — (вершина MakeHuman, материал)
-    T = tri(quads)
-    tm = np.concatenate([qmat, qmat])
-    key = T.astype(np.int64) * len(MATERIALS) + tm[:, None]
+    # Тело режется по полям белья; вершина сетки — смесь вершин MakeHuman (на ребре — двух, на пересечении — больше)
+    EI = np.zeros((len(base), 8), np.int64)
+    EI[:, 0] = np.arange(len(base))
+    EW = np.zeros((len(base), 8))
+    EW[:, 0] = 1.0
+    F, M = fields(v, J, Z)
+    Tb = tri(quads[:nbody]).astype(np.int64)
+    for name in sorted(F):
+        Tb, _, EI, EW = cut(Tb, ext_eval(F[name], EI, EW), EI, EW)
+    fe = {k: ext_eval(f, EI, EW)[Tb].mean(1) > 0 for k, f in F.items()}
+    me = {k: ext_eval(m.astype(np.float64), EI, EW)[Tb].mean(1) > 0.5 for k, m in M.items()}
+    bmat = np.full(len(Tb), SKIN)
+    shorts = me["trunk"] & fe["top"] & fe["leg"]
+    bmat[shorts] = LINEN
+    bmat[shorts & fe["band"]] = BAND
+    bmat[(bmat == SKIN) & me["chest"] & (fe["cup"] | (fe["ring_lo"] & fe["ring_hi"]))] = BRA
+    print("humanconv: бельё — вершин на срезах %d" % (len(EI) - len(base)))
+    Te = tri(quads[nbody:]).astype(np.int64)
+    T = np.concatenate([Tb, Te])
+    tm = np.concatenate([bmat, np.concatenate([eye_mat, eye_mat])])
+
+    # Вершины делятся по материалу граней: край белья резкий. Вершина сетки — (вершина среза, материал)
+    key = T * len(MATERIALS) + tm[:, None]
     uk, inv = np.unique(key.ravel(), return_inverse=True)
     src, vmat = uk // len(MATERIALS), uk % len(MATERIALS)
     T = inv.reshape(-1, 3)
+    SI, SW = EI[src], EW[src]
+    dom = SI[np.arange(len(src)), np.argmax(SW, 1)]  # веса костей — от главной вершины смеси
+    at = lambda X: ext_eval(X, SI, SW)
+    unit = lambda X: X / np.linalg.norm(X, axis=1, keepdims=True)
+    n_s = unit(at(n))
 
-    pos = grid(v[src], 17)
-    nx, nz = oct_encode(n[src])
+    pos = grid(at(v), 17)
+    nx, nz = oct_encode(n_s)
     vert = np.zeros(len(src), dtype=[("p", "<f4", 3), ("nx", "<u2"), ("nz", "<u2"), ("m0", "u1"), ("m1", "u1"),
                                        ("blend", "u1"), ("ao", "u1")])
     vert["p"], vert["nx"], vert["nz"] = pos, nx, nz
@@ -431,7 +520,7 @@ def build(p, base, groups, Z, rigs, weights, data_dir, meshpack):
         bones, wq = skin_weights(weights[s], order, len(base))
         body = name_bytes(s) + struct.pack("<I", len(order)) + b"".join(name_bytes(nm) for nm in order)
         rec = np.zeros(len(src), dtype=[("b", "u1", 4), ("w", "u1", 4)])
-        rec["b"], rec["w"] = bones[src], wq[src]
+        rec["b"], rec["w"] = bones[dom], wq[dom]
         out += chunk(b"SKIN", body + rec.tobytes())
     # Морфы: сумма тел, каждое приведено к росту HEIGHT; сдвиг положения int16 × шаг морфа, нормали int8 / 127.
     # Суставы тех же тел — сдвиги голов костей и длин (кусок MRPJ): вид строит по ним скелет человека
@@ -451,13 +540,13 @@ def build(p, base, groups, Z, rigs, weights, data_dir, meshpack):
                 h = np.array([place(joint(vo, groups, rigs[sn][b["name"]]["head"])[None, :], f)[0] for b in skels[sn]])
                 t = np.array([place(joint(vo, groups, rigs[sn][b["name"]]["tail"])[None, :], f)[0] for b in skels[sn]])
                 jk[sn] = np.concatenate([h, np.linalg.norm(t - h, axis=1)[:, None]], 1)
-            shapes[key] = (grid(vk[src], 17), nk[src], jk)
+            shapes[key] = (grid(at(vk), 17), unit(at(nk)), jk)
         return shapes[key]
 
     head = struct.pack("<I", len(MORPHS))
     recs, jrec = [], {sn: [] for sn in SKELETONS}
     for name, terms in MORPHS:
-        dp, dn = np.zeros_like(pos), np.zeros((len(src), 3))
+        dp, dn = np.zeros_like(pos), np.zeros((len(src), 3))  # сумма тел морфа (доли в сумме ноль)
         dj = {sn: np.zeros((len(skels[sn]), 4)) for sn in SKELETONS}
         for coef, q in terms:
             pk, nk, jk = shape(q)

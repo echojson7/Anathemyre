@@ -175,6 +175,13 @@ material human_skin skin
     color2 0.17 0.10 0.065
     rough 0.6
 
+# Лиф: у женщины — холст белья (extra b c d), у мужчины — та же кожа
+material human_bra skin
+    color 0.62 0.45 0.35
+    color2 0.17 0.10 0.065
+    rough 0.6
+    extra 1 0.55 0.50 0.42
+
 # Бельё из небелёного холста и тёмная резинка
 material human_linen flat
     color 0.55 0.50 0.42

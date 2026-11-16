@@ -26,8 +26,11 @@ struct Appear {
     f32 morph[AM_COUNT]; // веса морфов
 };
 Appear appear_make(u32 seed);
-// Зерно экземпляра тела для материала кожи: младший байт — тон (вид skin, docs/materials.md)
-inline u32 appear_skin_seed(u32 seed, const Appear &a) { return (seed & ~0xFFu) | (u32)(a.skin * 255.0f + 0.5f); }
+// Зерно экземпляра тела для материала кожи (вид skin, docs/materials.md): младший байт — тон, бит 8 — женщина
+// (грани лифа у неё — холст, у мужчины — кожа)
+inline u32 appear_skin_seed(u32 seed, const Appear &a) {
+    return (seed & ~0x1FFu) | (u32)(a.skin * 255.0f + 0.5f) | (a.female ? 0x100u : 0u);
+}
 
 // Место морфов Appear в сетке тела (−1 — в сетке такого нет)
 struct AppearBind {
