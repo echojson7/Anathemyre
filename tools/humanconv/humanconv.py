@@ -36,14 +36,110 @@ PEOPLE = [
                "head/head-scale-depth-decr": 0.3, "head/head-back-scale-depth-decr": 0.5,
                "measure/measure-upperarm-length-incr": 0.6, "measure/measure-lowerarm-length-decr": 0.4}),
 ]
-# Морфы внешности: сдвиги вершин от тела выше, вид смешивает их весами экземпляра (скиннинг, docs/people.md)
+# Морфы внешности (docs/people.md, «Тело»): сдвиги вершин от тела выше, вид смешивает их весами человека
+# (скиннинг). Морф — сумма «доля × тело с такими-то параметрами»; каждое тело перед вычитанием приводится к
+# росту HEIGHT, поэтому морф роста не меняет (рост — масштаб экземпляра), а суставы сдвигает (кусок MRPJ)
+BASE = PEOPLE[0]
+
+
+def P(**kw):
+    # Параметры тела: BASE с заменами; mods — добавка к правкам BASE, replace_mods — вместо них
+    q = dict(BASE)
+    mods = dict(kw.pop("replace_mods")) if "replace_mods" in kw else dict(BASE.get("mods", {}))
+    for k, x in kw.pop("mods", {}).items():
+        mods[k] = mods.get(k, 0.0) + x
+    q.update(kw)
+    q["mods"] = mods
+    return q
+
+
+def one(**kw):
+    return ((1.0, P(**kw)), (-1.0, BASE))
+
+
+def pair(incr, decr):
+    # Морф в обе стороны: вес +1 — тело incr, −1 — тело decr
+    return ((0.5, P(mods=incr)), (-0.5, P(mods=decr)))
+
+
+def both(names, w=1.0):
+    # Правки MakeHuman парой incr / decr; имена с «l-» — на обе стороны
+    out = ({}, {})
+    for n in names:
+        for side in (("l-", "r-") if n.startswith("l-") else ("",)):
+            m = side + n[2:] if side else n
+            out[0][m + "-incr"], out[1][m + "-decr"] = w, w
+    return pair(*out)
+
+
+# Женщина (числа беты, docs/legacy.md): талия уже бёдер без «галифе», плечи уже мужских, колени и икры суше
+FEMALE = dict(gender=0.0, muscle=0.5, weight=0.55, cup=0.6, firm=0.7, replace_mods={
+    "head/head-scale-vert-decr": 0.3, "head/head-scale-horiz-decr": 0.35, "head/head-scale-depth-decr": 0.3,
+    "head/head-back-scale-depth-decr": 0.5, "bodyshapes/bodyshapes-elvs-fem-neat-hourglass": 0.5,
+    "hip/hip-scale-horiz-decr": 0.4, "measure/measure-hips-circ-decr": 0.15, "measure/measure-thigh-circ-decr": 0.15,
+    "armslegs/l-upperleg-fat-decr": 0.2, "armslegs/r-upperleg-fat-decr": 0.2, "measure/measure-knee-circ-decr": 0.4,
+    "measure/measure-calf-circ-decr": 0.3, "buttocks/buttocks-volume-decr": 1.0,
+    "measure/measure-shoulder-dist-decr": 0.6, "measure/measure-upperarm-length-incr": 0.5,
+    "measure/measure-lowerarm-length-incr": 0.2, "breast/breast-dist-decr": 0.15, "pelvis/bulge-decr": 1.0})
+
+
+def cross(**kw):
+    # Поправка к сумме двух морфов: «женщина и полная» — не «женщина» плюс «полный мужчина»
+    f = dict(FEMALE)
+    f.update(kw)
+    return ((1.0, P(**f)), (-1.0, P(**FEMALE)), (-1.0, P(**kw)), (1.0, BASE))
+
+
+def kin(name):
+    r = {"african": 0.0, "asian": 0.0, "caucasian": 0.0}
+    r[name] = 1.0
+    return one(race=r)
+
+
+_eyes = lambda d: {"eyes/%s-%s" % (s, k): w for s in "lr" for k, w in d.items()}
 MORPHS = (
-    ("full", dict(weight=1.0)),
-    ("thin", dict(weight=0.0)),
-    ("strong", dict(muscle=1.0)),
-    ("nose", dict(mods={"nose/nose-volume-incr": 0.5, "nose/nose-scale-horiz-incr": 0.5,
-                        "nose/nose-scale-vert-incr": 0.3, "nose/nose-scale-depth-incr": 0.4})),
-    ("jaw", dict(mods={"chin/chin-width-incr": 0.7, "chin/chin-bones-incr": 0.6, "head/head-square": 0.6})),
+    # Сложение
+    ("female", ((1.0, P(**FEMALE)), (-1.0, BASE))),
+    ("full", one(weight=1.0)),
+    ("thin", one(weight=0.0)),
+    ("strong", one(muscle=1.0)),
+    ("old", one(age=1.0)),
+    ("belly", one(mods={"stomach/stomach-pregnant-incr": 0.55, "stomach/stomach-tone-decr": 0.6,
+                        "measure/measure-waist-circ-incr": 0.5})),
+    ("female_full", cross(weight=1.0)),
+    ("female_thin", cross(weight=0.0)),
+    ("female_strong", cross(muscle=1.0)),
+    # Пропорции: в обе стороны, суставы идут за ними
+    ("shoulders", both(["measure/measure-shoulder-dist"])),
+    ("hips", both(["hip/hip-scale-horiz"])),
+    ("legs", both(["measure/measure-upperleg-height", "measure/measure-lowerleg-height"])),
+    ("torso", both(["torso/torso-scale-vert"])),
+    ("arms", both(["measure/measure-upperarm-length", "measure/measure-lowerarm-length"])),
+    ("neck", both(["measure/measure-neck-height"])),
+    ("head", both(["head/head-scale-vert", "head/head-scale-horiz", "head/head-scale-depth"], 0.6)),
+    # Род: черты лица и черепа трёх наборов MakeHuman (третий — оба веса по −0.5)
+    ("kin_a", kin("african")),
+    ("kin_b", kin("asian")),
+    # Лицо — местные правки
+    ("nose", both(["nose/nose-volume", "nose/nose-scale-horiz", "nose/nose-scale-depth"], 0.6)),
+    ("nose_hump", pair({"nose/nose-hump-incr": 0.9, "nose/nose-point-down": 0.5},
+                       {"nose/nose-hump-decr": 0.9, "nose/nose-point-up": 0.5})),
+    ("jaw", pair({"chin/chin-width-incr": 0.7, "chin/chin-bones-incr": 0.6, "head/head-square": 0.6},
+                 {"chin/chin-width-decr": 0.7, "chin/chin-bones-decr": 0.6, "head/head-oval": 0.6})),
+    ("chin", pair({"chin/chin-prominent-incr": 0.8, "chin/chin-height-incr": 0.6},
+                  {"chin/chin-prominent-decr": 0.8, "chin/chin-height-decr": 0.6})),
+    ("lips", pair({"mouth/mouth-upperlip-volume-incr": 0.8, "mouth/mouth-lowerlip-volume-incr": 0.8,
+                   "mouth/mouth-scale-horiz-incr": 0.25},
+                  {"mouth/mouth-upperlip-volume-decr": 0.8, "mouth/mouth-lowerlip-volume-decr": 0.8,
+                   "mouth/mouth-scale-horiz-decr": 0.25})),
+    ("eyes", pair(_eyes({"eye-height2-decr": 0.7, "eye-height1-decr": 0.3, "eye-corner2-up": 0.6}),
+                  _eyes({"eye-height2-incr": 0.7, "eye-height1-incr": 0.3, "eye-corner2-down": 0.6}))),
+    ("cheeks", both(["cheek/l-cheek-bones", "cheek/l-cheek-volume"], 0.8)),
+    ("brow", pair({"eyebrows/eyebrows-trans-forward": 0.8, "eyebrows/eyebrows-trans-down": 0.5,
+                   "forehead/forehead-nubian-incr": 0.4},
+                  {"eyebrows/eyebrows-trans-backward": 0.8, "eyebrows/eyebrows-trans-up": 0.5,
+                   "forehead/forehead-nubian-decr": 0.4})),
+    ("ears", both(["ears/l-ear-wing", "ears/l-ear-scale"], 0.7)),
 )
 
 # Блендер → игра: исходники MPFB в осях Блендера (x, −z_obj, y_obj). Игра — x восток, y вверх, z север, и это
@@ -84,7 +180,7 @@ def morph(base, Z, p):
             v[i] += w * Z["targets/" + name + ".vector"].astype(np.float64) * 1e-3
     gen = {"female": 1 - p["gender"], "male": p["gender"]}
     age = {"young": 1 - p["age"], "old": p["age"]}
-    race = {"african": 1 / 3, "asian": 1 / 3, "caucasian": 1 / 3}
+    race = p.get("race", {"african": 1 / 3, "asian": 1 / 3, "caucasian": 1 / 3})
     for gn, gw in gen.items():
         for an, aw in age.items():
             for mn, mw in three(p["muscle"]).items():
@@ -92,7 +188,18 @@ def morph(base, Z, p):
                     add("macrodetails/universal-%s-%s-%smuscle-%sweight" % (gn, an, mn, wn), gw * aw * mw * ww)
             for rn, rw in race.items():
                 add("macrodetails/%s-%s-%s" % (rn, gn, an), gw * aw * rw)
+    # Размер и упругость груди (у MakeHuman только для женщин)
+    gw = 1 - p["gender"]
+    for mn, mw in three(p["muscle"]).items():
+        for wn, ww in three(p["weight"]).items():
+            for cn, cw in three(p.get("cup", 0.5)).items():
+                for fn, fw in three(p.get("firm", 0.5)).items():
+                    if cn != "average" or fn != "average":
+                        add("breast/female-young-%smuscle-%sweight-%scup-%sfirmness" % (mn, wn, cn, fn),
+                            gw * mw * ww * cw * fw)
     for name, w in sorted(p.get("mods", {}).items()):
+        if "targets/" + name + ".index" not in Z:
+            sys.exit("humanconv: нет правки MakeHuman %s" % name)
         add(name, w)
     return v
 
@@ -326,28 +433,58 @@ def build(p, base, groups, Z, rigs, weights, data_dir, meshpack):
         rec = np.zeros(len(src), dtype=[("b", "u1", 4), ("w", "u1", 4)])
         rec["b"], rec["w"] = bones[src], wq[src]
         out += chunk(b"SKIN", body + rec.tobytes())
-    # Морфы: тот же рост и низ, что у тела (fit), сдвиг положения int16 × шаг морфа, нормали int8 / 127
+    # Морфы: сумма тел, каждое приведено к росту HEIGHT; сдвиг положения int16 × шаг морфа, нормали int8 / 127.
+    # Суставы тех же тел — сдвиги голов костей и длин (кусок MRPJ): вид строит по ним скелет человека
+    shapes = {}
+
+    def shape(q):
+        key = json.dumps(q, sort_keys=True)
+        if key not in shapes:
+            vo = morph(base, Z, q)
+            lo = vo[used, 1].min()
+            f = (lo, HEIGHT / (vo[used, 1].max() - lo))
+            vk = place(vo, f)
+            nk = normals(vk, tri(quads[:nbody]))
+            nk[np.unique(eye_q)] = n[np.unique(eye_q)]
+            jk = {}
+            for sn in SKELETONS:
+                h = np.array([place(joint(vo, groups, rigs[sn][b["name"]]["head"])[None, :], f)[0] for b in skels[sn]])
+                t = np.array([place(joint(vo, groups, rigs[sn][b["name"]]["tail"])[None, :], f)[0] for b in skels[sn]])
+                jk[sn] = np.concatenate([h, np.linalg.norm(t - h, axis=1)[:, None]], 1)
+            shapes[key] = (grid(vk[src], 17), nk[src], jk)
+        return shapes[key]
+
     head = struct.pack("<I", len(MORPHS))
-    recs = []
-    for name, m in MORPHS:
-        q = dict(p, **{k: x for k, x in m.items() if k != "mods"})
-        q["mods"] = dict(p.get("mods", {}))
-        for k, x in m.get("mods", {}).items():
-            q["mods"][k] = q["mods"].get(k, 0.0) + x
-        vk = place(morph(base, Z, q), fit)
-        nk = normals(vk, tri(quads[:nbody]))
-        nk[np.unique(eye_q)] = n[np.unique(eye_q)]
-        dp = grid(vk[src], 17) - pos
-        dn = nk[src] - n[src]
+    recs, jrec = [], {sn: [] for sn in SKELETONS}
+    for name, terms in MORPHS:
+        dp, dn = np.zeros_like(pos), np.zeros((len(src), 3))
+        dj = {sn: np.zeros((len(skels[sn]), 4)) for sn in SKELETONS}
+        for coef, q in terms:
+            pk, nk, jk = shape(q)
+            dp += coef * pk
+            dn += coef * nk
+            for sn in SKELETONS:
+                dj[sn] += coef * jk[sn]
+        if abs(sum(c for c, _ in terms)) > 1e-9:
+            sys.exit("humanconv: морф %s — доли тел в сумме не ноль" % name)
         step = float(2.0 ** np.ceil(np.log2(max(float(np.abs(dp).max()), 1e-6) / 32767.0)))  # степень двойки
         ip = np.clip(np.round(dp / step), -32767, 32767).astype("<i2")
         inn = np.clip(np.round(dn * 127), -127, 127).astype("i1")
         head += name_bytes(name) + struct.pack("<f", step)
         recs.append((ip, inn))
+        for sn in SKELETONS:
+            jrec[sn].append(dj[sn])
+        print("humanconv: морф %-13s сдвиг вершин до %4.1f см, суставов до %4.1f см" % (
+            name, float(np.abs(dp).max()) * 100, float(np.linalg.norm(dj["game_engine"][:, :3], axis=1).max()) * 100))
     rec = np.zeros(len(src), dtype=[("m", [("p", "<i2", 3), ("n", "i1", 3)], len(MORPHS))])
     for k, (ip, inn) in enumerate(recs):
         rec["m"]["p"][:, k], rec["m"]["n"][:, k] = ip, inn
     out += chunk(b"MRPH", head + rec.tobytes())
+    for sn in SKELETONS:
+        body = name_bytes(sn) + struct.pack("<II", len(skels[sn]), len(MORPHS))
+        for (name, _), dj in zip(MORPHS, jrec[sn]):
+            body += name_bytes(name) + grid(dj, 20).astype("<f4").tobytes()
+        out += chunk(b"MRPJ", body)
 
     with tempfile.TemporaryDirectory() as tmp:
         raw = os.path.join(tmp, p["name"] + ".raw.mesh")

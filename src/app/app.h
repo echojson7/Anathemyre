@@ -15,6 +15,7 @@ struct Args {
     const char *replay = nullptr;   // --replay файл.rec
     const char *hashes = nullptr;   // --hashes файл.txt: хеш каждые 1000 шагов
     u32 duel = 0;                   // --duel N: с --sim вместо подставного игрока N пар бьются друг с другом (этап 11)
+    u32 lineup = 0;                 // --lineup N: ряд из N людей на площадке Остова вместо людей старта (отладка)
     u32 brawl[2] = {0, 0};          // --brawl AxB: стенка на стенку, A против B (этап 12; с --sim — бенч, в окне — видео)
     bool rewind_check = false;      // --rewind-check: с --sim проверить перемотку окна против прямого хода
     u64 frames = 0;             // --frames N: окно закрывается после N кадров (CI)

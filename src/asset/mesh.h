@@ -31,7 +31,7 @@ struct MeshLod {
 
 // Веса костей вершин для одного скелета (кусок SKIN, люди): кости по имени, как в .skel того же имени
 constexpr u32 MESH_MAX_SKINS = 4;
-constexpr u32 MESH_MAX_MORPHS = 8;
+constexpr u32 MESH_MAX_MORPHS = 48;
 struct MeshSkin {
     Str skeleton;           // имя скелета (game_engine, mixamo): файл data/people/<сетка>.<скелет>.skel
     Span<Str> bones;        // имена костей; номер кости в вершине — место здесь
@@ -45,6 +45,15 @@ struct MeshMorphs {
     Str names[MESH_MAX_MORPHS];
     f32 step[MESH_MAX_MORPHS];  // метров на единицу сдвига
     Span<u32> data;
+};
+
+// Сдвиги суставов скелета от морфов (кусок MRPJ, docs/people.md «Тело»): [морф][кость][4] — голова кости x y z
+// и её длина, м на единицу веса морфа. Морфы — в порядке MRPH (имена сверяет загрузка), кости — как в SKIN
+struct MeshJoints {
+    Str skeleton;
+    u32 bones = 0, morphs = 0;
+    Span<Str> names;
+    Span<f32> data;
 };
 
 // Коробка коллайдера или грубой формы в осях сетки
@@ -67,6 +76,8 @@ struct MeshData {
     MeshSkin skins[MESH_MAX_SKINS];
     u32 skin_count = 0;
     MeshMorphs morphs;
+    MeshJoints joints[MESH_MAX_SKINS];
+    u32 joints_count = 0;
     Span<u32> lod_vertices;
 };
 

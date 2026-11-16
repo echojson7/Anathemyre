@@ -407,6 +407,17 @@ static bool load_body(MeshLoad &L, const char *file, const MeshData &md, u32 mes
         b.skin[k] = render_skin_create(d);
         if (!b.skin[k]) return false;
         b.skel_name[k] = str_hash(sk.skeleton);
+        // Сдвиги суставов от морфов этого скелета: морфы — те же и в том же порядке, что в MRPH
+        for (u32 q = 0; q < md.joints_count; ++q) {
+            const MeshJoints &mj = md.joints[q];
+            if (str_hash(mj.skeleton) != b.skel_name[k]) continue;
+            bool same = mj.bones == s.bones.count && mj.morphs == md.morphs.count;
+            for (u32 t = 0; same && t < mj.morphs; ++t) same = str_hash(mj.names.data[t]) == str_hash(md.morphs.names[t]);
+            if (!same) { log_error("сетка %s: сдвиги суставов (MRPJ) не сходятся с морфами и скелетом", file); return false; }
+            f32 *copy = arena_push<f32>(L.m->world, mj.data.count);
+            memcpy(copy, mj.data.data, mj.data.count * sizeof(f32));
+            b.joints[k] = copy;
+        }
         b.skin_count++;
     }
     b.morph_count = md.morphs.count;

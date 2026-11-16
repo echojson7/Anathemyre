@@ -422,7 +422,7 @@ struct SkinJobGpu {
     f32 morph[RENDER_MAX_MORPHS];  // веса морфов
     f32 step[RENDER_MAX_MORPHS];   // шаг морфа, м на единицу сдвига
 };
-static_assert(sizeof(SkinJobGpu) == 112, "SkinJobGpu — как SkinJob в common.glsl");
+static_assert(sizeof(SkinJobGpu) == 48 + 8 * RENDER_MAX_MORPHS && RENDER_MAX_MORPHS == 48, "SkinJobGpu — как SkinJob в common.glsl");
 struct SkinGpu {
     GpuBuffer data;
     VkDeviceSize used = 0;

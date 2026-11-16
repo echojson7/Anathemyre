@@ -102,6 +102,7 @@ static bool bind(PeopleView &pv, const ViewAssets &a) {
         if (a.meshes[i].name == hash_str("sword")) pv.sword = a.meshes[i].id;
     if (!pv.sword) log_warn("люди: нет сетки sword — меча в руках не будет");
     else render_mesh_moving(pv.sword);  // ходит с рукой каждый кадр: иначе страницы теней под ним рисуются заново
+    appear_bind(pv.appear, b);
     pv.body = 0;
     pv.skin = k;
     pv.failed = false;
@@ -216,7 +217,8 @@ struct PoseWork {
     PeopleView &pv;
     const ViewInput &in;
     const Extract &c, &pe;
-    const Skel &s;
+    const Skel &s;   // скелет этого человека (appear.h)
+    f32 scale;       // его рост к росту сетки: оси сетки × scale — метры мира
     const Root &r;
     PersonLook &L;
     const i32 *B;
@@ -341,9 +343,11 @@ static WPos pose_feet(PoseWork &pw, f32 any, bool debug) {
     Vec3 &trans = pw.trans;
     const f32 *contact = pw.contact;
     const GaitMix &m = pw.m;
+    const f32 S = pw.scale;
     WPos base;
-    // Подгонка длины шага: стопа вдоль хода — от таза в k раз, чтобы стоящая стопа не скользила
-    f32 nat = c.gait->walk_len + (c.gait->run_len - c.gait->walk_len) * m.run;
+    // Подгонка длины шага: стопа вдоль хода — от таза в k раз, чтобы стоящая стопа не скользила. Шаг клипа у
+    // человека ростом S — в S раз длиннее, шаг мира у всех один
+    f32 nat = (c.gait->walk_len + (c.gait->run_len - c.gait->walk_len) * m.run) * S;
     f32 k = 1.0f + (gait_cycle_len(*c.gait, r.v) / nat - 1.0f) * m.move;
     f32 pz = wp[B[B_PELVIS]].z;
     WPos want[2];
@@ -356,10 +360,10 @@ static WPos pose_feet(PoseWork &pw, f32 any, bool debug) {
             a = rest + (a - rest) * mv;
         }
         f32 z = pz + (a.z - pz) * (k + (1.0f - k) * any), wx, wz;
-        body_to_world(r.yaw, a.x, z, &wx, &wz);
+        body_to_world(r.yaw, a.x * S, z * S, &wx, &wz);
         want[f] = add(r.at, wx, 0, wz);
-        ankle_h[f] = a.y;
-        toe_dz[f] = wp[B[B_BALL + f]].z - a.z;
+        ankle_h[f] = a.y * S;
+        toe_dz[f] = (wp[B[B_BALL + f]].z - a.z) * S;
     }
     // Стоит: стопы держатся на месте и переставляются по одной, если тело ушло или повернулось
     bool standing = m.move < 0.05f && any < 0.02f;
@@ -424,7 +428,7 @@ static WPos pose_feet(PoseWork &pw, f32 any, bool debug) {
         Vec2 d = wpos_delta_xz(r.at, at);
         f32 bx, bz;
         world_to_body(r.yaw, d.x, d.y, &bx, &bz);
-        target[f] = Vec3{bx, 0.0f, bz};
+        target[f] = Vec3{bx / S, 0.0f, bz / S};  // цель IK — в осях сетки
         at.y = L.foot_h[f] + ankle_h[f] + lift[f];
         if (debug && contact[f] > 0.5f && m.move > 0.5f) {
             const WPos &last = L.trail[(L.trail_at + VIEW_TRAIL - 1) % VIEW_TRAIL];
@@ -440,7 +444,7 @@ static WPos pose_feet(PoseWork &pw, f32 any, bool debug) {
     f32 base_y = L.y + L.drop;
     base = r.at;
     base.y = base_y;
-    for (u32 f = 0; f < 2; ++f) target[f].y -= base_y;
+    for (u32 f = 0; f < 2; ++f) target[f].y = (target[f].y - base_y) / S;
     for (u32 f = 0; f < 2; ++f)
         ik_two_bone(rot, wr, wp, (u32)B[B_THIGH + f], (u32)B[B_CALF + f], (u32)B[B_FOOT + f], target[f], Vec3{0, 0, 1});
     pose_world(s, rot, tb, &trans, wr, wp);
@@ -479,14 +483,14 @@ static void pose_sword(const PoseWork &pw, const ActWeights &aw, PoseOut &out) {
     Quat q2 = quat_between(quat_rotate(q1, Vec3{1, 0, 0}), e);
     out.sword_q = quat_mul(quat_yaw(r.yaw), quat_mul(q2, q1));
     f32 wx, wz;
-    body_to_world(r.yaw, g.x, g.z, &wx, &wz);
-    out.sword_at = add(out.base, wx, g.y, wz);
+    body_to_world(r.yaw, g.x * pw.scale, g.z * pw.scale, &wx, &wz);
+    out.sword_at = add(out.base, wx, g.y * pw.scale, wz);
 }
 
-static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewInput &in, u32 i, const Root &r, f32 dist,
+static PoseOut pose_person(PeopleView &pv, const AppearFit &fit, const ViewInput &in, u32 i, const Root &r, f32 dist,
                            PoseMatrix *palette, bool debug) {
     const Extract &c = *in.cur;
-    const Skel &s = assets.bodies[pv.body].skel[pv.skin];
+    const Skel &s = fit.skel;
     const u32 nb = (u32)s.bones.count;
     PersonLook &L = pv.look[i];
     const f32 dt = f_clamp(in.dt, 0.0f, 0.1f);
@@ -505,8 +509,8 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
     Quat rot[SKEL_MAX_BONES], tmp[SKEL_MAX_BONES], wr[SKEL_MAX_BONES];
     Vec3 wp[SKEL_MAX_BONES];
     const Extract &pe = *in.prev;
-    PoseWork pw{pv, in, c, pe, s, r, L, B, i, nb, pv.gait.trans_bone, dt, fresh, pe.person_gen[i] == c.person_gen[i],
-               rot, tmp, wr, wp, {}, {}, gait_mix(r.v)};
+    PoseWork pw{pv, in, c, pe, s, fit.scale, r, L, B, i, nb, pv.gait.trans_bone, dt, fresh,
+               pe.person_gen[i] == c.person_gen[i], rot, tmp, wr, wp, {}, {}, gait_mix(r.v)};
     gait_pose(pv.gait, nb, pw.m, r.phase, rot, &pw.trans, tmp, pw.contact);
     const i32 tb = pw.tb;
     Vec3 &trans = pw.trans;
@@ -514,6 +518,8 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
     // Действие (этапы 10–11): клип поверх ходьбы, вход 0.15 с от тика start, выход 0.25 с к концу действия. Сорванное
     // или сменённое действие (попадание, отбит, отмена в другое) гаснет за ACT_FADE с позы, где его оборвали
     const ActWeights aw = pose_actions(pw);
+    // Таз клипа — на высоте таза сетки: у человека с другой длиной ног он выше или ниже во столько же раз
+    trans.y *= fit.pelvis;
 
     // Наклон: вперёд от ускорения (позвоночник), вбок к центру поворота (таз; стопы вернёт IK)
     pose_world(s, rot, tb, &trans, wr, wp);
@@ -602,6 +608,18 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
 
     const Skel &s = body.skel[pv.skin];
     const u32 nb = (u32)s.bones.count;
+    // Внешность владельца копии: черты от зерна и скелет под его морфы — раз, пока копия за ним
+    for (u32 k = 0; k < np; ++k) {
+        if (slot_copy[k] < 0) continue;
+        u32 j = (u32)slot_copy[k], seed = c.person_seed[pick[k]];
+        if (pv.fit_set[j] && pv.fit_seed[j] == seed) continue;
+        f32 w[RENDER_MAX_MORPHS];
+        pv.who[j] = appear_make(seed);
+        appear_weights(pv.appear, pv.who[j], w);
+        appear_fit(pv.fit[j], s, body.joints[pv.skin], body.morph_count, w, pv.who[j].height, pv.bones[B_PELVIS]);
+        pv.fit_seed[j] = seed;
+        pv.fit_set[j] = true;
+    }
     static_assert(sizeof(PoseMatrix) == sizeof(RenderBone), "матрица позы — как кость рендера");
     usize nb0 = out.bones.count, ns0 = out.skinned.count;
     RenderBone *bones = arena_push<RenderBone>(frame, nb0 + (usize)np * nb);
@@ -609,19 +627,12 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
     RenderSkinned *sk = arena_push<RenderSkinned>(frame, ns0 + np);
     if (ns0) memcpy(sk, out.skinned.data, ns0 * sizeof(RenderSkinned));
     usize nbo = nb0, nso = ns0;
-    // Морфы внешности по зерну: полнота или худоба, сила, нос, челюсть
-    static const char *const MORPHS[] = {"full", "thin", "strong", "nose", "jaw"};
-    i32 morph_at[5];
-    for (u32 q = 0; q < 5; ++q) {
-        morph_at[q] = -1;
-        for (u32 j = 0; j < body.morph_count; ++j)
-            if (body.morph_name[j] == hash_str(MORPHS[q])) morph_at[q] = (i32)j;
-    }
     for (u32 k = 0; k < np; ++k) {
         if (slot_copy[k] < 0 || ni >= RENDER_MAX_INSTANCES) continue;
         u32 i = pick[k];
         Root r = person_root(*in.prev, c, in.alpha, i);
-        PoseOut po = pose_person(pv, assets, in, i, r, f_sqrt(pick_d[k]), (PoseMatrix *)(bones + nbo), debug);
+        const u32 cj = (u32)slot_copy[k];
+        PoseOut po = pose_person(pv, pv.fit[cj], in, i, r, f_sqrt(pick_d[k]), (PoseMatrix *)(bones + nbo), debug);
         pv.look[i].drawn = true;
         RenderInstance &it = inst[ni];
         it = RenderInstance{};
@@ -633,20 +644,15 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
         Quat q = quat_yaw(r.yaw);
         it.rot_xy = body_snorm2(q.x, q.y);
         it.rot_zw = body_snorm2(q.z, q.w);
-        it.scale = 1.0f;
-        it.mesh = pv.copy[slot_copy[k]];
+        it.scale = pv.fit[cj].scale;
+        it.mesh = pv.copy[cj];
         it.material = RENDER_NO_MATERIAL;
-        it.seed = c.person_seed[i];
+        it.seed = appear_skin_seed(c.person_seed[i], pv.who[cj]);
         RenderSkinned &o = sk[nso++];
         o = RenderSkinned{};
         o.instance = ni;
         o.first_bone = (u32)nbo;
-        u64 h = hash_mix(c.person_seed[i] | 0x5EED00000000ull);
-        auto r01 = [&](u32 sh) { return (f32)((h >> sh) & 0xFF) / 255.0f; };
-        f32 t = r01(0) * 2.0f - 1.0f;
-        f32 w[5] = {f_max(t, 0.0f) * 0.7f, f_max(-t, 0.0f) * 0.6f, r01(8) * 0.6f, r01(16) * 0.7f, r01(24) * 0.7f};
-        for (u32 q2 = 0; q2 < 5; ++q2)
-            if (morph_at[q2] >= 0 && morph_at[q2] < (i32)RENDER_MAX_MORPHS) o.morph[morph_at[q2]] = w[q2];
+        appear_weights(pv.appear, pv.who[cj], o.morph);
         ni++;
         nbo += nb;
         if (po.sword && ni < RENDER_MAX_INSTANCES) {
@@ -738,6 +744,7 @@ bool people_view_head(const PeopleView &pv, const Extract &prev, const Extract &
     // покачивания шага
     Root r = person_root(prev, cur, alpha, (u32)pv.sel);
     out = r.at;
-    out.y = (P.drawn && P.gen == pv.sel_gen ? P.y : r.at.y) + HEAD_ABOVE_M;
+    out.y = (P.drawn && P.gen == pv.sel_gen ? P.y : r.at.y) +
+            HEAD_ABOVE_M * appear_make(cur.person_seed[pv.sel]).height / APPEAR_MESH_HEIGHT;
     return true;
 }

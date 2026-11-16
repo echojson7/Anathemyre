@@ -4,6 +4,7 @@
 // скиннингу. Выбор человека, метка приказа и опора камеры «за человеком» — тоже здесь. Шаг мира и повтор
 // этого не видят: состояние только у вида
 #pragma once
+#include "appear.h"
 #include "../anim/gait.h"
 #include "../render/render.h"
 #include "../sim/extract.h"
@@ -53,6 +54,12 @@ struct PeopleView {
     u32 copy[VIEW_BODIES_MAX];        // копии сетки (render_skinned_create)
     u16 copy_owner[VIEW_BODIES_MAX];  // место + 1, 0 — свободна
     u32 copy_count;
+    // Внешность владельца копии (appear.h): черты от зерна, скелет со сдвигами суставов, рост
+    AppearBind appear;
+    Appear who[VIEW_BODIES_MAX];
+    AppearFit fit[VIEW_BODIES_MAX];
+    u32 fit_seed[VIEW_BODIES_MAX];
+    bool fit_set[VIEW_BODIES_MAX];
     bool bound, failed;
     u32 body, skin;                   // тело (ViewAssets::bodies) и его скелет game_engine
     GaitSet gait;

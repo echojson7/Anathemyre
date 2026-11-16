@@ -34,6 +34,8 @@ struct ViewBody {
     Skel skel[MESH_MAX_SKINS];
     u32 morph_count;
     u64 morph_name[MESH_MAX_MORPHS];
+    // Сдвиги суставов от морфов (кусок MRPJ): [морф][кость][4] — голова и длина, м; nullptr — у сетки их нет
+    const f32 *joints[MESH_MAX_SKINS];
 };
 // Клип захвата движения одного скелета (docs/anim.md): клип, запечённые дорожки и метки
 constexpr u32 VIEW_MAX_CLIPS = 64;

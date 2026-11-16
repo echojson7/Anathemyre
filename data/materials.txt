@@ -169,8 +169,10 @@ material sword_grip flat
     color 0.20 0.13 0.08
     rough 0.8
 
-material human_skin flat
-    color 0.52 0.37 0.28
+# Кожа: вид skin — тон между color (светлый) и color2 (тёмный) по зерну человека (src/view/appear.h)
+material human_skin skin
+    color 0.62 0.45 0.35
+    color2 0.17 0.10 0.065
     rough 0.6
 
 # Бельё из небелёного холста и тёмная резинка
