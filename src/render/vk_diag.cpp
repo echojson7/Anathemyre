@@ -104,6 +104,7 @@ void vk_diag_begin(VkCommandBuffer cmd, u32 pass, const char *name) {
     const DiagGpu &d = g_vk.diag;
     u32 v = encode(g_frame, pass, false);
     if (d.nv_checkpoints) vkCmdSetCheckpointNV(cmd, (const void *)(uintptr_t)v);
+    else if (d.amd_marker1) vkCmdWriteBufferMarkerAMD(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, d.markers.buffer, 0, v);
     else if (d.amd_marker) vkCmdWriteBufferMarker2AMD(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, d.markers.buffer, 0, v);
 }
 
@@ -111,6 +112,7 @@ void vk_diag_end(VkCommandBuffer cmd, u32 pass) {
     const DiagGpu &d = g_vk.diag;
     u32 v = encode(g_frame, pass, true);
     if (d.nv_checkpoints) vkCmdSetCheckpointNV(cmd, (const void *)(uintptr_t)v);
+    else if (d.amd_marker1) vkCmdWriteBufferMarkerAMD(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, d.markers.buffer, 4, v);
     else if (d.amd_marker) vkCmdWriteBufferMarker2AMD(cmd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, d.markers.buffer, 4, v);
 }
 
