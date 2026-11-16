@@ -15,6 +15,7 @@
 #include "../sim/record.h"
 #include "../sim/step.h"
 #include "../ui/ui.h"
+#include "../view/mech.h"
 #include "../view/people.h"
 #include "../view/view.h"
 #include <inttypes.h>
@@ -161,6 +162,9 @@ int run_window(const Args &a, AppMemory &m) {
     scatter_init(*scatter, m.world);
     PeopleView *pv = arena_push<PeopleView>(m.world, 1);  // ~1.3 МБ: не на стек
     people_view_init(*pv);
+    MechView *mechs = arena_push<MechView>(m.world, 1);
+    mech_view_init(*mechs);
+    if (a.mech) mech_view_demo(*mechs, a.mech);
     // Кеш эрозии рядом с игрой (docs/startup.md); снимки и запись повтора (--frames, --record) считают землю
     // заново, как --sim и CI
     char erode_path[1024];
@@ -302,6 +306,10 @@ int run_window(const Args &a, AppMemory &m) {
     auto hour_turn = [](f64 h) { return (u64)(u32)(u64)(h / 24.0 * 4294967296.0); };
     if (a.hour_set) pending.push_back({0, INTENT_CLOCK_SET, WPos{}, hour_turn(a.hour)});
     if (a.timelapse) pending.push_back({0, INTENT_CLOCK_RATE, WPos{}, 0});
+    if (a.clock >= 0 && !a.timelapse) {
+        clock_speed = (u32)a.clock;
+        pending.push_back({0, INTENT_CLOCK_RATE, WPos{}, CLOCK_SPEEDS[clock_speed]});
+    }
     // Люди окна у точки старта: намерение первого шага, поэтому запись окна их повторяет, а --sim не трогает
     const bool brawl = a.brawl[0] && a.brawl[1];
     if (w.start.set && w.start.people && !brawl) {
@@ -603,6 +611,7 @@ int run_window(const Args &a, AppMemory &m) {
         vi.aa = a.aa >= 0 ? (u32)a.aa : set.aa;
         if (!ds.lines) vi.dbg = nullptr;
         vi.people_debug = vi.dbg && ds.people_lines;
+        vi.mech = mechs;
         RenderFrame rf;
         u32 dbg_keep = dbg.count;  // метка осмотра — только на этот кадр, шаг мира её не видит
         if (hud_on && set.debug && set.debug_panel && ds.tab == DEBUG_TAB_WORLD) debug_inspect_mark(w, *inspect, dbg);
@@ -616,6 +625,7 @@ int run_window(const Args &a, AppMemory &m) {
             if (people_view_head(*pv, *vi.prev, *vi.cur, vi.alpha, head)) view_camera_follow(cam, head, (f32)dt, w.terrain, &w.coll);
             else if (pv->sel < 0) cam.follow = false;  // выбран, но тела ещё не было — подождать кадр
         }
+        if (a.mech_follow) mech_view_follow(*mechs, cam.pivot, vi.dt);
         if (a.look) {
             // --look: взгляд по азимуту светила этого кадра (кадры неба по часам суток)
             RenderSky ls;

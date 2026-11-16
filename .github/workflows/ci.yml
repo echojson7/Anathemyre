@@ -46,7 +46,7 @@ jobs:
         run: |
           # люди: исходники MakeHuman качает tools/humanconv/fetch.sh в кеш (sha256), docs/people.md
           make -s meshes
-          git diff --exit-code data/meshes data/people
+          git diff --exit-code data/meshes data/people data/weapons.txt
       - name: Дорожки клипов в git совпадают с запеканием
         run: |
           # ретаргет (bpy, сырые BVH/FBX) в CI не гоняем: запекание читает закоммиченные .anim (docs/anim.md)
@@ -165,6 +165,8 @@ jobs:
         if: matrix.kind == 'asan'
         env:
           LSAN_OPTIONS: suppressions=${{ github.workspace }}/tools/lsan.supp
+          # SIGILL без этого убивает молча («Illegal instruction», код 132): так ASan печатает стек и поток
+          ASAN_OPTIONS: handle_sigill=1
         run: |
           . tools/ci_par.sh
           . tools/versions.sh
@@ -211,8 +213,10 @@ jobs:
           # шаг мира, а не сколько успело по часам. Оба запуска разом на одной машине: кадр от этого не зависит
           # Первый запуск пишет и счётчики работы освещения (docs/tiles.md): сверка с эталоном ловит «стало делать
           # больше работы» без видеокарты
+          # Предел 540 с — с запасом на холодный кеш шейдеров Mesa: с ним первый кадр вдвое дольше (локально
+          # 205 с вместо 112 на весь прогон), а упавшая задача кеш не сохраняет и следующая снова холодная
           for k in 1 2; do
-            par same_$k 360 xvfb-run -n 9$((3 + k)) -s "-screen 0 1600x900x24" build/linux-release/anathemyre --nohud \
+            par same_$k 540 xvfb-run -n 9$((3 + k)) -s "-screen 0 1600x900x24" build/linux-release/anathemyre --nohud \
               --frames 4 --window 800 450 --lights --heat --cam 315 14 34 11704 -2336 --timelapse same_$k 15.5 15.5 \
               --work work_$k.txt
           done
