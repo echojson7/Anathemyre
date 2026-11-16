@@ -15,6 +15,7 @@
 #include "../sim/record.h"
 #include "../sim/step.h"
 #include "../ui/ui.h"
+#include "../view/mech.h"
 #include "../view/people.h"
 #include "../view/view.h"
 #include <inttypes.h>
@@ -160,6 +161,9 @@ int run_window(const Args &a, AppMemory &m) {
     scatter_init(*scatter, m.world);
     PeopleView *pv = arena_push<PeopleView>(m.world, 1);  // ~1.3 МБ: не на стек
     people_view_init(*pv);
+    MechView *mechs = arena_push<MechView>(m.world, 1);
+    mech_view_init(*mechs);
+    if (a.mech) mech_view_demo(*mechs, a.mech);
     WorldJob wj{&w, &m, a.seed, &desc, false, 0};
     PlatformThread *world_thread = platform_thread_start("world", world_job, &wj);
     if (!world_thread) world_job(&wj);  // поток не создан — по порядку, как раньше
@@ -589,6 +593,7 @@ int run_window(const Args &a, AppMemory &m) {
         vi.aa = a.aa >= 0 ? (u32)a.aa : set.aa;
         if (!ds.lines) vi.dbg = nullptr;
         vi.people_debug = vi.dbg && ds.people_lines;
+        vi.mech = mechs;
         RenderFrame rf;
         u32 dbg_keep = dbg.count;  // метка осмотра — только на этот кадр, шаг мира её не видит
         if (hud_on && set.debug && set.debug_panel && ds.tab == DEBUG_TAB_WORLD) debug_inspect_mark(w, *inspect, dbg);
@@ -601,6 +606,14 @@ int run_window(const Args &a, AppMemory &m) {
             WPos head;
             if (people_view_head(*pv, *vi.prev, *vi.cur, vi.alpha, head)) view_camera_follow(cam, head, (f32)dt, w.terrain, &w.coll);
             else if (pv->sel < 0) cam.follow = false;  // выбран, но тела ещё не было — подождать кадр
+        }
+        if (a.mech_follow && mechs->mech[0].live) {
+            // Опора камеры плавно идёт за машиной (место — с прошлого кадра); высоту опоры держит сама камера
+            Vec2 d = wpos_delta_xz(cam.pivot, mechs->mech[0].at);
+            f32 k = f_min(1.0f, 3.0f * (f32)(a.frames ? 1.0 / 30.0 : dt));
+            cam.pivot.x += d.x * k;
+            cam.pivot.z += d.y * k;
+            wpos_rebase(cam.pivot);
         }
         view_build(cam, *assets, vi, m.frame, rf);
         if (set.debug) debug_stand(ds, *assets, m.frame, rf);

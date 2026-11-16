@@ -25,6 +25,15 @@ static bool read_data(const char *rel, Arena &a, u8 **data, usize *size) {
     return false;
 }
 
+bool app_skel_load(const char *rel, AppMemory &m, Skel &out) {
+    u8 *data = nullptr;
+    usize size = 0;
+    const char *err = "";
+    if (!read_data(rel, m.load, &data, &size)) return false;
+    if (!skel_parse(data, size, m.world, out, &err)) { log_error("скелет %s: %s", rel, err); return false; }
+    return true;
+}
+
 // Заготовки сцены (data/prefabs/<имя>.txt): текст в арене загрузки, хеш — в хеш описаний
 struct PrefabLoad {
     AppMemory *m;

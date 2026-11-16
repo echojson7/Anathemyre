@@ -3,7 +3,7 @@
 // LOD упрощением с закреплённой границей (стыки соседних деталей не расходятся), кластеры по соседству
 // ≤ 124 треугольников со сферой. Коллайдер и грубая форма переписываются как есть.
 //
-//     meshpack [--lods n1,n2,…] <вход.mesh> <выход.mesh>
+//     meshpack [[--prune] --lods n1,n2,…] <вход.mesh> <выход.mesh>
 //
 // Сетка с весами костей (куски SKIN, MRPH — люди, tools/humanconv): потоки вершин SKIN и MRPH идут вместе с VERT
 // (склейка по всем, тот же порядок), граница не закрепляется (это не стык деталей), --lods задаёт треугольники
@@ -127,6 +127,14 @@ bool morph_stream(const Chunk &c, size_t nv, Stream &s) {
 int main(int argc, char **argv) {
     std::vector<size_t> lod_tris;  // --lods: треугольников LOD 1…
     int arg = 1;
+    // --prune (перед --lods): сетка из многих отдельных замкнутых тел (машина, tools/parts/rig.py) — мелкие тела
+    // пропадают целиком, когда становятся меньше ошибки LOD; без этого болты и пальцы держат цепочку
+    bool prune = false;
+    if (argc == 6 && !strcmp(argv[1], "--prune")) {
+        prune = true;
+        --argc;
+        ++argv;
+    }
     if (argc == 5 && !strcmp(argv[1], "--lods")) {
         for (const char *p = argv[2]; *p;) {
             char *end;
@@ -138,7 +146,7 @@ int main(int argc, char **argv) {
         }
         arg = 3;
     } else if (argc != 3) {
-        fprintf(stderr, "использование: meshpack [--lods n1,n2,…] <вход.mesh> <выход.mesh>\n");
+        fprintf(stderr, "использование: meshpack [[--prune] --lods n1,n2,…] <вход.mesh> <выход.mesh>\n");
         return 2;
     }
     const char *in_path = argv[arg], *out_path = argv[arg + 1];
@@ -234,7 +242,8 @@ int main(int argc, char **argv) {
         std::vector<uint32_t> dst(src.size());
         float err = 0.0f;
         size_t n = meshopt_simplify(dst.data(), src.data(), src.size(), &v[0].p[0], nv, sizeof(Vert), target,
-                                    LOD_MAX_ERROR / scale, skinned ? 0u : (unsigned)meshopt_SimplifyLockBorder, &err);
+                                    LOD_MAX_ERROR / scale,
+                                    skinned ? (prune ? (unsigned)meshopt_SimplifyPrune : 0u) : (unsigned)meshopt_SimplifyLockBorder, &err);
         if (n == 0 || (float)n > (float)src.size() * LOD_MIN_GAIN) {
             if (skinned) return die("LOD из --lods не вышел: упрощение остановилось", in_path), 1;
             break;
