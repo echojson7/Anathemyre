@@ -62,7 +62,7 @@ struct PeopleView {
     ArmsBind arms;                    // руки и оружие (docs/arms.md)
     ActClip act[ACTIONS_MAX];         // клипы действий по номеру действия (clip = nullptr — нет)
     bool act_bound;
-    u32 sword;                        // сетка оружия (0 — нет)
+    bool armed;                       // руки привязаны и оружие есть (иначе у людей пусто)
     Vec3 rest_foot[2];                // стопы в покое (оси тела, вдоль хода — от таза)
     // Выбор и приказ
     i32 sel;                          // место, −1 — никого
@@ -74,7 +74,7 @@ struct PeopleView {
 };
 
 void people_view_init(PeopleView &pv);
-// Тела людей кадра: экземпляры (inst, ni — дописывает, места — 2 · VIEW_BODIES_MAX: тело и меч), палитры и скиннинг в out;
+// Тела людей кадра: экземпляры (inst, ni — дописывает, места — 2 · VIEW_BODIES_MAX: тело и оружие), палитры и скиннинг в out;
 // линии метки и следа — в lines (ln — дописывает, места — VIEW_PEOPLE_LINES вершин)
 constexpr u32 VIEW_PEOPLE_LINES = 4096;
 void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput &in, const WPos &eye, Arena &frame,

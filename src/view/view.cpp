@@ -98,6 +98,8 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.style.dt = in.dt;
     out.style.eye_snap = in.eye_snap;
     out.style.tonemap = in.tonemap;
+    for (u32 k = 0; k < 3; ++k) out.style.local_tone[k] = assets.sky.local_tone[k];
+    out.style.local_tone[3] = in.local_off ? 0.0f : 1.0f;
     out.style.scans = in.scans;
     out.style.light_quality = in.light_quality;
     out.style.aa = in.aa;
@@ -112,7 +114,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
         desert = (f32)terrain_masks2(t, gx, gz).desert / 255.0f;
     }
     f64 ticks = sky_clock_ticks(in.prev->clock, in.cur->clock, in.alpha);
-    sky_build(assets.sky, desert, in.cur->clock, ticks, eye.y, out.sky, out.light);
+    sky_build(assets.sky, desert, in.cur->clock, ticks, eye.y, in.cloud_time, out.sky, out.light);
     out.sky.time = in.time;
     out.ground = in.cur->terrain != nullptr;
     for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) out.ground_layers[k] = assets.ground_layers[k];

@@ -170,6 +170,8 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_section(f, "СВЕТ");
     static const char *const TONEMAPS[] = {"AgX", "ACES"};
     ui_choice(f, "тонмаппинг", d.tonemap, TONEMAPS, ANA_COUNTOF(TONEMAPS));
+    bool local = !d.local_off;
+    if (ui_toggle(f, "местная экспозиция", local)) d.local_off = !local;
     if (in.light) {
         snprintf(t, sizeof t, "%.4g · %.4g лк", (double)in.lux_key, (double)in.lux_sky);
         ui_value(f, "светило · небо", t);

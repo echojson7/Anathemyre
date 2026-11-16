@@ -151,10 +151,19 @@ vec3 atmo_halo_one(vec3 dir, vec3 light, vec3 e, vec3 tau, float cap) {
     float m = max(L.r, max(L.g, L.b)) * f.sky_out.v[SKY_OUT_EYE].x;
     return L / (1.0 + m / cap);
 }
-// У луны ореол вдвое слабее и с низким пределом: в тёмном небе он иначе читается белым пятном
+// Предел яркости диска солнца, в долях белого кадра (sky_sun_disc): высокое, белое солнце — в 1500 раз ярче белого
+// (в тонмаппинге оно белое, а блеск, docs/glare.md, берёт свет от него и сияет на градусы вокруг); низкое,
+// покрасневшее (зелёного меньше красного) — тусклее, чтобы цвет дожил до экрана
+float atmo_sun_cap() {
+    vec3 t = pc.frame.a_sun_t.rgb;
+    return mix(12.0, 1500.0, smoothstep(0.55, 0.95, t.g / max(t.r, 1e-6)));
+}
+// Ореол солнца: днём у диска он в десятки раз ярче белого кадра (как в жизни: вокруг солнца — слепящее пятно),
+// у низкого солнца предел низкий — иначе ореол съедает диск. У луны ореол вдвое слабее и с низким пределом: в
+// тёмном небе он иначе читается белым пятном
 vec3 atmo_halo(vec3 dir) {
     FrameData f = pc.frame;
-    return atmo_halo_one(dir, f.a_sun.xyz, f.a_sun.w * f.a_sun_t.rgb, f.a_sun_halo.rgb, 2.5) +
+    return atmo_halo_one(dir, f.a_sun.xyz, f.a_sun.w * f.a_sun_t.rgb, f.a_sun_halo.rgb, max(2.5, 0.02 * atmo_sun_cap())) +
            atmo_halo_one(dir, f.a_moon.xyz, 0.5 * f.a_moon.w * f.a_moon_t.rgb, f.a_moon_halo.rgb, 0.35);
 }
 

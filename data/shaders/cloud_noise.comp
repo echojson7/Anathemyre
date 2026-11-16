@@ -1,0 +1,78 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Шум облаков (docs/clouds.md): куб CLOUD_N³, замкнутый по всем осям, один раз при запуске. В слове 4 байта:
+// r — «Перлин–Ворли» (клубы: плавный шум, изъеденный ячеистым), g, b, a — ячеистый шум трёх масштабов
+// (чем дальше, тем мельче): им форма облака объедается по краям. Как в облаках Nubis (Schneider 2015).
+// Поток — воксель
+#include "clouds.glsl"
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+uint cn_hash(ivec3 p) {
+    uvec3 v = uvec3(p);
+    uint h = v.x * 0x8DA6B343u ^ v.y * 0xD8163841u ^ v.z * 0xCB1AB31Fu;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return h;
+}
+vec3 cn_point(ivec3 c, int f, uint salt) {
+    uint h = cn_hash(ivec3(mod(vec3(c), float(f))) + ivec3(int(salt) * 131));
+    return vec3(float(h & 1023u), float((h >> 10) & 1023u), float((h >> 20) & 1023u)) / 1023.0;
+}
+
+// Ячеистый шум (Ворли): 1 — у точки клетки, 0 — далеко. f — клеток на сторону куба, по кругу
+float cn_worley(vec3 p, int f) {
+    p *= float(f);
+    ivec3 i = ivec3(floor(p));
+    vec3 fr = p - vec3(i);
+    float d = 1.0;
+    for (int z = -1; z <= 1; ++z)
+        for (int y = -1; y <= 1; ++y)
+            for (int x = -1; x <= 1; ++x) {
+                ivec3 o = ivec3(x, y, z);
+                vec3 r = vec3(o) + cn_point(i + o, f, uint(f)) - fr;
+                d = min(d, dot(r, r));
+            }
+    return 1.0 - min(sqrt(d), 1.0);
+}
+
+// Плавный шум по градиентам (Перлин), по кругу с периодом f
+float cn_perlin(vec3 p, int f) {
+    p *= float(f);
+    ivec3 i = ivec3(floor(p));
+    vec3 w = p - vec3(i);
+    vec3 u = w * w * w * (w * (w * 6.0 - 15.0) + 10.0);
+    float s = 0.0;
+    for (int k = 0; k < 8; ++k) {
+        ivec3 o = ivec3(k & 1, (k >> 1) & 1, k >> 2);
+        vec3 g = normalize(cn_point(i + o, f, 977u + uint(f)) * 2.0 - 1.0 + 1e-4);
+        vec3 t = mix(1.0 - u, u, vec3(o));
+        s += dot(g, w - vec3(o)) * t.x * t.y * t.z;
+    }
+    return s;  // примерно −0.7…0.7
+}
+
+float cn_remap(float v, float a, float b, float c, float d) { return c + (v - a) / (b - a) * (d - c); }
+
+void main() {
+    ivec3 id = ivec3(gl_GlobalInvocationID);
+    if (any(greaterThanEqual(id, ivec3(CLOUD_N)))) return;
+    vec3 p = (vec3(id) + 0.5) / float(CLOUD_N);
+    float pf = 0.0, a = 0.5;
+    int f = 4;
+    for (int k = 0; k < 4; ++k) {
+        pf += a * cn_perlin(p, f);
+        f *= 2;
+        a *= 0.5;
+    }
+    pf = clamp(pf * 1.25 + 0.5, 0.0, 1.0);
+    float w4 = cn_worley(p, 4), w8 = cn_worley(p, 8), w16 = cn_worley(p, 16), w32 = cn_worley(p, 32);
+    float wf0 = w4 * 0.625 + w8 * 0.25 + w16 * 0.125;
+    float wf1 = w8 * 0.625 + w16 * 0.25 + w32 * 0.125;
+    float wf2 = w16 * 0.75 + w32 * 0.25;
+    float pw = clamp(cn_remap(pf, wf0 - 1.0, 1.0, 0.0, 1.0), 0.0, 1.0);
+    uvec4 q = uvec4(clamp(vec4(pw, wf0, wf1, wf2), 0.0, 1.0) * 255.0 + 0.5);
+    pc.frame.cl_noise.v[(id.z * CLOUD_N + id.y) * CLOUD_N + id.x] = q.x | (q.y << 8) | (q.z << 16) | (q.w << 24);
+}

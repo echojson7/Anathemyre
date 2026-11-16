@@ -5,10 +5,10 @@
 #pragma once
 #include "../anim/clip.h"
 #include "../anim/pose.h"
+#include "weapon.h"
 
 // Как оружие держат и носят. Оси сетки оружия: начало — середина кулака верхней руки (у гарды), остриё — +Y,
 // лезвие — +X. Числа — y по оси сетки, м
-enum : u8 { CARRY_HIP_L, CARRY_BACK, CARRY_BACK_POLE };
 struct WeaponHold {
     u8 hands;      // 1 — одной рукой, 2 — двумя, 3 — древко
     u8 carry;      // CARRY_*: у левого бедра, за спиной наискось, за спиной почти отвесно
@@ -16,8 +16,6 @@ struct WeaponHold {
     f32 carry_at;  // точка оси, за которую оружие висит на ремне
     f32 tip, butt; // остриё и навершие
 };
-// Двуручный меч-заглушка этапа 10 (tools/meshgen.py, sword)
-constexpr WeaponHold WEAPON_HOLD_SWORD{2, CARRY_BACK, -0.20f, 0.30f, 1.02f, -0.30f};
 
 constexpr u32 ARMS_FINGERS = 15;  // кости пальцев кисти: 5 пальцев по 3
 constexpr u32 ARMS_STANCE = 12;   // кости стойки, кроме первого позвонка: позвонки 2–3, шея, голова, ключицы, руки

@@ -159,16 +159,6 @@ material stone rock
     extra 0.18 0.0625 0.7 0.3
 
 # Люди (стенд этапа 7, docs/people.md): временные ровные цвета — кожа и бельё «по-настоящему» после света (этап 6)
-# Меч-заглушка (этап 10): сталь клинка и тёмная кожа рукояти
-material sword_steel flat
-    color 0.62 0.63 0.65
-    rough 0.32
-    metal 1
-
-material sword_grip flat
-    color 0.20 0.13 0.08
-    rough 0.8
-
 material human_skin flat
     color 0.52 0.37 0.28
     rough 0.6
@@ -242,3 +232,82 @@ material lamp_red glow
     color 1.0 0.07 0.03
     rough 0.4
     extra 1500 0 0 0
+
+# Оружие (docs/weapons.md, сетки tools/weapons): вид flat — вещь ходит с рукой, а узоры видов metal и сканы
+# проецируются по миру и поплыли бы по клинку. Различие — материалами по деталям: плоскость, подводка, железо
+material wpn_steel flat
+    color 0.36 0.36 0.37
+    rough 0.48
+    metal 1
+
+material wpn_edge flat
+    color 0.58 0.58 0.59
+    rough 0.28
+    metal 1
+
+material wpn_forged flat
+    color 0.21 0.21 0.21
+    rough 0.55
+    metal 1
+
+material wpn_file flat
+    color 0.2 0.2 0.21
+    rough 0.65
+    metal 1
+
+material wpn_iron flat
+    color 0.13 0.125 0.12
+    rough 0.66
+    metal 1
+
+material wpn_dark flat
+    color 0.09 0.09 0.095
+    rough 0.55
+    metal 1
+
+material wpn_pipe flat
+    color 0.17 0.16 0.15
+    rough 0.7
+    metal 1
+
+material wpn_rust flat
+    color 0.22 0.10 0.05
+    rough 0.92
+
+material wpn_wire flat
+    color 0.34 0.32 0.29
+    rough 0.5
+    metal 1
+
+material wpn_leather flat
+    color 0.16 0.095 0.055
+    rough 0.62
+
+material wpn_wood flat
+    color 0.24 0.15 0.085
+    rough 0.72
+
+material wpn_rag flat
+    color 0.30 0.27 0.22
+    rough 0.95
+
+material wpn_cord flat
+    color 0.11 0.10 0.09
+    rough 0.8
+
+material wpn_tape flat
+    color 0.035 0.04 0.05
+    rough 0.38
+
+material wpn_textolite flat
+    color 0.27 0.23 0.12
+    rough 0.48
+
+material wpn_hole flat
+    color 0.012 0.012 0.012
+    rough 0.95
+
+material wpn_glyph glow
+    color 0.45 0.85 0.55
+    rough 0.6
+    extra 40 0 0 0

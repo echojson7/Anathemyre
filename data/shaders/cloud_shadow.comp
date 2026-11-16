@@ -1,0 +1,37 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Карта тени облаков на землю (docs/clouds.md): тексель — клетка CLOUD_SH_M м в осях облаков (мир минус снос
+// ветром) на средней высоте слоя, в ней — доля света главного светила, прошедшая облака по лучу к нему.
+// Тексели по кругу: окно CLOUD_SH_N² клеток идёт за камерой. Поток — блок 4×4, в нём тексель фазы pc.a: вся
+// карта — за 16 кадров (облако за это время сдвигается в осях облаков на сантиметры)
+#include "clouds.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    FrameData f = pc.frame;
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy) * 4 + ivec2(pc.a & 3u, pc.a >> 2);
+    if (px.x >= CLOUD_SH_N || px.y >= CLOUD_SH_N) return;
+    vec3 l = normalize(f.sun_dir.xyz);
+    float ly = cl_sun_y(l);
+    float base = f.cl_shape.x, top = f.cl_shape.y, hm = 0.5 * (base + top);
+    // Клетка этого текселя, ближайшая к середине окна
+    vec2 cc = cl_shadow_center(l) / CLOUD_SH_M;
+    vec2 cell = vec2(px) + float(CLOUD_SH_N) * round((cc - vec2(px) - 0.5) / float(CLOUD_SH_N));
+    vec2 q = (cell + 0.5) * CLOUD_SH_M;
+    vec3 dir = vec3(l.x, ly, l.z);
+    float tau = 0.0;
+    if (f.cl_shape.z > 0.0) {
+        const int NS = 10;
+        float s0 = (base - hm) / ly, s1 = (top - hm) / ly;
+        float ds = (s1 - s0) / float(NS);
+        for (int j = 0; j < NS; ++j) {
+            float s = s0 + ds * (float(j) + 0.5);
+            tau += cloud_density(vec3(q.x + dir.x * s, hm + ly * s, q.y + dir.z * s), f.cl_cam.w, false);
+        }
+        tau *= ds * length(dir);
+    }
+    if (f.cl_cirrus.y > 0.0) tau += cirrus_tau(q + l.xz * ((f.cl_cirrus.x - hm) / ly)) / ly;
+    // Сквозь облако идёт не только прямой луч: капли светят вперёд, и под облаком толщиной 20 всё ещё треть
+    // света (два потока, g ≈ 0.85)
+    f.cl_shadow.v[px.y * CLOUD_SH_N + px.x] = floatBitsToUint(1.0 / (1.0 + 0.11 * tau));
+}

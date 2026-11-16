@@ -103,15 +103,13 @@ static bool bind(PeopleView &pv, const ViewAssets &a) {
         const SkelBone &fb = s.bones.data[pv.bones[B_FOOT + f]];
         pv.rest_foot[f] = Vec3{fb.pos[0], fb.pos[1], fb.pos[2] - pel.pos[2]};
     }
-    for (u32 i = 0; i < a.mesh_count; ++i)
-        if (a.meshes[i].name == hash_str("sword")) pv.sword = a.meshes[i].id;
     const ViewClip *stance = find_clip(a, STANCE_CLIP, ge);
-    if (pv.sword && !(stance && arms_bind(pv.arms, s, stance->clip, STANCE_T, idle->clip, IDLE_T))) {
+    pv.armed = a.weapons.issue_sum > 0.0f;
+    if (!pv.armed) log_warn("люди: нет оружия в data/weapons.txt — в руках пусто");
+    else if (!(stance && arms_bind(pv.arms, s, stance->clip, STANCE_T, idle->clip, IDLE_T))) {
         log_warn("люди: нет клипа %s или костей рук — оружия у людей не будет", STANCE_CLIP);
-        pv.sword = 0;
+        pv.armed = false;
     }
-    if (!pv.sword) log_warn("люди: нет сетки sword — меча в руках не будет");
-    else render_mesh_moving(pv.sword);  // ходит с рукой каждый кадр: иначе страницы теней под ним рисуются заново
     pv.body = 0;
     pv.skin = k;
     pv.failed = false;
@@ -209,6 +207,7 @@ static u32 body_snorm2(f32 a, f32 b) {
 struct PoseOut {
     WPos base;  // корень экземпляра (с опусканием таза)
     bool sword; // оружие (в руке или на теле): начало сетки и поворот в мире
+    u32 weapon_mesh;
     WPos sword_at;
     Quat sword_q;
 };
@@ -496,9 +495,15 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
 
     // Оружие (docs/arms.md): в бою (цель, действие, реакция) — в руках, иначе на теле. Стойка и рука с оружием —
     // поверх ходьбы, до клипов действий: клип действия их перекрывает
-    const WeaponHold hold = WEAPON_HOLD_SWORD;
+    // Как держать и носить — из записи оружия по зерну внешности (docs/weapons.md); hands там с 0, здесь с 1
+    const i32 wi = pv.armed ? weapon_pick(assets.weapons, c.person_seed[i]) : -1;
+    WeaponHold hold{};
+    if (wi >= 0) {
+        const WeaponDesc &wd = assets.weapons.w[wi];
+        hold = WeaponHold{(u8)(wd.hands + 1), wd.carry, wd.grip2, wd.carry_at, wd.tip, wd.butt};
+    }
     ArmsState arms{};
-    if (pv.sword) {
+    if (wi >= 0) {
         const bool fight = c.person_target[i] || c.person_act[i] || c.person_react_t[i];
         arms = arms_update(L.arms, hold, fight, c.person_act[i] != 0, r.v, dt, fresh);
         if (arms.two > 0.0f || arms.one > 0.0f) {
@@ -532,8 +537,9 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const ViewI
     } else {
         out.base = pose_feet(pw, aw.any, debug);
     }
-    out.sword = pv.sword != 0;
+    out.sword = wi >= 0;
     if (out.sword) {
+        out.weapon_mesh = assets.weapons.w[wi].mesh;
         const ArmsWeapon w = arms_pose_weapon(pv.arms, s, hold, arms, aw.any, aw.grip2, aw.guard, tb, &trans, rot, wr, wp);
         out.sword_at = body_point(out.base, r.yaw, w.at);
         out.sword_q = quat_mul(quat_yaw(r.yaw), w.q);
@@ -660,7 +666,7 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
             sw.rot_xy = body_snorm2(po.sword_q.x, po.sword_q.y);
             sw.rot_zw = body_snorm2(po.sword_q.z, po.sword_q.w);
             sw.scale = 1.0f;
-            sw.mesh = pv.sword;
+            sw.mesh = po.weapon_mesh;
             sw.material = RENDER_NO_MATERIAL;
             sw.seed = c.person_seed[i];
         }
