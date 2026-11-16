@@ -48,14 +48,14 @@ bool weapon_parse(WeaponTable &t, const u8 *text, usize size, char *err, usize e
                 return bad("carry hip_l|back|back_pole <y>");
             have |= 2;
         } else {
-            struct Key {
+            struct Field {
                 const char *name;
                 f32 *v;
                 u32 bit;
             };
-            const Key keys[] = {{"grip2", &d->grip2, 4}, {"tip", &d->tip, 8}, {"butt", &d->butt, 16}, {"issue", &d->issue, 32}};
-            const Key *k = nullptr;
-            for (const Key &q : keys)
+            const Field keys[] = {{"grip2", &d->grip2, 4}, {"tip", &d->tip, 8}, {"butt", &d->butt, 16}, {"issue", &d->issue, 32}};
+            const Field *k = nullptr;
+            for (const Field &q : keys)
                 if (str_eq(l.w[0], q.name)) k = &q;
             if (!k) return bad("неизвестный ключ");
             if (l.count != 2 || !parse_f32(l.w[1], *k->v)) return bad("ожидается одно число");
