@@ -205,15 +205,17 @@ void main() {
             acc.c += r2;
         }
         bool young = cnt < LC_K;
-        bool show = young || turn == LC_K - 1u;
+        bool ease = f.lc_ease != 0u && !young;
+        bool show = young || ease || turn == LC_K - 1u;
         if (show) {
             vec4 m0 = acc.a / float(turn + 1u), m1 = acc.b / float(turn + 1u), m2 = acc.c / float(turn + 1u);
             vec3 n0 = m0.rgb, nx = vec3(m0.a, m1.xy), ny = vec3(m1.zw, m2.x), nz = m2.yzw;
             if (!young) {
-                // Конец круга: новое среднее со старым показанным долей lc_hyst (как у зондов)
+                // Конец круга: новое среднее со старым показанным долей lc_hyst (как у зондов). Быстрое светило
+                // (ускоренное время): каждый счёт малым шагом к среднему круга — за круг тот же сдвиг (gi_blend.comp)
                 vec3 o0, ox, oy, oz;
                 lc_unpack(f.lc_show.v[e], o0, ox, oy, oz);
-                float hy = f.lc_hyst;
+                float hy = ease ? 1.0 - (1.0 - f.lc_hyst) / float(LC_K) * 1.5 : f.lc_hyst;
                 n0 = mix(n0, o0, hy);
                 nx = mix(nx, ox, hy);
                 ny = mix(ny, oy, hy);
