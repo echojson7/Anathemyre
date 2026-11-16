@@ -1,4 +1,4 @@
-"""Одноручное (ШИЛО, ЛИСТ, КОЛУН): ЗАТОЧКА, РЕЗАК, РЕССОРА, ПОЛОСА, СЕКАЧ, ТЁСЛО.
+"""Одноручное (ШИЛО, ЛИСТ): ЗАТОЧКА, РЕЗАК, РЕССОРА, ПОЛОСА.
 
 Формы — со склада беты (tools/weaponconv/onehand.py ветки stage0/test-room), переписаны на замкнутые тела без
 Blender. Каждая вещь строится от торца рукояти (x = 0) к острию (+X), лезвие вниз (−Z). Функция отдаёт вещь и
@@ -138,85 +138,4 @@ def polosa():
     return w, (0.1, 0.0)
 
 
-# ================================================================ СЕКАЧ 1.0: тесак из толстого листа, носок-клюв
-def sekach():
-    w = Weapon()
-    X0, L = 0.27, 1.0
-
-    def top(x):
-        n = 0.0022 * saw((x - X0) / 0.011) if 0.04 < (x - X0) < 0.2 else 0.0     # зазубрины на обухе у пяты
-        return 0.022 - n
-
-    def bot(x):
-        u = (x - X0) / (L - X0)
-        z = -0.042 - 0.045 * u ** 1.3
-        t = (x - (L - 0.045)) / 0.045
-        if t > 0:
-            z -= 0.02 * t ** 2           # нижний угол вытянут вперёд клювом
-        return z
-
-    def sec(x):
-        if x < X0:
-            return edge_sec(0.012, -0.012, 0.003, 0.0)
-        return edge_sec(top(x), bot(x), 0.0033, 0.022 if x > X0 + 0.015 else 0.0)
-    xs = [X0 - 0.12, X0 - 0.0005] + [X0 + (L - X0) * i / 180 for i in range(181)]
-    w.loft(xs, sec, ["forged", "edge"])
-    through_hole(w, L - 0.05, 0.004, 0.0033, 0.0075)
-
-    # рукоять: деревянные накладки на хвостовике, три заклёпки, стальной упор у клинка, к торцу крюк
-    def grip(x):
-        u = (x - 0.012) / (X0 - 0.03 - 0.012)
-        rz = 0.0175 + 0.0025 * math.sin(math.pi * u) + 0.007 * smooth((0.12 - u) / 0.12)
-        zc = -0.003 - 0.005 * smooth((0.12 - u) / 0.12)
-        return [(yy, zz + zc, m) for yy, zz, m in ring(0.0118, 18, 0, rz)]
-    gx = [0.012 + (X0 - 0.03 - 0.012) * i / 30 for i in range(31)]
-    w.loft(gx, grip, ["wood"], shade="smooth")
-    w.slab(X0 - 0.032, X0, -0.0085, 0.0085, -0.034, 0.024, "iron", bevel=0.003)
-    w.loft([0.0, 0.004, 0.009, 0.013], lambda x: [(yy, zz - 0.008, m) for yy, zz, m in
-                                                 ring(0.0095 if x in (0.0, 0.013) else 0.0105, 14, 0,
-                                                      0.0225 if x in (0.0, 0.013) else 0.0245)],
-           ["iron"], shade="smooth")
-    for x in (0.06, 0.13, 0.2):
-        rivets(w, x, -0.002, 0.0117, 0.0045)
-    return w, (0.17, -0.005)
-
-
-# ================================================================ ТЁСЛО 0.86: топор с длинной бородой
-def teslo():
-    w = Weapon()
-    L = 0.86
-    hx = [0.0] + [L * i / 20 for i in range(1, 21)]
-    w.loft(hx, lambda x: ring(0.0125 + 0.0015 * smooth(x / 0.1), 12, 0, 0.0165 + 0.002 * smooth(x / 0.1)),
-           ["wood"], shade="smooth")
-    w.wrap(0.012, 0.11, 0.0148, 0.0195, "cord", step=0.006, bulge=0.0009, per=4)
-    # втулка из трубы
-    S0, S1 = 0.735, 0.835
-    w.rod(S0, S1, 0.022, "iron", rz=0.024, n=16)
-
-    # щека-пластина: полумесяц лезвия, борода назад к рукояти
-    def zt(x):
-        if x < S0 + 0.01:
-            return lerp(-0.13, -0.022, smooth((x - 0.6) / (S0 + 0.01 - 0.6)) ** 0.7)
-        if x > S1 - 0.01:
-            return lerp(-0.022, -0.06, ((x - (S1 - 0.01)) / 0.075) ** 1.5)
-        return -0.022
-
-    def zb(x):
-        u = (x - 0.6) / 0.31
-        return -0.135 - 0.015 * math.sin(math.pi * u) + 0.06 * max(0, u - 0.82) / 0.18
-
-    def sec(x):
-        a, b = zt(x), zb(x)
-        if a - b < 0.004:
-            a = b + 0.004
-        return edge_sec(a, b, 0.0045, min(0.022, (a - b) * 0.5))
-    xs = [0.6 + 0.305 * i / 70 for i in range(71)]
-    w.loft(xs, sec, ["iron", "edge"])
-    # сквозной болт и старая приварка
-    bolt(w, 0.785, 0.0, 0.0225, 0.0065)
-    w.tube([(S0 + 0.004, -0.0048, -0.023), (S1 - 0.004, -0.0048, -0.023)], 0.0025, "rust", seg=8)
-    w.tube([(S0 + 0.004, 0.0048, -0.023), (S1 - 0.004, 0.0048, -0.023)], 0.0025, "rust", seg=8)
-    return w, (0.07, 0.0)
-
-
-ITEMS = {"zatochka": zatochka, "rezak": rezak, "ressora": ressora, "polosa": polosa, "sekach": sekach, "teslo": teslo}
+ITEMS = {"zatochka": zatochka, "rezak": rezak, "ressora": ressora, "polosa": polosa}

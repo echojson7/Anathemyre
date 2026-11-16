@@ -56,24 +56,6 @@ weapon lopast
     butt -0.205
     issue 0.3
 
-weapon sekach
-    family КОЛУН
-    hands 1
-    grip2 0
-    carry hip_l 0.08
-    tip 0.83
-    butt -0.17
-    issue 1
-
-weapon teslo
-    family КОЛУН
-    hands 1
-    grip2 0
-    carry hip_l 0.52
-    tip 0.835
-    butt -0.07
-    issue 1
-
 weapon dolgaya
     family ДВУХВАТ
     hands 2
@@ -109,15 +91,6 @@ weapon resheto
     tip 1.205
     butt -0.285
     issue 0.3
-
-weapon bagor
-    family ЖЕРДЬ
-    hands pole
-    grip2 -0.62
-    carry back_pole 0.101
-    tip 1.13
-    butt -0.928
-    issue 1
 
 weapon kosa
     family ЖЕРДЬ

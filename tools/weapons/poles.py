@@ -1,49 +1,10 @@
-"""Древковое (ЖЕРДЬ): БАГОР, КОСА, ТРУБА.
+"""Древковое (ЖЕРДЬ): КОСА, ТРУБА.
 
 Формы — со склада беты (tools/weaponconv/polearms.py ветки stage0/test-room), переписаны на замкнутые тела
 без Blender. Торец древка у x = 0, остриё к +X. Начало сетки — верхняя рука (у беты кулак был у нижней, на
 0.25–0.3 м от торца; вторая рука на 0.62 м выше): нижняя кисть — grip2 = −0.62 в data/weapons.txt.
 """
 from wkit import Weapon, edge_sec, lerp, math, ring, smooth
-
-
-def band(w, x, r, wd, mat):
-    w.loft([x, x + 0.002, x + wd - 0.002, x + wd], lambda xx: ring(r if x + 0.001 < xx < x + wd - 0.001 else r - 0.0012, 20, 0),
-           [mat], shade="smooth")
-
-
-# ================================================================ БАГОР 2.0: пика и крюк из одного прута, деревянное древко
-def bagor():
-    w = Weapon()
-    L = 2.0
-    S0, S1 = 1.66, 1.8          # втулка
-    w.rod(0.0, S0 + 0.02, 0.018, "wood", n=14)
-    band(w, 0.04, 0.0195, 0.035, "iron")
-    band(w, 0.95, 0.0195, 0.03, "iron")
-    w.loft([S0 + i * (S1 - S0) / 8 for i in range(9)],
-           lambda x: ring(lerp(0.0215, 0.013, ((x - S0) / (S1 - S0)) ** 1.5), 8, 0, phase=math.pi / 8), ["iron"])
-    for x in (S0 + 0.03, S0 + 0.08):
-        for side in (-1, 1):
-            w.dome_y(x, 0.0, side * 0.0195, 0.0055, 0.0028, "dark", side=side, seg=10)
-
-    # пика: четырёхгранная
-    def pike(x):
-        u = max(0.0, (x - S1) / (L - S1))
-        h = 0.012 * (1 - u ** 1.3) + 0.0004
-        return [(0, h, 0), (h, 0, 0), (0, -h, 0), (-h, 0, 0)]
-    w.loft([S1 - 0.005] + [S1 + (L - S1) * (i / 30) for i in range(1, 31)], pike, ["steel"])
-    # крюк: отходит от втулки вверх и загибается назад, к древку
-    pts = []
-    for i in range(41):
-        t = i / 40
-        a = math.pi * 1.15 * t
-        pts.append((S1 - 0.01 + 0.055 * math.sin(a) - 0.03 * t, 0.0, 0.012 + 0.055 * (1 - math.cos(a)) * 0.95))
-    w.tube(pts, 0.0085, "iron", seg=10)
-    w.tube([pts[-3], (pts[-1][0] - 0.02, 0.0, pts[-1][2] - 0.012)], 0.005, "iron", seg=8)
-    # кольцо на торце
-    w.torus((-0.028, 0.0, 0.0), "y", 0.026, 0.004, "dark", seg=32, rseg=8)
-    w.rod(-0.006, 0.004, 0.006, "dark", n=10)
-    return w, (0.87, 0.0)
 
 
 # ================================================================ КОСА 2.84: недораспрямлённое полотно косы на трубе
@@ -125,4 +86,4 @@ def truba():
     return w, (0.92, 0.0)
 
 
-ITEMS = {"bagor": bagor, "kosa": kosa, "truba": truba}
+ITEMS = {"kosa": kosa, "truba": truba}
