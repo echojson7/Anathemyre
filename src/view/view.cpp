@@ -98,6 +98,8 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.style.dt = in.dt;
     out.style.eye_snap = in.eye_snap;
     out.style.tonemap = in.tonemap;
+    for (u32 k = 0; k < 3; ++k) out.style.local_tone[k] = assets.sky.local_tone[k];
+    out.style.local_tone[3] = in.local_off ? 0.0f : 1.0f;
     out.style.scans = in.scans;
     out.style.light_quality = in.light_quality;
     out.style.aa = in.aa;

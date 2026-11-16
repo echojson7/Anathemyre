@@ -77,6 +77,7 @@ struct ViewInput {
     f64 cloud_time = 0.0;  // то же без круга: ветер и смена формы облаков (docs/clouds.md)
     bool eye_snap = true;
     u32 tonemap = RENDER_TONEMAP_AGX;
+    bool local_off = false;  // без местной экспозиции (F3, --nolocal): сравнение было/стало
     bool scans = false;  // поверхности из сканов CC0 (docs/scans.md), F3 и --scans
     u32 light_quality = RENDER_LIGHT_HIGH;
     u32 aa = RENDER_AA_TAA;

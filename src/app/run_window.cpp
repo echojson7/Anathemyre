@@ -593,6 +593,7 @@ int run_window(const Args &a, AppMemory &m) {
         vi.cloud_time = cloud_time;
         vi.eye_snap = frames < 2 || a.timelapse || a.shot;
         vi.tonemap = ds.tonemap;
+        vi.local_off = a.local_off || ds.local_off;
         vi.scans = ds.scans;
         vi.lamps_off = a.lamps_off || ds.lamps_off;
         vi.shadow_pages = a.shadow_pages ? a.shadow_pages : ds.shadow_pages;

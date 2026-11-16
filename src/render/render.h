@@ -107,6 +107,8 @@ struct RenderStyle {
     // Свет (docs/light.md)
     u32 tonemap = RENDER_TONEMAP_AGX;
     u32 light_quality = RENDER_LIGHT_HIGH;
+    // Местная экспозиция (data/sky.txt, local_tone): колено, стопы; наклон в свет; в тень; 1 — включена
+    f32 local_tone[4] = {1.0f, 0.05f, 1.0f, 1.0f};
     f32 dt = 0.0f;         // секунды кадра: привыкание глаза
     bool eye_snap = true;  // глаз привыкает сразу (первый кадр, --timelapse: кадр — свой час)
 };

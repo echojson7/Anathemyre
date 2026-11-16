@@ -35,6 +35,7 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"cirrus", &d.cirrus, 1},         {"cirrus_height", &d.cirrus_height, 1},
         {"wind", &d.wind, 1},             {"wind_dir", &d.wind_dir, 1},
         {"night_fill", &d.night_fill, 1}, {"glare", &d.glare, 1},
+        {"local_tone", d.local_tone, 3},
     };
     TextReader r = text_reader(text, size);
     TextLine l;
@@ -75,6 +76,10 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         d.cirrus_height > 14000.0f || d.cloud_density <= 0.0f || d.cloud_light < 0.0f || d.wind < 0.0f || d.wind > 60.0f) {
         snprintf(err, err_cap, "clouds и cirrus 0–1, cloud_base ≥ 500, cloud_top от cloud_base + 300 до 8000, cirrus_height от "
                                "cloud_top + 500 до 14000, cloud_density > 0, cloud_light ≥ 0, wind 0–60");
+        return false;
+    }
+    if (d.local_tone[0] < 0.0f || d.local_tone[1] <= 0.0f || d.local_tone[1] > 1.0f || d.local_tone[2] <= 0.0f || d.local_tone[2] > 1.0f) {
+        snprintf(err, err_cap, "local_tone: колено ≥ 0, наклоны в (0, 1]");
         return false;
     }
     return true;

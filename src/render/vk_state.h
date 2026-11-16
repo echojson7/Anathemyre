@@ -85,6 +85,7 @@ struct FrameGpu {
     // Свет (docs/light.md): время кадра, сразу ли привыкать глазу, тонмаппинг, качество света
     f32 dt;
     u32 eye_snap, tonemap, light_q;
+    f32 local_tone[4];  // местная экспозиция: колено, наклон в свет, наклон в тень, включена
     // Тени солнца страницами (vk_shadow.cpp, docs/shadow.md): окна страниц уровней, пул страниц и их тексели,
     // заявки, вызовы и список отрисовки страниц, сферы сброса кадра
     VkDeviceAddress sm_table, sm_pages, sm_texels, sm_req, sm_draws, sm_list, sm_inval;
