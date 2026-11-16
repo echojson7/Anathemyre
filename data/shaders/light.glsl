@@ -17,6 +17,8 @@
 // 1 — освещается поверхность самой земли (ставит light_cells.comp до light_surface): под грунтом она не бывает,
 // какой бы ни была грубая высота земли у зондов (gi_buried)
 float g_ground = 0.0;
+// 1 — сетка движется сама (люди, меч): ячейки мира ей не подходят, отражённый свет — от зондов (ставит light_cells.comp)
+float g_moving = 0.0;
 
 // Свет места для местной экспозиции (docs/light.md, «Местная экспозиция»; light_cells.comp): освещённость, лк,
 // какую намерил бы экспонометр глаза, встань он в этой точке, — непрямой свет по нормали, светило в доле
@@ -115,6 +117,18 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
     }
     return c;
 }
+// Свет берёт ячейки: не движущаяся сетка, не F3 «без ячеек» (сравнение) и не «ячейки» (там их показывает свой вид)
+bool lc_use() { return g_moving == 0.0 && pc.frame.gi_view != GI_VIEW_PROBES && pc.frame.gi_view != GI_VIEW_CELLS; }
+
+// Ближнее затенение по полю: у зондов — на 1 м (углы мельче их шага), у ячеек — на полторы стороны ячейки у точки
+// (не меньше 25 см: старт конусов — полвокселя поля), дальше ячейка затенена своими лучами
+float lc_ao(vec3 pos, vec3 n, float cells) {
+    float tc = clamp(length(pos) * pc.frame.lc_angle * 1.5, 0.25, 1.0);
+    uint q = pc.frame.light_q;
+    uint steps = q == LIGHT_Q_LOW ? 4u : q == LIGHT_Q_MEDIUM ? 5u : q == LIGHT_Q_HIGH ? 6u : 7u;
+    return sdf_cones(pos, n, q, mix(1.0, tc, cells), steps).x;
+}
+
 // Непрямой свет (6г, docs/gi.md): рассеянное и отражение от неба и от того, что отразили стены и земля.
 // irr, env — небо без заслонки по нормали и в сторону отражения; kd — доля рассеянного, fss_ess, fms_ems —
 // отражение за один отскок и добавка многократного (Fdez-Agüera 2019).
@@ -141,9 +155,13 @@ vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, v
         c = (kd * irr * ao + (fss_ess * env + fms_ems * irr) * so) * (1.0 - g.cov);
     }
     if (g.cov > 0.0) {
+        // Ячейки света (docs/lcache.md): рассеянный отражённый свет на самой поверхности вместо смеси зондов; ближнее
+        // затенение — только мельче ячейки (крупнее ячейка видит сама)
+        vec4 lc = lc_use() ? lc_gather(s.pos, n, g_ground != 0.0) : vec4(0.0);
+        g.irr = mix(g.irr, lc.rgb, lc.a);
         lit += clamp(dot(g.irr, Y) / sky_y, 0.0, 1.0) * g.cov;
         g_e_local += A_PI * max(dot(g.irr, Y), 0.0) * g.cov;
-        float ao = s.ao * sdf_ao(s.pos, n);
+        float ao = s.ao * lc_ao(s.pos, n, lc.a);
         float so = spec_occlusion(nv, ao, a);
         vec3 bounce = max(g.refl.rgb - atmo_ambient(rd) * g.refl.a, vec3(0.0));
         vec3 env_g = mix(env * g.refl.a + bounce, g.refl.rgb, blur);
@@ -165,7 +183,8 @@ vec3 light_indirect_view(Surface s) {
     vec3 irr = atmo_ambient(s.normal);
     float bury = g_ground == 0.0 ? gi_buried(s.pos + pc.frame.sdf_cam.xyz) : 0.0;
     vec3 fb = irr * (s.ao * (g.cov < 1.0 ? sdf_sky(s.pos, s.normal).x * (1.0 - bury) : 1.0));
-    vec3 gi = g.cov > 0.0 ? g.irr * (s.ao * sdf_ao(s.pos, s.normal)) : vec3(0.0);
+    vec4 lc = lc_use() ? lc_gather(s.pos, s.normal, g_ground != 0.0) : vec4(0.0);
+    vec3 gi = g.cov > 0.0 ? mix(g.irr, lc.rgb, lc.a) * (s.ao * lc_ao(s.pos, s.normal, lc.a)) : vec3(0.0);
     vec3 c = 0.5 * mix(fb, gi, g.cov);
     return pc.frame.gi_view == GI_VIEW_CELLS ? c * vec3(1.0, 0.45, 0.45) : c;
 }
