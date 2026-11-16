@@ -39,6 +39,7 @@ struct Extract {
     u16 *person_react_t;
     u32 *person_react_yaw;
     u8 *person_react_part;
+    u32 *person_target;      // цель боя (номер с поколением, 0 — нет): в бою оружие в руках (вид, docs/arms.md)
 };
 
 void extract_init(Extract &e, Arena &arena);
