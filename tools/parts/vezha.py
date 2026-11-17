@@ -27,8 +27,8 @@ LEGS = (("fr", "front", 0.40, 0.44, -50.0, False), ("fl", "front", 0.40, 0.44, -
         ("rl", "rear", 0.40, -0.44, 50.0, True), ("rr", "rear", 0.40, -0.44, 50.0, False))
 ANTENNAS = (("ant_l", -1.0, 0.16, 0.92), ("ant_r", 1.0, 0.05, 0.62))   # кость, сторона, наклон назад, длина штыря
 
-LODS = (20500, 15000, 10000)  # треугольников в LOD 1…3 (meshpack --prune --lods): первый держит ошибку ≤ 5.3 см, ниже
-# ~20 тыс. отсечение мелочи срывает LOD сразу к ~13 тыс. и 0.22 м
+LODS = (45000, 26000, 16000)  # треугольников в LOD 1…3 (meshpack --prune --lods): первый держит ошибку ~2 см; ноги из
+# сотен отдельных тел (болты, пальцы, хомуты) упрощаются ступенькой — ниже ~40 тыс. ошибка сразу растёт до 7–12 см
 
 WEAR = (WORN, 0.035, 0.80, 0.05)       # краска: сколы у кромки на 3.5 см, редкие на плоскости
 
@@ -656,10 +656,10 @@ def make():
         L = leg_points(kind)
         parts, rams = leg_parts(L)
         heads = {"hip": (0.0, HIP_Y, 0.0), "thigh": L["P"], "shin": L["K"], "tarsus": L["A"], "foot": L["F"],
-                 "pa": L["la"], "pb": L["lb"], "ka": L["ka"], "kb": L["kb"]}
+                 "pa": L["la"], "pb": L["lb"], "ka": L["ka"], "kb": L["kb"], "ma": L["ma"], "mb": L["mb"]}
         kinds[kind] = (parts, heads, rams)
     parent = {"hip": "chassis", "thigh": "hip", "shin": "thigh", "tarsus": "shin", "foot": "tarsus", "pa": "hip", "pb": "thigh",
-              "ka": "thigh", "kb": "shin"}
+              "ka": "thigh", "kb": "shin", "ma": "shin", "mb": "tarsus"}
     for name, kind, x, z, deg, mirror in LEGS:
         parts, heads, extra = kinds[kind]
         m = rot_y(math.radians(deg))

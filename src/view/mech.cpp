@@ -7,8 +7,8 @@
 #include "view.h"
 
 static const char *const MECH_LEG_NAMES[MECH_LEGS] = {"fr", "fl", "rl", "rr"};
-static const char *const MECH_LEG_BONES[9] = {"hip", "thigh", "shin", "tarsus", "foot", "pa", "pb", "ka", "kb"};
-enum { ML_HIP, ML_THIGH, ML_SHIN, ML_TARSUS, ML_FOOT, ML_PA, ML_PB, ML_KA, ML_KB };
+static const char *const MECH_LEG_BONES[11] = {"hip", "thigh", "shin", "tarsus", "foot", "pa", "pb", "ka", "kb", "ma", "mb"};
+enum { ML_HIP, ML_THIGH, ML_SHIN, ML_TARSUS, ML_FOOT, ML_PA, ML_PB, ML_KA, ML_KB, ML_MA, ML_MB, ML_COUNT };
 
 void mech_view_init(MechView &mv) {
     memset((void *)&mv, 0, sizeof mv);
@@ -64,7 +64,7 @@ static bool mech_bind_skel(MechRig &r, u8 kind, const Skel &s) {
     r.mast = find("mast", tat);
     r.bipod = find("bipod", tat);
     for (u32 k = 0; k < MECH_LEGS; ++k)
-        for (u32 j = 0; j < 9; ++j) {
+        for (u32 j = 0; j < ML_COUNT; ++j) {
             char name[32];
             snprintf(name, sizeof name, "%s_%s", MECH_LEG_BONES[j], MECH_LEG_NAMES[k]);
             r.leg[k].bone[j] = find(name, j < ML_PA);   // цилиндры — не у всех ног (у части ног Тати нет)
@@ -189,7 +189,7 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
             r = mech_leg_reach(L, quat_rotate(quat_conj(tilt), b));
         }
         f32 a, sh, ta;
-        mech_leg_solve(L, LD, r.x, r.y, &a, &sh, &ta);
+        mech_leg_solve(L, LD, mech_leg_meta(D, k, m.h), r.x, r.y, &a, &sh, &ta);
         // Ось сгиба ноги в бинде: поперёк ноги, x ноги × вверх
         Vec3 z = cross(L.dir, Y);
         f32 da = a - L.a1, ds = sh - L.a2, dt = ta - L.a3;
@@ -210,9 +210,9 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
         Vec3 ax = normalize(cross(up, n));
         pose_turn_world(rot, wr, f, quat_axis_angle(ax, f_min(ang, 0.6f) * foot_w[k]));
     }
-    // Цилиндры: гильза и шток смотрят друг на друга (подъём бедра и колено)
+    // Цилиндры: гильза и шток смотрят друг на друга (подъём бедра, колено, плюсна)
     for (u32 k = 0; k < MECH_LEGS; ++k)
-        for (u32 c = ML_PA; c <= ML_KA; c += 2) {
+        for (u32 c = ML_PA; c <= ML_MA; c += 2) {
             i32 i = R.leg[k].bone[c], j = R.leg[k].bone[c + 1];
             if (i < 0 || j < 0) continue;
             Vec3 d0 = normalize(mech_head(s, j) - mech_head(s, i));
