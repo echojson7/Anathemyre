@@ -146,15 +146,38 @@ float lc_ao(vec3 pos, vec3 n, float cells) {
 // lit — освещённость воздуха у точки против открытого неба (рассеянный свет к небу по нормали): дымке отрезка
 vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, vec3 irr, vec3 env, vec3 kd,
                     vec3 fss_ess, vec3 fms_ems, out float lit) {
-    GiSample g = gi_sample(s.pos, n, rd, true);
+    // Земля из кеша (docs/gcache.md, «Отражённый свет в кеше»): зонды, ячейки, ближнее затенение и видимость неба —
+    // смесь текселей. Только у шероховатого (blur = 1): там отражение берёт свет зондов почти по нормали, и его
+    // заменяет тот же свет текселя; гладкому (вода, мокрое) нужен свет точно по лучу отражения — он на пиксель
+    bool cached = false;
+#ifdef GCACHE_GLSL
+    cached = g_gcl_ok && blur >= 1.0;
+#endif
+    GiSample g;
+    if (cached) {
+#ifdef GCACHE_GLSL
+        g.irr = g_gcl.irr;
+        g.refl = vec4(g_gcl.irr, g_gcl.refl);
+        g.cov = g_gcl.cov;
+#endif
+    } else {
+        g = gi_sample(s.pos, n, rd, true);
+    }
     vec3 c = vec3(0.0);
     const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
     float sky_y = max(dot(irr, Y), 1e-6);
     lit = 0.0;
     if (g.cov < 1.0) {
         // Под грунтом неба нет, что бы ни видели конусы (gi_buried)
-        float vis = sdf_sky(s.pos, n).x;
-        if (g_ground == 0.0) vis *= 1.0 - gi_buried(s.pos + pc.frame.sdf_cam.xyz);
+        float vis;
+#ifdef GCACHE_GLSL
+        if (cached) vis = g_gcl.vis;
+        else
+#endif
+        {
+            vis = sdf_sky(s.pos, n).x;
+            if (g_ground == 0.0) vis *= 1.0 - gi_buried(s.pos + pc.frame.sdf_cam.xyz);
+        }
         lit = vis * (1.0 - g.cov);
         g_e_local += A_PI * sky_y * lit;
         float ao = s.ao * vis;
@@ -164,11 +187,19 @@ vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, v
     if (g.cov > 0.0) {
         // Ячейки света (docs/lcache.md): рассеянный отражённый свет на самой поверхности вместо смеси зондов; ближнее
         // затенение — только мельче ячейки (крупнее ячейка видит сама)
-        vec4 lc = lc_use() ? lc_gather(s.pos, n, g_ground != 0.0) : vec4(0.0);
-        g.irr = mix(g.irr, lc.rgb, lc.a);
+        float lao;
+#ifdef GCACHE_GLSL
+        if (cached) lao = g_gcl.ao;
+        else
+#endif
+        {
+            vec4 lc = lc_use() ? lc_gather(s.pos, n, g_ground != 0.0) : vec4(0.0);
+            g.irr = mix(g.irr, lc.rgb, lc.a);
+            lao = lc_ao(s.pos, n, lc.a);
+        }
         lit += clamp(dot(g.irr, Y) / sky_y, 0.0, 1.0) * g.cov;
         g_e_local += A_PI * max(dot(g.irr, Y), 0.0) * g.cov;
-        float ao = s.ao * lc_ao(s.pos, n, lc.a);
+        float ao = s.ao * lao;
         float so = spec_occlusion(nv, ao, a);
         vec3 bounce = max(g.refl.rgb - atmo_ambient(rd) * g.refl.a, vec3(0.0));
         vec3 env_g = mix(env * g.refl.a + bounce, g.refl.rgb, blur);

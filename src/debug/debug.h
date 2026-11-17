@@ -17,6 +17,7 @@ struct DebugState {
     bool froxel_heat = false; // тепловая карта огней по клеткам froxels
     bool scans = false;       // поверхности из сканов CC0 (docs/scans.md, --scans; не сохраняется)
     bool gcache_off = false;  // без кеша поверхности земли (сравнение, не сохраняется)
+    bool gclight_off = false; // отражённый свет земли на пиксель, не из кеша (docs/gcache.md; сравнение, не сохраняется)
     u32 shadow_pages = 0;     // тени (docs/shadow.md): 0 — кадр, 1 — страницы поверх, 2 — только тень (не сохраняется)
     u32 sdf_view = 0;         // поле расстояний (docs/sdf.md): кадр, только небо, поле, выкл (RENDER_SDF_*, не сохраняется)
     u32 gi_view = 0;          // непрямой свет (docs/gi.md): кадр, только он, без зондов (RENDER_GI_*, не сохраняется)

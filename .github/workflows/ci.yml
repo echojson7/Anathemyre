@@ -188,7 +188,7 @@ jobs:
           # 1536², зондов за кадр 1024 вместо 1536). Первый кадр собирает всю карту облаков, под GPU-AV это была
           # половина прогона (docs/graph.md, «Проверки»). «Высоко» идёт в окнах asan, shot и same
           par gpuav 720 xvfb-run -n 92 -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 4 --window 640 360 \
-            --gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp,lcache_trace.comp \
+            --gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp,lcache_trace.comp,gcache_light.comp \
             --cam 45 5 6 11698 -2348.5 --stand elbow,morph1 --light medium
           par_wait 5
       - name: Снимок сцены

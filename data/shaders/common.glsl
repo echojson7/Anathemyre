@@ -82,6 +82,8 @@ layout(buffer_reference, scalar) buffer GiJobs { uint v[]; };
 // мировой номер, кадр последнего взгляда, состояние; показанный свет (половинки) и сумма круга
 const uint STAT_LC_LIVE = 32u, STAT_LC_NEW = 33u, STAT_LC_JOBS = 34u, STAT_LC_RAYS = 35u, STAT_LC_OVER = 36u,
            STAT_LC_TAPS = 37u, STAT_LC_WAIT = 38u;
+const uint STAT_GC_LIT = 39u;  // текселей кеша земли, чей отражённый свет посчитан в кадре (docs/gcache.md)
+const uint GC_LIGHT_ON = 1u, GC_LIGHT_ALL = 2u;  // gc_lmode: свет в кеше читается; пересчитать все страницы кадра
 struct LcMeta { ivec3 home; uint seen; uint key; uint state; vec3 org; uint pad; };  // org — точка лучей, м от якоря
 struct LcSh { uvec4 a; uvec2 b; };      // a0.rgb, a1x.rgb, a1y.rgb, a1z.rgb половинками
 struct LcAcc { vec4 a, b, c; };         // те же 12 чисел суммой круга
@@ -103,10 +105,13 @@ struct TileCmd { uint x, y, z, pad; };  // VkDispatchIndirectCommand, шаг 16 
 layout(buffer_reference, scalar) buffer Tiles { TileCmd cmd[TILE_KINDS]; uint list[]; };
 
 // Кеш поверхности земли (docs/gcache.md, gcache.glsl): страница — 8×8 текселей одного уровня ячейки
-struct GcPage { uint key0, key1, used, pad; };  // ключ страницы (уровень << 24 | x, z), кадр последнего чтения
+struct GcPage { uint key0, key1, used, lit; };  // ключ страницы (уровень << 24 | x, z), кадр последнего чтения, света (0 — нет)
 layout(buffer_reference, scalar) buffer GcTable { uint v[]; };  // окна страниц уровней
 layout(buffer_reference, scalar) buffer GcPages { GcPage v[]; };
 layout(buffer_reference, scalar) buffer GcTexels { uvec4 v[]; };  // тексель: два варианта по 8 байт
+// Отражённый свет текселя (docs/gcache.md): высота точки, E/π (половинки) с отметкой «посчитан», доли зондов,
+// неба, ближнее затенение, доля неба к отражению (по 8 бит)
+layout(buffer_reference, scalar) buffer GcLight { uvec4 v[]; };
 // Заявки кадра и свободные страницы: счёт заявок, «старых» и «недавних» свободных, dispatch запекания; дальше
 // заявки (ключи), старые и недавние — по req_cap и pages_n мест
 layout(buffer_reference, scalar) buffer GcReq { uint req_n, old_n, recent_n, pad; uvec4 bake; uint v[]; };
@@ -254,9 +259,11 @@ layout(buffer_reference, scalar) buffer FrameData {
     GcTexels gc_texels;
     GcReq gc_req;
     GcCells gc_cells;         // на пиксель кадра, строками
+    GcLight gc_light;         // отражённый свет текселей, рядом с gc_texels
     uint gc_w, gc_pages_n, gc_req_cap, gc_frame;  // кадр кеша: с 1, растёт на кадр мира
     int gc_tpc0;              // текселей уровня 0 на чанк (256 м / cell_min)
-    uint gc_on, gc_pad0, gc_pad1;  // 0 — кеш выключен: вся земля на пиксель (F3, --nogcache)
+    uint gc_on;               // 0 — кеш выключен: вся земля на пиксель (F3, --nogcache)
+    uint gc_lmode, gc_lperiod;  // свет в кеше: GC_LIGHT_ON, GC_LIGHT_ALL; страница пересчитывается раз в gc_lperiod кадров
     // Карта горизонта земли (docs/horizon.md): H_DIRS/2 слов на узел сетки 8 м
     HMap h_map;
     uint h_on;                // 0 — карты нет (земли нет или ещё не собрана): тени земли нет

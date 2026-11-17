@@ -303,6 +303,7 @@ int run_window(const Args &a, AppMemory &m) {
     DebugState ds;
     if (a.tonemap >= 0) ds.tonemap = (u32)a.tonemap;
     ds.scans = a.scans;
+    ds.gclight_off = a.nogclight;
     u32 clock_speed = 0;  // номер в CLOCK_SPEEDS
     // Час дня → доля суток в оборотах (намерение часов)
     auto hour_turn = [](f64 h) { return (u64)(u32)(u64)(h / 24.0 * 4294967296.0); };
@@ -628,6 +629,7 @@ int run_window(const Args &a, AppMemory &m) {
         vi.tonemap = ds.tonemap;
         vi.local_off = a.local_off || ds.local_off;
         vi.scans = ds.scans;
+        vi.gclight_off = ds.gclight_off;
         vi.lamps_off = a.lamps_off || ds.lamps_off;
         vi.shadow_pages = a.shadow_pages ? a.shadow_pages : ds.shadow_pages;
         vi.sdf_view = a.sdf_view ? a.sdf_view : ds.sdf_view;
@@ -805,13 +807,14 @@ int run_window(const Args &a, AppMemory &m) {
                          "gc_over %u\ngc_direct %u\nskin_verts %u\nsm_used %u\nsm_new %u\nsm_over %u\nsm_miss %u\n"
                          "sm_draws %u\nsm_taps %u\nsm_wait %u\nsdf_taps %u\nsdf_bricks %u\ngi_probes %u\ngi_rays %u\n"
                          "gi_taps %u\nlc_live %u\nlc_new %u\nlc_jobs %u\nlc_rays %u\nlc_over %u\nlc_taps %u\n"
-                         "lc_wait %u\n",
+                         "lc_wait %u\ngc_lit %u\n",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
                          work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts, work.sm_used, work.sm_new,
                          work.sm_over, work.sm_miss, work.sm_draws, work.sm_taps, work.sm_wait,
                          work.sdf_taps, work.sdf_bricks, work.gi_probes, work.gi_rays, work.gi_taps,
-                         work.lc_live, work.lc_new, work.lc_jobs, work.lc_rays, work.lc_over, work.lc_taps, work.lc_wait);
+                         work.lc_live, work.lc_new, work.lc_jobs, work.lc_rays, work.lc_over, work.lc_taps, work.lc_wait,
+                         work.gc_lit);
         if (!work_have) log_error("--work: кадр мира не прочитан (мало кадров)");
         if (!work_have || n <= 0 || !platform_write_file(a.work, t, (usize)n)) rc_exit = 1;
     }

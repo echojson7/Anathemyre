@@ -286,6 +286,7 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     vk_sdf_fill(g, f, fs, images);
     vk_gi_fill(g, f, fs);
     vk_lcache_fill(g, f);
+    vk_gcache_light_fill(g, f);
 }
 
 static void dispatch(VkCommandBuffer cmd, VkPipeline p, VkDeviceAddress frame, u32 gx, u32 gy) {
@@ -513,6 +514,8 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     vk_shadow_passes();
     // Ячейки света (docs/lcache.md): заявки поставил разбор плиток; работы и лучи — до освещения
     vk_lcache_passes();
+    // Отражённый свет земли в тексели кеша (docs/gcache.md): зонды и ячейки этого кадра уже посчитаны
+    vk_gcache_light_pass();
     static const char *const light_names[TILE_KINDS] = {"освещение: небо", "освещение: земля", "освещение: сетки",
                                                         "освещение: смесь", "освещение: земля на пиксель"};
     for (u32 k = 0; k < TILE_KINDS; ++k) {

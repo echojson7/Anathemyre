@@ -113,6 +113,7 @@ vec3 shade_hit(Hit h, int phys) {
         return sky_radiance(normalize(h.rel));
     }
     Surface s;
+    g_gcl_ok = false;  // свет из кеша — только у пути gc_surface_px
     bool gc = GC_KIND && h.kind == HIT_GCACHE;
     int k = int(h.level);
     ivec2 t = ivec2(int(h.m0), int(h.m1));
