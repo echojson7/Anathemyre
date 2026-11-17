@@ -38,9 +38,6 @@ extern const MechDesc MECH_DESC[MECH_KINDS];
 constexpr f32 VEZHA_JUMP_V = 3.6f;       // скорость тела вверх в толчке прыжка, м/с
 constexpr f32 VEZHA_H_LAND = 0.74f;      // оси бёдер над опорой в миг касания после прыжка
 
-// Тать: мачта прибора ложится вперёд на палубу на этот угол, рад (TAT_MAST_FOLD в tools/parts/tat_pose.py)
-constexpr f32 TAT_MAST_FOLD = 1.30f;
-
 inline const MechDesc &mech_desc(const Mech &m) { return MECH_DESC[m.kind]; }
 inline const MechRig &mech_rig(const MechView &mv, const Mech &m) { return mv.rig[m.kind]; }
 

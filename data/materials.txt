@@ -501,6 +501,45 @@ material wear_sole flat
     color 0.035 0.03 0.028
     rough 0.85
 
+# «Тать» (docs/tat.md): тёмная графитовая краска крыши, киля и щитков с песочной пылью пятнами, голая сталь сколов,
+# чёрное железо рамы и ног, янтарный визор головы, светлый трафарет, красные кабели
+material tat_paint metal
+    color 0.045 0.047 0.05
+    color2 0.30 0.255 0.185
+    rough 0.7
+    metal 0
+    texel 0.015625
+    extra 0.16 0.09 0.25 0
+
+material tat_worn metal
+    color 0.21 0.205 0.2
+    color2 0.20 0.11 0.06
+    rough 0.5
+    metal 0.85
+    texel 0.015625
+    extra 0.15 0.0625 0.3 0
+
+material tat_iron metal
+    color 0.04 0.04 0.041
+    color2 0.24 0.20 0.14
+    rough 0.68
+    metal 0.35
+    texel 0.015625
+    extra 0.12 0.125 0.3 0
+
+material tat_lens glow
+    color 1.0 0.48 0.1
+    rough 0.3
+    extra 120 0 0 0
+
+material tat_mark flat
+    color 0.40 0.36 0.28
+    rough 0.75
+
+material tat_cable flat
+    color 0.30 0.03 0.02
+    rough 0.6
+
 # Волосы, бороды, брови (docs/hair.md): вид hair — цвет от зерна (тёмность, седина, рыжина), пряди узором вдоль
 # направления. hair — от макушки (стрижки, распущенные), hair_back — зачёсанные назад; hair_stubble — щетина на
 # коже (color, color2 — тон кожи как у human_skin). Завязки — кожаный шнур и медное кольцо

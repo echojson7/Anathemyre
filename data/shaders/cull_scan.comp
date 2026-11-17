@@ -29,6 +29,7 @@ void main() {
     }
     if (t == 255u) {
         f.cull.draw_count = min(s_sum[255], f.vis_max);
+        f.cull.veil_count = 0u;   // список морока набирает cull_write.comp
         f.stats.v[STAT_VIS_WANT] = s_sum[255];
     }
 }

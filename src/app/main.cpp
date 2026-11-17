@@ -47,7 +47,7 @@ static void usage() {
     log_info("           --frames N --video префикс                                   каждый кадр → префикс_0000.bmp… (стенд: 1/30 с на кадр)");
     log_info("           [--spin град/с]                                              камера поворачивается сама (видео мерцания при повороте)");
     log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines] [--sides]  выбрать, камера за ним, приказы, отладка");
-    log_info("           [--mech pack|stand|walk|show] [--mech-follow]                шагающие машины: лежат, стоят, обходят, показ всего по порядку; камера за машиной (docs/vezha.md, docs/tat.md)");
+    log_info("           [--mech pack|stand|walk|show|veil|prone] [--mech-follow]     шагающие машины: лежат, стоят, обходят, показ всего по порядку, морок по кругу, лёжка; камера за машиной (docs/vezha.md, docs/tat.md)");
     log_info("           [--mech-kind vezha|tat]                                      за какой машиной камера и след");
     log_info("           --frames N --mech-trace файл.txt                             след её движения без окна: N кадров по 1/30 с, строка чисел на кадр");
     log_info("           [--attack \"кадр место цель; …\"] [--slow кадр]  приказы «атаковать» по кадрам, замедление ×0.25 (видео удара)");
@@ -220,7 +220,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--follow")) a.follow = true;
         else if (!strcmp(s, "--mech")) {
             a.mech = next;
-            ok = next && (!strcmp(next, "pack") || !strcmp(next, "stand") || !strcmp(next, "walk") || !strcmp(next, "show"));
+            ok = next && (!strcmp(next, "pack") || !strcmp(next, "stand") || !strcmp(next, "walk") || !strcmp(next, "show") ||
+                            !strcmp(next, "veil") || !strcmp(next, "prone"));
             i++;
         }
         else if (!strcmp(s, "--people-lines")) a.people_lines = true;
