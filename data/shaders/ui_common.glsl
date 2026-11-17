@@ -4,7 +4,7 @@
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_scalar_block_layout : require
 
-struct UiQuad { vec4 rect; vec4 uv; uint rgba; float feather; uint pad0, pad1; };
+struct UiQuad { vec4 rect; vec4 uv; vec4 clip; uint rgba; float feather; float radius; float stroke; };
 layout(buffer_reference, scalar) readonly buffer UiQuads { UiQuad v[]; };
 layout(buffer_reference, scalar) readonly buffer UiAtlas { uint v[]; };
 

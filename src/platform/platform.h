@@ -74,6 +74,8 @@ void platform_poll(Input &in);
 void platform_mouse_grab(bool on);
 void platform_window_size(i32 *w, i32 *h);   // в пикселях кадра
 void platform_set_title(const char *title);
+// Текст UTF-8 в буфер обмена системы (панель показателей, «Скопировать всё»). false — не вышло
+bool platform_clipboard_set(const char *text);
 void platform_toggle_fullscreen();
 void platform_set_fullscreen(bool on);
 bool platform_is_fullscreen();

@@ -126,7 +126,8 @@ visibility buffer при готовых швах — это замена дву�
   ходьба, бег; Mixamo (скачивает пользователь, в игре только внутри наших `.anim`) — удары, блоки, уклоны,
   реакции. Платные паки — решает пользователь. Ретаргет офлайн: Blender как модуль Python (`pip install bpy`)
   читает BVH и FBX, перенос считает свой код в numpy, выход — наш `.anim` с метками (`docs/anim.md`).
-- Шрифт интерфейса: IBM Plex Sans (SIL OFL), конвертер `tools/fontconv` из склада.
+- Шрифт интерфейса: Inter 4.1, обычное и полужирное (SIL OFL, `tools/fontconv/OFL.txt`), конвертер `tools/fontconv`
+  (Pillow с raqm: кернинг и табличные цифры).
 
 ## Инструменты разработки
 - git + GitHub (`echojson7/Anathemyre`), ветка v2 — `claude/project-v2`.
