@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Разбор следа движения «Вежи» (docs/vezha.md): anathemyre --frames N --mech-trace след.txt
+"""Разбор следа движения машины (docs/vezha.md, docs/tat.md): anathemyre --frames N --mech-trace след.txt [--mech-kind tat]
 
     python tools/mech_trace.py след.txt                                        итог по состояниям и проверки
     python tools/mech_trace.py след.txt --sheet лист.png [первый шаг число азимут подъём]   кадры-палочки (нужен PIL)
@@ -11,7 +11,7 @@
 import math
 import sys
 
-STATES = ("лежит", "раскл", "стоит", "идёт", "склад")
+STATES = ("лежит", "раскл", "стоит", "идёт", "склад", "лёжка")
 
 
 def load(path):
@@ -50,7 +50,7 @@ def summary(fr):
 
 
 def checks(fr):
-    slip, slip_at, low, near, close = 0.0, None, [], [], []
+    slip, slip_at, low, near, close, dig = 0.0, None, [], [], [], []
     yaw_max = [0.0] * 4
     for i, f in enumerate(fr):
         ch, yaw = f["pts"]["chassis"], f["yaw"]
@@ -61,9 +61,11 @@ def checks(fr):
                 d = math.dist(fr[i - 1]["legs"][k][0][4], j[4])
                 if d > slip:
                     slip, slip_at = d, (i, k)
-            low += [(i, k, n) for n in range(1, 4) if j[n][1] - f["at"][1] < 0.03]
-            if flag == 2:
+            if flag == 2:   # сложенная лапа лежит у рамы (у Тати — на земле), её суставы не проверяем
                 continue
+            low += [(i, k, n) for n in range(1, 4) if j[n][1] - f["at"][1] < 0.03]
+            if j[3][1] < j[4][1] - 0.05:   # начало плюсны ниже оси лапы: при плюсне вверх (пантограф) — в земле
+                dig.append((i, k))
             fx, fz, hx, hz = j[4][0] - ch[0], j[4][2] - ch[2], j[0][0] - ch[0], j[0][2] - ch[2]
             if math.hypot(fx, fz) < 0.45:
                 near.append((i, k))
@@ -75,6 +77,7 @@ def checks(fr):
         close += [(i, a[0], b[0]) for n, a in enumerate(feet) for b in feet[n + 1:] if math.dist(a[1], b[1]) < 0.3]
     print("скольжение стоящих лап, худшее: %.4f м" % slip, slip_at or "")
     print("суставы у земли:", len(low), low[:6])
+    print("плюсна уходит в землю:", len(dig), dig[:6])
     print("лапа ближе 0.45 м к оси машины:", len(near), near[:6])
     print("лапы ближе 0.3 м друг к другу:", len(close), close[:6])
     print("поворот бедра от диагонали, худший по ногам, град:", [round(y) for y in yaw_max])
@@ -166,4 +169,5 @@ def main():
     checks(fr)
 
 
-main()
+if __name__ == "__main__":
+    main()

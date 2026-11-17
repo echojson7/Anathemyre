@@ -500,6 +500,7 @@ class Garment:
         W = self.body.W[s]
         acc = (W[self.VI] * self.VW[:, :, None]).sum(1)
         rig = [np.repeat(W[at].mean(0)[None, :], len(L), 0) for at, L in zip(self.RA, self.RL)]
+        rig += self.more_weights(s)
         acc = np.concatenate([acc] + rig) if rig else acc
         # Сглаживание весов по рёбрам ткани (широкие вещи: полы, хакама — без изломов на сгибах)
         it = max([p.smooth_w for p in self.parts] + [0])
@@ -514,6 +515,10 @@ class Garment:
                 m = deg[:, 0] > 0
                 acc[m] = acc[m] * 0.5 + 0.5 * s_[m] / deg[m]
         return H.skin_quant(acc)
+
+    def more_weights(self, s):
+        # Плотные веса вершин после жёстких деталей (у волос — пряди, hair_core)
+        return []
 
     def write(self, body, data_dir, meshpack, lods):
         self.body = body

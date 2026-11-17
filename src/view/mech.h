@@ -48,7 +48,7 @@ struct Mech {
     Vec3 vel, acc;    // скорость и сглаженное ускорение в мире (y = 0)
     f32 h, h_v, h_to; // оси бёдер над опорой, м
     f32 pitch, pitch_v, roll, roll_v;   // наклон рамы
-    f32 hull, hull_v; // корпус (у Тати — башенка) относительно рамы
+    f32 hull, hull_v; // корпус (у Тати — станок винтовки) относительно рамы
     f32 gun, gun_v;   // возвышение ствола
     f32 eye, eye_to, eye_wait;          // голова-прибор относительно корпуса (у Тати — относительно рамы)
     f32 ant[2][2], ant_v[2][2];         // антенны: качание вокруг x и z
@@ -74,8 +74,7 @@ struct Mech {
     u8 next_leg;      // чья очередь шагать крадучись
     f32 creep_t;      // Вежа шагом: сколько ещё переносить вес до отрыва следующей лапы
     Vec3 sway, sway_v;   // сдвиг тела над опорой в осях рамы (переносит вес с шагающей ноги)
-    f32 mast, mast_to;   // мачта прибора: 0 — поднята, 1 — сложена
-    f32 bipod, bipod_to; // сошки: 0 — вдоль ствола, 1 — раскрыты (угол — по земле)
+    f32 stow, stow_to;   // по-походному: 0 — голова и ствол свободны, 1 — убраны по курсу
     f32 kick, kick_v;    // отдача: откат тела назад, м
     u32 shots;        // выстрелов за лёжку
     f32 aim_t;        // сколько ещё целиться до выстрела
@@ -97,8 +96,7 @@ struct MechLegRig {
 struct MechRig {
     bool bound, failed;
     u32 body;         // тело в ViewAssets::bodies
-    i32 chassis, hull, gun, eye, ant[2];   // у Тати hull — башенка
-    i32 mast, bipod;  // только у Тати (у Вежи −1)
+    i32 chassis, hull, gun, eye, ant[2];   // у Тати hull — станок винтовки
     MechLegRig leg[MECH_LEGS];
 };
 
@@ -106,11 +104,13 @@ struct MechView {
     MechRig rig[MECH_KINDS];
     Mech mech[MECH_MAX];
     u8 demo;
+    bool veil_demo;   // --mech veil: стоит, морок по кругу (только у Тати)
+    bool prone_demo;  // --mech prone: лёжка и выстрелы (только у Тати)
     i8 pick;          // за какой машиной камера и след (--mech-kind): вид или −1 — первая
 };
 
 void mech_view_init(MechView &mv);
-// Режим по слову ключа --mech (pack, stand, walk, show); false — слово не то
+// Режим по слову ключа --mech (pack, stand, walk, show; у Тати veil — морок по кругу, prone — лёжка); false — слово не то
 bool mech_view_demo(MechView &mv, const char *name);
 // Вид для --mech-kind (vezha, tat); false — слово не то
 bool mech_view_pick(MechView &mv, const char *name);

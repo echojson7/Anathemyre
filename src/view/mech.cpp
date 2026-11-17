@@ -22,7 +22,11 @@ bool mech_view_demo(MechView &mv, const char *name) {
         mv.demo = (u8)(MECH_DEMO_PACK + i);
         return true;
     }
-    return false;
+    if (strcmp(name, "veil") && strcmp(name, "prone")) return false;
+    mv.demo = MECH_DEMO_STAND;
+    mv.veil_demo = !strcmp(name, "veil");
+    mv.prone_demo = !mv.veil_demo;
+    return true;
 }
 
 bool mech_view_pick(MechView &mv, const char *name) {
@@ -61,13 +65,11 @@ static bool mech_bind_skel(MechRig &r, u8 kind, const Skel &s) {
     r.eye = find("eye", true);
     r.ant[0] = find("ant_l", true);
     r.ant[1] = find("ant_r", true);
-    r.mast = find("mast", tat);
-    r.bipod = find("bipod", tat);
     for (u32 k = 0; k < MECH_LEGS; ++k)
         for (u32 j = 0; j < ML_COUNT; ++j) {
             char name[32];
             snprintf(name, sizeof name, "%s_%s", MECH_LEG_BONES[j], MECH_LEG_NAMES[k]);
-            r.leg[k].bone[j] = find(name, j < ML_PA);   // цилиндры — не у всех ног (у части ног Тати нет)
+            r.leg[k].bone[j] = find(name, j < ML_PA);   // цилиндры — не у всех машин (у Тати нет)
         }
     if (!ok) return false;
     Vec3 c0 = mech_head(s, r.chassis);
@@ -128,7 +130,7 @@ void mech_view_place(MechView &mv, u32 prop, u8 kind, const WPos &at, Turn yaw) 
     m.h = m.h_to = MECH_DESC[kind].belly;
     m.state = MECH_PACKED;
     m.wait = 4.0f;
-    m.mast = m.mast_to = 1.0f;
+    m.stow = m.stow_to = 1.0f;
     for (u32 k = 0; k < MECH_LEGS; ++k) {
         m.leg[k].fold = 1.0f;
         m.leg[k].t = -1.0f;
@@ -150,8 +152,6 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
     rot[R.hull] = quat_axis_angle(Y, m.hull);
     rot[R.gun] = quat_axis_angle(X, -m.gun);
     rot[R.eye] = quat_axis_angle(Y, m.eye);
-    if (R.mast >= 0) rot[R.mast] = quat_axis_angle(X, TAT_MAST_FOLD * m.mast);
-    if (R.bipod >= 0) rot[R.bipod] = quat_axis_angle(X, m.bipod);
     for (u32 a = 0; a < 2; ++a)
         rot[R.ant[a]] = quat_mul(quat_axis_angle(X, m.ant[a][0]), quat_axis_angle(Vec3{0, 0, 1}, m.ant[a][1]));
     Vec3 trans = mech_trans(m);
@@ -363,8 +363,8 @@ bool mech_view_trace(MechView &mv, const Skel *skels, const Extract &c, f32 dt, 
         for (u32 j = 0; j < 5; ++j) put(R.leg[k].bone[j]);
         if (n > 0 && (usize)n < cap) n += snprintf(line + n, cap - (usize)n, " %d", m.leg[k].fold > 0.0f ? 2 : (m.leg[k].t >= 0.0f ? 0 : 1));
     }
-    // Тать: морок, мачта, сошки, отдача — в конце строки (разбор Вежи их не читает)
+    // Тать: морок, походное положение, отдача, походка — в конце строки (разбор Вежи их не читает)
     if (m.kind == MECH_TAT && n > 0 && (usize)n < cap)
-        n += snprintf(line + n, cap - (usize)n, " %.3f %.3f %.3f %.3f %u", m.veil, m.mast, m.bipod, m.kick, (u32)m.gait);
+        n += snprintf(line + n, cap - (usize)n, " %.3f %.3f %.3f %u", m.veil, m.stow, m.kick, (u32)m.gait);
     return n > 0 && (usize)n < cap;
 }
