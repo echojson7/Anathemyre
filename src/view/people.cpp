@@ -562,6 +562,27 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const Appea
     return out;
 }
 
+// Показ тел (docs/body.md, «Показ»): поза привязки как есть — стоит ровно, руки в стороны, взгляд прямо, без оружия.
+// Низ сетки — на нуле, поэтому корень — на опоре под человеком
+static PoseOut pose_show(PeopleView &pv, const AppearFit &fit, const ViewInput &in, u32 i, const Root &r,
+                         PoseMatrix *palette) {
+    const Extract &c = *in.cur;
+    PersonLook &L = pv.look[i];
+    if (L.gen != c.person_gen[i]) {
+        L = PersonLook{};
+        L.gen = c.person_gen[i];
+    }
+    pose_palette(fit.skel, nullptr, palette);
+    PoseOut out{};
+    out.base = r.at;
+    L.y = r.at.y;
+    L.drop = 0.0f;
+    L.lock = false;
+    L.root = out.base;
+    L.yaw = r.yaw;
+    return out;
+}
+
 void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput &in, const WPos &eye, Arena &frame,
                        RenderInstance *inst, u32 &ni, RenderFrame &out, RenderLineVertex *lines, u32 &ln, bool debug) {
     const Extract &c = *in.cur;
@@ -569,14 +590,17 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
     const ViewBody &body = assets.bodies[pv.body];
     bind_actions(pv, assets, c.actions);
     // Ближние к глазу — с телом
-    u32 pick[VIEW_BODIES_MAX];
+    u32 pick[VIEW_BODIES_MAX], pick_show[VIEW_BODIES_MAX];
     f32 pick_d[VIEW_BODIES_MAX];
-    u32 np = 0;
+    u32 np = 0, alive = 0;
     for (u32 i = 0; i < PEOPLE_CAPACITY; ++i) {
         if (!c.person_gen[i]) {
             pv.look[i].drawn = false;
             continue;
         }
+        // Номер в ряду показа — по порядку мест: ряд рождается первым шагом по порядку, места идут с нуля
+        const u32 show = in.people_show ? 1 + alive : 0;
+        alive++;
         Vec2 d = wpos_delta_xz(eye.cx, eye.cz, eye.x, eye.z, c.person_cx[i], c.person_cz[i], c.person_x[i], c.person_z[i]);
         f32 d2 = dot(d, d);
         if (d2 > VIEW_BODY_FAR_M * VIEW_BODY_FAR_M) continue;
@@ -584,10 +608,12 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
         u32 k = np < VIEW_BODIES_MAX ? np++ : np - 1;
         while (k > 0 && pick_d[k - 1] > d2) {
             pick[k] = pick[k - 1];
+            pick_show[k] = pick_show[k - 1];
             pick_d[k] = pick_d[k - 1];
             --k;
         }
         pick[k] = i;
+        pick_show[k] = show;
         pick_d[k] = d2;
     }
     // Копии сетки: у кого была — та же; остальным — свободные или новые
@@ -626,19 +652,22 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
     for (u32 k = 0; k < np; ++k) {
         if (slot_copy[k] < 0) continue;
         u32 j = (u32)slot_copy[k], seed = c.person_seed[pick[k]];
-        if (pv.fit_set[j] && pv.fit_seed[j] == seed) continue;
+        const u32 show = pick_show[k] > 255 ? 255 : pick_show[k];
+        if (pv.fit_set[j] && pv.fit_seed[j] == seed && pv.fit_show[j] == show) continue;
         f32 w[RENDER_MAX_MORPHS];
-        pv.who[j] = appear_make(seed);
+        u32 look_seed = seed;
+        pv.who[j] = show ? appear_show(show - 1, seed, &look_seed) : appear_make(seed);
         appear_weights(pv.appear, pv.who[j], w);
         appear_fit(pv.fit[j], s, body.joints[pv.skin], body.morph_count, w, pv.who[j].height, pv.bones[B_PELVIS]);
         pv.fit[j].carry = appear_carry(pv.who[j]);
         if (pv.fit_set[j]) wear_release(pv.wcopies, pv.outfit[j], pv.outfit_copy[j]);
-        pv.outfit[j] = wear_make(seed, pv.who[j], pv.wear, assets);
+        pv.outfit[j] = wear_make(look_seed, pv.who[j], pv.wear, assets, !show);
         wear_take(pv.wcopies, pv.outfit[j], pv.outfit_copy[j], assets, pv.wear, pv.skin);
         // Одежда отодвигает места ношения оружия на свою толщину
         pv.fit[j].carry.hip += pv.outfit[j].hip;
         pv.fit[j].carry.back += pv.outfit[j].back;
         pv.fit_seed[j] = seed;
+        pv.fit_show[j] = (u8)show;
         pv.fit_set[j] = true;
     }
     static_assert(sizeof(PoseMatrix) == sizeof(RenderBone), "матрица позы — как кость рендера");
@@ -653,7 +682,9 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
         u32 i = pick[k];
         Root r = person_root(*in.prev, c, in.alpha, i);
         const u32 cj = (u32)slot_copy[k];
-        PoseOut po = pose_person(pv, assets, pv.fit[cj], in, i, r, f_sqrt(pick_d[k]), (PoseMatrix *)(bones + nbo), debug);
+        PoseOut po = in.people_show ? pose_show(pv, pv.fit[cj], in, i, r, (PoseMatrix *)(bones + nbo))
+                                    : pose_person(pv, assets, pv.fit[cj], in, i, r, f_sqrt(pick_d[k]),
+                                                  (PoseMatrix *)(bones + nbo), debug);
         pv.look[i].drawn = true;
         RenderInstance &it = inst[ni];
         it = RenderInstance{};

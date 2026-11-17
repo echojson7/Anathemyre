@@ -64,6 +64,7 @@ struct PeopleView {
     AppearFit fit[VIEW_BODIES_MAX];
     u32 fit_seed[VIEW_BODIES_MAX];
     bool fit_set[VIEW_BODIES_MAX];
+    u8 fit_show[VIEW_BODIES_MAX];     // облик показа тел + 1 (appear_show), 0 — облик от зерна
     // Одежда владельца копии (wear.h): набор и места копий вещей в запасах по виду вещи
     WearBind wear;
     Outfit outfit[VIEW_BODIES_MAX];

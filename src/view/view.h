@@ -82,6 +82,7 @@ struct ViewInput {
     ScatterCache *scatter;  // рассыпка камней (кеш между кадрами), может быть nullptr
     PeopleView *people = nullptr;  // тела людей (состояние вида между кадрами, docs/people.md), может быть nullptr
     bool people_debug = false;     // след касаний стоп (отладка)
+    bool people_show = false;      // показ тел: поза привязки, без одежды и оружия (docs/body.md, «Показ»)
     MechView *mech = nullptr;      // шагающие машины (состояние вида между кадрами, docs/vezha.md, docs/tat.md), может быть nullptr
     bool lamps_off = false;        // лампы карты не светят (F3 «лампы карты», --nolamps): сравнение было/стало
     // Свет (docs/light.md): секунды кадра и «привыкнуть сразу» для глаза, тонмаппинг (F3), качество (меню)

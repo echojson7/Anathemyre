@@ -32,7 +32,8 @@ struct Outfit {
     u32 hide;                  // области тела под одеждой
     f32 hip, back;             // толщина одежды у мест ношения оружия, м
 };
-Outfit wear_make(u32 seed, const Appear &a, const WearBind &b, const ViewAssets &assets);
+// clothes = false — только волосы (показ тел, docs/body.md): кости зерна те же, волосы — как у одетого без капюшона
+Outfit wear_make(u32 seed, const Appear &a, const WearBind &b, const ViewAssets &assets, bool clothes = true);
 
 // Копии сеток вещей (скиннинг пишет в копию): запас на вид вещи, свободная копия берётся раньше новой
 constexpr u32 WEAR_COPIES_MAX = 48;  // копий одного вида вещи (= людей с телом в кадре)
