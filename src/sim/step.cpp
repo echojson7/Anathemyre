@@ -19,7 +19,8 @@ static void step_intents(World &w, StepCtx &ctx) {
             u32 n = (u32)(it.arg & 0xFFFFu);
             f32 r = (f32)(u32)((it.arg >> 16) & 0xFFFFu);
             u32 side = (u32)((it.arg >> 32) & 0xFFu);
-            for (u32 i = 0; i < n && people_spawn(w, it.target, r, side); ++i) {}
+            i32 face = (it.arg >> 40) & 1 ? (i32)((it.arg >> 41) & 0xFFu) : -1;
+            for (u32 i = 0; i < n && people_spawn(w, it.target, r, side, face); ++i) {}
         } break;
         case INTENT_GO: people_order_go(w, (u32)it.arg, it.target, (u32)(it.arg >> 32)); break;
         case INTENT_ATTACK: people_order_attack(w, (u32)it.arg, (u32)(it.arg >> 32)); break;

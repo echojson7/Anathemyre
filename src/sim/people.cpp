@@ -60,7 +60,7 @@ void people_init(People &p, Arena &arena) {
     p.q_head = p.q_count = 0;
 }
 
-bool people_spawn(World &w, const WPos &at, f32 radius, u32 side) {
+bool people_spawn(World &w, const WPos &at, f32 radius, u32 side, i32 face) {
     People &p = w.people;
     if (p.free_count == 0) return false;
     // Место: точка в круге; в сетке ходимости — ближайшая ходимая клетка (уровень — самый нижний)
@@ -94,6 +94,7 @@ bool people_spawn(World &w, const WPos &at, f32 radius, u32 side) {
     p.y[s] = sup.height;
     p.vy[s] = 0.0f;
     p.heading[s] = p.move_yaw[s] = rng_u32(w.rng);
+    if (face >= 0) p.heading[s] = p.move_yaw[s] = (u32)face << 24;
     p.speed[s] = 0.0f;
     p.gait[s] = GAIT_WALK;
     p.phase[s] = 0;

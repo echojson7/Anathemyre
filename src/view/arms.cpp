@@ -193,7 +193,7 @@ static void carry_place(const ArmsBind &b, const WeaponHold &h, const Quat *wr, 
         at_bone = b.pelvis;
         unbind = b.pelvis_unbind;
         base = b.pelvis_at;
-        hang = base + Vec3{-0.19f, 0.03f, 0.05f};
+        hang = base + Vec3{-0.19f - h.out_hip, 0.03f, 0.05f};
         const f32 c = f_clamp((hang.y - 0.12f) / f_max(h.tip - h.carry_at, 0.1f), 0.3f, 0.8f);
         dir = Vec3{-0.06f, -c, -f_sqrt(1.0f - c * c - 0.0036f)};
         edge = Vec3{0.0f, dir.z, -dir.y};
@@ -203,7 +203,7 @@ static void carry_place(const ArmsBind &b, const WeaponHold &h, const Quat *wr, 
         at_bone = b.chest;
         unbind = b.chest_unbind;
         base = b.chest_at;
-        hang = base + Vec3{0.02f, 0.13f, -0.13f};
+        hang = base + Vec3{0.02f, 0.13f, -0.13f - h.out_back};
         dir = normalize(h.carry == CARRY_BACK_POLE ? Vec3{-0.14f, -0.99f, -0.03f} : Vec3{-0.50f, -0.86f, -0.04f});
         edge = Vec3{-dir.y, dir.x, 0.0f};
         *pole = Vec3{0.8f, 0.45f, 0.35f};

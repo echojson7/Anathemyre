@@ -197,7 +197,11 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_choice(f, "кость", d.stand_bone, BONES, ANA_COUNTOF(BONES));
     static const char *const SKELS[] = {"game_engine", "mixamo"};
     ui_choice(f, "скелет", d.stand_skel, SKELS, ANA_COUNTOF(SKELS));
-    static const char *const MORPHS[] = {"нет", "полнее", "худее", "сильнее", "нос", "челюсть"};
+    // Морфы тела в порядке сетки (tools/humanconv MORPHS)
+    static const char *const MORPHS[] = {"нет", "женщина", "полнее", "худее", "сильнее", "старше", "живот",
+                                         "ж: полнее", "ж: худее", "ж: сильнее", "плечи", "бёдра", "ноги", "торс",
+                                         "руки", "шея", "голова", "род 1", "род 2", "нос", "горбинка", "челюсть",
+                                         "подбородок", "губы", "глаза", "скулы", "брови", "уши"};
     ui_choice(f, "морф", d.stand_morph, MORPHS, ANA_COUNTOF(MORPHS));
     ui_toggle(f, "оба скелета рядом", d.stand_both);
     u32 nclips = 0;
