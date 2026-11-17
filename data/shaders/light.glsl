@@ -71,12 +71,19 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
     uint fi = froxel_at(s.pos);
     uint cnt = froxel_light_count(fi);
     if (cnt == 0u) return vec3(0.0);
+#ifdef LAMP_TILE_MASK
+    if (s_lamp_any == 0u) return vec3(0.0);  // ни один огонь не достаёт до плитки (light_cells.comp)
+#endif
     FrameData f = pc.frame;
     uint steps = lamp_steps(f.light_q);
     vec3 r = reflect(-v, n);
     vec3 c = vec3(0.0);
     for (uint k = 0u; k < cnt; ++k) {
-        Light l = f.lights.v[froxel_light(fi, k)];
+        uint li = froxel_light(fi, k);
+#ifdef LAMP_TILE_MASK
+        if ((s_lamp[li >> 5] & (1u << (li & 31u))) == 0u) continue;  // шар огня мимо точек плитки: d ≥ radius у всех
+#endif
+        Light l = f.lights.v[li];
         vec3 q = lamp_closest(l, s.pos);
         vec3 dl = q - s.pos;
         float d = length(dl);

@@ -115,7 +115,8 @@ layout(buffer_reference, scalar) buffer GcCells { GcCell v[]; };
 
 // Тени солнца страницами (docs/shadow.md, shadow.glsl): страница — SM_PAGE² текселей одного уровня; тексель —
 // высота ближайшей к светилу заслонки (sm_enc), 0 — заслонки нет
-struct SmPage { uint key0, key1, used, made; };  // ключ (место уровня << 24 | x, z), кадр чтения, кадр отрисовки
+struct SmPage { uint key0, key1, used, made, top; };  // ключ (место уровня << 24 | x, z), кадр чтения, кадр отрисовки,
+                                                    // самая высокая заслонка страницы (sm_enc; 0 — пустая)
 layout(buffer_reference, scalar) buffer SmTable { uint v[]; };
 layout(buffer_reference, scalar) buffer SmPages { SmPage v[]; };
 layout(buffer_reference, scalar) buffer SmTexels { uint v[]; };

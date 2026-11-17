@@ -38,6 +38,22 @@ float sdf_dist(vec3 pa, int L) {
     return d;
 }
 
+// Вокруг точки pa (м от якоря) пусто: поле уровня не мельче L и на два грубее окна, что точку накрывает (выборки
+// конусов рядом берут уровень окна или на один грубее у края окна, со смесью со следующим — не грубее этого), —
+// ровно полоса, то есть ни одной заслонки ближе ~2.85 вокселя этого уровня (у ближайшего из восьми вокселей
+// недостача меньше 1/30 вокселя; ошибка LOD засыпки — четверть). Выборка идёт в счётчик STAT_SDF_TAPS
+const float SDF_EMPTY_R = 1.5;  // радиус гарантированно пустого шара, вокселей уровня проверки (с запасом)
+bool sdf_empty(vec3 pa, int L) {
+    FrameData f = pc.frame;
+    vec3 dc = abs(pa - f.sdf_cam.xyz);
+    float q = max(dc.x, max(dc.y, dc.z)) / f.sdf_cam.w;
+    int lc = 0;
+    while (lc < SDF_LEVELS && q > SDF_FADE1 * float(1 << lc)) ++lc;
+    if (lc >= SDF_LEVELS) return true;
+    int l0 = max(L, min(lc + 2, SDF_LEVELS - 1));
+    return sdf_level(pa, l0) >= 0.999 * SDF_BAND * f.sdf_cam.w * float(1 << l0);
+}
+
 // Видимость по конусу из o по dir (тангенс полуугла th) до tmax: наименьшее d / ширина конуса, шаг — не меньше
 // половины ширины. Уровень выборки — тот, чья полоса не уже конуса (у широкого конуса — грубее, как мип).
 // x — до tmax, y — только ближе SDF_NEAR
@@ -74,6 +90,12 @@ vec2 sdf_cones(vec3 pos, vec3 n, uint q, float tmax, uint steps) {
     vec3 o = pa + n * (0.5 * vs);
     int ring = q == LIGHT_Q_LOW ? 3 : q == LIGHT_Q_MEDIUM ? 4 : q == LIGHT_Q_HIGH ? 5 : 8;
     float th = q == LIGHT_Q_LOW ? 0.70 : q == LIGHT_Q_MEDIUM ? 0.62 : q == LIGHT_Q_HIGH ? 0.58 : 0.45;
+    // Короткие конусы (ближнее затенение, до ~1 м) в пустоте: каждый их шаг на расстоянии t от старта видит
+    // заслонку не ближе шара пустоты минус t минус ошибку своей выборки — не меньше ширины конуса, то есть
+    // видимость ровно 1. Одна выборка вместо девяти конусов; у длинных конусов неба шар нужен больше окна
+    float reach = max(tmax, vs) * (1.0 + th) + 0.5 * f.sdf_cam.w;
+    int lb = clamp(int(ceil(log2(reach / (SDF_EMPTY_R * f.sdf_cam.w)))), 0, SDF_LEVELS - 1);
+    if (SDF_EMPTY_R * f.sdf_cam.w * float(1 << lb) >= reach && sdf_empty(o, lb)) return vec2(1.0);
     float ca = q == LIGHT_Q_ULTRA ? 0.616 : 0.574;  // косинус угла кольца к нормали: 52° / 55°
     float sa = sqrt(1.0 - ca * ca);
     // Базис у нормали без ветвлений (Duff и др. 2017): зависит только от n
