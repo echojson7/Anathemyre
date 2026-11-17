@@ -7,8 +7,8 @@
 #include "view.h"
 
 static const char *const MECH_LEG_NAMES[MECH_LEGS] = {"fr", "fl", "rl", "rr"};
-static const char *const MECH_LEG_BONES[7] = {"hip", "thigh", "shin", "tarsus", "foot", "pa", "pb"};
-enum { ML_HIP, ML_THIGH, ML_SHIN, ML_TARSUS, ML_FOOT, ML_PA, ML_PB };
+static const char *const MECH_LEG_BONES[9] = {"hip", "thigh", "shin", "tarsus", "foot", "pa", "pb", "ka", "kb"};
+enum { ML_HIP, ML_THIGH, ML_SHIN, ML_TARSUS, ML_FOOT, ML_PA, ML_PB, ML_KA, ML_KB };
 
 void mech_view_init(MechView &mv) {
     memset((void *)&mv, 0, sizeof mv);
@@ -66,10 +66,10 @@ static bool mech_bind_skel(MechRig &r, u8 kind, const Skel &s) {
     r.ant[0] = find("ant_l", true);
     r.ant[1] = find("ant_r", true);
     for (u32 k = 0; k < MECH_LEGS; ++k)
-        for (u32 j = 0; j < 7; ++j) {
+        for (u32 j = 0; j < 9; ++j) {
             char name[32];
             snprintf(name, sizeof name, "%s_%s", MECH_LEG_BONES[j], MECH_LEG_NAMES[k]);
-            r.leg[k].bone[j] = find(name, j < ML_PA || !tat);   // у Тати поршней нет
+            r.leg[k].bone[j] = find(name, j < ML_PA);   // цилиндры — не у всех машин (у Тати нет)
         }
     if (!ok) return false;
     Vec3 c0 = mech_head(s, r.chassis);
@@ -173,7 +173,7 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
             f32 up = mech_smooth(l.fold / 0.4f);
             r.yaw = mech_mix(l.pol.x, LD.pack.x, mech_smooth((l.fold - 0.15f) / 0.85f));
             r.x = mech_mix(l.pol.y - L.u, LD.pack.y > 0.0f ? LD.pack.y : mech_leg_min(L, LD), f);
-            r.y = mech_mix(l.pol.z, LD.pack.z, up) + 0.03f * sinf(PI_F * f);
+            r.y = mech_mix(l.pol.z, LD.pack.z, up) + (0.03f + LD.fold_arc) * sinf(PI_F * f);
         } else {
             WPos p = mech_leg_now(l);
             if (l.t >= 0.0f) {
@@ -210,15 +210,16 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
         Vec3 ax = normalize(cross(up, n));
         pose_turn_world(rot, wr, f, quat_axis_angle(ax, f_min(ang, 0.6f) * foot_w[k]));
     }
-    // Поршень: цилиндр и шток смотрят друг на друга
-    for (u32 k = 0; k < MECH_LEGS; ++k) {
-        i32 i = R.leg[k].bone[ML_PA], j = R.leg[k].bone[ML_PB];
-        if (i < 0 || j < 0) continue;
-        Vec3 d0 = normalize(mech_head(s, j) - mech_head(s, i));
-        Vec3 d = normalize(wp[j] - wp[i]);
-        rot[i] = quat_between(d0, quat_rotate(quat_conj(wr[i]), d));
-        rot[j] = quat_between(-d0, quat_rotate(quat_conj(wr[j]), -d));
-    }
+    // Цилиндры: гильза и шток смотрят друг на друга (подъём бедра и колено)
+    for (u32 k = 0; k < MECH_LEGS; ++k)
+        for (u32 c = ML_PA; c <= ML_KA; c += 2) {
+            i32 i = R.leg[k].bone[c], j = R.leg[k].bone[c + 1];
+            if (i < 0 || j < 0) continue;
+            Vec3 d0 = normalize(mech_head(s, j) - mech_head(s, i));
+            Vec3 d = normalize(wp[j] - wp[i]);
+            rot[i] = quat_between(d0, quat_rotate(quat_conj(wr[i]), d));
+            rot[j] = quat_between(-d0, quat_rotate(quat_conj(wr[j]), -d));
+        }
     pose_world(s, rot, R.chassis, &trans, wr, wp);
     if (palette) pose_palette_world(s, wr, wp, palette);
 }

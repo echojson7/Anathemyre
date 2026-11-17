@@ -1,13 +1,32 @@
-// Жизнь «Вежи» (docs/vezha.md): поведение, ход тела, перестановка лап (рысь) и пружины. Поза по этим данным —
-// mech.cpp, опора и путь — mech_common.cpp
+// Жизнь «Вежи» (docs/vezha.md): поведение, ход тела, перестановка лап (шагом — по одной с переносом веса, рывком —
+// рысь) и пружины. Поза по этим данным — mech.cpp, опора и путь — mech_common.cpp
 #include "mech_in.h"
+
+// Шагом лапы идут по кругу (правая задняя, правая передняя, левая задняя, левая передняя); перед отрывом тело
+// уходит к середине треугольника из трёх остальных
+static const u8 CREEP_ORDER[MECH_LEGS] = {3, 0, 2, 1};
+constexpr f32 CREEP_STEP = 0.28f;   // лапа в воздухе, с
+constexpr f32 CREEP_SHIFT = 0.08f;  // перенос веса между шагами, с
+constexpr f32 CREEP_CYCLE = MECH_LEGS * (CREEP_STEP + CREEP_SHIFT);
+
+// Идёт шагом (или переступает на месте): по одной лапе. Рывок и прыжок — рысью
+static bool mech_creeping(const Mech &m) {
+    return m.jump == 0 && !(m.state == MECH_WALK && m.speed_max > mech_desc(m).v_walk + 0.1f);
+}
 
 // Где лапе k стоять сейчас: дом под своим углом рамы, со сдвигом вперёд по ходу и повороту
 static WPos mech_ideal(const MechView &mv, const Mech &m, u32 k, f32 ahead) {
     const MechLegRig &L = mech_rig(mv, m).leg[k];
-    Vec3 home = L.corner + L.dir * mech_reach(mv, m, k, m.h);
-    Vec3 w = mech_to_world(m.yaw + m.yaw_v * ahead, Vec3{home.x, 0, home.z});
-    return mech_moved(m.at, w.x + m.vel.x * ahead, w.z + m.vel.z * ahead);
+    // Ложится — лапы сразу переходят на места «лёжа»: у стоек с локтем назад локоть иначе уходит в землю
+    f32 h = m.state == MECH_FOLD ? mech_desc(m).belly : m.h;
+    Vec3 home = L.corner + L.dir * mech_reach(mv, m, k, h);
+    f32 yaw = m.yaw + m.yaw_v * ahead;
+    Vec3 w = mech_to_world(yaw, Vec3{home.x, 0, home.z}) + m.vel * ahead;
+    // Упреждение на повороте и боком не переводит лапу за ось машины: пары лап не перекрещиваются
+    Vec3 b = mech_to_body(yaw, w);
+    f32 side = home.x > 0.0f ? 1.0f : -1.0f, keep = 0.62f * f_abs(home.x);
+    if (b.x * side < keep) w = mech_to_world(yaw, Vec3{side * keep, 0, b.z});
+    return mech_moved(m.at, w.x, w.z);
 }
 
 static f32 mech_step_time(f32 speed) { return f_clamp(0.28f - 0.03f * speed, 0.17f, 0.28f); }
@@ -239,20 +258,63 @@ static void mech_body(Mech &m, f32 dt) {
     f32 k = f_min(1.0f, 8.0f * dt);
     m.acc = m.acc + (a - m.acc) * k;
     m.at = mech_moved(m.at, m.vel.x * dt, m.vel.z * dt);
-    // Курс: пружина без перелёта, не быстрее 1.9 рад/с (лапы успевают переступать)
+    // Курс: пружина без перелёта; лапы далеко от оси — шагом поворот медленный, рысью быстрее
     f32 err = mech_wrap(yaw_to - m.yaw);
     m.yaw_v += (36.0f * err - 12.0f * m.yaw_v) * dt;
-    f32 wmax = 1.9f * f_clamp(2.4f - m.lag, 0.3f, 1.0f);
+    f32 wmax = (mech_creeping(m) ? 0.35f : 1.2f) * f_clamp(2.4f - m.lag, 0.3f, 1.0f);
     m.yaw_v = f_clamp(m.yaw_v, -wmax, wmax);
     m.yaw = mech_wrap(m.yaw + m.yaw_v * dt);
 }
 
+// Стоящей лапе пора шагать сразу: на повороте она уехала к оси машины (пара лап перекрестится)
+static bool mech_leg_urgent(const MechView &mv, const Mech &m, u32 k) {
+    const MechLeg &l = m.leg[k];
+    if (l.fold > 0.0f || l.t >= 0.0f) return false;
+    const MechLegRig &L = mech_rig(mv, m).leg[k];
+    Vec3 p = mech_world_chassis(m, l.at, mech_desc(m).leg[k].foot_h);
+    return p.x * L.corner.x < 0.5f * L.corner.x * L.corner.x;
+}
+
+// Начать шаг лапы k длительностью dur: цель — где лапа должна стоять через ahead секунд
+static void mech_step_start(const MechView &mv, Mech &m, const Extract &c, u32 k, f32 dur, f32 ahead, f32 lift) {
+    MechLeg &l = m.leg[k];
+    l.from = l.at;
+    l.dur = dur;
+    WPos to = mech_ideal(mv, m, k, ahead);
+    to.y = mech_support(c, to, m.at.y + 0.4f, &l.n);
+    l.to = to;
+    l.lift = lift * mech_desc(m).leg[k].lift + 0.5f * f_abs(to.y - l.from.y);
+    l.t = 0.0f;
+}
+
+// Шагом: лапы по очереди, по одной; следующая отрывается, когда предыдущая встала и вес перенесён. На месте не
+// шагает, пока все лапы близко к своим местам
+static void mech_creep(const MechView &mv, Mech &m, const Extract &c, const f32 *err, f32 dt) {
+    m.creep_t -= dt;
+    bool need = false;
+    for (u32 k = 0; k < MECH_LEGS; ++k) {
+        if (m.leg[k].fold > 0.0f || m.leg[k].t >= 0.0f) return;
+        need = need || err[k] > 0.06f;
+    }
+    if (!need || m.creep_t > 0.0f) return;
+    // Очередная по кругу; лапа, которой пора сразу, — вне очереди
+    u32 k = CREEP_ORDER[m.next_leg];
+    for (u32 j = 0; j < MECH_LEGS; ++j)
+        if (mech_leg_urgent(mv, m, j)) k = j;
+    for (u32 i = 0; i < MECH_LEGS; ++i)
+        if (CREEP_ORDER[i] == k) m.next_leg = (u8)((i + 1) % MECH_LEGS);
+    f32 dur = CREEP_STEP * (1.0f + 0.1f * (mech_rnd(m.rng) - 0.5f));
+    mech_step_start(mv, m, c, k, dur, dur + 0.5f * CREEP_CYCLE, 0.13f);
+    m.creep_t = dur + CREEP_SHIFT;
+}
+
 // Лапы: отставшая от своего места переставляется шагом; соседние по кругу в воздухе вместе не бывают — выходит рысь
 static void mech_legs(const MechView &mv, Mech &m, const Extract &c, f32 dt) {
-    f32 speed = length(m.vel) + f_abs(m.yaw_v) * 1.0f;   // лапа на повороте едет по кругу радиусом около метра
+    f32 speed = length(m.vel) + f_abs(m.yaw_v) * 1.6f;   // лапа на повороте едет по кругу радиусом около 1.6 м
     f32 dur = mech_step_time(speed);
     f32 err[MECH_LEGS];
-    f32 thr = 0.05f + 0.5f * speed * dur;
+    const bool creep = mech_creeping(m);
+    f32 thr = creep ? 0.12f + 0.5f * speed * CREEP_CYCLE : 0.05f + 0.5f * speed * dur;
     i32 best = -1;
     m.lag = 0.0f;
     for (u32 k = 0; k < MECH_LEGS; ++k) {
@@ -264,7 +326,7 @@ static void mech_legs(const MechView &mv, Mech &m, const Extract &c, f32 dt) {
             l.t += dt / l.dur;
             if (l.t < 0.75f) {
                 f32 rest = (1.0f - l.t) * l.dur;
-                WPos to = mech_ideal(mv, m, k, rest + 0.5f * dur);
+                WPos to = mech_ideal(mv, m, k, rest + 0.5f * (creep ? CREEP_CYCLE : dur));
                 to.y = mech_support(c, to, m.at.y + 0.4f, &l.n);
                 l.to = to;
             }
@@ -285,6 +347,9 @@ static void mech_legs(const MechView &mv, Mech &m, const Extract &c, f32 dt) {
         bool free_ = p.t < 0.0f && q.t < 0.0f && p.fold <= 0.0f && q.fold <= 0.0f;
         if (free_ && err[k] > thr && (best < 0 || err[k] > err[best])) best = (i32)k;
     }
+    // Лапа, которой пора шагать сразу, шагает, даже если соседняя в воздухе
+    for (u32 k = 0; k < MECH_LEGS; ++k)
+        if (mech_leg_urgent(mv, m, k)) best = (i32)k;
     if (m.jump == 3) {
         // Все лапы снова на земле — прыжок кончился; антенны хлещут
         bool down = true;
@@ -294,19 +359,18 @@ static void mech_legs(const MechView &mv, Mech &m, const Extract &c, f32 dt) {
             for (u32 a = 0; a < 2; ++a) m.ant_v[a][0] += 1.6f;
         }
     }
+    if (creep) {
+        mech_creep(mv, m, c, err, dt);
+        return;
+    }
     if (best < 0 || m.jump >= 2) return;
     // Шагает самая отставшая и с ней лапа по диагонали, если и та отстала хоть немного: пары не расходятся
     u32 pair[2] = {(u32)best, ((u32)best + 2) % MECH_LEGS};
     for (u32 i = 0; i < 2; ++i) {
         MechLeg &l = m.leg[pair[i]];
         if (i == 1 && (l.t >= 0.0f || l.fold > 0.0f || err[pair[i]] < thr * 0.2f)) continue;
-        l.from = l.at;
-        l.dur = dur * (1.0f + 0.12f * (mech_rnd(m.rng) - 0.5f));
-        WPos to = mech_ideal(mv, m, pair[i], l.dur + 0.5f * dur);
-        to.y = mech_support(c, to, m.at.y + 0.4f, &l.n);
-        l.to = to;
-        l.lift = 0.07f + 0.03f * speed + 0.5f * f_abs(to.y - l.from.y);
-        l.t = 0.0f;
+        f32 d = dur * (1.0f + 0.12f * (mech_rnd(m.rng) - 0.5f));
+        mech_step_start(mv, m, c, pair[i], d, d + 0.5f * dur, 0.07f + 0.03f * speed);
     }
 }
 
@@ -329,8 +393,38 @@ static void mech_leap(const MechView &mv, Mech &m, const Extract &c) {
     m.jump = 3;
 }
 
+// Перенос веса шагом: тело уходит к середине опоры без лапы, которая в воздухе или шагнёт следующей, и чуть
+// оседает на ту сторону; стоит — возвращается на середину
+static void mech_sway(Mech &m, f32 dt) {
+    Vec3 to{0, 0, 0};
+    bool moving = false;
+    i32 lifted = -1;
+    for (u32 k = 0; k < MECH_LEGS; ++k) {
+        if (m.leg[k].fold > 0.0f) return;
+        if (m.leg[k].t >= 0.0f) lifted = (i32)k;
+    }
+    moving = lifted >= 0 || length(m.vel) > 0.05f || f_abs(m.yaw_v) > 0.03f;
+    if (mech_creeping(m) && moving) {
+        u32 skip = lifted >= 0 ? (u32)lifted : CREEP_ORDER[m.next_leg];
+        Vec3 all{0, 0, 0}, rest{0, 0, 0};
+        for (u32 k = 0; k < MECH_LEGS; ++k) {
+            Vec3 p = mech_world_chassis(m, m.leg[k].t >= 0.0f ? m.leg[k].from : m.leg[k].at, 0.0f) + m.sway;
+            all += p * 0.25f;
+            if (k != skip) rest += p * (1.0f / 3.0f);
+        }
+        to = (rest - all) * 0.3f;
+        to.y = -0.015f;
+        f32 l = f_sqrt(to.x * to.x + to.z * to.z);
+        if (l > 0.12f) { to.x *= 0.12f / l; to.z *= 0.12f / l; }
+    }
+    mech_spring(m.sway.x, m.sway_v.x, to.x, 8.0f, 0.85f, dt);
+    mech_spring(m.sway.y, m.sway_v.y, to.y, 8.0f, 0.85f, dt);
+    mech_spring(m.sway.z, m.sway_v.z, to.z, 8.0f, 0.85f, dt);
+}
+
 // Высота и наклон тела по опоре лап, пружины корпуса, ствола, головы и антенн
 static void mech_springs(const MechView &mv, Mech &m, const Extract &c, const MechTarget &tg, f32 dt) {
+    mech_sway(m, dt);
     // Опора: средняя высота лап и наклон плоскости через них (в осях машины)
     f32 sum = 0.0f, sz = 0.0f, sx = 0.0f, zz = 0.0f, xx = 0.0f;
     f32 hmin = 0.0f, hmax = 10.0f;
@@ -383,7 +477,9 @@ static void mech_springs(const MechView &mv, Mech &m, const Extract &c, const Me
         // Толчок и полёт: тело летит по баллистике; лапы отрываются, когда ноги почти выпрямились
         m.h_v -= MECH_G * dt;
         m.h += m.h_v * dt;
-        if (m.jump == 2 && (m.h > 0.76f || m.h > hmax - 0.03f || m.h_v < 1.0f)) mech_leap(mv, m, c);
+        bool behind = false;   // стойка уехала под ось — толчок кончился раньше
+        for (u32 k = 0; k < MECH_LEGS; ++k) behind = behind || mech_leg_urgent(mv, m, k);
+        if (m.jump == 2 && (m.h > 0.76f || m.h > hmax - 0.03f || m.h_v < 1.0f || behind)) mech_leap(mv, m, c);
     } else {
         mech_spring(m.h, m.h_v, to, lying ? 16.0f : (slow ? 4.6f : 8.5f), lying ? 1.0f : (slow ? 0.62f : 0.55f), dt);
     }
