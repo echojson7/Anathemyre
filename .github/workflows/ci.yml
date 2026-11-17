@@ -32,14 +32,7 @@ jobs:
           key: tc-${{ runner.os }}-${{ hashFiles('tools/versions.sh', 'tools/toolchain.sh', 'tools/third_party.sh') }}
       - name: Пакеты
         run: |
-          # заголовки X11 и звука нужны только сборке SDL3, она в кеше
-          p="glslang-tools spirv-tools python3-numpy"
-          if [ "${{ steps.tc.outputs.cache-hit }}" != true ]; then
-            p="$p cmake ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev
-              libxkbcommon-dev libasound2-dev libpulse-dev"
-          fi
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends $p
+          tools/ci_apt.sh "${{ steps.tc.outputs.cache-hit }}" glslang-tools spirv-tools python3-numpy
       - name: Компиляторы и SDL3
         run: |
           make toolchain third_party TARGET=linux
@@ -108,13 +101,7 @@ jobs:
           key: tc-window-${{ runner.os }}-${{ hashFiles('tools/versions.sh', 'tools/toolchain.sh', 'tools/third_party.sh') }}
       - name: Пакеты
         run: |
-          p="glslang-tools spirv-tools"
-          if [ "${{ steps.tc.outputs.cache-hit }}" != true ]; then
-            p="$p cmake ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev
-              libxkbcommon-dev libasound2-dev libpulse-dev"
-          fi
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends $p
+          tools/ci_apt.sh "${{ steps.tc.outputs.cache-hit }}" glslang-tools spirv-tools
       - name: Компиляторы и SDL3
         run: make toolchain third_party TARGET=linux
       - name: Сборки отладка и релиз

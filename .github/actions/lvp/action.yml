@@ -31,14 +31,7 @@ runs:
     - name: Пакеты
       shell: bash
       run: |
-        # заголовки X11 и звука нужны только сборке SDL3, она в кеше; без них apt вдвое короче
-        p="glslang-tools spirv-tools mesa-vulkan-drivers vulkan-validationlayers xvfb"
-        if [ "${{ steps.tc.outputs.cache-hit }}" != true ]; then
-          p="$p cmake ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev
-            libxkbcommon-dev libasound2-dev libpulse-dev"
-        fi
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq --no-install-recommends $p
+        tools/ci_apt.sh "${{ steps.tc.outputs.cache-hit }}" glslang-tools spirv-tools mesa-vulkan-drivers vulkan-validationlayers xvfb
     # Ключ со своим номером прогона, сохраняется и после падения или снятия по пределу: иначе упавшая задача кеш
     # не сохраняла, следующая снова шла с холодным (вдвое дольше) и снова падала. Берётся последний с теми же
     # шейдерами, иначе последний вообще (неизменные шейдеры в нём есть)
