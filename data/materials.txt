@@ -159,9 +159,18 @@ material stone rock
     extra 0.18 0.0625 0.7 0.3
 
 # Люди (стенд этапа 7, docs/people.md): временные ровные цвета — кожа и бельё «по-настоящему» после света (этап 6)
-material human_skin flat
-    color 0.52 0.37 0.28
+# Кожа: вид skin — тон между color (светлый) и color2 (тёмный) по зерну человека (src/view/appear.h)
+material human_skin skin
+    color 0.62 0.45 0.35
+    color2 0.17 0.10 0.065
     rough 0.6
+
+# Лиф: у женщины — холст белья (extra b c d), у мужчины — та же кожа
+material human_bra skin
+    color 0.62 0.45 0.35
+    color2 0.17 0.10 0.065
+    rough 0.6
+    extra 1 0.55 0.50 0.42
 
 # Бельё из небелёного холста и тёмная резинка
 material human_linen flat

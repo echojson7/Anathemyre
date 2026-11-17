@@ -206,7 +206,7 @@ constexpr u32 RENDER_MAX_LIGHTS = 1024;
 constexpr u32 RENDER_MAX_SKINS = 64;       // источников скиннинга (сетка × скелет)
 constexpr u32 RENDER_MAX_SKINNED = 256;    // людей в кадре
 constexpr u32 RENDER_MAX_BONES = 16384;    // матриц костей в кадре
-constexpr u32 RENDER_MAX_MORPHS = 8;
+constexpr u32 RENDER_MAX_MORPHS = 48;     // как MESH_MAX_MORPHS и SkinJob в common.glsl
 
 bool render_init(const RenderConfig &cfg);
 void render_shutdown();

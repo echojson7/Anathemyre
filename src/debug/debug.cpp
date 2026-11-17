@@ -163,6 +163,14 @@ void brawl_intents(const World &w, const u32 n[2], FixedArray<Intent> &out, f32 
         }
 }
 
+void lineup_intents(const World &w, u32 n, FixedArray<Intent> &out) {
+    if (w.step != 0) return;
+    // Ряд с запада на восток через метр (клетка сетки ходимости — 0.5 м), лицом на юг
+    for (u32 k = 0; k < n; ++k)
+        out.push_back({0, INTENT_PEOPLE_SPAWN, ostov_at(w, ((f32)k - 0.5f * (f32)(n - 1)) * 1.0f, -17.0f, 0.0f),
+                       1ull | (1ull << 40) | (128ull << 41)});
+}
+
 void debug_brawl_step(const World &w, BrawlStats &b) {
     const People &p = w.people;
     FightView v;

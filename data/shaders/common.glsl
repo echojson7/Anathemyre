@@ -148,8 +148,8 @@ struct SkinJob {
     uint src_vertex, dst_vertex, vertex_count, first_bone;
     Words skin, morphs;  // 2 слова на вершину (кости, веса); 3 слова на вершину на морф
     uint morph_count, first_cluster, cluster_count, first_index;
-    float morph[8];      // веса морфов
-    float step[8];       // шаг морфа, м на единицу сдвига
+    float morph[48];     // веса морфов (RENDER_MAX_MORPHS)
+    float step[48];      // шаг морфа, м на единицу сдвига
 };
 layout(buffer_reference, scalar) readonly buffer SkinJobs { SkinJob v[]; };
 layout(buffer_reference, scalar) readonly buffer Bones { vec4 v[]; };
