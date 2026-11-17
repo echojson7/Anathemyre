@@ -1,12 +1,12 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
-// Отсечение, шаг 3: видимые кластеры экземпляра — в список кадра и косвенные вызовы с его места
+// Отсечение, шаг 3: видимые кластеры экземпляра (группа, cull.glsl) — в список кадра и косвенные вызовы с его места
 #include "cull.glsl"
-layout(local_size_x = 64) in;
+layout(local_size_x = 64) in;  // CULL_GROUP: группа на экземпляр
 
 void main() {
     FrameData f = pc.frame;
-    uint i = gl_GlobalInvocationID.x;
+    uint i = cull_group_instance();
     if (i >= f.instance_count) return;
     uint lod;
     cull_instance(i, true, f.cull.offset[i], lod);

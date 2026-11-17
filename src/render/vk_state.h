@@ -292,12 +292,13 @@ struct CloudGpu {
     bool noise_ready = false, ready = false;  // ready — слоты a и b собраны
     u32 size = 0;                             // сторона карты (по ступени света)
     u32 slot_a = 0, slot_b = 0, slot_w = 1;
-    u32 phase = 0;     // фаз слота w уже собрано (из CLOUD_PHASES)
+    u32 unit = 0;      // кусков слота w уже собрано (фаза × CLOUD_BANDS полос, из CLOUD_PHASES · CLOUD_BANDS)
+    f32 unit_acc = 0;  // куски, которые время кадров уже задолжало (карта — за CLOUD_PERIOD секунд)
     u32 sh_phase = 0;  // следующая фаза карты тени
     CloudSnap snap_a, snap_b, snap_w;
     // Работа этого кадра (vk_clouds_fill → vk_clouds_passes)
-    bool job_on = false, job_first = false, job_sh_full = false;
-    u32 job_slot = 0, job_phase = 0, job_n = 0;
+    bool job_on = false, job_sh_full = false;
+    u32 job_slot = 0, job_unit = 0, job_n = 0;  // первый кусок и сколько кусков
 };
 
 // Блеск (vk_glare.cpp, docs/glare.md): пирамида кадра после сглаживания — уровни вниз и вверх в одном буфере
