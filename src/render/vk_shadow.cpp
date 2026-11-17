@@ -91,7 +91,7 @@ static bool sm_ensure(u32 width, u32 height) {
     s.req_cap = pages;
     const VkBufferUsageFlags ind = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
     if (!sm_make(s.table, (VkDeviceSize)SM_SLOTS * SM_WIN * SM_WIN * 4, "тени: окна страниц", s.rg_table) ||
-        !sm_make(s.pages, (VkDeviceSize)pages * 16, "тени: страницы", s.rg_pages) ||
+        !sm_make(s.pages, (VkDeviceSize)pages * 20, "тени: страницы", s.rg_pages) ||
         !sm_make(s.texels, (VkDeviceSize)pages * SM_PAGE * SM_PAGE * 4, "тени: тексели", s.rg_texels) ||
         !sm_make(s.req, SM_REQ_HEAD + (VkDeviceSize)(4 * s.req_cap + 2 * pages) * 4, "тени: заявки", s.rg_req, ind) ||
         !sm_make(s.draws, 16 + (VkDeviceSize)SM_DRAW_CAP * 20, "тени: вызовы", s.rg_draws, ind) ||

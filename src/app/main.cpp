@@ -29,6 +29,7 @@ static void usage() {
     log_info("           [--lights] [--heat]                                          тестовые огни, огни по клеткам froxels");
     log_info("           [--nolamps]                                                  лампы карты не светят (было/стало)");
     log_info("           [--nogcache]                                                 без кеша поверхности земли (сравнение)");
+    log_info("           [--nogclight]                                                отражённый свет земли на пиксель (сравнение)");
     log_info("           [--scans]                                                    поверхности из сканов CC0, где есть (docs/scans.md)");
     log_info("           [--smpages] [--smonly]                                       страницы теней поверх кадра, только тень (docs/shadow.md)");
     log_info("           [--sdfsky] [--sdffield] [--nosdf]                            видимость неба, поле расстояний, свет без поля (docs/sdf.md)");
@@ -151,6 +152,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--nolamps")) a.lamps_off = true;
         else if (!strcmp(s, "--heat")) a.froxel_heat = true;
         else if (!strcmp(s, "--nogcache")) a.nogcache = true;
+        else if (!strcmp(s, "--nogclight")) a.nogclight = true;
         else if (!strcmp(s, "--scans")) a.scans = true;
         else if (!strcmp(s, "--smpages")) a.shadow_pages = 1;
         else if (!strcmp(s, "--smonly")) a.shadow_pages = 2;

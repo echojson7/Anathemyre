@@ -106,6 +106,7 @@ struct RenderStyle {
     bool froxel_heat = false;  // тепловая карта числа огней в клетке froxels поверх кадра (F3)
     bool scans = false;        // поверхности из сканов CC0 вместо узора, где они есть (docs/scans.md, --scans, F3)
     bool gcache = true;        // кеш поверхности земли (docs/gcache.md); выкл — земля на пиксель (F3, --nogcache)
+    bool gclight = true;       // отражённый свет земли в кеше (docs/gcache.md); выкл — на пиксель (F3, --nogclight)
     u32 shadow_pages = 0;      // F3 (docs/shadow.md): 1 — страницы теней поверх кадра, 2 — только тень светила
     u32 sdf_view = RENDER_SDF_FRAME;  // F3 (docs/sdf.md): поле расстояний мира
     u32 gi_view = RENDER_GI_FRAME;    // F3 (docs/gi.md): зонды непрямого света
@@ -349,6 +350,7 @@ struct RenderWork {
     // Ячейки света (docs/lcache.md): живых, заявлено заново, посчитано, их лучей, заявок без места, выборок поля,
     // отложено до следующего кадра
     u32 lc_live, lc_new, lc_jobs, lc_rays, lc_over, lc_taps, lc_wait;
+    u32 gc_lit;  // текселей кеша земли с пересчитанным отражённым светом (docs/gcache.md)
     u32 sm_blend;  // перетекание шага светила: % нового набора, 100 — один набор (в --work не пишется)
     const char *gc_off;  // почему кеш земли выключен (nullptr — включён); в --work не пишется
 };

@@ -93,6 +93,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.style.pixel = in.pixel;
     out.style.froxel_heat = in.froxel_heat;
     out.style.gcache = !in.gcache_off;
+    out.style.gclight = !in.gclight_off;
     out.style.shadow_pages = in.shadow_pages;
     out.style.sdf_view = in.sdf_view;
     out.style.gi_view = in.gi_view;

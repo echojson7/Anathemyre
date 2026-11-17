@@ -286,6 +286,7 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     vk_sdf_fill(g, f, fs, images);
     vk_gi_fill(g, f, fs);
     vk_lcache_fill(g, f);
+    vk_gcache_light_fill(g, f);
 }
 
 static void dispatch(VkCommandBuffer cmd, VkPipeline p, VkDeviceAddress frame, u32 gx, u32 gy) {
@@ -317,14 +318,16 @@ static void record_ground_bake(VkCommandBuffer cmd, void *) {
     vkCmdDispatch(cmd, (row * row + 63) / 64, CLIP_LEVELS, 1);
 }
 
-static u32 cull_groups() { return (g_vk.world.inst_count + 63) / 64; }
-static void record_cull_count(VkCommandBuffer cmd, void *) {
-    if (cull_groups()) dispatch(cmd, g_vk.world.pipe_cull_count, g_wf.frame, cull_groups(), 1);
+// Отсечение: группа на экземпляр (cull.glsl); больше 65535 экземпляров — групп по y (лишние выходят сразу)
+static void cull_dispatch(VkCommandBuffer cmd, VkPipeline p) {
+    u32 n = g_vk.world.inst_count;
+    if (!n) return;
+    u32 gx = n < 65535 ? n : 65535;
+    dispatch(cmd, p, g_wf.frame, gx, (n + gx - 1) / gx);
 }
+static void record_cull_count(VkCommandBuffer cmd, void *) { cull_dispatch(cmd, g_vk.world.pipe_cull_count); }
 static void record_cull_scan(VkCommandBuffer cmd, void *) { dispatch(cmd, g_vk.world.pipe_cull_scan, g_wf.frame, 1, 1); }
-static void record_cull_write(VkCommandBuffer cmd, void *) {
-    if (cull_groups()) dispatch(cmd, g_vk.world.pipe_cull_write, g_wf.frame, cull_groups(), 1);
-}
+static void record_cull_write(VkCommandBuffer cmd, void *) { cull_dispatch(cmd, g_vk.world.pipe_cull_write); }
 
 static VkRenderingAttachmentInfo depth_attachment(VkAttachmentLoadOp load, VkAttachmentStoreOp store) {
     auto da = vk_info<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
@@ -511,6 +514,8 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     vk_shadow_passes();
     // Ячейки света (docs/lcache.md): заявки поставил разбор плиток; работы и лучи — до освещения
     vk_lcache_passes();
+    // Отражённый свет земли в тексели кеша (docs/gcache.md): зонды и ячейки этого кадра уже посчитаны
+    vk_gcache_light_pass();
     static const char *const light_names[TILE_KINDS] = {"освещение: небо", "освещение: земля", "освещение: сетки",
                                                         "освещение: смесь", "освещение: земля на пиксель"};
     for (u32 k = 0; k < TILE_KINDS; ++k) {

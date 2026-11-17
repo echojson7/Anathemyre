@@ -21,9 +21,22 @@ bool sphere_visible(vec3 c, float r) {
     return true;
 }
 
-// Сколько кластеров экземпляра i видно и какой LOD; with_write — записать их вызовы с места first
+// Группа из CULL_GROUP потоков на экземпляр (17.11): кластеры LOD идут по потокам кусками по 64, место кластера в
+// списке — сколько видимых кластеров раньше него (биты куска в общей памяти), поэтому порядок вызовов и номера в
+// visibility buffer те же, что при одном потоке на экземпляр. Раньше поток один проходил все кластеры сетки
+// подряд, и большая постройка (сотни кластеров) держала весь проход своей длинной цепочкой чтений
+const uint CULL_GROUP = 64u;
+shared uint s_cull_mask[2];
+shared uint s_cull_vbase;
+
+// Экземпляр группы: dispatch бывает двумерным (больше 65535 экземпляров)
+uint cull_group_instance() { return gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x; }
+
+// Сколько кластеров экземпляра i видно и какой LOD; with_write — записать их вызовы с места first. Зовут все потоки
+// группы; ответ — у всех
 uint cull_instance(uint i, bool with_write, uint first, out uint lod) {
     FrameData f = pc.frame;
+    uint t = gl_LocalInvocationIndex;
     lod = 0u;
     Instance it = f.vis_instances.v[i];
     if (it.mesh == 0u || it.mesh >= MAX_MESHES) return 0u;
@@ -40,35 +53,49 @@ uint cull_instance(uint i, bool with_write, uint first, out uint lod) {
     // Морок (docs/tat.md): кластеры машины под мороком рисует свой конвейер (vis_veil) из мест за списком кадра;
     // место в главном списке остаётся пустым вызовом. Место в списке морока — одно прибавление на экземпляр
     bool veil = with_write && it.material >= 0xFFFFFF00u && (it.material & 0xFFu) < 255u;
-    uint vbase = veil ? atomicAdd(f.cull.veil_count, f.cull.count[i] & 0x1FFFFFFFu) : 0u;
+    if (t == 0u) s_cull_vbase = veil ? atomicAdd(f.cull.veil_count, f.cull.count[i] & 0x1FFFFFFFu) : 0u;
     uint n = 0u;
-    for (uint k = 0u; k < L.y; ++k) {
+    for (uint base = 0u; base < L.y; base += CULL_GROUP) {
+        if (t < 2u) s_cull_mask[t] = 0u;
+        barrier();
+        uint k = base + t;
         uint ci = L.x + k;
-        Cluster c = f.clusters.v[ci];
-        if (!sphere_visible(origin + quat_rotate(q, c.sphere.xyz * it.scale), c.sphere.w * it.scale)) continue;
-        if (with_write) {
-            uint slot = first + n;
-            if (slot >= f.vis_max) break;
-            f.vis.v[slot] = uvec2(i, ci);
-            DrawCmd d;
-            d.index_count = c.tri_count * 3u;
-            d.instance_count = 1u;
-            d.first_index = m.first_index + c.first_index;
-            d.vertex_offset = int(m.first_vertex);
-            d.first_instance = slot;
-            if (veil) {
-                if (vbase + n < VEIL_MAX) {
-                    uint vs = f.vis_max + vbase + n;
-                    f.vis.v[vs] = uvec2(i, ci);
-                    d.first_instance = vs;
-                    f.draws.v[vs] = d;
-                }
-                d.instance_count = 0u;
-                d.first_instance = slot;
-            }
-            f.draws.v[slot] = d;
+        bool vis = false;
+        Cluster c;
+        if (k < L.y) {
+            c = f.clusters.v[ci];
+            vis = sphere_visible(origin + quat_rotate(q, c.sphere.xyz * it.scale), c.sphere.w * it.scale);
         }
-        n++;
+        if (vis) atomicOr(s_cull_mask[t >> 5], 1u << (t & 31u));
+        barrier();
+        uint m0 = s_cull_mask[0], m1 = s_cull_mask[1];
+        if (with_write && vis) {
+            uint below = t < 32u ? bitCount(m0 & ((1u << t) - 1u)) : bitCount(m0) + bitCount(m1 & ((1u << (t - 32u)) - 1u));
+            uint slot = first + n + below;
+            if (slot < f.vis_max) {
+                f.vis.v[slot] = uvec2(i, ci);
+                DrawCmd d;
+                d.index_count = c.tri_count * 3u;
+                d.instance_count = 1u;
+                d.first_index = m.first_index + c.first_index;
+                d.vertex_offset = int(m.first_vertex);
+                d.first_instance = slot;
+                if (veil) {
+                    uint vb = s_cull_vbase;
+                    if (vb + n + below < VEIL_MAX) {
+                        uint vs = f.vis_max + vb + n + below;
+                        f.vis.v[vs] = uvec2(i, ci);
+                        d.first_instance = vs;
+                        f.draws.v[vs] = d;
+                    }
+                    d.instance_count = 0u;
+                    d.first_instance = slot;
+                }
+                f.draws.v[slot] = d;
+            }
+        }
+        n += bitCount(m0) + bitCount(m1);
+        barrier();  // маска куска прочитана всеми до обнуления под следующий
     }
     return n;
 }

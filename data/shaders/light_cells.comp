@@ -19,6 +19,12 @@ layout(constant_id = 0) const uint TILE_KIND = 3u;  // TILE_* из common.glsl; 
 #define RESOLVE_MESH (TILE_KIND == TILE_MESH || TILE_KIND == TILE_MIX)
 uint g_steps = 0u;  // выборки карты горизонта этого потока (horizon.glsl)
 #define T_SHADOW_STEPS g_steps
+// Огни плитки (light_lamps, light.glsl): бит огня — его шар задевает рамку точек плитки. Клетка froxels — 64 пикселя
+// и слой глубины в десятки метров, и дальние клетки берут огни зданий целиком; пиксель земли без них перебирал бы
+// каждый, хотя ни один не достаёт. Пропуск ровно тех огней, что всё равно отброшены (d ≥ radius): кадр тот же
+shared uint s_lamp[32];  // RENDER_MAX_LIGHTS / 32
+shared uint s_lamp_any;
+#define LAMP_TILE_MASK
 ivec2 g_origin;  // начало отсчёта узоров: чанк камеры, у текселя кеша — его чанк (gcache.glsl)
 #define ORIGIN_CHUNK g_origin
 #define GC_ORIGIN_VAR
@@ -63,6 +69,17 @@ shared vec3 s_color[64];
 shared uint s_work[10];    // пиксели неба, земли, сеток; поверхности земли, сеток; выборки тени; земля на пиксель;
                            // выборки карты теней и без страницы; выборки поля расстояний
 shared uint s_bail;        // плитка земли уходит в «землю на пиксель»: текселя нет в кеше
+shared uint s_box[6];      // рамка точек ведущих пикселей плитки, м от камеры: min xyz, max xyz (порядок слов — порядок чисел)
+
+// Число → слово, где порядок слов — порядок чисел (атомарные min и max по рамке)
+uint ord_enc(float x) {
+    uint b = floatBitsToUint(x);
+    return (b & 0x80000000u) != 0u ? ~b : b | 0x80000000u;
+}
+float ord_dec(uint e) { return uintBitsToFloat((e & 0x80000000u) != 0u ? e & 0x7FFFFFFFu : ~e); }
+
+// Огни, чьи шары задевают рамку точек плитки (с запасом: точка света — у ячейки или текселя чуть в стороне от
+// точки пикселя). При правиле ячеек (pixel ≠ 0) точка — центр ячейки, рамку не строим: все огни
 const uint HIT_GCACHE = 3u;  // земля из кеша: rel — точка пикселя, level — уровень, m0, m1 — номер текселя
 
 // Центр ячейки точки, как у surface(): на плоскости поперёк главной оси нормали
@@ -96,6 +113,7 @@ vec3 shade_hit(Hit h, int phys) {
         return sky_radiance(normalize(h.rel));
     }
     Surface s;
+    g_gcl_ok = false;  // свет из кеша — только у пути gc_surface_px
     bool gc = GC_KIND && h.kind == HIT_GCACHE;
     int k = int(h.level);
     ivec2 t = ivec2(int(h.m0), int(h.m1));
@@ -138,6 +156,29 @@ vec3 shade_hit(Hit h, int phys) {
     return pc.frame.froxel_heat != 0u ? froxel_heat(c, s.pos) : c;
 }
 
+void lamp_tile(uint t) {
+    FrameData f = pc.frame;
+    bool all_ = f.pixel != 0u;
+    vec3 lo = vec3(ord_dec(s_box[0]), ord_dec(s_box[1]), ord_dec(s_box[2]));
+    vec3 hi = vec3(ord_dec(s_box[3]), ord_dec(s_box[4]), ord_dec(s_box[5]));
+    bool any_ = false;
+    for (uint k = t; k < f.light_count; k += 64u) {
+        bool hit = all_;
+        if (!hit) {
+            Light l = f.lights.v[k];
+            // Шар вокруг отрезка огня: радиус действия + полудлина оси
+            float r = l.radius + length(l.axis) + 0.1;
+            vec3 d = max(max(lo - l.c, l.c - hi), vec3(0.0));
+            hit = dot(d, d) < r * r;
+        }
+        if (hit) {
+            atomicOr(s_lamp[k >> 5], 1u << (k & 31u));
+            any_ = true;
+        }
+    }
+    if (any_) s_lamp_any = 1u;
+}
+
 // Работа группы — в счётчики кадра: одна атомарная операция на счётчик и плитку
 void work_flush() {
     const uint at[10] = uint[10](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
@@ -170,7 +211,9 @@ void main() {
         return;
     }
     if (t < 10u) s_work[t] = 0u;
-    if (t == 0u) s_bail = 0u;
+    if (t == 0u) s_bail = s_lamp_any = 0u;
+    if (t < 32u) s_lamp[t] = 0u;
+    if (t < 6u) s_box[t] = t < 3u ? 0xFFFFFFFFu : 0u;
     uint id = inside ? imageLoad(u_vis, px).r : 0xFFFFFFFFu;
     bool ground = inside && id != 0u && (id & VIS_GROUND) != 0u;
     GcCell c;
@@ -236,6 +279,12 @@ void main() {
         } else if (hl.kind == HIT_GROUND) {
             atomicAdd(s_work[6], 1u);
         }
+        if (hl.kind != HIT_SKY) {
+            for (int i = 0; i < 3; ++i) {
+                atomicMin(s_box[i], ord_enc(hl.rel[i]));
+                atomicMax(s_box[3 + i], ord_enc(hl.rel[i]));
+            }
+        }
     }
     barrier();
     if (TILE_KIND == TILE_GROUND && s_bail != 0u) {
@@ -245,6 +294,8 @@ void main() {
         }
         return;
     }
+    if (f.light_count != 0u && f.froxel_on != 0u && s_box[0] != 0xFFFFFFFFu) lamp_tile(t);
+    barrier();
     if (t < nlead) {
         vec3 col = shade_hit(hl, phys);
         s_color[t] = pre_exposed(col, g_e_local);

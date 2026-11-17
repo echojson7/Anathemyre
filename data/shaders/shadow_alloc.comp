@@ -27,7 +27,7 @@ void main() {
             uvec2 pk = uvec2(pg.key0, pg.key1);
             atomicCompSwap(f.sm_table.v[sm_slot(sm_key_level(pk), sm_key_page(pk))], p + 1u, 0u);
         }
-        f.sm_pages.v[p] = SmPage(key.x, key.y, f.sm_frame, f.sm_frame);
+        f.sm_pages.v[p] = SmPage(key.x, key.y, f.sm_frame, f.sm_frame, 0u);
         uint slot = sm_slot(k, page);
         f.sm_table.v[slot] = p + 1u;
         uint local = slot - uint(k) * uint(SM_WIN * SM_WIN);

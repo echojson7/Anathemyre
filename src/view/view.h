@@ -93,6 +93,7 @@ struct ViewInput {
     u32 tonemap = RENDER_TONEMAP_AGX;
     bool local_off = false;  // без местной экспозиции (F3, --nolocal): сравнение было/стало
     bool scans = false;  // поверхности из сканов CC0 (docs/scans.md), F3 и --scans
+    bool gclight_off = false;  // отражённый свет земли на пиксель, не из кеша (docs/gcache.md, F3, --nogclight)
     u32 light_quality = RENDER_LIGHT_HIGH;
     u32 aa = RENDER_AA_TAA;
     u32 shadow_pages = 0;  // F3 (docs/shadow.md): 1 — страницы теней поверх кадра, 2 — только тень

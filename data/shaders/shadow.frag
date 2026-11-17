@@ -22,5 +22,9 @@ void main() {
     if (pg.made != f.sm_frame || uvec2(pg.key0, pg.key1) != sm_page_key(v_k, page)) return;
     float h = v_h;
     if (gl_FrontFacing) h -= SM_FRONT * sm_texel(v_k) + min(SM_FRONT_SLOPE * fwidth(v_h), SM_FRONT_MAX * sm_texel(v_k));
-    atomicMax(f.sm_texels.v[phys * uint(SM_PAGE * SM_PAGE) + uint((t.y & 127) * SM_PAGE + (t.x & 127))], sm_enc(h));
+    uint he = sm_enc(h);
+    atomicMax(f.sm_texels.v[phys * uint(SM_PAGE * SM_PAGE) + uint((t.y & 127) * SM_PAGE + (t.x & 127))], he);
+    // Самая высокая заслонка страницы (sm_clear): атомарно — только если выше уже записанной, иначе все фрагменты
+    // страницы толпились бы на одном слове
+    if (he > pg.top && he > f.sm_pages.v[phys].top) atomicMax(f.sm_pages.v[phys].top, he);
 }

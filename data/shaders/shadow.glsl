@@ -108,6 +108,23 @@ float sm_occ(int k, ivec2 t) {
     return e != 0u ? sm_dec(e) : SM_NONE;
 }
 
+// Ни одна заслонка в страницах под квадратом w ± r (тексели окна места k) не выше hmin: каждая выборка там —
+// «свет» (выше hmin ни одна высота не сравнивается), а страница без места — тоже свет. Так пиксель открытой земли
+// не делает выборок вовсе: страница помнит свою самую высокую заслонку (top, shadow.frag)
+bool sm_clear(int k, vec2 w, float r, float hmin) {
+    ivec2 lo, hi;
+    if (!sm_rect(w, r, lo, hi)) return true;
+    ivec2 b = pc.frame.sm_base[k];
+    for (int y = lo.y; y <= hi.y; ++y)
+        for (int x = lo.x; x <= hi.x; ++x) {
+            int phys = sm_find(k, b + ivec2(x, y));
+            if (phys < 0) continue;
+            uint top = pc.frame.sm_pages.v[phys].top;
+            if (top != 0u && sm_dec(top) > hmin) return false;
+        }
+    return true;
+}
+
 // Четыре соседних текселя вокруг w (тексели окна) с весами по месту точки между ними: 1 — свет, 0 — тень. hr —
 // высота точки, g — её прирост на тексель по r и u (плоскость приёмника): сосед сравнивается со своей высотой
 float sm_pcf(int k, vec2 w, float hr, vec2 g) {
@@ -145,6 +162,10 @@ float sm_vis_set(int set, vec3 pos, vec3 n, float depth) {
     float ns = max(dot(n, f.sm_s[set].xyz), 0.25);
     vec2 g = -vec2(dot(n, f.sm_r[set].xyz), dot(n, f.sm_u[set].xyz)) / ns * t;
     float rs = sm_search(t);
+    // Все выборки ниже (поиск, фильтр и их 2×2) — в квадрате w ± (rs + 2), и каждая сравнивает заслонку с высотой
+    // не ниже hr − (rs + 2)·(|g.x| + |g.y|): нет заслонки выше — свет, ровно 1, как дали бы сами выборки
+    float reach = rs + 2.0;
+    if (sm_clear(k, w, reach, hr - reach * (abs(g.x) + abs(g.y)))) return 1.0;
     if (rs == 0.0) return sm_pcf(k, w, hr, g);
     // PCSS: средняя высота заслонок над точкой в круге поиска → полутень → фильтр её радиуса
     int ns_taps = f.light_q >= LIGHT_Q_ULTRA ? 12 : f.light_q >= LIGHT_Q_HIGH ? 8 : 6;
