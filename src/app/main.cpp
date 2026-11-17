@@ -45,6 +45,8 @@ static void usage() {
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
     log_info("           --look sun|moon град                                          взгляд по азимуту светила + поворот (с --cam: кадры неба)");
     log_info("           --frames N --video префикс                                   каждый кадр → префикс_0000.bmp… (стенд: 1/30 с на кадр)");
+    log_info("           --cam-test файл.txt                                          проверка камеры записанным вводом без окна (docs/camera.md)");
+    log_info("           --frames N --video префикс --cam-play                        видео камеры: показ записанным вводом");
     log_info("           [--spin град/с]                                              камера поворачивается сама (видео мерцания при повороте)");
     log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines] [--sides]  выбрать, камера за ним, приказы, отладка");
     log_info("           [--mech pack|stand|walk|show|veil|prone] [--mech-follow]     шагающие машины: лежат, стоят, обходят, показ всего по порядку, морок по кругу, лёжка; камера за машиной (docs/vezha.md, docs/tat.md)");
@@ -216,6 +218,8 @@ int main(int argc, char **argv) {
         }
         else if (!strcmp(s, "--pivot")) { ok = next && parse_f32(Str{next, (u32)strlen(next)}, a.pivot_above); i++; }
         else if (!strcmp(s, "--video")) { a.video = next; ok = next != nullptr; i++; }
+        else if (!strcmp(s, "--cam-test")) { a.cam_test = next; ok = next != nullptr; i++; }
+        else if (!strcmp(s, "--cam-play")) a.cam_play = true;
         else if (!strcmp(s, "--select")) { u32 v = 0; ok = next && parse_u32(Str{next, (u32)strlen(next)}, v) && v < 1024; a.select = (i32)v; i++; }
         else if (!strcmp(s, "--follow")) a.follow = true;
         else if (!strcmp(s, "--mech")) {
@@ -256,7 +260,7 @@ int main(int argc, char **argv) {
 #endif
     AppMemory m;
     app_memory_init(m, a.record || a.replay);
-    int rc = a.mech_trace ? run_mech_trace(a, m) : a.terrain_map ? run_terrain_map(a, m) : a.walk_map ? run_walk_map(a, m) : a.replay ? run_replay(a, m) : a.sim_steps ? run_sim(a, m) : run_window(a, m);
+    int rc = a.cam_test ? run_cam_test(a, m) : a.mech_trace ? run_mech_trace(a, m) : a.terrain_map ? run_terrain_map(a, m) : a.walk_map ? run_walk_map(a, m) : a.replay ? run_replay(a, m) : a.sim_steps ? run_sim(a, m) : run_window(a, m);
     app_memory_free(m);
     if (rc != 0) log_error("выход с кодом %d", rc);
     platform_shutdown();  // дописать журнал и закрыть SDL до выхода
