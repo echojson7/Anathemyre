@@ -19,6 +19,10 @@ struct Settings {
     bool invert_x = false;   // мышь вправо — взгляд влево
     f32 cam_smooth = 1.0f;   // плавность камеры: 0 — без сглаживания
     f32 fov_deg = 60.0f;
+    bool cam_tilt_zoom = true;    // наклон от расстояния (docs/camera.md)
+    bool cam_zoom_cursor = true;  // колесо приближает к курсору
+    bool cam_edge_pan = false;    // курсор у края экрана двигает камеру
+    f32 cam_pan_speed = 1.0f;     // скорость WASD и края экрана
     // Графика (docs/light.md, «Ступени»): RENDER_LIGHT_* — низко, средне, высоко, ультра
     u32 light_quality = 2;
     u32 aa = 2;               // сглаживание (docs/aa.md): RENDER_AA_* — выкл, FXAA, TAA

@@ -7,6 +7,7 @@
 
 const uint MAX_MESHES = 4096u;    // RENDER_MAX_MESHES
 const float LOD_PIXELS = 0.75;    // как в view.cpp
+const uint VEIL_MAX = 4096u;       // VIS_VEIL_MAX: мест списка морока за списком кадра
 
 // Сфера относительно камеры задевает пирамиду взгляда (дальней плоскости нет)
 bool sphere_visible(vec3 c, float r) {
@@ -36,6 +37,10 @@ uint cull_instance(uint i, bool with_write, uint first, out uint lod) {
     // Не тоньше lod_min: у человека скинены вершины только этого LOD и грубее (src/render/vk_skin.cpp)
     lod = clamp(max(lod, it.lod_min), 0u, m.lod_count - 1u);
     uvec4 L = m.lods[lod];
+    // Морок (docs/tat.md): кластеры машины под мороком рисует свой конвейер (vis_veil) из мест за списком кадра;
+    // место в главном списке остаётся пустым вызовом. Место в списке морока — одно прибавление на экземпляр
+    bool veil = with_write && it.material >= 0xFFFFFF00u && (it.material & 0xFFu) < 255u;
+    uint vbase = veil ? atomicAdd(f.cull.veil_count, f.cull.count[i] & 0x1FFFFFFFu) : 0u;
     uint n = 0u;
     for (uint k = 0u; k < L.y; ++k) {
         uint ci = L.x + k;
@@ -51,6 +56,16 @@ uint cull_instance(uint i, bool with_write, uint first, out uint lod) {
             d.first_index = m.first_index + c.first_index;
             d.vertex_offset = int(m.first_vertex);
             d.first_instance = slot;
+            if (veil) {
+                if (vbase + n < VEIL_MAX) {
+                    uint vs = f.vis_max + vbase + n;
+                    f.vis.v[vs] = uvec2(i, ci);
+                    d.first_instance = vs;
+                    f.draws.v[vs] = d;
+                }
+                d.instance_count = 0u;
+                d.first_instance = slot;
+            }
             f.draws.v[slot] = d;
         }
         n++;

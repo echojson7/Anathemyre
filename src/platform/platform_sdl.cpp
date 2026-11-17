@@ -604,6 +604,7 @@ void platform_poll(Input &in) {
     SDL_GetMouseState(&mx, &my);
     in.mouse_x = mx * density;
     in.mouse_y = my * density;
+    in.mouse_in = g_window && SDL_GetMouseFocus() == g_window && (SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS);
 }
 
 void platform_window_size(i32 *w, i32 *h) {
