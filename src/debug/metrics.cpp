@@ -182,9 +182,14 @@ static void metrics_body(UiForm &f, const DebugInfo &in, DebugState &d) {
             snprintf(t, sizeof t, "%.4g · %.4g лк", (double)in.lux_key, (double)in.lux_sky);
             ui_value(f, "светило · небо", t);
             snprintf(t, sizeof t, "%.4g лк", (double)in.lux_eye);
-            ui_value(f, "у глаза (с заслонкой)", t);
+            ui_value(f, "замер глаза", t);
+            snprintf(t, sizeof t, "%.4g · %.4g лк", (double)in.lux_cam, (double)in.lux_view);
+            ui_value(f, "у камеры · в кадре", t);
             snprintf(t, sizeof t, "%.2f → %.2f", (double)in.ev100, (double)in.ev100_goal);
             ui_value(f, "EV100 глаза → цель", t);
+            snprintf(t, sizeof t, "%.2f %.2f %.2f · %.0f%%", (double)in.wb_white[0], (double)in.wb_white[1],
+                     (double)in.wb_white[2], (double)(in.wb_degree * 100.0f));
+            ui_value(f, "цвет света · привыкание", t);
         }
     }
 

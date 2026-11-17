@@ -166,7 +166,6 @@ void vk_gi_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     s.jobs_n = s.chunks = 0;
     s.snapped = false;
     g.gi_on = 0;
-    g.dbg_alpha = g_vk.capture_hdr ? 1.0f : 0.0f;
     u32 view = f.style.gi_view < RENDER_GI_VIEWS ? f.style.gi_view : RENDER_GI_FRAME;
     g.gi_view = view;
     s.on = sd.on && g.sdf_on && s.irr.image && s.pipe_trace && s.pipe_blend && view != RENDER_GI_OFF;

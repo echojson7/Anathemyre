@@ -144,6 +144,16 @@ static void world_job(void *user) {
 
 static f64 ms_since(u64 t0) { return (f64)(platform_time_ns() - t0) / 1e6; }
 
+// Глаз в журнал (docs/light.md, «Экспозиция»): «у глаза» — замер, к которому он привыкает (смесь света у камеры и
+// мест в кадре); tools/lightlab разбирает строку до «экспозиция»
+static void log_eye(const RenderLightInfo &e) {
+    log_info("глаз: светило %.4g лк, небо %.4g лк, у глаза %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g; у камеры "
+             "%.4g лк, в кадре %.4g лк; цвет света %.3f %.3f %.3f, привыкание к цвету %.2f",
+             (double)e.lux_key, (double)e.lux_sky, (double)e.lux_eye, (double)e.ev100, (double)e.ev100_goal,
+             (double)e.exposure, (double)e.lux_cam, (double)e.lux_view, (double)e.wb_white[0], (double)e.wb_white[1],
+             (double)e.wb_white[2], (double)e.wb_degree);
+}
+
 int run_window(const Args &a, AppMemory &m) {
     const u64 t_start = platform_time_ns();
     // Настройки игрока (docs/ui.md): запуски для CI и видео (--frames) их не пишут
@@ -496,6 +506,10 @@ int run_window(const Args &a, AppMemory &m) {
                 di.lux_key = eye_info.lux_key;
                 di.lux_sky = eye_info.lux_sky;
                 di.lux_eye = eye_info.lux_eye;
+                di.lux_cam = eye_info.lux_cam;
+                di.lux_view = eye_info.lux_view;
+                for (u32 k = 0; k < 3; ++k) di.wb_white[k] = eye_info.wb_white[k];
+                di.wb_degree = eye_info.wb_degree;
                 di.ev100 = eye_info.ev100;
                 di.ev100_goal = eye_info.ev100_goal;
                 di.overflows = nover_last;
@@ -829,10 +843,7 @@ int run_window(const Args &a, AppMemory &m) {
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
                          work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts, work.sm_used, work.sm_new,
                          work.sm_over, work.sm_taps, work.sm_miss, work.sm_draws);
-            if (eye_have)
-                log_info("глаз: светило %.4g лк, небо %.4g лк, у глаза %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g",
-                         (double)eye_info.lux_key, (double)eye_info.lux_sky, (double)eye_info.lux_eye, (double)eye_info.ev100,
-                         (double)eye_info.ev100_goal, (double)eye_info.exposure);
+            if (eye_have) log_eye(eye_info);
             frames_window = 0;
             window_t0 = now;
             prof_part(*prof, FP_LOG, platform_time_ns());
@@ -841,10 +852,12 @@ int run_window(const Args &a, AppMemory &m) {
     }
 
     if (save_settings) settings_save(set, settings_path());
-    if (a.frames && eye_have)
-        log_info("глаз: светило %.4g лк, небо %.4g лк, у глаза %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g",
-                 (double)eye_info.lux_key, (double)eye_info.lux_sky, (double)eye_info.lux_eye, (double)eye_info.ev100,
-                 (double)eye_info.ev100_goal, (double)eye_info.exposure);
+    // Глаз последнего кадра (в цикле прочитан кадр N−2). Счётчики --work остаются от кадра в цикле: так их сверяет CI
+    if (a.frames) {
+        render_collect();
+        eye_have = render_light(eye_info);
+    }
+    if (a.frames && eye_have) log_eye(eye_info);
     if (a.shot && !debug_write_shot(a.shot, m.load)) rc_exit = 1;
     if (a.shot && a.hdr) {
         char hp[512];

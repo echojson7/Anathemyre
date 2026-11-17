@@ -22,7 +22,7 @@ struct DebugState {
     u32 sdf_view = 0;         // поле расстояний (docs/sdf.md): кадр, только небо, поле, выкл (RENDER_SDF_*, не сохраняется)
     u32 gi_view = 0;          // непрямой свет (docs/gi.md): кадр, только он, без зондов (RENDER_GI_*, не сохраняется)
     bool local_off = false;   // без местной экспозиции (docs/light.md; сравнение, не сохраняется)
-    u32 tonemap = 0;          // тонмаппинг: 0 — AgX, 1 — ACES (RENDER_TONEMAP_*; docs/light.md), выбор по кадрам
+    u32 tonemap = 2;          // тонмаппинг: 0 — AgX, 1 — ACES, 2 — плёночная кривая UE5 (RENDER_TONEMAP_*; docs/light.md)
     // Стенд людей (stand.cpp): человек у Остова, кость согнута (B), скелет, морф (0 — нет, k — морф k − 1)
     bool people_lines = false; // люди мира: капсулы шага, путь выбранного, след касаний стоп (при отрезках L)
     bool people_show = false;  // показ тел (docs/body.md, «Показ»): поза привязки, без одежды и оружия; ставит start show
@@ -118,6 +118,8 @@ struct DebugInfo {
     // Глаз прочитанного кадра (render_light, docs/light.md): освещённость земли, лк, и EV100; light = false — нет
     bool light;
     f32 lux_key, lux_sky, lux_eye, ev100, ev100_goal;
+    f32 lux_cam, lux_view;          // свет у камеры и мест в кадре — две части замера глаза, лк
+    f32 wb_white[3], wb_degree;     // цвет света, к которому привык глаз (Y = 1), и доля привыкания к цвету
     // Что не влезло за секунду (render_overflows): сколько просили, сколько есть (0 — счёт клеток без предела)
     u32 overflows;
     const char *over_what[DEBUG_MAX_OVERFLOWS];

@@ -69,6 +69,7 @@ struct FrameGpu {
     VkDeviceAddress stats;    // счётчики GPU кадра (STAT_*), vk_diag.cpp
     VkDeviceAddress tiles;    // плитки по видам (Tiles в common.glsl, docs/tiles.md)
     u32 tile_cap, tile_pad;   // мест в списке одного вида
+    VkDeviceAddress view_light;  // свет мест плиток прошлого кадра для глаза (vec4 на плитку, common.glsl)
     // Кеш поверхности земли (vk_gcache.cpp, docs/gcache.md)
     VkDeviceAddress gc_table, gc_pages, gc_texels, gc_req, gc_cells, gc_light;
     u32 gc_w, gc_pages_n, gc_req_cap, gc_frame;
@@ -87,6 +88,7 @@ struct FrameGpu {
     f32 dt;
     u32 eye_snap, tonemap, light_q;
     f32 local_tone[4];  // местная экспозиция: колено, наклон в свет, наклон в тень, включена
+    f32 eye_meter[4];   // замер глаза: доля по кадру, альфа HDR годна, баланс белого, время привыкания к цвету, с
     // Тени солнца страницами (vk_shadow.cpp, docs/shadow.md): окна страниц уровней, пул страниц и их тексели,
     // заявки, вызовы и список отрисовки страниц, сферы сброса кадра
     VkDeviceAddress sm_table, sm_pages, sm_texels, sm_req, sm_draws, sm_list, sm_inval;
@@ -111,7 +113,7 @@ struct FrameGpu {
     VkDeviceAddress gi_probes, gi_jobs, gi_rays, gi_pos;
     i32 gi_lo[4][4];
     u32 gi_on, gi_view, gi_rays_n, gi_pad0;
-    f32 gi_hyst, dbg_alpha, glow_gain, gi_pad3;  // dbg_alpha: 1 — a HDR = свет места (--hdr)
+    f32 gi_hyst, gi_pad2, glow_gain, gi_pad3;
     // Ячейки света (vk_lcache.cpp, docs/lcache.md): ключи (они же по 4), места, показанный свет, сумма круга,
     // работы кадра; ступень
     VkDeviceAddress lc_keys, lc_keys4, lc_meta, lc_show, lc_filt, lc_acc, lc_jobs;
@@ -176,9 +178,9 @@ constexpr u32 STAT_COUNT = 40;
 constexpr u32 TILE_KINDS = 5;
 constexpr u32 TILE_KIND_GROUND = 1, TILE_KIND_MIX = 3, TILE_KIND_GROUND_PX = 4;
 constexpr u32 TILE_HEADER = TILE_KINDS * 16;  // косвенные dispatch видов перед списками
-// Буфер чтения кадра: число видимых кластеров, с READBACK_STATS — счётчики, с READBACK_EYE — глаз (sky_out [4], [5])
+// Буфер чтения кадра: число видимых кластеров, с READBACK_STATS — счётчики, с READBACK_EYE — глаз (sky_out [4]…[8])
 constexpr VkDeviceSize READBACK_STATS = 16, READBACK_EYE = READBACK_STATS + STAT_COUNT * 4;
-constexpr VkDeviceSize READBACK_BYTES = READBACK_EYE + 32;
+constexpr VkDeviceSize READBACK_BYTES = READBACK_EYE + 80;
 constexpr u32 SKY_OUT_EYE = 4;  // sky_out: [4], [5] — экспозиция и освещённость (sky_sum.comp, common.glsl)
 
 // Небо (vk_sky.cpp, docs/sky.md): таблицы в буферах видеопамяти, считают их compute-шейдеры sky_*.comp
@@ -241,10 +243,12 @@ struct WorldGpu {
     GpuBuffer vis;       // видимый кластер: экземпляр, кластер
     GpuBuffer gverts;    // вершины колец земли кадра (ground_bake.comp)
     GpuBuffer tiles;     // плитки по видам: косвенные dispatch и списки (light_tiles.comp), под размер кадра
+    GpuBuffer view_light;  // свет мест плитки (light_cells.comp → eye.comp следующего кадра), vec4 на плитку
     u32 tile_cap = 0;    // плиток кадра — мест в списке одного вида
     u32 inst_count = 0;  // сколько экземпляров лежит в inst
     GpuImage id;         // visibility buffer R32_UINT
-    GpuImage hdr;        // линейный цвет кадра RGBA16F (освещение → стиль)
+    GpuImage hdr;        // линейный цвет кадра RGBA16F (освещение → стиль); a — свет места × экспозиция
+    bool hdr_lit = false;  // кадр освещён: свет мест плиток (view_light) годен для замера глаза следующего кадра
     VkExtent2D extent = {};
     VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
     VkDescriptorPool pool = VK_NULL_HANDLE;
@@ -255,10 +259,11 @@ struct WorldGpu {
     VkPipeline pipe_light[TILE_KINDS] = {}, pipe_tiles = VK_NULL_HANDLE, pipe_ground_bake = VK_NULL_HANDLE;
     u32 vis_clusters = 0;  // видимых кластеров в последнем прочитанном кадре
     u32 work[STAT_COUNT] = {};  // счётчики последнего прочитанного кадра мира (STAT_*)
-    f32 eye[8] = {};            // глаз того же кадра: sky_out [4], [5] (render_light)
+    f32 eye[20] = {};           // глаз того же кадра: sky_out [4]…[8] (render_light)
     bool work_valid = false;
     // Ресурсы графа кадра (vk_graph.h)
     u8 rg_inst = 0, rg_cull = 0, rg_draws = 0, rg_vis = 0, rg_gverts = 0, rg_id = 0, rg_hdr = 0, rg_tiles = 0;
+    u8 rg_view = 0;
 };
 
 // Кеш поверхности земли (vk_gcache.cpp, docs/gcache.md): виртуальная текстура страницами 8×8 текселей по

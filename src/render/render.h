@@ -91,7 +91,7 @@ struct RenderView {
 // cell_min метров и растёт с глубиной степенями двойки, пока не станет пикселем кадра. Выключено: свет на пиксель.
 // cell_min и cell_pixels по-прежнему задают решётки кеша земли и теней солнца
 // Тонмаппинг (post.glsl) и ступени качества света (docs/light.md, «Ступени»): номера — как в common.glsl
-enum RenderTonemap : u32 { RENDER_TONEMAP_AGX, RENDER_TONEMAP_ACES, RENDER_TONEMAPS };
+enum RenderTonemap : u32 { RENDER_TONEMAP_AGX, RENDER_TONEMAP_ACES, RENDER_TONEMAP_UE, RENDER_TONEMAPS };
 // Поле расстояний мира (docs/sdf.md), режим F3: кадр, только видимость неба, поле изолиниями, свет без поля
 enum RenderSdfView : u32 { RENDER_SDF_FRAME, RENDER_SDF_SKY, RENDER_SDF_FIELD, RENDER_SDF_OFF, RENDER_SDF_VIEWS };
 // Зонды непрямого света (docs/gi.md), режим F3: кадр, только непрямой свет, без зондов
@@ -113,10 +113,13 @@ struct RenderStyle {
     f32 cell_min = 1.0f / 80.0f;
     f32 cell_pixels = 1.0f;  // ячейка — не меньше стольких пикселей кадра
     // Свет (docs/light.md)
-    u32 tonemap = RENDER_TONEMAP_AGX;
+    u32 tonemap = RENDER_TONEMAP_UE;
     u32 light_quality = RENDER_LIGHT_HIGH;
     // Местная экспозиция (data/sky.txt, local_tone): колено, стопы; наклон в свет; в тень; 1 — включена
     f32 local_tone[4] = {1.0f, 0.05f, 1.0f, 1.0f};
+    // Замер и цвет глаза (data/sky.txt: meter_view, white_balance, adapt_color): доля замера по кадру; [1] ставит
+    // рендер; доля привыкания к цвету света; время привыкания к цвету, с
+    f32 eye_meter[4] = {0.8f, 0.0f, 0.8f, 1.5f};
     f32 dt = 0.0f;         // секунды кадра: привыкание глаза
     bool eye_snap = true;  // глаз привыкает сразу (первый кадр, --timelapse: кадр — свой час)
     bool glow = true;      // светящиеся детали (стекло ламп, табло) светятся; выкл — вместе с лампами (F3, --nolamps)
@@ -218,6 +221,8 @@ bool render_frame(const RenderFrame &f);
 void render_resized();
 // Дождаться, пока GPU доделает всё отправленное (строка запуска после первого кадра). В игровом цикле не нужно
 void render_wait_idle();
+// Дождаться GPU и прочитать счётчики и глаз последнего отправленного кадра (конец снимка: иначе прочитан кадр N−2)
+void render_collect();
 // Число ошибок слоя проверки за всё время
 u32 render_validation_errors();
 const char *render_device_name();
@@ -359,9 +364,12 @@ bool render_work(RenderWork &out);
 // Глаз прочитанного кадра (docs/light.md, «Экспозиция»): освещённость горизонтальной земли и EV100. F3
 struct RenderLightInfo {
     f32 lux, lux_sky, lux_key;  // всего, от неба, от главного светила (солнце или луна) — на открытой земле
-    f32 lux_eye;                // у глаза: с заслонкой полем расстояний (eye.comp), к нему привыкает глаз
+    f32 lux_eye;                // замер глаза (eye.comp): смесь света у камеры и в кадре, к нему привыкает глаз
     f32 ev100, ev100_goal;      // глаз сейчас и к чему привыкает
     f32 exposure;               // множитель кадра
+    f32 lux_cam, lux_view;      // две части замера: свет у камеры и мест в кадре (по плиткам прошлого кадра), лк
+    f32 wb_white[3];            // цвет света, к которому привык глаз (линейный sRGB, Y = 1)
+    f32 wb_gain[3], wb_degree;  // множители конусов CAT02 и доля привыкания к цвету (баланс белого)
 };
 bool render_light(RenderLightInfo &out);
 // Процессорное время последнего render_frame по частям, мс (docs/frame_time.md). Ожидание — fence, acquire и

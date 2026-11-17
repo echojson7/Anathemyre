@@ -36,6 +36,7 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"wind", &d.wind, 1},             {"wind_dir", &d.wind_dir, 1},
         {"night_fill", &d.night_fill, 1}, {"glare", &d.glare, 1},
         {"local_tone", d.local_tone, 3},
+        {"meter_view", &d.meter_view, 1}, {"white_balance", &d.white_balance, 1}, {"adapt_color", &d.adapt_color, 1},
     };
     TextReader r = text_reader(text, size);
     TextLine l;
@@ -80,6 +81,10 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
     }
     if (d.local_tone[0] < 0.0f || d.local_tone[1] <= 0.0f || d.local_tone[1] > 1.0f || d.local_tone[2] <= 0.0f || d.local_tone[2] > 1.0f) {
         snprintf(err, err_cap, "local_tone: колено ≥ 0, наклоны в (0, 1]");
+        return false;
+    }
+    if (d.meter_view < 0.0f || d.meter_view > 1.0f || d.white_balance < 0.0f || d.white_balance > 1.0f || d.adapt_color <= 0.0f) {
+        snprintf(err, err_cap, "meter_view и white_balance в [0, 1], adapt_color > 0");
         return false;
     }
     return true;

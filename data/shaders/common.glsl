@@ -253,6 +253,9 @@ layout(buffer_reference, scalar) buffer FrameData {
     Stats stats;              // счётчики GPU кадра (STAT_*)
     Tiles tiles;              // плитки по видам (light_tiles.comp → light_cells.comp)
     uint tile_cap, tile_pad;  // мест в списке одного вида (плиток кадра)
+    // Свет мест плитки для глаза следующего кадра (light_cells.comp → eye.comp), на плитку 8×8 строками:
+    // xyz — цвет света мест (Y = 1), w — log2 света места против света у камеры того кадра; средние по пикселям
+    Vec4s view_light;
     // Кеш поверхности земли (docs/gcache.md): окно страниц уровня в gc_table — gc_w × gc_w, уровни подряд
     GcTable gc_table;         // физическая страница + 1; 0 — нет; GC_REQ | кадр — заявка этого кадра
     GcPages gc_pages;
@@ -281,6 +284,10 @@ layout(buffer_reference, scalar) buffer FrameData {
     uint eye_snap, tonemap, light_q;
     // Местная экспозиция (docs/light.md): колено, стопы; наклон в свет; наклон в тень; w — включена (F3, --nolocal)
     vec4 local_tone;
+    // Замер и цвет глаза (docs/light.md, «Экспозиция», «Баланс белого»): x — доля замера по свету мест в кадре
+    // (0 — только у камеры); y — 1: свет мест плиток прошлого кадра (view_light) годен для замера; z — баланс
+    // белого (доля привыкания к цвету света, 0 — выключен); w — время привыкания к цвету, с
+    vec4 eye_meter;
     // Тени солнца страницами (docs/shadow.md, shadow.glsl): окна страниц уровней, страницы, тексели, заявки,
     // вызовы и список отрисовки страниц, сферы сброса кадра
     SmTable sm_table;
@@ -316,8 +323,7 @@ layout(buffer_reference, scalar) buffer FrameData {
     Vec4s gi_pos;
     ivec4 gi_lo[4];           // первый зонд окна уровня: мировой номер от якоря поля
     uint gi_on, gi_view, gi_rays_n, gi_pad0;  // зонды читаются; режим F3 (GI_VIEW_*); лучей на зонд
-    float gi_hyst, dbg_alpha, glow_gain, gi_pad3;  // доля старого при смешении; 1 — a HDR = свет места (--hdr);
-                                                // множитель свечения glow (0 — лампы выключены)
+    float gi_hyst, gi_pad2, glow_gain, gi_pad3;  // доля старого при смешении; множитель свечения glow (0 — лампы выключены)
     // Ячейки света (docs/lcache.md, lcache.glsl): таблица, работы кадра; ступень — тангенс угла ячейки, дальность,
     // лучей на счёт, кадров между счётами видимой ячейки, пределы работ кадра
     LcKeys lc_keys;
@@ -366,13 +372,16 @@ layout(push_constant, scalar) uniform Push {
 } pc;
 
 const float CHUNK_M = 256.0;
-const uint TONEMAP_AGX = 0u, TONEMAP_ACES = 1u;
+const uint TONEMAP_AGX = 0u, TONEMAP_ACES = 1u, TONEMAP_UE = 2u;
 const uint LIGHT_Q_LOW = 0u, LIGHT_Q_MEDIUM = 1u, LIGHT_Q_HIGH = 2u, LIGHT_Q_ULTRA = 3u;
 // Свет неба и экспозиция (sky_sum.comp, eye.comp → sky_out): [4] — x множитель экспозиции (на него умножен HDR
 // кадра), y — освещённость открытой горизонтальной земли, лк, z — EV100 глаза (с привыканием), w — от неба, лк;
 // [5] — x от светила, лк, y — EV100, к которому глаз привыкает, z — освещённость у глаза с заслонкой полем, лк,
-// w — рассеянный свет у глаза против открытого неба (дымка ближних отрезков, light.glsl)
-const int SKY_OUT_EYE = 4, SKY_OUT_EYE2 = 5;
+// w — рассеянный свет у глаза против открытого неба (дымка ближних отрезков, light.glsl);
+// [6] — баланс белого (eye.comp → post.glsl): xyz — множители конусов CAT02, w — доля привыкания к цвету (0 — нет);
+// [7] — xyz — цвет света, к которому глаз привык (линейный sRGB, Y = 1), w — свет мест в кадре (замер), лк;
+// [8] — xyz — свет открытой земли (небо и светило на горизонтальную площадку, лк, цветом), w — свет у камеры, лк
+const int SKY_OUT_EYE = 4, SKY_OUT_EYE2 = 5, SKY_OUT_WB = 6, SKY_OUT_WB2 = 7, SKY_OUT_VIEW = 8;
 // Начало отсчёта узоров земли и материалов (world_cell, t_split…): по умолчанию чанк камеры. Запекание кеша
 // земли считает тексель от его собственного чанка (gcache.glsl), чтобы тексель зависел только от себя
 #ifndef ORIGIN_CHUNK

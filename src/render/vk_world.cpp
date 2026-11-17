@@ -93,6 +93,7 @@ bool vk_world_init() {
     w.rg_id = rg_image("мир: номера треугольников", VK_IMAGE_ASPECT_COLOR_BIT);
     w.rg_hdr = rg_image("мир: HDR", VK_IMAGE_ASPECT_COLOR_BIT);
     w.rg_tiles = rg_buffer("мир: плитки по видам");
+    w.rg_view = rg_buffer("мир: свет мест плиток");
     w.inst_count = 0;
     PipeDesc vm{"vis_mesh.vert", "vis_mesh.frag"};
     vm.cull = VK_CULL_MODE_BACK_BIT;
@@ -148,6 +149,7 @@ void vk_world_shutdown() {
     vk_destroy_buffer(w.vis);
     vk_destroy_buffer(w.gverts);
     vk_destroy_buffer(w.tiles);
+    vk_destroy_buffer(w.view_light);
     for (FrameSlot &fs : g_vk.frames) vk_destroy_buffer(fs.inst_upload);
     vk_gcache_shutdown();
     vk_shadow_shutdown();
@@ -193,6 +195,7 @@ static bool ensure_images() {
     vkDeviceWaitIdle(g_vk.device);
     destroy_image(w.id);
     destroy_image(w.hdr);
+    w.hdr_lit = false;  // свет мест плиток под новый размер ещё не записан: замер глаза — у камеры
     if (!create_image(w.id, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT) ||
         !create_image(w.hdr, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
         return false;
@@ -209,6 +212,12 @@ static bool ensure_images() {
         return false;
     vk_buffer_name(w.tiles, "мир: плитки по видам");
     rg_reset(w.rg_tiles);
+    // Свет мест плитки — на каждую плитку кадра: его пишет освещение, читает глаз следующего кадра
+    vk_destroy_buffer(w.view_light);
+    if (!vk_create_buffer(w.view_light, (VkDeviceSize)w.tile_cap * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true))
+        return false;
+    vk_buffer_name(w.view_light, "мир: свет мест плиток");
+    rg_reset(w.rg_view);
     rg_bind_image(w.rg_id, w.id.image);
     rg_bind_image(w.rg_hdr, w.hdr.image);
     VkDescriptorImageInfo ii[2] = {{VK_NULL_HANDLE, w.id.view, VK_IMAGE_LAYOUT_GENERAL},
@@ -279,8 +288,10 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     if (g_ncopies) vmaFlushAllocation(g_vk.vma, fs.inst_upload.alloc, 0, VK_WHOLE_SIZE);
     bool images = ensure_images();
     if (!images) g.instance_count = 0;
+    g.eye_meter[1] = images && w.hdr_lit ? 1.0f : 0.0f;
     g.tiles = w.tiles.address;
     g.tile_cap = w.tile_cap;
+    g.view_light = w.view_light.address;
     vk_gcache_fill(g, f, images);
     vk_shadow_fill(g, f, fs, images);
     vk_sdf_fill(g, f, fs, images);
@@ -525,6 +536,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         rg_use(w.rg_tiles, k == TILE_KIND_GROUND ? RG_CS_WRITE : RG_CS_READ);
         rg_use(w.rg_id, RG_IMG_CS_READ);
         rg_use(w.rg_hdr, RG_IMG_CS_WRITE, k == 0 ? RG_DISCARD : 0);
+        rg_use(w.rg_view, RG_CS_WRITE);
         rg_use(w.rg_vis, RG_CS_READ);
         rg_use(w.rg_inst, RG_CS_READ);
         rg_use(w.rg_gverts, RG_CS_READ);
@@ -541,6 +553,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         vk_skin_prev_read();
         vk_aa_light_uses(k == 0);
     }
+    g_vk.world.hdr_lit = true;  // свет мест плиток этого кадра записан: по нему меряет глаз следующего (eye.comp)
     // 5. Сглаживание (docs/aa.md): HDR → история этого кадра
     vk_aa_pass(&fs.frame.address);
     vk_glare_pass(&fs.frame.address);

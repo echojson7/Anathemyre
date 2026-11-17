@@ -54,7 +54,7 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
 static void tab_light(UiForm &f, DebugState &d) {
     // Свет (docs/light.md): тонмаппинг на выбор по кадрам, местная экспозиция
     ui_section(f, "СВЕТ");
-    static const char *const TONEMAPS[] = {"AgX", "ACES"};
+    static const char *const TONEMAPS[] = {"AgX", "ACES", "UE5"};
     ui_segment(f, "тонмаппинг", d.tonemap, TONEMAPS, ANA_COUNTOF(TONEMAPS));
     bool local = !d.local_off;
     if (ui_toggle(f, "местная экспозиция", local)) d.local_off = !local;

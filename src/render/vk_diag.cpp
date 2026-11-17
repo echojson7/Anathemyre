@@ -230,7 +230,7 @@ static void record_stats_copy(VkCommandBuffer cmd, void *user) {
     vkCmdCopyBuffer(cmd, g_vk.diag.stats.buffer, fs.readback.buffer, 1, &c);
     VkBufferCopy d{0, 0, 4};  // число вызовов отсечения — видимых кластеров
     vkCmdCopyBuffer(cmd, g_vk.world.cull.buffer, fs.readback.buffer, 1, &d);
-    VkBufferCopy e{SKY_OUT_EYE * 16, READBACK_EYE, 32};  // глаз: экспозиция и освещённость (F3)
+    VkBufferCopy e{SKY_OUT_EYE * 16, READBACK_EYE, 80};  // глаз: экспозиция, освещённость, баланс белого (F3)
     vkCmdCopyBuffer(cmd, g_vk.sky.out.buffer, fs.readback.buffer, 1, &e);
 }
 
@@ -323,6 +323,11 @@ bool render_light(RenderLightInfo &out) {
     out.lux_key = w.eye[4];
     out.ev100_goal = w.eye[5];
     out.lux_eye = w.eye[6];
+    for (u32 k = 0; k < 3; ++k) out.wb_gain[k] = w.eye[8 + k];
+    out.wb_degree = w.eye[11];
+    for (u32 k = 0; k < 3; ++k) out.wb_white[k] = w.eye[12 + k];
+    out.lux_view = w.eye[15];
+    out.lux_cam = w.eye[19];
     return true;
 }
 

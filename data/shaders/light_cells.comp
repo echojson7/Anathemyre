@@ -58,6 +58,19 @@ float local_gain(float e) {
 // Цвет в HDR кадра: × экспозиция глаза этого кадра (sky_sum.comp) × местная экспозиция по свету точки e, лк;
 // предел — запас до края f16
 vec3 pre_exposed(vec3 c, float e) { return min(c * (pc.frame.sky_out.v[SKY_OUT_EYE].x * local_gain(e)), vec3(60000.0)); }
+// Альфа HDR — свет места × экспозиция кадра (без местной): её пишет --hdr (tools/lightlab/hdr.py делит на
+// экспозицию из журнала)
+float elocal_alpha(float e) { return min(e * pc.frame.sky_out.v[SKY_OUT_EYE].x, 60000.0); }
+// Свет места для глаза следующего кадра (eye.comp): цвет (Y = 1) и log2 света места против света у камеры этого
+// кадра — отношение, а не лк: после скачка часов замер не тянет старый свет, а переносит его соотношение к камере
+vec4 view_value(vec3 c, float e) {
+    return vec4(c, log2(max(e, 1e-9) / max(pc.frame.sky_out.v[SKY_OUT_VIEW].w, 1e-9)));
+}
+// Свет мест плитки — средние по её пикселям (порядок сложения постоянный)
+void view_store(ivec2 origin, vec4 v) {
+    uint tx = (uint(pc.frame.viewport.x) + 7u) / 8u;
+    pc.frame.view_light.v[uint(origin.y / 8) * tx + uint(origin.x / 8)] = v;
+}
 
 shared Hit s_hit[64];
 shared uint s_id[64];
@@ -66,7 +79,8 @@ shared uint s_lead[64];    // поток ведущего пикселя той 
 shared uint s_rank[64];    // у ведущего — его место среди ведущих
 shared uint s_list[64];    // ведущие по порядку
 shared vec3 s_color[64];
-shared float s_elocal[64];  // свет места ведущего, лк (альфа HDR при --hdr)
+shared float s_elocal[64];  // свет места ведущего × экспозиция (альфа HDR)
+shared vec4 s_view[64];     // свет места ведущего для глаза (view_light)
 shared uint s_work[10];    // пиксели неба, земли, сеток; поверхности земли, сеток; выборки тени; земля на пиксель;
                            // выборки карты теней и без страницы; выборки поля расстояний
 shared uint s_bail;        // плитка земли уходит в «землю на пиксель»: текселя нет в кеше
@@ -111,6 +125,7 @@ vec3 froxel_heat(vec3 c, vec3 rel) {
 vec3 shade_hit(Hit h, int phys) {
     if (h.kind == HIT_SKY) {
         g_e_local = local_sky_e();
+        g_c_local = local_sky_c();
         return sky_radiance(normalize(h.rel));
     }
     Surface s;
@@ -199,7 +214,8 @@ void main() {
     if (TILE_KIND == TILE_SKY) {
         // Только небо: то же, что shade_hit() пустого пикселя
         if (inside) imageStore(u_hdr, px, vec4(pre_exposed(sky_radiance(normalize(pixel_ray(px))), local_sky_e()),
-                                         f.dbg_alpha != 0.0 ? local_sky_e() : 1.0));
+                                         elocal_alpha(local_sky_e())));
+        if (t == 0u) view_store(origin, view_value(local_sky_c(), local_sky_e()));
         if (inside && f.aa_mode == AA_TAA) {
             Hit hs;
             hs.kind = HIT_SKY;
@@ -301,14 +317,26 @@ void main() {
     if (t < nlead) {
         vec3 col = shade_hit(hl, phys);
         s_color[t] = pre_exposed(col, g_e_local);
-        s_elocal[t] = g_e_local;
+        s_elocal[t] = elocal_alpha(g_e_local);
+        s_view[t] = view_value(g_c_local, g_e_local);
         if (g_steps != 0u) atomicAdd(s_work[5], g_steps);
         if (g_sm_taps != 0u) atomicAdd(s_work[7], g_sm_taps);
         if (g_sm_miss != 0u) atomicAdd(s_work[8], g_sm_miss);
         if (g_sdf_taps != 0u) atomicAdd(s_work[9], g_sdf_taps);
     }
     barrier();
-    if (inside) imageStore(u_hdr, px, vec4(s_color[s_rank[s_lead[t]]], f.dbg_alpha != 0.0 ? s_elocal[s_rank[s_lead[t]]] : 1.0));
+    if (inside) imageStore(u_hdr, px, vec4(s_color[s_rank[s_lead[t]]], s_elocal[s_rank[s_lead[t]]]));
     if (inside && f.aa_mode == AA_TAA) imageStore(u_motion, px, mv);
-    if (t == 0u) work_flush();
+    if (t == 0u) {
+        work_flush();
+        vec4 v = vec4(0.0);
+        float n = 0.0;
+        for (uint j = 0u; j < 64u; ++j) {
+            ivec2 q = origin + ivec2(j & 7u, j >> 3u);
+            if (q.x >= int(f.viewport.x) || q.y >= int(f.viewport.y)) continue;
+            v += s_view[s_rank[s_lead[j]]];
+            n += 1.0;
+        }
+        view_store(origin, v / max(n, 1.0));
+    }
 }

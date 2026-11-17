@@ -123,9 +123,10 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.dt = f.style.dt;
     g.eye_snap = f.style.eye_snap ? 1u : 0u;
     g.glow_gain = f.style.glow ? 1.0f : 0.0f;
-    g.tonemap = f.style.tonemap < RENDER_TONEMAPS ? f.style.tonemap : RENDER_TONEMAP_AGX;
+    g.tonemap = f.style.tonemap < RENDER_TONEMAPS ? f.style.tonemap : RENDER_TONEMAP_UE;
     g.light_q = f.style.light_quality < RENDER_LIGHT_QUALITIES ? f.style.light_quality : RENDER_LIGHT_HIGH;
     for (u32 k = 0; k < 4; ++k) g.local_tone[k] = f.style.local_tone[k];
+    for (u32 k = 0; k < 4; ++k) g.eye_meter[k] = f.style.eye_meter[k];  // [1] — vk_world_fill (картинка кадра)
     g.viewport[0] = w;
     g.viewport[1] = h;
     g.ndc_per_pixel[0] = 2.0f / (w > 0 ? w : 1.0f);
@@ -314,6 +315,13 @@ void render_resized() { g_vk.swapchain_dirty = true; }
 
 void render_wait_idle() {
     if (g_vk.device) vkDeviceWaitIdle(g_vk.device);
+}
+
+// Дождаться GPU и прочитать счётчики и глаз всех кадров в полёте по порядку: прочитанное — последний кадр
+void render_collect() {
+    if (!g_vk.device) return;
+    vkDeviceWaitIdle(g_vk.device);
+    for (u32 k = 0; k < FRAMES_IN_FLIGHT; ++k) vk_stats_read(g_vk.frames[(g_vk.frame_index + k) % FRAMES_IN_FLIGHT]);
 }
 
 void render_capture_next() { g_vk.capture_next = true; }

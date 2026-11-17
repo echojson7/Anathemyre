@@ -94,7 +94,7 @@ struct ViewInput {
     f32 time = 0.0f;  // время от запуска, с (мерцание звёзд, docs/sky.md); в снимках — номер кадра / 30
     f64 cloud_time = 0.0;  // то же без круга: ветер и смена формы облаков (docs/clouds.md)
     bool eye_snap = true;
-    u32 tonemap = RENDER_TONEMAP_AGX;
+    u32 tonemap = RENDER_TONEMAP_UE;
     bool local_off = false;  // без местной экспозиции (F3, --nolocal): сравнение было/стало
     bool scans = false;  // поверхности из сканов CC0 (docs/scans.md), F3 и --scans
     bool gclight_off = false;  // отражённый свет земли на пиксель, не из кеша (docs/gcache.md, F3, --nogclight)
