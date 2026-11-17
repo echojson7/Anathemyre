@@ -17,9 +17,10 @@ def main():
     out_dir, meshpack, only = sys.argv[1], sys.argv[2], sys.argv[3:]
     import ispod_meshes
     import rig
+    import tat
     import vezha
-    # Машины на костях (docs/vezha.md): сетка с весами и скелет
-    for name, make, lods in (("vezha", vezha.make, vezha.LODS),):
+    # Машины на костях (docs/vezha.md, docs/tat.md): сетка с весами и скелет
+    for name, make, lods in (("vezha", vezha.make, vezha.LODS), ("tat", tat.make, tat.LODS)):
         if only and name not in only:
             continue
         t0 = time.time()
