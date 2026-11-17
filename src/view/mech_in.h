@@ -20,7 +20,10 @@ struct MechLegDesc {
                       // высота оси лапы от осей бёдер
     f32 lift;         // высота дуги шага, доля от обычной
     f32 fold_arc;     // лапа на пути складывания поднимается ещё на столько, м (лёжа лапы на земле — переступают)
+    f32 meta_lie, meta_stand;      // MECH_LEG_VERT: плюсна к горизонту лёжа и стоя, рад (−π/2 — отвесна; между —
+                                   // по высоте тела, как вынос лап; MECH_META_BIND — держать угол бинда)
 };
+static constexpr f32 MECH_META_BIND = 10.0f;   // плюсна держит свой угол бинда (у Тати — вниз и чуть внутрь)
 
 // Вид машины: имя сетки и скелета, высоты, скорости, ноги. Числа Вежи — прежние константы MECH_*
 struct MechDesc {
@@ -118,28 +121,36 @@ inline WPos mech_leg_now(const MechLeg &l) {
     p.y = mech_mix(l.from.y, l.to.y, e) + l.lift * 4.0f * l.t * (1.0f - l.t);
     return p;
 }
-// Две длины, которыми решается нога, и сдвиг цели решения от оси лапы (вынос, высота). Плюсна в режиме VERT
-// держит свой угол бинда к горизонту (у Вежи — отвесно, у Тати — вниз и чуть внутрь): цель — голеностоп
-inline void mech_leg_links(const MechLegRig &L, const MechLegDesc &D, f32 *la, f32 *lb, f32 *ox, f32 *oy) {
+// Две длины, которыми решается нога, и высота цели решения над осью лапы (у отвесной плюсны — голеностоп)
+inline void mech_leg_links(const MechLegRig &L, const MechLegDesc &D, f32 *la, f32 *lb) {
     bool vert = D.mode == MECH_LEG_VERT;
     *la = vert ? L.l1 : L.l1 + L.l3;
     *lb = L.l2;
-    *ox = vert ? -L.l3 * cosf(L.a3) : 0.0f;
-    *oy = vert ? -L.l3 * sinf(L.a3) : 0.0f;
+}
+// Угол плюсны к горизонту при высоте осей бёдер h (tools/parts/vezha_leg.py, meta_at)
+inline f32 mech_leg_meta(const MechLegRig &L, const MechDesc &d, u32 k, f32 h) {
+    if (d.leg[k].meta_lie == MECH_META_BIND) return L.a3;
+    return mech_mix(d.leg[k].meta_lie, d.leg[k].meta_stand, mech_smooth((h - d.reach_h0) / d.reach_span));
+}
+// Сдвиг цели решения от оси лапы к скакательному суставу (MECH_LEG_VERT: плюсна под углом meta; иначе — нет)
+inline Vec2 mech_leg_off(const MechLegRig &L, const MechLegDesc &D, f32 meta) {
+    if (D.mode != MECH_LEG_VERT) return {0.0f, 0.0f};
+    return {-L.l3 * cosf(meta), -L.l3 * sinf(meta)};
 }
 // Самая короткая и самая длинная нога (от оси качания до цели решения)
 inline f32 mech_leg_min(const MechLegRig &L, const MechLegDesc &D) {
-    f32 la, lb, ox, oy;
-    mech_leg_links(L, D, &la, &lb, &ox, &oy);
+    f32 la, lb;
+    mech_leg_links(L, D, &la, &lb);
     return f_abs(la - lb) + 0.0005f;
 }
 inline f32 mech_leg_max(const MechLegRig &L, const MechLegDesc &D) {
-    f32 la, lb, ox, oy;
-    mech_leg_links(L, D, &la, &lb, &ox, &oy);
+    f32 la, lb;
+    mech_leg_links(L, D, &la, &lb);
     return la + lb - 0.02f;
 }
-// Углы бедра, голени и плюсны к горизонту для оси лапы в точке (x, y) от оси качания
-void mech_leg_solve(const MechLegRig &L, const MechLegDesc &D, f32 x, f32 y, f32 *thigh, f32 *shin, f32 *tarsus);
+// Углы бедра, голени и плюсны к горизонту для оси лапы в точке (x, y) от оси качания; meta — угол плюсны
+// (MECH_LEG_VERT, mech_leg_meta)
+void mech_leg_solve(const MechLegRig &L, const MechLegDesc &D, f32 meta, f32 x, f32 y, f32 *thigh, f32 *shin, f32 *tarsus);
 // Стоящая лапа k ограничивает высоту тела: нога не короче сложенной и не длиннее вытянутой (hmin, hmax сужает)
 void mech_leg_hlimit(const MechView &mv, const Mech &m, u32 k, f32 &hmin, f32 &hmax);
 
