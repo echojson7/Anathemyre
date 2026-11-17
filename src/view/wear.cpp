@@ -82,7 +82,7 @@ static void hair_pick(Dice &d, const Appear &a, bool want[WK_COUNT]) {
 
 // Набор: штаны или хакама, рубаха, верх (куртка, длинная куртка, жилет или ничего), пояс или оби, ботинки, к ним —
 // обмотки, капюшон, наплечник, перчатки. Тон вещей — около общего тона набора: один человек одет в одной гамме
-Outfit wear_make(u32 seed, const Appear &a, const WearBind &b, const ViewAssets &assets) {
+Outfit wear_make(u32 seed, const Appear &a, const WearBind &b, const ViewAssets &assets, bool clothes) {
     Outfit o{};
     Dice d{0, 0, (u64)seed | 0x3EA2000000000ull};
     const u32 theme = d.byte();
@@ -106,12 +106,15 @@ Outfit wear_make(u32 seed, const Appear &a, const WearBind &b, const ViewAssets 
     if (d.byte() < 55) want[WK_PAULDRON] = true;
     // Порядок — слоями снизу вверх (порядок перечисления), зерно вещи: тон около темы, износ — свой. Одежды не
     // больше WEAR_MAX_CLOTHES (как до волос: лишняя верхняя вещь не надевается)
-    for (u32 k = 0; k < WK_BROWS && o.count < WEAR_MAX_CLOTHES; ++k) {
+    // taken — счёт вещей и без одежды: кости зерна для волос те же, что у одетого
+    for (u32 k = 0, taken = 0; k < WK_BROWS && taken < WEAR_MAX_CLOTHES; ++k) {
         if (!want[k] || b.at[k] < 0) continue;
         const ViewBody &w = assets.wear[b.at[k]];
         i32 tone = (i32)theme + (i32)(d.bell() * 70.0f);
         tone = tone < 0 ? 0 : tone > 255 ? 255 : tone;
         const u32 wear_amt = d.byte();
+        taken++;
+        if (!clothes) continue;
         o.kind[o.count] = (u8)k;
         o.seed[o.count] = ((seed & 0xFFFF0000u) ^ ((u32)k << 20)) | (wear_amt << 8) | (u32)tone;
         o.count++;
@@ -120,6 +123,7 @@ Outfit wear_make(u32 seed, const Appear &a, const WearBind &b, const ViewAssets 
         o.back = f_max(o.back, w.carry_back);
     }
     // Волосы — байтами после одежды (набор одежды у людей прежний). Цвет один на брови, причёску и бороду
+    if (!clothes) want[WK_HOOD] = false;  // без капюшона хвост и коса не подбираются в пучок
     hair_pick(d, a, want);
     const u32 hseed = hair_seed(d, a);
     for (u32 k = WK_BROWS; k < WK_COUNT && o.count < WEAR_MAX_ITEMS; ++k) {

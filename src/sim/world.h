@@ -31,7 +31,9 @@ struct SceneStart {
     f32 yaw = 0, pitch = 14, dist = 34;     // камера: градусы, метры (как --cam)
     u32 people = 0;                         // сколько людей родить у точки в первом шаге окна
     u32 radius = 4;                         // в каком круге, целые м (как у INTENT_PEOPLE_SPAWN)
+    u32 show = 0;                           // показ тел (docs/body.md, «Показ»): ряд из show людей вместо people
 };
+constexpr u32 SCENE_SHOW_MAX = 16;          // тел в ряду показа (столько обликов в appear_show)
 
 constexpr u32 PROPS_CAPACITY = 1024;
 
