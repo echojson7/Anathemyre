@@ -70,10 +70,10 @@ struct FrameGpu {
     VkDeviceAddress tiles;    // плитки по видам (Tiles в common.glsl, docs/tiles.md)
     u32 tile_cap, tile_pad;   // мест в списке одного вида
     // Кеш поверхности земли (vk_gcache.cpp, docs/gcache.md)
-    VkDeviceAddress gc_table, gc_pages, gc_texels, gc_req, gc_cells;
+    VkDeviceAddress gc_table, gc_pages, gc_texels, gc_req, gc_cells, gc_light;
     u32 gc_w, gc_pages_n, gc_req_cap, gc_frame;
     i32 gc_tpc0;
-    u32 gc_on, gc_pad0, gc_pad1;
+    u32 gc_on, gc_lmode, gc_lperiod;
     // Карта горизонта земли (vk_horizon.cpp, docs/horizon.md)
     VkDeviceAddress h_map;
     u32 h_on;
@@ -166,7 +166,10 @@ constexpr u32 STAT_GI_PROBES = 29, STAT_GI_RAYS = 30, STAT_GI_TAPS = 31;
 // лучами и поиском поверхности, молодых, отложенных до следующего кадра
 constexpr u32 STAT_LC_LIVE = 32, STAT_LC_NEW = 33, STAT_LC_JOBS = 34, STAT_LC_RAYS = 35, STAT_LC_OVER = 36,
               STAT_LC_TAPS = 37, STAT_LC_WAIT = 38;
-constexpr u32 STAT_COUNT = 39;
+// Кеш земли (docs/gcache.md, «Отражённый свет в кеше»): текселей, чей свет посчитан в кадре
+constexpr u32 STAT_GC_LIT = 39;
+constexpr u32 GC_LIGHT_ON = 1, GC_LIGHT_ALL = 2;  // gc_lmode (common.glsl): свет в кеше читается; все страницы кадра заново
+constexpr u32 STAT_COUNT = 40;
 // Виды плиток кадра мира (TILE_* в common.glsl): небо, земля из кеша (и небо), сетки (и небо), смесь земли и
 // сеток, земля на пиксель (и небо)
 constexpr u32 TILE_KINDS = 5;
@@ -263,7 +266,7 @@ constexpr u32 GC_LEVELS = 13;   // как GC_LEVELS в gcache.glsl
 constexpr u32 GC_PAGE_TEXELS = 64;
 constexpr u32 GC_TEXEL_BYTES = 16;  // два варианта следа пикселя по 8 байт
 struct GcacheGpu {
-    GpuBuffer table, pages, texels, req, cells;
+    GpuBuffer table, pages, texels, req, cells, light;
     u32 w = 0, pages_n = 0, req_cap = 0, frame = 0;
     i32 tpc0 = 0;
     bool reset = true;       // очистить окна и страницы в начале следующего кадра мира
@@ -273,8 +276,13 @@ struct GcacheGpu {
     u32 materials_gen = 0, terrain_gen = 0, seen_materials = ~0u, seen_terrain = ~0u;
     f32 cell_min = 0, cell_pixels = 0;
     u32 layers[8] = {};
-    VkPipeline pipe_scan = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE, pipe_bake = VK_NULL_HANDLE;
-    u8 rg_table = 0, rg_pages = 0, rg_texels = 0, rg_req = 0, rg_cells = 0;
+    // Отражённый свет в кеше (gcache_light.comp): в этом кадре читается; пересчитать все страницы; от чего он
+    // (ступень света, режимы F3, что включено) — сменилось — все страницы заново
+    bool lit = false, lit_all = true;
+    u32 lit_sig = ~0u;
+    VkPipeline pipe_scan = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE, pipe_bake = VK_NULL_HANDLE,
+               pipe_light = VK_NULL_HANDLE;
+    u8 rg_table = 0, rg_pages = 0, rg_texels = 0, rg_req = 0, rg_cells = 0, rg_light = 0;
 };
 
 // Облака (vk_clouds.cpp, docs/clouds.md): карта купола вокруг камеры в трёх слотах (два показаны с перетеканием,
@@ -292,12 +300,13 @@ struct CloudGpu {
     bool noise_ready = false, ready = false;  // ready — слоты a и b собраны
     u32 size = 0;                             // сторона карты (по ступени света)
     u32 slot_a = 0, slot_b = 0, slot_w = 1;
-    u32 phase = 0;     // фаз слота w уже собрано (из CLOUD_PHASES)
+    u32 unit = 0;      // кусков слота w уже собрано (фаза × CLOUD_BANDS полос, из CLOUD_PHASES · CLOUD_BANDS)
+    f32 unit_acc = 0;  // куски, которые время кадров уже задолжало (карта — за CLOUD_PERIOD секунд)
     u32 sh_phase = 0;  // следующая фаза карты тени
     CloudSnap snap_a, snap_b, snap_w;
     // Работа этого кадра (vk_clouds_fill → vk_clouds_passes)
-    bool job_on = false, job_first = false, job_sh_full = false;
-    u32 job_slot = 0, job_phase = 0, job_n = 0;
+    bool job_on = false, job_sh_full = false;
+    u32 job_slot = 0, job_unit = 0, job_n = 0;  // первый кусок и сколько кусков
 };
 
 // Блеск (vk_glare.cpp, docs/glare.md): пирамида кадра после сглаживания — уровни вниз и вверх в одном буфере
@@ -751,6 +760,7 @@ void vk_lcache_fill(FrameGpu &g, const RenderFrame &f);
 bool vk_gcache_init();
 void vk_gcache_shutdown();
 void vk_gcache_fill(FrameGpu &g, const RenderFrame &f, bool images);
+void vk_gcache_light_fill(FrameGpu &g, const RenderFrame &f);  // после зондов и ячеек (снимок, что включено)
 void vk_gcache_read(const u32 *stats);
 // Froxels (vk_froxel.cpp, docs/frame.md «Froxels»): сетка клеток, огни и декали по клеткам
 constexpr u32 FROXEL_TILE = 64, FROXEL_Z = 32, FROXEL_STRIDE = 96;

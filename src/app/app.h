@@ -34,6 +34,7 @@ struct Args {
     bool lamps_off = false;         // --nolamps: лампы карты не светят
     bool froxel_heat = false;       // --heat: тепловая карта огней по клеткам froxels
     bool nogcache = false;          // --nogcache: без кеша поверхности земли (сравнение)
+    bool nogclight = false;         // --nogclight: отражённый свет земли на пиксель, не из кеша (сравнение)
     bool scans = false;             // --scans: поверхности из сканов CC0 (docs/scans.md), в F3 — переключатель
     u32 shadow_pages = 0;           // --smpages: страницы теней поверх кадра, --smonly: только тень (docs/shadow.md)
     u32 sdf_view = 0;               // --sdfsky, --sdffield, --nosdf: поле расстояний мира (docs/sdf.md, RENDER_SDF_*)

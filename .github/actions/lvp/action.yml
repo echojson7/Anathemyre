@@ -35,12 +35,16 @@ runs:
     # Ключ со своим номером прогона, сохраняется и после падения или снятия по пределу: иначе упавшая задача кеш
     # не сохраняла, следующая снова шла с холодным (вдвое дольше) и снова падала. Берётся последний с теми же
     # шейдерами, иначе последний вообще (неизменные шейдеры в нём есть)
+    # В ключе — набор команд процессора: llvmpipe кладёт в кеш машинный код под процессор машины, а машины GitHub
+    # разные (с AVX-512 и без); код с чужой машины падал SIGILL на первом кадре (#212, 17.11)
     - name: Ключ кеша шейдеров Mesa
       id: key
       shell: bash
       run: |
-        echo "prefix=lvp-${{ inputs.kind }}-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}-" >> "$GITHUB_OUTPUT"
-        echo "key=lvp-${{ inputs.kind }}-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+        cpu=$(grep -m1 '^flags' /proc/cpuinfo | md5sum | cut -c1-8)
+        echo "cpu=lvp-${{ inputs.kind }}-$cpu-" >> "$GITHUB_OUTPUT"
+        echo "prefix=lvp-${{ inputs.kind }}-$cpu-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}-" >> "$GITHUB_OUTPUT"
+        echo "key=lvp-${{ inputs.kind }}-$cpu-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
     - name: Кеш шейдеров Mesa
       id: mesa
       uses: actions/cache/restore@v4
@@ -49,7 +53,7 @@ runs:
         key: ${{ steps.key.outputs.key }}
         restore-keys: |
           ${{ steps.key.outputs.prefix }}
-          lvp-${{ inputs.kind }}-
+          ${{ steps.key.outputs.cpu }}
     - name: Компиляторы и SDL3
       shell: bash
       run: make toolchain third_party TARGET=linux

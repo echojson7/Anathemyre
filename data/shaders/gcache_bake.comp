@@ -34,5 +34,11 @@ void main() {
     }
     barrier();
     ivec2 l = ivec2(gl_LocalInvocationID.xy);
-    f.gc_texels.v[s_phys * 64u + uint(l.y * 8 + l.x)] = ground_texel(k, page * GC_PAGE + l);
+    uint at = s_phys * 64u + uint(l.y * 8 + l.x);
+    GroundIn g = ground_texel_in(k, page * GC_PAGE + l);
+    Surface lo, hi;
+    ground_eval(g, lo, hi);
+    f.gc_texels.v[at] = uvec4(gc_pack(lo), gc_pack(hi));
+    // Высота точки текселя — для отражённого света в кеше (gcache_light.comp); свет ещё не посчитан
+    f.gc_light.v[at] = uvec4(floatBitsToUint(g.p.y), 0u, 0u, 0u);
 }

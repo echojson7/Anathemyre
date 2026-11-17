@@ -72,6 +72,7 @@ static void tab_light(UiForm &f, DebugState &d) {
     ui_section(f, "СРАВНЕНИЕ");
     ui_toggle(f, "ячейки, старое правило  (P)", d.pixel);
     ui_toggle(f, "без кеша земли", d.gcache_off);
+    ui_toggle(f, "свет земли без кеша", d.gclight_off);
     ui_toggle(f, "тестовые огни", d.test_lights);
     ui_toggle(f, "огни по клеткам", d.froxel_heat);
     ui_toggle(f, "сканы CC0", d.scans);

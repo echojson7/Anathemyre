@@ -306,6 +306,7 @@ bool render_work(RenderWork &out) {
     out.lc_over = w.work[STAT_LC_OVER];
     out.lc_taps = w.work[STAT_LC_TAPS];
     out.lc_wait = w.work[STAT_LC_WAIT];
+    out.gc_lit = w.work[STAT_GC_LIT];
     out.sm_blend = vk_shadow_blend();
     out.gc_off = g_vk.gcache.off;
     return true;

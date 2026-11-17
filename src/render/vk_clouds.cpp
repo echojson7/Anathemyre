@@ -13,7 +13,15 @@ static constexpr u32 CLOUD_N = 128, CLOUD_SH_N = 512;
 static constexpr u32 CLOUD_PHASES = 64, CLOUD_SH_PHASES = 16;
 static constexpr u32 CLOUD_SIZES[RENDER_LIGHT_QUALITIES] = {768, 1024, 1536, 2048};
 static constexpr u32 CLOUD_STEPS[RENDER_LIGHT_QUALITIES] = {64, 96, 128, 160};
-static constexpr u32 CLOUD_RATE[RENDER_LIGHT_QUALITIES] = {1, 1, 1, 2};  // фаз карты за кадр: вся карта — за 64 или 32 кадра
+// Карта собирается за CLOUD_PERIOD секунд при любой частоте кадров (17.11): фаза режется на CLOUD_BANDS полос по
+// строкам, и кадр берёт столько полос, сколько задолжало время, но не больше CLOUD_RATE фаз (так было до этого:
+// вся карта — за 64 кадра, на «Ультра» за 32). При 86 к/с «Ультра» прежде пересобирала карту за 0.37 с, хотя форма и
+// свет облаков меняются за секунды, а сдвиг ветром показ переносит каждый кадр сам; теперь — за 1.07 с, как
+// «Высоко» при 60 к/с, втрое дешевле на кадр. Ниже 60 к/с — как раньше
+static constexpr u32 CLOUD_RATE[RENDER_LIGHT_QUALITIES] = {1, 1, 1, 2};  // предел фаз карты за кадр
+static constexpr u32 CLOUD_BANDS = 8;
+static constexpr u32 CLOUD_UNITS = CLOUD_PHASES * CLOUD_BANDS;
+static constexpr f32 CLOUD_PERIOD = 64.0f / 60.0f;
 
 bool vk_clouds_init() {
     CloudGpu &c = g_vk.clouds;
@@ -117,14 +125,14 @@ void vk_clouds_fill(FrameGpu &g, const RenderFrame &f) {
         c.slot_a = c.slot_b = 0;
         c.slot_w = 1;
         c.snap_a = c.snap_b = c.snap_w = now;
-        c.phase = 0;
+        c.unit = 0;
+        c.unit_acc = 0.0f;
         c.job_slot = 0;
-        c.job_first = true;
-        c.job_phase = 0;
-        c.job_n = CLOUD_PHASES;
+        c.job_unit = 0;
+        c.job_n = CLOUD_UNITS;
         c.ready = true;
     } else {
-        if (c.phase >= CLOUD_PHASES) {
+        if (c.unit >= CLOUD_UNITS) {
             // Слот w собран: b уходит в a, w — в b, старый a строится заново
             u32 old_a = c.slot_a;
             c.slot_a = c.slot_b;
@@ -132,19 +140,24 @@ void vk_clouds_fill(FrameGpu &g, const RenderFrame &f) {
             c.slot_w = old_a == c.slot_a ? 3 - c.slot_a - c.slot_b : old_a;
             c.snap_a = c.snap_b;
             c.snap_b = c.snap_w;
-            c.phase = 0;
+            c.unit = 0;
         }
-        if (c.phase == 0) c.snap_w = now;
+        if (c.unit == 0) c.snap_w = now;
         c.job_slot = c.slot_w;
-        c.job_first = c.phase == 0;
-        c.job_phase = c.phase;
-        c.job_n = CLOUD_RATE[q] < CLOUD_PHASES - c.phase ? CLOUD_RATE[q] : CLOUD_PHASES - c.phase;
+        c.job_unit = c.unit;
+        f32 dt = f.style.dt > 0.0f ? f.style.dt : 0.0f;
+        u32 cap = CLOUD_RATE[q] * CLOUD_BANDS;
+        c.unit_acc += dt * ((f32)CLOUD_UNITS / CLOUD_PERIOD);
+        if (c.unit_acc > (f32)cap) c.unit_acc = (f32)cap;
+        u32 n = (u32)c.unit_acc;
+        c.unit_acc -= (f32)n;
+        c.job_n = n < CLOUD_UNITS - c.unit ? n : CLOUD_UNITS - c.unit;
     }
     g.cl_on = 1;
     g.cl_size = c.size;
     g.cl_slot_a = c.slot_a;
     g.cl_slot_b = c.slot_b;
-    g.cl_mix = full ? 1.0f : (f32)c.phase / (f32)CLOUD_PHASES;
+    g.cl_mix = full ? 1.0f : (f32)c.unit / (f32)CLOUD_UNITS;
     g.cl_steps = CLOUD_STEPS[q];
     // Средняя тень за окном карты тени: грубо по доле неба под облаками
     g.cl_mean_t = 1.0f - 0.55f * s.cloud_shape[2] - 0.08f * s.cloud_cirrus[1];
@@ -154,7 +167,7 @@ void vk_clouds_fill(FrameGpu &g, const RenderFrame &f) {
     snap_vec(bs, s.alt0, g.cl_build);
     memcpy(g.cl_build_light, bs.light, sizeof g.cl_build_light);
     snap_vec(now, s.alt0, g.cl_cam);
-    if (!full) c.phase += c.job_n;
+    if (!full) c.unit += c.job_n;
 }
 
 static VkDeviceAddress g_cl_frame;
@@ -166,15 +179,19 @@ static void record_noise(VkCommandBuffer cmd, void *) {
     vkCmdDispatch(cmd, CLOUD_N / 4, CLOUD_N / 4, CLOUD_N / 4);
 }
 
-// pc.a — слот | первая фаза слота << 8; pc.b — фаза: поток — блок 8×8 текселей, в нём один тексель фазы
+// pc.a — слот | первая фаза слота << 8 | первая строка групп полосы << 16; pc.b — фаза: поток — блок 8×8 текселей,
+// в нём один тексель фазы. Кусок — полоса строк групп одной фазы
 static void record_map(VkCommandBuffer cmd, void *) {
     const CloudGpu &c = g_vk.clouds;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, c.pipe_map);
     u32 groups = (c.size / 8 + 7) / 8;
     for (u32 i = 0; i < c.job_n; ++i) {
-        PushConsts pc{g_cl_frame, c.job_slot | (c.job_first ? 1u << 8 : 0u), c.job_phase + i};
+        u32 u = c.job_unit + i, phase = u / CLOUD_BANDS, band = u % CLOUD_BANDS;
+        u32 y0 = band * groups / CLOUD_BANDS, y1 = (band + 1) * groups / CLOUD_BANDS;
+        if (y1 == y0) continue;
+        PushConsts pc{g_cl_frame, c.job_slot | (phase == 0 ? 1u << 8 : 0u) | y0 << 16, phase};
         vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
-        vkCmdDispatch(cmd, groups, groups, 1);
+        vkCmdDispatch(cmd, groups, y1 - y0, 1);
     }
 }
 

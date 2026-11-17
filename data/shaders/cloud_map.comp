@@ -2,7 +2,8 @@
 #extension GL_GOOGLE_include_directive : require
 // Карта купола облаков (docs/clouds.md): тексель — луч от камеры сборки сквозь слой кучевых и слой перистых.
 // Поток — блок 8×8 текселей, в нём один тексель фазы pc.b (раскладка Байера: соседние фазы далеко друг от
-// друга). pc.a — слот | первая фаза слота << 8. Камера, ветер, время формы и светило слота застыли на его
+// друга). pc.a — слот | первая фаза слота << 8 | первая строка групп полосы << 16 (кадр берёт фазу полосами,
+// vk_clouds.cpp). Камера, ветер, время формы и светило слота застыли на его
 // первой фазе (cl_build, cl_build_light), постоянные слота (норма яркости, свет неба сверху и снизу) пишет
 // первая фаза в cl_info, остальные читают: все тексели слота согласованы, хотя собраны в разных кадрах
 #include "clouds.glsl"
@@ -22,9 +23,9 @@ ivec2 phase_px(uint p) {
 void main() {
     FrameData f = pc.frame;
     uint slot = pc.a & 0xFFu;
-    bool first = (pc.a >> 8) != 0u;
+    bool first = ((pc.a >> 8) & 1u) != 0u;
     int size = int(f.cl_size);
-    ivec2 blk = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 blk = ivec2(gl_GlobalInvocationID.xy) + ivec2(0, int(pc.a >> 16) * 8);
     ivec2 px = blk * 8 + phase_px(pc.b);
     vec3 lt = f.cl_build_light.xyz;
     float E = f.cl_build_light.w;

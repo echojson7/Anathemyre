@@ -166,6 +166,12 @@ ivec2 gc_bilinear(vec3 rel, int k, out vec2 fr) {
     return ivec2(b) + (f.cam_chunk - ivec2(f.t_chunk0)) * (f.gc_tpc0 >> k);
 }
 
+// Отражённый свет пикселя из кеша (docs/gcache.md, «Отражённый свет в кеше»): смесь четырёх текселей теми же
+// долями, что поверхность; ставит gc_surface_px, читает light_indirect. ok — свет есть у всех смешанных текселей
+struct GcLit { vec3 irr; float cov, vis, ao, refl; };
+GcLit g_gcl;
+bool g_gcl_ok = false;
+
 // Поверхность пикселя из четырёх текселей b…b+1; phys0 — страница текселя b. Тексель без страницы (пул кончился)
 // выпадает из смеси, остальные делят его долю. pos — точка пикселя (на 2 мм внутрь, как у текселя)
 Surface gc_surface_px(int k, ivec2 b, vec2 fr, vec3 rel, int phys0) {
@@ -176,6 +182,10 @@ Surface gc_surface_px(int k, ivec2 b, vec2 fr, vec3 rel, int phys0) {
     vec3 alb = vec3(0.0), nrm = vec3(0.0);
     float rough = 0.0, ao = 0.0, wsum = 0.0;
     ivec2 page0 = b >> 3;
+    bool lit = (f.gc_lmode & GC_LIGHT_ON) != 0u;
+    vec3 l_irr = vec3(0.0);
+    vec4 l_q = vec4(0.0);
+    bool l_ok = lit;
     [[unroll]] for (int j = 0; j < 4; ++j) {
         ivec2 o = ivec2(j & 1, j >> 1);
         float w = (o.x == 1 ? fr.x : 1.0 - fr.x) * (o.y == 1 ? fr.y : 1.0 - fr.y);
@@ -184,6 +194,13 @@ Surface gc_surface_px(int k, ivec2 b, vec2 fr, vec3 rel, int phys0) {
         if (phys < 0) continue;
         uvec4 v = gc_read(phys, t);
         Surface lo = gc_unpack(v.xy), hi = gc_unpack(v.zw);
+        if (lit) {
+            uvec4 L = f.gc_light.v[phys * 64 + (t.y & 7) * 8 + (t.x & 7)];
+            vec2 bz = unpackHalf2x16(L.z);
+            l_ok = l_ok && bz.y == 1.0;
+            l_irr += vec3(unpackHalf2x16(L.y), bz.x) * w;
+            l_q += unpackUnorm4x8(L.w) * w;
+        }
         alb += mix(lo.albedo, hi.albedo, wv) * w;
         rough += mix(lo.rough, hi.rough, wv) * w;
         nrm += mix(lo.normal, hi.normal, wv) * w;
@@ -197,6 +214,15 @@ Surface gc_surface_px(int k, ivec2 b, vec2 fr, vec3 rel, int phys0) {
     s.normal = normalize(nrm + vec3(0.0, 1e-6, 0.0));
     s.ao = ao * inv;
     s.pos = vec3(rel.x, rel.y - 0.002, rel.z);
+    g_gcl_ok = l_ok && wsum > 0.0;
+    if (g_gcl_ok) {
+        g_gcl.irr = l_irr * inv;
+        vec4 q = l_q * inv;
+        g_gcl.cov = q.x;
+        g_gcl.vis = q.y;
+        g_gcl.ao = q.z;
+        g_gcl.refl = q.w;
+    }
     return s;
 }
 

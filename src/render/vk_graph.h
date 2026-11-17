@@ -81,6 +81,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
 void vk_gcache_begin(VkDeviceAddress frame);
 void vk_gcache_tiles_uses();
 void vk_gcache_bake_passes();
+void vk_gcache_light_pass();  // отражённый свет в тексели: после ячеек света, до освещения
 void vk_gcache_reads();
 // Тени солнца (vk_shadow.cpp, docs/shadow.md): сброс, заявки с нуля и сброс страниц под изменившимися
 // экземплярами — до разбора плиток; что пишет разбор плиток (заявки); свободные, выдача, отбор и отрисовка

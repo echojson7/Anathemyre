@@ -11,6 +11,8 @@
 
 constexpr u32 GC_MIN_PAGES = 4096, GC_MAX_PAGES = 1u << 18;  // пул: 4 МБ … 256 МБ
 constexpr u32 GC_MAX_W = 1024;                               // окно уровня: до 1024² страниц
+constexpr u32 GC_LIGHT_BYTES = 16;                           // свет текселя: высота, E/π, доли (gcache_light.comp)
+constexpr u32 GC_LIGHT_PERIOD = 8;                           // страница пересчитывает свет раз в столько кадров
 
 bool vk_gcache_init() {
     GcacheGpu &c = g_vk.gcache;
@@ -18,21 +20,23 @@ bool vk_gcache_init() {
     ok = vk_make_compute(&c.pipe_scan, "gcache_scan.comp") && ok;
     ok = vk_make_compute(&c.pipe_args, "gcache_args.comp") && ok;
     ok = vk_make_compute(&c.pipe_bake, "gcache_bake.comp") && ok;
+    ok = vk_make_compute(&c.pipe_light, "gcache_light.comp") && ok;
     c.rg_table = rg_buffer("земля: кеш, окна страниц");
     c.rg_pages = rg_buffer("земля: кеш, страницы");
     c.rg_texels = rg_buffer("земля: кеш, тексели");
     c.rg_req = rg_buffer("земля: кеш, заявки");
     c.rg_cells = rg_buffer("земля: ячейки пикселей");
+    c.rg_light = rg_buffer("земля: кеш, свет");
     c.reset = true;
     return ok;
 }
 
 void vk_gcache_shutdown() {
     GcacheGpu &c = g_vk.gcache;
-    VkPipeline ps[] = {c.pipe_scan, c.pipe_args, c.pipe_bake};
+    VkPipeline ps[] = {c.pipe_scan, c.pipe_args, c.pipe_bake, c.pipe_light};
     for (VkPipeline p : ps)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
-    GpuBuffer *bs[] = {&c.table, &c.pages, &c.texels, &c.req, &c.cells};
+    GpuBuffer *bs[] = {&c.table, &c.pages, &c.texels, &c.req, &c.cells, &c.light};
     for (GpuBuffer *b : bs) vk_destroy_buffer(*b);
     u32 mg = c.materials_gen, tg = c.terrain_gen;
     c = GcacheGpu{};
@@ -84,13 +88,14 @@ static bool ensure(const RenderFrame &f, u32 width, u32 height) {
     if (!make(c.table, (VkDeviceSize)GC_LEVELS * w * w * 4, "земля: кеш, окна страниц", c.rg_table) ||
         !make(c.pages, (VkDeviceSize)pages * 16, "земля: кеш, страницы", c.rg_pages) ||
         !make(c.texels, (VkDeviceSize)pages * GC_PAGE_TEXELS * GC_TEXEL_BYTES, "земля: кеш, тексели", c.rg_texels) ||
+        !make(c.light, (VkDeviceSize)pages * GC_PAGE_TEXELS * GC_LIGHT_BYTES, "земля: кеш, свет", c.rg_light) ||
         !make(c.req, 32 + (VkDeviceSize)(2 * c.req_cap + 2 * pages) * 4, "земля: кеш, заявки", c.rg_req,
               VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT)) {
         c.w = c.pages_n = 0;
         return false;
     }
     log_info("кеш земли: окно %u² страниц × %u уровней, пул %u страниц (%.0f МБ)", w, GC_LEVELS, pages,
-             (f64)(c.pages.size + c.texels.size + c.table.size) / (1 << 20));
+             (f64)(c.pages.size + c.texels.size + c.light.size + c.table.size) / (1 << 20));
     c.reset = true;
     return true;
 }
@@ -132,12 +137,33 @@ void vk_gcache_fill(FrameGpu &g, const RenderFrame &f, bool images) {
     g.gc_texels = c.texels.address;
     g.gc_req = c.req.address;
     g.gc_cells = c.cells.address;
+    g.gc_light = c.light.address;
     g.gc_w = c.w;
     g.gc_pages_n = c.pages_n;
     g.gc_req_cap = c.req_cap;
     g.gc_frame = c.frame;
     g.gc_tpc0 = c.tpc0;
     g.gc_on = 1;
+}
+
+// Отражённый свет в кеше (docs/gcache.md, «Отражённый свет в кеше»): после зондов и ячеек — снимок зондов, сброс
+// ячеек, ускоренное время и смена того, от чего свет текселя, пересчитывают все страницы кадра разом
+void vk_gcache_light_fill(FrameGpu &g, const RenderFrame &f) {
+    GcacheGpu &c = g_vk.gcache;
+    bool lit = c.on && f.style.gclight && !f.style.pixel && c.pipe_light;
+    if (!lit) {
+        c.lit = false;
+        c.lit_all = true;
+        g.gc_lmode = 0;
+        return;
+    }
+    u32 sig = g.light_q | g.gi_view << 4 | g.sdf_view << 8 | g.gi_on << 12 | g.sdf_on << 13 | g.lc_on << 14;
+    if (sig != c.lit_sig || !c.lit || c.reset || g_vk.gi.snapped || g.lc_snap || g_vk.shadow.sun_fast) c.lit_all = true;
+    c.lit_sig = sig;
+    c.lit = true;
+    g.gc_lmode = GC_LIGHT_ON | (c.lit_all ? GC_LIGHT_ALL : 0);
+    g.gc_lperiod = GC_LIGHT_PERIOD;
+    c.lit_all = false;
 }
 
 void vk_gcache_read(const u32 *st) {
@@ -215,6 +241,28 @@ void vk_gcache_bake_passes() {
     rg_use(c.rg_table, RG_CS_WRITE);
     rg_use(c.rg_pages, RG_CS_WRITE);
     rg_use(c.rg_texels, RG_CS_WRITE);
+    rg_use(c.rg_light, RG_CS_WRITE);
+}
+
+static void record_gc_light(VkCommandBuffer cmd, void *) {
+    gc_bind(cmd, g_vk.gcache.pipe_light);
+    u32 n = g_vk.gcache.pages_n, gx = n < 65535 ? n : 65535;
+    vkCmdDispatch(cmd, gx, (n + gx - 1) / gx, 1);
+}
+
+void vk_gcache_light_pass() {
+    const GcacheGpu &c = g_vk.gcache;
+    if (!c.on || !c.lit) return;
+    rg_pass("земля: кеш, свет", "земля: свет кеша", record_gc_light, nullptr);
+    rg_use(c.rg_pages, RG_CS_WRITE);
+    rg_use(c.rg_texels, RG_CS_READ);
+    rg_use(c.rg_light, RG_CS_WRITE);
+    rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
+    vk_sky_reads(RG_CS_READ);
+    vk_horizon_reads(RG_CS_READ);
+    vk_sdf_reads();
+    vk_gi_reads();
+    vk_lcache_reads();
 }
 
 void vk_gcache_reads() {
@@ -224,4 +272,5 @@ void vk_gcache_reads() {
     rg_use(c.rg_pages, RG_CS_READ);
     rg_use(c.rg_texels, RG_CS_READ);
     rg_use(c.rg_cells, RG_CS_READ);
+    if (c.lit) rg_use(c.rg_light, RG_CS_READ);
 }
