@@ -7,6 +7,8 @@
 #include "mech.h"
 #include "people.h"
 
+#include <stdio.h>
+
 static constexpr f32 NEAR_M = 0.1f;
 
 // Метры от a до b
@@ -125,7 +127,8 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     u32 n = cur.props_count;
     if (in.scatter && cur.terrain) scatter_update(*in.scatter, *cur.terrain, eye, assets.rocks);
     u32 nscat = in.scatter ? in.scatter->count : 0;
-    RenderInstance *inst = arena_push<RenderInstance>(frame, n + nscat + 1 + (in.people ? 2 * VIEW_BODIES_MAX : 0) + MECH_MAX);  // тело и меч; машины
+    RenderInstance *inst = arena_push<RenderInstance>(frame, n + nscat + 1 + (in.people ? 2 * VIEW_BODIES_MAX : 0) + MECH_MAX +
+                                                 in.show_old_n);  // тело и меч; машины; тела беты
     u32 ni = 0;
     for (u32 i = 0; i < n && ni < RENDER_MAX_INSTANCES; ++i) {
         if (!cur.prop_gen[i]) continue;
@@ -156,6 +159,28 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
         r.seed = cur.prop_seed[i];
         r.lod_min = 0;
         ni++;
+    }
+    // Тела беты (tools/oldbodies.py): неподвижные сетки old_body_<k> вторым рядом показа тел
+    for (u32 k = 0; in.people_show && cur.terrain && k < in.show_old_n && ni < RENDER_MAX_INSTANCES; ++k) {
+        char name[24];
+        snprintf(name, sizeof name, "old_body_%u", k);
+        const ViewMesh *vm = find_mesh(assets, hash_str(name));
+        if (!vm) continue;
+        const WPos &at = in.show_old[k];
+        RenderInstance &r = inst[ni++];
+        r.cx = at.cx;
+        r.cz = at.cz;
+        r.x = at.x;
+        r.y = ground_at(*cur.terrain, at).height;
+        r.z = at.z;
+        Quat q = quat_yaw(in.show_old_yaw);
+        r.rot_xy = pack_snorm2(q.x, q.y);
+        r.rot_zw = pack_snorm2(q.z, q.w);
+        r.scale = 1.0f;
+        r.mesh = vm->id;
+        r.material = RENDER_NO_MATERIAL;
+        r.seed = 0x40u + 0x10u * (k % 3);  // тон кожи — младший байт (data/shaders/materials/skin.glsl)
+        r.lod_min = 0;
     }
     // Рассыпка камней: экземпляры — все (кадр мира отсекает и выбирает LOD сам, а постоянный список на GPU не
     // должен сдвигаться от поворота камеры)

@@ -316,6 +316,9 @@ int run_window(const Args &a, AppMemory &m) {
     const bool brawl = a.brawl[0] && a.brawl[1];
     // Показ тел (docs/body.md, «Показ»): ряд поперёк взгляда камеры старта, лицом к ней, вместо людей старта
     const bool show = w.start.set && w.start.show && !brawl && !a.lineup;
+    constexpr u32 SHOW_OLD = 6;  // тел беты: столько сеток пишет tools/oldbodies.py
+    WPos show_old[SHOW_OLD];
+    Turn show_old_yaw = 0;
     if (show) {
         const f32 deg = PI_F / 180.0f, gap = 2.0f;
         const f32 rx = cos_f(w.start.yaw * deg), rz = sin_f(w.start.yaw * deg);
@@ -330,6 +333,15 @@ int run_window(const Args &a, AppMemory &m) {
             pending.push_back({0, INTENT_PEOPLE_SPAWN, at, 1ull | (1ull << 40) | ((u64)face << 41)});
         }
         ds.people_show = true;
+        // Тела беты (tools/oldbodies.py) — вторым рядом в 3 м за первым, в промежутках между телами v2; только вид
+        const f32 bx = -rz * 3.0f, bz = rx * 3.0f;  // от камеры: глаз от опоры — (sin yaw, −cos yaw)
+        for (u32 k = 0; k < SHOW_OLD; ++k) {
+            const f32 o = ((f32)k - 0.5f * (f32)(SHOW_OLD - 1)) * gap + 0.5f * gap;
+            show_old[k].x = w.start.x + rx * o + bx;
+            show_old[k].z = w.start.z + rz * o + bz;
+            wpos_rebase(show_old[k]);
+        }
+        show_old_yaw = (Turn)face << 24;
     }
     if (w.start.set && w.start.people && !brawl && !a.lineup && !show) {
         WPos at;
@@ -654,6 +666,9 @@ int run_window(const Args &a, AppMemory &m) {
         if (!ds.lines) vi.dbg = nullptr;
         vi.people_debug = vi.dbg && ds.people_lines;
         vi.people_show = ds.people_show;
+        vi.show_old = show ? show_old : nullptr;
+        vi.show_old_n = show ? SHOW_OLD : 0;
+        vi.show_old_yaw = show_old_yaw;
         vi.mech = mechs;
         RenderFrame rf;
         u32 dbg_keep = dbg.count;  // метка осмотра — только на этот кадр, шаг мира её не видит
