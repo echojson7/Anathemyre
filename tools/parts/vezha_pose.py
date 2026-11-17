@@ -1,8 +1,8 @@
 """Позы «Вежи» для листа просмотра (docs/vezha.md): та же геометрия ног, что считает игра (src/view/mech.cpp).
 
-Нога-паук (vezha_leg.py) решается в своей плоскости как две длины L1 и L2 до голеностопа над лапой, колено вверх;
-стойка голеностопа отвесна, лапа — подошвой вниз. Цилиндры смотрят концами на свои проушины. Оси сгиба — поперёк
-ноги (направление ноги × вверх): так и у зеркальных ног угол тот же.
+Нога-паук (vezha_leg.py) из трёх звеньев: угол плюсны задан высотой тела (meta_at), бедро и голень решаются двумя
+длинами до скакательного сустава, колено вверх; ступня — подошвой вниз. Цилиндры смотрят концами на свои проушины.
+Оси сгиба — поперёк ноги (направление ноги × вверх): так и у зеркальных ног угол тот же.
 """
 import math
 
@@ -10,14 +10,14 @@ import numpy as np
 
 from kit import rot_y
 from vezha import BELLY, LEGS
-from vezha_leg import FOOT_H, L3, LINKS, THIGH_MAX, THIGH_MIN, two_link
+from vezha_leg import solve
 
-# Позы: высота осей бёдер, вынос оси лапы от оси качания и поворот ног к оси машины (лёжа — к носу и корме)
+# Позы: высота осей бёдер, вынос оси кардана от оси качания и поворот ног к оси машины (лёжа — к носу и корме)
 POSES = {
     "stand": (0.82, 1.0, 0.0),
     "high": (1.0, 0.95, 0.0),
     "low": (0.58, 1.05, 0.0),
-    "pack": (BELLY, 0.95, math.radians(20.0)),
+    "pack": (BELLY, 1.1, math.radians(20.0)),
 }
 
 
@@ -54,17 +54,16 @@ def pose(rig, name, hull=0.0, gun=0.0, eye=0.0):
         d[1] = 0.0
         d /= np.linalg.norm(d)
         z = np.cross(d, (0.0, 1.0, 0.0))
-        P, K, A = (head(b + "_" + leg) for b in ("thigh", "shin", "tarsus"))
+        P, K, A, F = (head(b + "_" + leg) for b in ("thigh", "shin", "tarsus", "foot"))
         flat = lambda v: (float(np.dot(v, d)), float(v[1]))
         a1 = math.atan2(*reversed(flat(K - P)))
         a2 = math.atan2(*reversed(flat(A - K)))
-        l1, l2 = LINKS[kind]
-        a, s = two_link(l1, l2, reach, FOOT_H + L3 - h)
-        a = min(max(a, THIGH_MIN), THIGH_MAX)
-        s = math.atan2(FOOT_H + L3 - h - l1 * math.sin(a), reach - l1 * math.cos(a))
+        a3 = math.atan2(*reversed(flat(F - A)))
+        a, s, m = solve(kind, h, reach)
         rot["thigh_" + leg] = _axis(z, a - a1)
         rot["shin_" + leg] = _axis(z, (s - a2) - (a - a1))
-        rot["tarsus_" + leg] = _axis(z, -(s - a2))   # стойка голеностопа снова отвесна
+        rot["tarsus_" + leg] = _axis(z, (m - a3) - (s - a2))
+        rot["foot_" + leg] = _axis(z, -(m - a3))   # ступня снова подошвой вниз
         # к оси машины: передние — к носу, задние — к корме (поворот вокруг y по знаку угла ноги)
         side = 1.0 if (d[0] > 0) == (d[2] > 0) else -1.0
         rot["hip_" + leg] = np.asarray(rot_y(-side * fold))
@@ -72,7 +71,7 @@ def pose(rig, name, hull=0.0, gun=0.0, eye=0.0):
     mats = R.pose(rig, rot, trans)
     ix = {b[0]: i for i, b in enumerate(rig.bones)}
     for leg, *_ in LEGS:
-        for pa, pb in (("pa_", "pb_"), ("ka_", "kb_")):
+        for pa, pb in (("pa_", "pb_"), ("ka_", "kb_"), ("ma_", "mb_")):
             i, j = ix[pa + leg], ix[pb + leg]
             d0 = np.asarray(rig.bones[j][2]) - np.asarray(rig.bones[i][2])
             d0 /= np.linalg.norm(d0)
