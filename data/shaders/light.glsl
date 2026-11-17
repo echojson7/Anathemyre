@@ -136,12 +136,12 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
 bool lc_use() { return g_moving == 0.0 && pc.frame.gi_view != GI_VIEW_PROBES && pc.frame.gi_view != GI_VIEW_CELLS; }
 
 // Ближнее затенение по полю: у зондов — на 1 м (углы мельче их шага), у ячеек — на полторы стороны ячейки у точки
-// (не меньше 25 см: старт конусов — полвокселя поля), дальше ячейка затенена своими лучами
-float lc_ao(vec3 pos, vec3 n, float cells) {
-    float tc = clamp(length(pos) * pc.frame.lc_angle * 1.5, 0.25, 1.0);
-    uint q = pc.frame.light_q;
-    uint steps = q == LIGHT_Q_LOW ? 4u : q == LIGHT_Q_MEDIUM ? 5u : q == LIGHT_Q_HIGH ? 6u : 7u;
-    return sdf_cones(pos, n, q, mix(1.0, tc, cells), steps).x;
+// и только разница с затенением у точек ячеек (ao_cell — сглаженное, как их свет): их лучи эти заслонки уже видят.
+// Иначе у основания колонн и стен тень считалась дважды — тёмное кольцо (разбор 17.11). Светлее ячейки — нет:
+// конусы тень переоценивают (заслонка для них чёрная), лучи ячейки видят и отражённое заслонкой
+float lc_ao(vec3 pos, vec3 n, float cells, float ao_cell) {
+    float v = lc_near_ao(pos, n, mix(1.0, lc_near_t(pos), cells));
+    return min(v / mix(1.0, max(ao_cell, 0.05), cells), 1.0);
 }
 
 // Непрямой свет (6г, docs/gi.md): рассеянное и отражение от неба и от того, что отразили стены и земля.
@@ -202,9 +202,10 @@ vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, v
         else
 #endif
         {
-            vec4 lc = lc_use() ? lc_gather(s.pos, n, g_ground != 0.0) : vec4(0.0);
+            float ao_c = 1.0;
+            vec4 lc = lc_use() ? lc_gather(s.pos, n, g_ground != 0.0, ao_c) : vec4(0.0);
             g.irr = mix(g.irr, lc.rgb, lc.a);
-            lao = lc_ao(s.pos, n, lc.a);
+            lao = lc_ao(s.pos, n, lc.a, ao_c);
         }
         lit += clamp(dot(g.irr, Y) / sky_y, 0.0, 1.0) * g.cov;
         g_e_local += A_PI * max(dot(g.irr, Y), 0.0) * g.cov;
@@ -231,8 +232,9 @@ vec3 light_indirect_view(Surface s) {
     vec3 irr = atmo_ambient(s.normal);
     float bury = g_ground == 0.0 ? gi_buried(s.pos + pc.frame.sdf_cam.xyz) : 0.0;
     vec3 fb = irr * (s.ao * (g.cov < 1.0 ? sdf_sky(s.pos, s.normal).x * (1.0 - bury) : 1.0));
-    vec4 lc = lc_use() ? lc_gather(s.pos, s.normal, g_ground != 0.0) : vec4(0.0);
-    vec3 gi = g.cov > 0.0 ? mix(g.irr, lc.rgb, lc.a) * (s.ao * lc_ao(s.pos, s.normal, lc.a)) : vec3(0.0);
+    float ao_c = 1.0;
+    vec4 lc = lc_use() ? lc_gather(s.pos, s.normal, g_ground != 0.0, ao_c) : vec4(0.0);
+    vec3 gi = g.cov > 0.0 ? mix(g.irr, lc.rgb, lc.a) * (s.ao * lc_ao(s.pos, s.normal, lc.a, ao_c)) : vec3(0.0);
     vec3 c = 0.5 * mix(fb, gi, g.cov);
     return pc.frame.gi_view == GI_VIEW_CELLS ? c * vec3(1.0, 0.45, 0.45) : c;
 }

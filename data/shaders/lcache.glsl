@@ -26,6 +26,19 @@ const uint LC_LIT = 0x400u;    // посчитана хоть раз
 
 float lc_size(int k) { return LC_S0 * float(1 << k); }
 
+#ifdef SDF_GLSL
+// Ближнее затенение по полю (light.glsl, lcache_trace.comp): конусы до tmax; у ячеек — на полторы стороны ячейки у
+// точки (lc_near_t, не меньше 25 см: старт конусов — полвокселя поля), дальше ячейка затенена своими лучами
+float lc_near_ao(vec3 pos, vec3 n, float tmax) {
+    uint q = pc.frame.light_q;
+    uint steps = q == LIGHT_Q_LOW ? 4u : q == LIGHT_Q_MEDIUM ? 5u : q == LIGHT_Q_HIGH ? 6u : 7u;
+    return sdf_cones(pos, n, q, tmax, steps).x;
+}
+float lc_near_t(vec3 pos) { return clamp(length(pos) * pc.frame.lc_angle * 1.5, 0.25, 1.0); }
+// То же у точки ячейки (pos — м от камеры, на поверхности под точкой лучей)
+float lc_cell_ao(vec3 pos, vec3 n) { return lc_near_ao(pos, n, lc_near_t(pos)); }
+#endif
+
 // Уровень у точки на расстоянии d от камеры — дробно: log2(d·tg угла / сторона уровня 0)
 float lc_level_f(float d) { return log2(max(d * pc.frame.lc_angle / LC_S0, 1e-6)); }
 
@@ -213,42 +226,62 @@ LcSh lc_pack(vec3 a0, vec3 ax, vec3 ay, vec3 az) {
     return s;
 }
 
+// Ячейка e годится точке pa: её точка лучей в плоскости точки (дальше четверти стороны с подъёмом — чужая
+// поверхность: ступенька, край плиты), 0..1
+float lc_plane_w(int e, vec3 pa, vec3 N, float s) {
+    float dz = abs(dot(pc.frame.lc_meta.v[e].org - pa, N) - (0.05 + 0.05 * s));
+    return clamp(1.0 - (dz - 0.25 * s) / (0.5 * s), 0.0, 1.0);
+}
+
 // Свет одной стороны и уровня у точки: билинейно по 4 ячейкам в плоскости (центры ячеек вдоль поверхности — на
-// середине кубиков), слой поперёк — тот же, что у точки. Ячейка чужой поверхности (точка лучей дальше от
-// плоскости точки, чем четверть стороны с подъёмом: ступенька, край плиты) и ненайденные — без веса; x — сумма
-// весов, найденных из 1
-vec4 lc_gather_one(vec3 pa, vec3 n, int k, int a, bool ground) {
+// середине кубиков), слой поперёк — тот же, что у точки. Соседа нет или он чужой поверхности — его долю берёт
+// своя ячейка (в которой точка), если она есть: у стены и колонны соседа за гранью нет вовсе (его кубик в
+// заслонке), и без замены доля ячеек у каждой стены проседала — свет у основания уходил на зонды с их затенением
+// на 1 м, тёмное кольцо с резким краем (разбор 17.11). Своей нет (молодое место) — без веса; w — сумма весов
+// найденных из 1. ao — сглаженное ближнее затенение у точек ячеек теми же весами
+vec4 lc_gather_one(vec3 pa, vec3 n, int k, int a, bool ground, out float ao) {
     float s = lc_size(k);
     int ax = a >> 1, i1 = (ax + 1) % 3, i2 = (ax + 2) % 3;
     ivec3 h = lc_home(pa, k, a);
     vec2 f = vec2(pa[i1], pa[i2]) / s - 0.5;
     vec2 b = floor(f), fr = f - b;
     vec3 N = lc_axis_n(a);
-    float lift = 0.05 + 0.05 * s;
+    int eh = lc_lookup(lc_key(k, a, h, ground), h);
+    float wh = eh >= 0 ? lc_plane_w(eh, pa, N, s) : 0.0;
+    vec3 ih = wh > 0.0 ? lc_irr(eh, n) : vec3(0.0);
+    float aoh = wh > 0.0 ? unpackHalf2x16(pc.frame.lc_meta.v[eh].ao).y : 1.0;
     vec3 sum = vec3(0.0);
-    float wsum = 0.0;
+    float wsum = 0.0, asum = 0.0;
     for (int j = 0; j < 4; ++j) {
         ivec2 o = ivec2(j & 1, j >> 1);
         ivec3 c = h;
         c[i1] = int(b.x) + o.x;
         c[i2] = int(b.y) + o.y;
         float w = (o.x == 0 ? 1.0 - fr.x : fr.x) * (o.y == 0 ? 1.0 - fr.y : fr.y);
-        int e = lc_lookup(lc_key(k, a, c, ground), c);
-        if (e < 0 || w <= 0.0) continue;
-        float dz = abs(dot(pc.frame.lc_meta.v[e].org - pa, N) - lift);
-        w *= clamp(1.0 - (dz - 0.25 * s) / (0.5 * s), 0.0, 1.0);
-        sum += lc_irr(e, n) * w;
-        wsum += w;
+        if (w <= 0.0) continue;
+        int e = c == h ? eh : lc_lookup(lc_key(k, a, c, ground), c);
+        float we = e >= 0 ? w * (c == h ? wh : lc_plane_w(e, pa, N, s)) : 0.0;
+        if (we > 0.0) {
+            sum += lc_irr(e, n) * we;
+            asum += unpackHalf2x16(pc.frame.lc_meta.v[e].ao).y * we;
+            wsum += we;
+        }
+        float wr = (w - we) * (wh > 0.0 ? 1.0 : 0.0);  // недостающее — своей ячейкой
+        sum += ih * wr;
+        asum += aoh * wr;
+        wsum += wr;
     }
+    ao = wsum > 0.0 ? asum / wsum : 1.0;
     return vec4(wsum > 0.0 ? sum / wsum : vec3(0.0), wsum);
 }
 
 // Отражённый свет точки из ячеек (docs/lcache.md, «Сбор»): E/π по нормали n и доля ячеек 0..1 (остальное — зонды).
 // Стороны нормали смешиваются по наклону (у ребра 45° — поровну), уровни — в полосе у края уровня (там заявлены оба),
 // дальше последнего уровня и у предела дальности ячейки сходят на зонды. Найденная доля меньше половины — зонды
-vec4 lc_gather(vec3 pos, vec3 n, bool ground) {
+vec4 lc_gather(vec3 pos, vec3 n, bool ground, out float ao) {
     FrameData f = pc.frame;
     float d = length(pos);
+    ao = 1.0;
     if (f.lc_on == 0u || d > f.lc_far) return vec4(0.0);
     float x = lc_level_f(d);
     if (x > float(LC_LEVELS - 1)) return vec4(0.0);
@@ -261,16 +294,19 @@ vec4 lc_gather(vec3 pos, vec3 n, bool ground) {
     float wa = clamp((w2 - LC_AXIS2) / max(w1 - LC_AXIS2, 1e-4), 0.0, 1.0) * 0.5;  // доля второй стороны
     float wl = k + 1 < LC_LEVELS ? clamp((x - (float(k) - LC_BAND)) / LC_BAND, 0.0, 1.0) : 0.0;  // доля уровня k+1
     vec3 sum = vec3(0.0);
-    float got = 0.0, want = 0.0;
+    float got = 0.0, want = 0.0, asum = 0.0;
     for (int i = 0; i < 4; ++i) {
         int kk = k + (i >> 1), aa = (i & 1) == 0 ? a : a2;
         float w = ((i >> 1) == 0 ? 1.0 - wl : wl) * ((i & 1) == 0 ? 1.0 - wa : wa);
         if (w <= 0.0) continue;
-        vec4 g = lc_gather_one(pa, n, kk, aa, ground);
+        float ag;
+        vec4 g = lc_gather_one(pa, n, kk, aa, ground, ag);
         sum += g.rgb * (w * g.w);
+        asum += ag * (w * g.w);
         got += w * g.w;
         want += w;
     }
+    ao = got > 0.0 ? asum / got : 1.0;
     float cov = smoothstep(0.5, 0.8, got / max(want, 1e-6));
     // Последний уровень (за ним уровня нет) и последние 8 м дальности — на зонды
     if (k + 1 >= LC_LEVELS) cov *= clamp((float(LC_LEVELS - 1) - x) / LC_BAND, 0.0, 1.0);

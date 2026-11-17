@@ -228,5 +228,9 @@ void main() {
     }
     f.lc_acc.v[e] = acc;
     f.lc_meta.v[e].org = o.xyz;
+    // Ближнее затенение у точки ячейки — тем же lc_ao, что у пикселя (с поверхности под точкой лучей): лучи ячейки
+    // уже видят эти заслонки, пиксель берёт только разницу с ним (light.glsl). Сглаженное — до сглаживания соседей
+    float ao = lc_cell_ao(o.xyz - N * lc_lift(lc_size(lc_key_level(m.key))) - f.sdf_cam.xyz, N);
+    f.lc_meta.v[e].ao = packHalf2x16(vec2(ao));
     f.lc_meta.v[e].state = turn | cnt << 2 | LC_LIT;
 }

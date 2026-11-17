@@ -56,9 +56,10 @@ void main() {
     vec3 irr = vec3(0.0);
     if (g.cov < 1.0) vis = sdf_sky(pos, n).x;
     if (g.cov > 0.0) {
-        vec4 lc = lc_use() ? lc_gather(pos, n, true) : vec4(0.0);
+        float ao_c = 1.0;
+        vec4 lc = lc_use() ? lc_gather(pos, n, true, ao_c) : vec4(0.0);
         irr = mix(g.irr, lc.rgb, lc.a);
-        ao = lc_ao(pos, n, lc.a);
+        ao = lc_ao(pos, n, lc.a, ao_c);
     }
     f.gc_light.v[at] = uvec4(floatBitsToUint(h), packHalf2x16(irr.rg), packHalf2x16(vec2(irr.b, 1.0)),
                              packUnorm4x8(vec4(g.cov, vis, ao, g.refl.a)));

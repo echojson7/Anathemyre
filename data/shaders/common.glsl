@@ -84,7 +84,9 @@ const uint STAT_LC_LIVE = 32u, STAT_LC_NEW = 33u, STAT_LC_JOBS = 34u, STAT_LC_RA
            STAT_LC_TAPS = 37u, STAT_LC_WAIT = 38u;
 const uint STAT_GC_LIT = 39u;  // текселей кеша земли, чей отражённый свет посчитан в кадре (docs/gcache.md)
 const uint GC_LIGHT_ON = 1u, GC_LIGHT_ALL = 2u;  // gc_lmode: свет в кеше читается; пересчитать все страницы кадра
-struct LcMeta { ivec3 home; uint seen; uint key; uint state; vec3 org; uint pad; };  // org — точка лучей, м от якоря
+// org — точка лучей, м от якоря; ao — половинками ближнее затенение по полю у точки ячейки (x) и оно же,
+// сглаженное как свет (y): его лучи ячейки уже видят, пиксель делит своё на него (light.glsl, lc_ao)
+struct LcMeta { ivec3 home; uint seen; uint key; uint state; vec3 org; uint ao; };
 struct LcSh { uvec4 a; uvec2 b; };      // a0.rgb, a1x.rgb, a1y.rgb, a1z.rgb половинками
 struct LcAcc { vec4 a, b, c; };         // те же 12 чисел суммой круга
 layout(buffer_reference, scalar) buffer LcKeys { uint v[]; };
