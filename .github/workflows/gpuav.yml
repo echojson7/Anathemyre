@@ -1,0 +1,76 @@
+# Проверка на GPU (GPU-AV) под lavapipe (docs/build.md, «CI»; docs/graph.md, «Проверки»): чтение и запись мимо
+# буферов по адресам, кадр мира. Отдельно от ci.yml, потому что не укладывается в прогон PR за 3–6 минут:
+# lavapipe собирает шейдеры под проверкой на одном ядре при первом вызове, и с холодным кешем (почти каждый PR
+# со светом) это 8–14 минут (в контейнере 686 с холодный кеш, 161 с тёплый).
+# Когда идёт: после влития в claude/project-v2 (каждый пуш; упало — открывается задача «GPU-AV упал в v2»),
+# на PR — только с меткой gpuav, вручную — workflow_dispatch
+name: gpuav
+on:
+  push:
+    branches: [claude/project-v2]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+
+# PR: новый пуш снимает старый прогон. v2: идущий доходит до конца, из ждущих остаётся последний коммит
+concurrency:
+  group: gpuav-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  gpuav:
+    name: window (gpuav)
+    # на PR — только с меткой gpuav; другая метка не перезапускает
+    if: >-
+      github.event_name != 'pull_request' ||
+      (contains(github.event.pull_request.labels.*.name, 'gpuav') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'gpuav'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Пакеты, кеши, сборка
+        id: lvp
+        uses: ./.github/actions/lvp
+        with:
+          kind: gpuav
+          mode: release
+      - name: Проверка на GPU (GPU-AV)
+        run: |
+          . tools/ci_par.sh
+          # Пять шейдеров lavapipe под GPU-AV не тянет (падает, съедает ~14 ГБ или считает минуты) — без проверки;
+          # лучи зондов (gi_trace) — снимок 4 × 49 152 зонда под GPU-AV идёт дольше 10 мин; лучи ячеек света
+          # (lcache_trace) — тот же луч
+          # Камера у стенда людей с согнутой костью и морфом: скиннинг и сферы кластеров тоже под проверкой
+          # Свет «Средне»: шейдеры и ветки те же, что на «Высоко», меньше лишь размеры (карта облаков 1024² вместо
+          # 1536², зондов за кадр 1024 вместо 1536). «Высоко» идёт в окнах asan, shot и same (ci.yml)
+          # Предел 1500 с — на холодный кеш: прогон никто не ждёт, а снятие по пределу без вины правки хуже
+          par gpuav 1500 xvfb-run -n 92 -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 4 --window 640 360 \
+            --gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp,lcache_trace.comp \
+            --cam 45 5 6 11698 -2348.5 --stand elbow,morph1 --light medium
+          par_wait 5
+      - name: Сохранить кеш шейдеров Mesa
+        if: always() && steps.lvp.outputs.mesa-key != '' && steps.lvp.outputs.mesa-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/mesa_shader_cache
+          key: ${{ steps.lvp.outputs.mesa-key }}
+      # Упало после влития — задача в репозитории, чтобы это не прошло незамеченным: PR его уже не ждал
+      - name: Задача «GPU-AV упал в v2»
+        if: failure() && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          t="GPU-AV упал в v2"
+          url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          msg="Коммит ${{ github.sha }}: $url"
+          n=$(gh issue list -R "${{ github.repository }}" --state open --search "\"$t\" in:title" --json number -q '.[0].number')
+          if [ -n "$n" ]; then
+            gh issue comment "$n" -R "${{ github.repository }}" --body "$msg"
+          else
+            gh issue create -R "${{ github.repository }}" --title "$t" --body "$msg"
+          fi
