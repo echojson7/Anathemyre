@@ -36,6 +36,7 @@ extern const MechDesc MECH_DESC[MECH_KINDS];
 // Вежа: прыжок на рывке (mech_move.cpp)
 constexpr f32 VEZHA_JUMP_V = 3.6f;       // скорость тела вверх в толчке прыжка, м/с
 constexpr f32 VEZHA_H_LAND = 0.74f;      // оси бёдер над опорой в миг касания после прыжка
+constexpr f32 VEZHA_COMP_MAX = 0.07f;    // ход штока передней стойки внутрь (COMP_MAX в tools/parts/vezha_strut.py)
 
 // Тать: мачта прибора ложится вперёд на палубу на этот угол, рад (TAT_MAST_FOLD в tools/parts/tat_pose.py)
 constexpr f32 TAT_MAST_FOLD = 1.30f;
@@ -122,9 +123,9 @@ inline WPos mech_leg_now(const MechLeg &l) {
 }
 // Две длины, которыми решается нога, и высота цели решения над осью лапы (у отвесной плюсны — голеностоп)
 inline void mech_leg_links(const MechLegRig &L, const MechLegDesc &D, f32 *la, f32 *lb, f32 *up) {
-    bool vert = D.mode == MECH_LEG_VERT;
-    *la = vert ? L.l1 : L.l1 + L.l3;
-    *lb = L.l2;
+    bool vert = D.mode == MECH_LEG_VERT, slide = D.mode == MECH_LEG_SLIDE;
+    *la = vert || slide ? L.l1 : L.l1 + L.l3;
+    *lb = slide ? L.l2 + L.l3 : L.l2;
     *up = vert ? L.l3 : 0.0f;
 }
 // Самая короткая и самая длинная нога (от оси качания до цели решения)

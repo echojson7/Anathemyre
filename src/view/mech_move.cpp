@@ -5,9 +5,17 @@
 // Где лапе k стоять сейчас: дом под своим углом рамы, со сдвигом вперёд по ходу и повороту
 static WPos mech_ideal(const MechView &mv, const Mech &m, u32 k, f32 ahead) {
     const MechLegRig &L = mech_rig(mv, m).leg[k];
-    Vec3 home = L.corner + L.dir * mech_reach(mv, m, k, m.h);
-    Vec3 w = mech_to_world(m.yaw + m.yaw_v * ahead, Vec3{home.x, 0, home.z});
-    return mech_moved(m.at, w.x + m.vel.x * ahead, w.z + m.vel.z * ahead);
+    // Ложится — лапы сразу переходят на места «лёжа»: у стоек с локтем назад локоть иначе уходит в землю
+    f32 h = m.state == MECH_FOLD ? mech_desc(m).belly : m.h;
+    Vec3 home = L.corner + L.dir * mech_reach(mv, m, k, h);
+    f32 yaw = m.yaw + m.yaw_v * ahead;
+    Vec3 w = mech_to_world(yaw, Vec3{home.x, 0, home.z}) + m.vel * ahead;
+    // Упреждение на повороте и боком не переводит лапу за ось машины: пары лап не перекрещиваются (у Вежи колея
+    // передних стоек узкая)
+    Vec3 b = mech_to_body(yaw, w);
+    f32 side = home.x > 0.0f ? 1.0f : -1.0f, keep = 0.62f * f_abs(home.x);
+    if (b.x * side < keep) w = mech_to_world(yaw, Vec3{side * keep, 0, b.z});
+    return mech_moved(m.at, w.x, w.z);
 }
 
 static f32 mech_step_time(f32 speed) { return f_clamp(0.28f - 0.03f * speed, 0.17f, 0.28f); }
@@ -242,9 +250,23 @@ static void mech_body(Mech &m, f32 dt) {
     // Курс: пружина без перелёта, не быстрее 1.9 рад/с (лапы успевают переступать)
     f32 err = mech_wrap(yaw_to - m.yaw);
     m.yaw_v += (36.0f * err - 12.0f * m.yaw_v) * dt;
-    f32 wmax = 1.9f * f_clamp(2.4f - m.lag, 0.3f, 1.0f);
+    f32 wmax = 1.5f * f_clamp(2.4f - m.lag, 0.3f, 1.0f);   // длинная рама: передние лапы далеко от оси
     m.yaw_v = f_clamp(m.yaw_v, -wmax, wmax);
     m.yaw = mech_wrap(m.yaw + m.yaw_v * dt);
+}
+
+// Стоящей лапе пора шагать сразу: стойка (MECH_LEG_SLIDE) уехала почти под ось поворота (дальше локоть назад
+// вывернется) или лапа на повороте уехала к оси машины (пара лап перекрестится)
+static bool mech_leg_urgent(const MechView &mv, const Mech &m, u32 k) {
+    const MechLeg &l = m.leg[k];
+    const MechLegDesc &D = mech_desc(m).leg[k];
+    if (l.fold > 0.0f || l.t >= 0.0f) return false;
+    const MechLegRig &L = mech_rig(mv, m).leg[k];
+    Vec3 p = mech_world_chassis(m, l.at, D.foot_h);
+    if (p.x * L.corner.x < 0.5f * L.corner.x * L.corner.x) return true;
+    if (D.mode != MECH_LEG_SLIDE) return false;
+    MechReach r = mech_leg_reach(L, p);
+    return (r.x + L.u) * cosf(r.yaw) < 0.14f;
 }
 
 // Лапы: отставшая от своего места переставляется шагом; соседние по кругу в воздухе вместе не бывают — выходит рысь
@@ -272,6 +294,7 @@ static void mech_legs(const MechView &mv, Mech &m, const Extract &c, f32 dt) {
                 l.t = -1.0f;
                 l.at = l.to;
                 m.h_v -= 0.05f + 0.02f * speed;   // тело проседает на опоре
+                l.comp_v += 0.35f + 0.12f * speed;  // телескоп садится на касании
                 u32 a = k & 1;
                 m.ant_v[a][0] += 0.5f * (mech_rnd(m.rng) - 0.5f);
                 m.ant_v[a][1] += 0.5f * (mech_rnd(m.rng) - 0.5f);
@@ -285,6 +308,9 @@ static void mech_legs(const MechView &mv, Mech &m, const Extract &c, f32 dt) {
         bool free_ = p.t < 0.0f && q.t < 0.0f && p.fold <= 0.0f && q.fold <= 0.0f;
         if (free_ && err[k] > thr && (best < 0 || err[k] > err[best])) best = (i32)k;
     }
+    // Лапа, которой пора шагать сразу, шагает, даже если соседняя в воздухе
+    for (u32 k = 0; k < MECH_LEGS; ++k)
+        if (mech_leg_urgent(mv, m, k)) best = (i32)k;
     if (m.jump == 3) {
         // Все лапы снова на земле — прыжок кончился; антенны хлещут
         bool down = true;
@@ -305,7 +331,7 @@ static void mech_legs(const MechView &mv, Mech &m, const Extract &c, f32 dt) {
         WPos to = mech_ideal(mv, m, pair[i], l.dur + 0.5f * dur);
         to.y = mech_support(c, to, m.at.y + 0.4f, &l.n);
         l.to = to;
-        l.lift = 0.07f + 0.03f * speed + 0.5f * f_abs(to.y - l.from.y);
+        l.lift = (0.07f + 0.03f * speed) * mech_desc(m).leg[pair[i]].lift + 0.5f * f_abs(to.y - l.from.y);
         l.t = 0.0f;
     }
 }
@@ -330,7 +356,23 @@ static void mech_leap(const MechView &mv, Mech &m, const Extract &c) {
 }
 
 // Высота и наклон тела по опоре лап, пружины корпуса, ствола, головы и антенн
+// Телескопы ног (MECH_LEG_SLIDE): шток сидит под весом, садится глубже на касании и в приседе перед прыжком, в
+// воздухе выходит до упора; пружина жёсткая и чуть недогашена — после касания шток раз-другой качнётся
+static void mech_struts(Mech &m, f32 dt) {
+    const MechDesc &md = mech_desc(m);
+    for (u32 k = 0; k < MECH_LEGS; ++k) {
+        MechLeg &l = m.leg[k];
+        if (md.leg[k].mode != MECH_LEG_SLIDE) continue;
+        bool planted = l.fold <= 0.0f && l.t < 0.0f;
+        f32 to = planted ? (m.jump == 1 ? 0.055f : 0.024f) : 0.0f;
+        mech_spring(l.comp, l.comp_v, to, 34.0f, 0.32f, dt);
+        if (l.comp < 0.0f) { l.comp = 0.0f; l.comp_v = f_max(l.comp_v, 0.0f); }
+        if (l.comp > VEZHA_COMP_MAX) { l.comp = VEZHA_COMP_MAX; l.comp_v = f_min(l.comp_v, 0.0f); }
+    }
+}
+
 static void mech_springs(const MechView &mv, Mech &m, const Extract &c, const MechTarget &tg, f32 dt) {
+    mech_struts(m, dt);
     // Опора: средняя высота лап и наклон плоскости через них (в осях машины)
     f32 sum = 0.0f, sz = 0.0f, sx = 0.0f, zz = 0.0f, xx = 0.0f;
     f32 hmin = 0.0f, hmax = 10.0f;
@@ -383,7 +425,9 @@ static void mech_springs(const MechView &mv, Mech &m, const Extract &c, const Me
         // Толчок и полёт: тело летит по баллистике; лапы отрываются, когда ноги почти выпрямились
         m.h_v -= MECH_G * dt;
         m.h += m.h_v * dt;
-        if (m.jump == 2 && (m.h > 0.76f || m.h > hmax - 0.03f || m.h_v < 1.0f)) mech_leap(mv, m, c);
+        bool behind = false;   // стойка уехала под ось — толчок кончился раньше
+        for (u32 k = 0; k < MECH_LEGS; ++k) behind = behind || mech_leg_urgent(mv, m, k);
+        if (m.jump == 2 && (m.h > 0.76f || m.h > hmax - 0.03f || m.h_v < 1.0f || behind)) mech_leap(mv, m, c);
     } else {
         mech_spring(m.h, m.h_v, to, lying ? 16.0f : (slow ? 4.6f : 8.5f), lying ? 1.0f : (slow ? 0.62f : 0.55f), dt);
     }

@@ -22,7 +22,9 @@ enum MechState : u8 { MECH_PACKED = 0, MECH_UNFOLD, MECH_STAND, MECH_WALK, MECH_
 enum MechDemo : u8 { MECH_DEMO_AUTO = 0, MECH_DEMO_PACK, MECH_DEMO_STAND, MECH_DEMO_WALK, MECH_DEMO_SHOW };
 // Плюсна: параллельна бедру (пантограф, нога решается двумя длинами L1 + L3 и L2) или отвесна в осях рамы
 // (нога решается двумя длинами L1 и L2 до голеностопа над лапой)
-enum MechLegMode : u8 { MECH_LEG_PAR = 0, MECH_LEG_VERT };
+// PAR — плюсна параллельна бедру (пантограф), VERT — отвесна, SLIDE — плюсны нет: шток выходит из голени по её оси
+// (телескоп с пружиной, сжатие — MechLeg::comp)
+enum MechLegMode : u8 { MECH_LEG_PAR = 0, MECH_LEG_VERT, MECH_LEG_SLIDE };
 
 struct MechLeg {
     WPos at;          // точка опоры лапы на земле
@@ -32,6 +34,7 @@ struct MechLeg {
     f32 dur, lift;    // длительность шага, с; высота дуги, м
     f32 fold;         // 1 — сложена у рамы, 0 — работает
     Vec3 pol;         // начало пути складывания у земли в осях рамы: поворот бедра, вынос от оси поворота, высота
+    f32 comp, comp_v; // телескоп (MECH_LEG_SLIDE): на сколько шток ушёл в голень, м, и его скорость
 };
 
 struct Mech {

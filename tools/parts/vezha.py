@@ -1,9 +1,10 @@
 """«Вежа» — шагающая турель (docs/vezha.md): рецепт машины. Литой гранёный корпус в пустынной краске на поворотном
-кольце, железная рама из двух палуб, четыре складные ноги (vezha_leg.py), ствол, голова-прибор и антенны.
+кольце, длинная железная рама, две передние стойки-телескопа (vezha_strut.py) и два задних рычага (vezha_leg.py),
+ствол, голова-прибор и антенны.
 
 Оси сетки — как у людей: x вправо, y вверх, z вперёд (ствол смотрит в +z), начало — на земле под серединой.
-Бинд-поза — «стоя высоко». Ноги — четыре одинаковые, повёрнутые вокруг оси y на диагонали; в «турели» они
-сложены пачками вдоль сторон рамы по кругу.
+Бинд-поза — «стоя высоко». Стойки смотрят вперёд-наружу, рычаги — назад-наружу; левая нога пары — зеркало правой.
+Лёжа стойки лежат, как лапы собаки, рычаги сложены ножом прямо назад.
 """
 import math
 
@@ -11,10 +12,10 @@ from kit import Body, add, cross, mat_mul, mat_vec, mul, rot_x, rot_y, rot_z, su
 from rig import Rig
 from vezha_leg import (BRASS, CANVAS, EYE, GLASS, HIP_Y, IRON, MARK, PAINT, RUBBER, STEEL, WORN, bolt, leg_parts, leg_points,
                        piston, piston_lengths)
+from vezha_strut import strut_parts, strut_points
 
 # --- размеры, м ---
-SIDE = 0.43                    # оси поворота бёдер — в углах квадрата с такой полустороной
-R_YAW = SIDE * math.sqrt(2.0)  # их радиус от оси машины
+FRAME_W = 0.24                 # полуширина короба рамы
 BELLY = 0.20                   # полозья дна ниже осей бёдер
 RING_Y = HIP_Y + 0.14          # разъём поворотного кольца: ниже — рама, выше — корпус
 Y0 = HIP_Y + 0.19              # низ корпуса
@@ -22,10 +23,13 @@ TOP = Y0 + 0.44                # крыша
 GUN_Y = Y0 + 0.19              # ось ствола и цапф
 GUN_Z = 0.47                   # цапфы — на лобовой грани
 EYE_AT = (0.0, TOP + 0.02, 0.185)   # ось головы-прибора на крыше
-LEGS = (("fr", -45.0), ("fl", -135.0), ("rl", 135.0), ("rr", 45.0))  # имя, поворот рецепта ноги вокруг y
+# Ноги: имя, вид (strut — передняя стойка vezha_strut.py, lever — задний рычаг vezha_leg.py), ось поворота (x, z) и
+# поворот рецепта вокруг y до зеркала; зеркальная нога — отражение соседней через x = 0 (поршень и мотор — снаружи)
+LEGS = (("fr", "strut", 0.33, 0.40, -78.0, False), ("fl", "strut", 0.33, 0.40, -78.0, True),
+        ("rl", "lever", -0.33, -0.42, 105.0, False), ("rr", "lever", -0.33, -0.42, 105.0, True))
 ANTENNAS = (("ant_l", -1.0, 0.16, 0.92), ("ant_r", 1.0, 0.05, 0.62))   # кость, сторона, наклон назад, длина штыря
 
-LODS = (28000, 16000, 9500, 6000)  # треугольников в LOD 1…4 (meshpack --prune --lods)
+LODS = (28000, 17500, 9000, 6000)  # треугольников в LOD 1…4 (meshpack --prune --lods)
 
 WEAR = (WORN, 0.035, 0.80, 0.05)       # краска: сколы у кромки на 3.5 см, редкие на плоскости
 
@@ -397,68 +401,110 @@ def gun():
     return b
 
 
-# --- рама (кость chassis): короб между двумя палубами, в углах палуб — проушины осей поворота бёдер ---
+# --- рама (кость chassis): длинный короб, по углам — палубы осей поворота ног, по бортам и корме — разное навесное ---
+
+def _frame_ring(z, w, y0, y1, c=0.04):
+    """Сечение короба рамы поперёк оси: прямоугольник со снятыми нижними углами."""
+    return [(w, y1, z), (-w, y1, z), (-w, y0 + c, z), (-w + c, y0, z), (w - c, y0, z), (w, y0 + c, z)]
+
+
+def leg_corner(name):
+    """Ось поворота ноги name в осях сетки (x, z)."""
+    for n, _kind, x, z, _deg, mirror in LEGS:
+        if n == name:
+            return (-x if mirror else x, z)
+    raise KeyError(name)
+
 
 def chassis():
     from solid import solid
-    sq = lambda y, h: [(h, y, -h), (h, y, h), (-h, y, h), (-h, y, -h)]
+    H = HIP_Y
     core = Body()
-    core.loft([sq(HIP_Y - 0.14, 0.2), sq(HIP_Y - 0.10, 0.25), sq(HIP_Y + 0.10, 0.25)], None)
+    core.loft([_frame_ring(0.57, 0.15, H - 0.06, H + 0.05, 0.03), _frame_ring(0.47, FRAME_W, H - 0.13, H + 0.088),
+               _frame_ring(-0.47, FRAME_W, H - 0.14, H + 0.088), _frame_ring(-0.57, 0.17, H - 0.08, H + 0.07, 0.03)], None)
     adds = Body()
-    for _, deg in LEGS:
-        m = rot_y(math.radians(deg))
-        for y in (HIP_Y + 0.088, HIP_Y - 0.088):   # палубы выше и ниже сложенных ног
-            adds.box(mat_vec(m, (R_YAW * 0.78, y, 0.0)), (R_YAW * 0.5, 0.024, 0.09), None, bevel=0.0, rot=m)
-            adds.lathe(mat_vec(m, (R_YAW, y - 0.012, 0.0)), (0, 1, 0), [(0.09, 0.0), (0.09, 0.024)], None, seg=18)
+    for name, *_ in LEGS:
+        x, z = leg_corner(name)
+        s = 1.0 if x > 0 else -1.0
+        for y in (H + 0.088, H - 0.088):   # палубы выше и ниже кулака ноги
+            adds.box((s * (FRAME_W + abs(x)) * 0.5 - s * 0.03, y, z), (abs(x) - FRAME_W + 0.06, 0.024, 0.15), None, bevel=0.0)
+            adds.lathe((x, y - 0.012, z), (0, 1, 0), [(0.088, 0.0), (0.088, 0.024)], None, seg=20)
     out = solid([("add", core), ("add", adds)], bevel=0.005, bevel_angle=28.0)
     b = Body()
     b.faces = [(p, IRON, s) for p, _, s in out.faces]
-    for _, deg in LEGS:   # пальцы осей поворота, болты проушин, шланг по верхней палубе
-        m = rot_y(math.radians(deg))
-        for s in (-1.0, 1.0):
-            b.lathe(mat_vec(m, (R_YAW, HIP_Y + s * 0.1, 0.0)), (0, s, 0), [(0.036, 0.0), (0.036, 0.012), (0.022, 0.018)], STEEL, seg=10)
+    for name, *_ in LEGS:   # пальцы осей поворота и болты проушин
+        x, z = leg_corner(name)
+        for y, s in ((H + 0.1, 1.0), (H - 0.1, -1.0)):
+            b.lathe((x, y, z), (0, s, 0), [(0.036, 0.0), (0.036, 0.012), (0.022, 0.018)], STEEL, seg=10)
             for k in range(5):
                 a = 2 * math.pi * (k + 0.5) / 5
-                bolt(b, mat_vec(m, (R_YAW + 0.066 * math.cos(a), HIP_Y + s * 0.1, 0.066 * math.sin(a))), (0, s, 0), r=0.008)
-        b.tube([mat_vec(m, (0.30, HIP_Y + 0.108, 0.026)), mat_vec(m, (0.44, HIP_Y + 0.108, 0.026)),
-                mat_vec(m, (0.50, HIP_Y + 0.108, 0.058))], 0.008, RUBBER, seg=6, fillet=0.03)
-        b.box(mat_vec(m, (0.37, HIP_Y + 0.105, 0.026)), (0.024, 0.012, 0.03), STEEL, bevel=0.003, rot=m)
-    # нижняя половина поворотного кольца и болты
-    b.lathe((0.0, HIP_Y + 0.098, 0.0), (0, 1, 0), [(0.2, 0.0), (0.36, 0.0), (0.36, 0.03), (0.345, 0.042), (0.2, 0.042)], IRON, seg=32)
+                bolt(b, (x + 0.064 * math.cos(a), y, z + 0.064 * math.sin(a)), (0, s, 0), r=0.008)
+    # верхняя половина короба: поворотное кольцо (низ) и болты
+    b.lathe((0.0, H + 0.088, 0.0), (0, 1, 0), [(0.2, 0.0), (0.36, 0.0), (0.36, 0.03), (0.345, 0.042), (0.2, 0.042)], IRON, seg=32)
     for k in range(16):
         a = 2 * math.pi * (k + 0.5) / 16
-        bolt(b, (0.325 * math.cos(a), HIP_Y + 0.098, 0.325 * math.sin(a)), (0, -1, 0), r=0.01)
-    # борта короба: гидроаккумуляторы по бокам, ребристые панели спереди и сзади
-    for k, n in enumerate(((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (-1.0, 0.0, 0.0), (0.0, 0.0, -1.0))):
-        m = frame(n)
-        at = lambda r, u, o: add(mat_vec(m, (r, u, o + 0.25)), (0.0, HIP_Y, 0.0))
-        t = mat_vec(m, (1.0, 0.0, 0.0))
-        if k % 2 == 0:
-            for u in (0.036, -0.03):
-                b.lathe(at(-0.15, u, 0.026), t, [(0.012, 0.0), (0.024, 0.01), (0.024, 0.29), (0.012, 0.3)], IRON, seg=12)
-                b.lathe(at(0.15, u, 0.026), t, [(0.009, 0.0), (0.009, 0.03)], STEEL, seg=8)
-                for r in (-0.09, 0.09):
-                    b.box(at(r, u, 0.026), (0.02, 0.054, 0.054), STEEL, bevel=0.004, rot=m)
-            b.box(at(0.205, 0.0, 0.016), (0.05, 0.12, 0.032), IRON, bevel=0.005, rot=m)
-            for u in (-0.04, 0.04):
-                bolt(b, at(0.205, u, 0.032), n, r=0.008)
-        else:
-            b.box(at(-0.04, 0.0, 0.006), (0.30, 0.13, 0.012), IRON, bevel=0.003, rot=m)
-            for i in range(9):
-                b.box(at(-0.17 + i * 0.0325, 0.0, 0.02), (0.01, 0.118, 0.022), IRON, bevel=0.002, rot=m)
-            b.box(at(0.175, -0.01, 0.018), (0.075, 0.085, 0.036), IRON, bevel=0.005, rot=m)
-            b.box(at(0.175, -0.01, 0.038), (0.05, 0.05, 0.006), STEEL, bevel=0.002, rot=m)
-            b.tube([at(0.175, 0.03, 0.02), at(0.175, 0.062, 0.02), at(0.10, 0.07, 0.014)], 0.007, RUBBER, seg=6, fillet=0.02)
-    # дно: полозья, лючок на болтах, сливная пробка
+        bolt(b, (0.325 * math.cos(a), H + 0.088, 0.325 * math.sin(a)), (0, -1, 0), r=0.01)
+    # шланги к ногам по верхней палубе, хомуты
+    for name, *_ in LEGS:
+        x, z = leg_corner(name)
+        s, t = (1.0 if x > 0 else -1.0), (1.0 if z > 0 else -1.0)
+        b.tube([(s * 0.1, H + 0.096, t * 0.36), (s * 0.17, H + 0.096, t * 0.4), (x - s * 0.06, H + 0.098, z - t * 0.02)], 0.008,
+               RUBBER, seg=6, fillet=0.03)
+        b.box((s * 0.15, H + 0.094, t * 0.39), (0.024, 0.012, 0.03), STEEL, bevel=0.003)
+    # борта: рёбра жёсткости и лючок на болтах
     for s in (-1.0, 1.0):
-        b.loft([[(s * 0.12 - 0.022, HIP_Y - 0.135, z), (s * 0.12 + 0.022, HIP_Y - 0.135, z), (s * 0.12 + 0.016, y, z * 0.92),
-                 (s * 0.12 - 0.016, y, z * 0.92)] for z, y in ((-0.2, HIP_Y - 0.165), (-0.15, HIP_Y - BELLY), (0.15, HIP_Y - BELLY),
-                                                             (0.2, HIP_Y - 0.165))], STEEL)
-    b.box((0.0, HIP_Y - 0.143, 0.0), (0.16, 0.01, 0.2), IRON, bevel=0.003)
+        for z in (-0.33, -0.05, 0.22):
+            b.box((s * (FRAME_W + 0.006), H - 0.02, z), (0.014, 0.17, 0.016), IRON, bevel=0.002)
+        hz = 0.33 if s < 0 else 0.33
+        b.box((s * (FRAME_W + 0.004), H - 0.025, hz), (0.008, 0.1, 0.1), IRON, bevel=0.003)
+        for dy in (-0.035, 0.035):
+            for dz in (-0.035, 0.035):
+                bolt(b, (s * (FRAME_W + 0.008), H - 0.025 + dy, hz + dz), (s, 0, 0), r=0.006, h=0.005)
+    # слева — ящик ЗИП на полосах, с крышкой и защёлкой
+    bc = (-FRAME_W - 0.06, H - 0.03, -0.19)
+    b.box(bc, (0.115, 0.15, 0.24), PAINT, bevel=0.008)
+    b.box(add(bc, (0.0, 0.082, 0.0)), (0.125, 0.016, 0.25), PAINT, bevel=0.004)
+    for z in (-0.07, 0.07):
+        b.box(add(bc, (-0.004, 0.0, z)), (0.125, 0.17, 0.02), IRON, bevel=0.003)
+    b.box(add(bc, (-0.061, 0.045, 0.0)), (0.01, 0.035, 0.045), STEEL, bevel=0.003)
+    b.box(add(bc, (-0.0585, -0.025, 0.0)), (0.003, 0.05, 0.13), MARK, bevel=0.0)
+    # справа — два гидроаккумулятора вдоль борта и коробка разводки
+    for y in (H + 0.035, H - 0.045):
+        b.lathe((FRAME_W + 0.028, y, -0.34), (0, 0, 1), [(0.012, 0.0), (0.026, 0.012), (0.026, 0.25), (0.012, 0.262)], IRON, seg=12)
+        for z in (-0.28, -0.13):
+            b.box((FRAME_W + 0.026, y, z), (0.058, 0.056, 0.018), STEEL, bevel=0.004)
+    b.box((FRAME_W + 0.03, H - 0.005, -0.05), (0.05, 0.1, 0.07), IRON, bevel=0.006)
+    b.tube([(FRAME_W + 0.055, H + 0.02, -0.05), (FRAME_W + 0.06, H + 0.05, -0.12), (FRAME_W + 0.052, H + 0.035, -0.2)], 0.007,
+           RUBBER, seg=6, fillet=0.02)
+    # нос: отбойник из трубы и буксирный крюк
+    for s in (-1.0, 1.0):
+        b.tube([(s * 0.12, H + 0.02, 0.55), (s * 0.15, H - 0.02, 0.63), (s * 0.08, H - 0.1, 0.66), (0.0, H - 0.11, 0.665)], 0.017,
+               STEEL, seg=8, fillet=0.03)
+        b.box((s * 0.12, H + 0.0, 0.555), (0.04, 0.05, 0.03), IRON, bevel=0.004)
+    b.box((0.0, H - 0.1, 0.585), (0.05, 0.03, 0.06), IRON, bevel=0.005)
+    b.torus((0.0, H - 0.1, 0.63), (1.0, 0.0, 0.0), 0.028, 0.009, STEEL, seg=12, tseg=6)
+    # корма: радиатор со смещением влево (между сложенными рычагами), выхлоп вправо-назад, фонарь
+    rc = (-0.03, H - 0.03, -0.62)
+    b.box(rc, (0.26, 0.17, 0.12), IRON, bevel=0.008)
+    for i in range(10):
+        b.box(add(rc, (-0.115 + i * 0.0255, 0.0, -0.065)), (0.008, 0.15, 0.016), IRON, bevel=0.0)
+    for s in (-1.0, 1.0):
+        b.box(add(rc, (s * 0.115, 0.0, 0.05)), (0.03, 0.04, 0.08), IRON, bevel=0.004)
+    b.tube([(0.07, H + 0.058, -0.6), (0.085, H + 0.1, -0.64), (0.09, H + 0.11, -0.73)], 0.024, IRON, seg=10, fillet=0.03)
+    b.lathe((0.09, H + 0.112, -0.725), (0, 0, -1), [(0.03, 0.0), (0.03, 0.03), (0.026, 0.034)], IRON, seg=10)
+    lamp = (-0.14, H + 0.05, -0.555)
+    b.box(lamp, (0.05, 0.035, 0.02), IRON, bevel=0.004)
+    b.box(add(lamp, (0.0, 0.0, -0.012)), (0.036, 0.022, 0.006), EYE, bevel=0.0)
+    # дно: полозья, лючок, сливная пробка
+    for s in (-1.0, 1.0):
+        b.loft([[(s * 0.12 - 0.022, H - 0.13, z), (s * 0.12 + 0.022, H - 0.13, z), (s * 0.12 + 0.016, y, z * 0.95),
+                 (s * 0.12 - 0.016, y, z * 0.95)] for z, y in ((-0.44, H - 0.15), (-0.36, H - BELLY), (0.36, H - BELLY),
+                                                               (0.46, H - 0.14))], STEEL)
+    b.box((0.0, H - 0.143, 0.0), (0.16, 0.01, 0.3), IRON, bevel=0.003)
     for sx in (-1.0, 1.0):
-        for z in (-0.08, 0.0, 0.08):
-            bolt(b, (sx * 0.068, HIP_Y - 0.148, z), (0, -1, 0), r=0.007)
-    b.lathe((0.0, HIP_Y - 0.148, 0.0), (0, -1, 0), [(0.02, 0.0), (0.02, 0.01), (0.012, 0.016)], STEEL, seg=6, smooth=False)
+        for z in (-0.12, 0.0, 0.12):
+            bolt(b, (sx * 0.068, H - 0.148, z), (0, -1, 0), r=0.007)
+    b.lathe((0.0, H - 0.148, -0.2), (0, -1, 0), [(0.02, 0.0), (0.02, 0.01), (0.012, 0.016)], STEEL, seg=6, smooth=False)
     return b
 
 
@@ -528,22 +574,33 @@ def make():
         rig.add(antenna(side, lean, length), bone, name=bone)
     L = leg_points()
     lc, lr = piston_lengths(L)
-    parts = leg_parts(L)
     pa, pb = piston(L["pa"], L["pb"], lc, lr)
-    for name, deg in LEGS:
+    kinds = {
+        "lever": (leg_parts(L), {"hip": (0.0, HIP_Y, 0.0), "thigh": L["P"], "shin": L["K"], "tarsus": L["A"], "foot": L["F"],
+                                 "pa": L["pa"], "pb": L["pb"]}, {"pa": pa, "pb": pb}),
+    }
+    S = strut_points()
+    kinds["strut"] = (strut_parts(S), {"hip": (0.0, HIP_Y, 0.0), "thigh": S["P"], "shin": S["K"], "tarsus": S["R"],
+                                       "foot": S["F"]}, {})
+    parent = {"hip": "chassis", "thigh": "hip", "shin": "thigh", "tarsus": "shin", "foot": "tarsus", "pa": "hip", "pb": "thigh"}
+    for name, kind, x, z, deg, mirror in LEGS:
+        parts, heads, extra = kinds[kind]
         m = rot_y(math.radians(deg))
-        o = mat_vec(m, (R_YAW, 0.0, 0.0))
-        w = lambda p: add(mat_vec(m, p), o)
-        rig.bone("hip_" + name, "chassis", w((0.0, HIP_Y, 0.0)))
-        rig.bone("thigh_" + name, "hip_" + name, w(L["P"]))
-        rig.bone("shin_" + name, "thigh_" + name, w(L["K"]))
-        rig.bone("tarsus_" + name, "shin_" + name, w(L["A"]))
-        rig.bone("foot_" + name, "tarsus_" + name, w(L["F"]))
-        rig.bone("pa_" + name, "hip_" + name, w(L["pa"]))
-        rig.bone("pb_" + name, "thigh_" + name, w(L["pb"]))
-        for bone, bodies in parts.items():
+        o = (x, 0.0, z)
+        flip = lambda p: (-p[0], p[1], p[2]) if mirror else p
+        for bone, head in heads.items():
+            rig.bone(bone + "_" + name, "chassis" if bone == "hip" else parent[bone] + "_" + name, flip(add(mat_vec(m, head), o)))
+        for bone, bodies in list(parts.items()) + [(k, [(v, None)]) for k, v in extra.items()]:
             for body, wear in bodies:
-                rig.add(body.placed(m, o), bone + "_" + name, wear=wear, edge=0.05 if wear else 0.12, name=bone + " " + name)
-        for bone, body in (("pa", pa), ("pb", pb)):
-            rig.add(body.placed(m, o), bone + "_" + name, name=bone + " " + name)
+                body = body.placed(m, o)
+                if mirror:
+                    body = mirrored(body)
+                rig.add(body, bone + "_" + name, wear=wear, edge=0.05 if wear else 0.12, name=bone + " " + name)
     return rig
+
+
+def mirrored(b):
+    """Отражение тела через плоскость x = 0 (обход граней разворачивается, чтобы нормали смотрели наружу)."""
+    out = Body()
+    out.faces = [(tuple(reversed([(-p[0], p[1], p[2]) for p in pts])), m, s) for pts, m, s in b.faces]
+    return out

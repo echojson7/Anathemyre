@@ -67,7 +67,7 @@ static bool mech_bind_skel(MechRig &r, u8 kind, const Skel &s) {
         for (u32 j = 0; j < 7; ++j) {
             char name[32];
             snprintf(name, sizeof name, "%s_%s", MECH_LEG_BONES[j], MECH_LEG_NAMES[k]);
-            r.leg[k].bone[j] = find(name, j < ML_PA || !tat);   // поршень у Тати — не у всех ног
+            r.leg[k].bone[j] = find(name, j < ML_PA);   // поршень — не у всех ног (у стоек Вежи и части ног Тати нет)
         }
     if (!ok) return false;
     Vec3 c0 = mech_head(s, r.chassis);
@@ -155,7 +155,7 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
     for (u32 a = 0; a < 2; ++a)
         rot[R.ant[a]] = quat_mul(quat_axis_angle(X, m.ant[a][0]), quat_axis_angle(Vec3{0, 0, 1}, m.ant[a][1]));
     Vec3 trans = mech_trans(m);
-    f32 foot_w[MECH_LEGS];
+    f32 foot_w[MECH_LEGS], comp[MECH_LEGS];
     Vec3 foot_n[MECH_LEGS];
     for (u32 k = 0; k < MECH_LEGS; ++k) {
         const MechLeg &l = m.leg[k];
@@ -187,9 +187,23 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
             Vec2 d = wpos_delta_xz(m.at, p);
             Vec3 b = mech_to_body(m.yaw, Vec3{d.x, p.y + LD.foot_h - m.at.y, d.y}) - trans;
             r = mech_leg_reach(L, quat_rotate(quat_conj(tilt), b));
+            // Лапа Вежи за осью поворота (стойка на рывке, рычаг под рамой): бедро не разворачивается кругом, нога
+            // тянется к лапе назад в своей плоскости
+            if (m.kind == MECH_VEZHA && f_abs(r.yaw) > 0.5f * PI_F) {
+                r.yaw = mech_wrap(r.yaw + PI_F);
+                r.x = -r.x - 2.0f * L.u;
+            }
         }
         f32 a, sh, ta;
-        mech_leg_solve(L, LD, r.x, r.y, &a, &sh, &ta);
+        // Шток в голени: нога короче, лапа там же; вытянутой ноге шток отдаёт ход, чтобы достать до опоры
+        MechLegRig Lc = L;
+        comp[k] = 0.0f;
+        if (LD.mode == MECH_LEG_SLIDE) {
+            f32 room = L.l1 + L.l2 + L.l3 - 0.02f - f_sqrt(r.x * r.x + r.y * r.y);
+            comp[k] = f_clamp(f_min(l.comp, room), 0.0f, l.comp);
+            Lc.l3 -= comp[k];
+        }
+        mech_leg_solve(Lc, LD, r.x, r.y, &a, &sh, &ta);
         // Ось сгиба ноги в бинде: поперёк ноги, x ноги × вверх
         Vec3 z = cross(L.dir, Y);
         f32 da = a - L.a1, ds = sh - L.a2, dt = ta - L.a3;
@@ -220,6 +234,14 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
         rot[j] = quat_between(-d0, quat_rotate(quat_conj(wr[j]), -d));
     }
     pose_world(s, rot, R.chassis, &trans, wr, wp);
+    // Телескоп: шток и лапа уходят по оси голени на величину сжатия (поворот у них как у голени)
+    for (u32 k = 0; k < MECH_LEGS; ++k) {
+        if (comp[k] == 0.0f) continue;
+        const i32 *B = R.leg[k].bone;
+        Vec3 ax = normalize(wp[B[ML_FOOT]] - wp[B[ML_SHIN]]) * comp[k];
+        wp[B[ML_TARSUS]] = wp[B[ML_TARSUS]] - ax;
+        wp[B[ML_FOOT]] = wp[B[ML_FOOT]] - ax;
+    }
     if (palette) pose_palette_world(s, wr, wp, palette);
 }
 
