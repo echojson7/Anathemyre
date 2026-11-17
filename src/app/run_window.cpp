@@ -286,8 +286,9 @@ int run_window(const Args &a, AppMemory &m) {
         // Точка старта из сцены (строка start, docs/text.md): сейчас — у входа в Остов в пустыне
         const f32 deg = PI_F / 180.0f;
         cam.yaw = w.start.yaw * deg;
-        cam.pitch = w.start.pitch * deg;
         cam.dist = w.start.dist;
+        // Наклон от расстояния включён — старт по кривой (свой наклон игрока ноль): колесо потом не уводит взгляд вверх
+        cam.pitch = set.cam_tilt_zoom ? view_camera_auto_pitch(cam.dist) : w.start.pitch * deg;
         cam.pivot.x = w.start.x;
         cam.pivot.z = w.start.z;
         wpos_rebase(cam.pivot);
@@ -295,7 +296,7 @@ int run_window(const Args &a, AppMemory &m) {
         cam.pivot.z = 10.0f;  // сцена этапа 1 — к северу от начала карты
     }
     if (a.pivot_above > CAM_PIVOT_UNSET) cam.pivot_above = a.pivot_above;
-    cam.exact = a.cam_set && a.frames;  // снимок: без сглаживания, кадр не зависит от времени кадра
+    cam.exact = a.cam_set && a.frames && !a.cam_play;  // снимок: без сглаживания, кадр не зависит от времени кадра
     view_camera_place(cam, w.terrain, &w.coll);
     TimeCtl tc;
     DebugState ds;
@@ -482,7 +483,8 @@ int run_window(const Args &a, AppMemory &m) {
             render_set_vsync(vs);
             vsync_applied = vs;
         }
-        cam.settings = CameraSettings{set.mouse_sens, set.invert_y, set.fov_deg, set.invert_x, set.cam_smooth};
+        cam.settings = CameraSettings{set.mouse_sens,    set.invert_y,       set.fov_deg,      set.invert_x, set.cam_smooth,
+                                      set.cam_tilt_zoom, set.cam_zoom_cursor, set.cam_edge_pan, set.cam_pan_speed};
         bool pixel = ds.pixel || a.cells;
         unfair_modes(unfair, sizeof unfair, pixel, a.nogcache || ds.gcache_off, a.test_lights || ds.test_lights,
                      a.froxel_heat || ds.froxel_heat, a.validation || a.gpu_validation, vsync_applied,
@@ -494,7 +496,14 @@ int run_window(const Args &a, AppMemory &m) {
         if (ds.pause_toggle) tc.paused = !tc.paused;
         if (ds.speed_set >= 0 && (u32)ds.speed_set < ANA_COUNTOF(SPEEDS)) tc.speed = (u32)ds.speed_set;
         if (a.spin != 0.0f) cam.yaw += a.spin * (3.14159265f / 180.0f) * (f32)dt;
-        view_camera_control(cam, win, (f32)dt, w.terrain, &w.coll);
+        // Край экрана — только когда мышь над окном, а не над интерфейсом и не в меню
+        bool edge = in.mouse_in && !menu.open && !(hud_on && ui_wants_mouse()) && !a.frames;
+        if (a.cam_play) {
+            // Видео камеры: ввод камеры — записанный показ (cam_test.cpp), кадр — 1/30 с
+            f32 t0 = (f32)frames / 30.0f, t1 = (f32)(frames + 1) / 30.0f;
+            cam_show_input((t0 + t1) * 0.5f, t0, t1, 1.0f / 30.0f, ww, wh, win);
+        }
+        view_camera_control(cam, win, (f32)dt, ww, wh, edge, w.terrain, &w.coll);
         // Пока игрок крутит или тащит камеру, курсор спрятан и не упирается в край экрана
         if (cam.grab != mouse_grab && !a.frames) platform_mouse_grab(mouse_grab = cam.grab);
 

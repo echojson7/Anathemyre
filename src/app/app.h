@@ -54,6 +54,8 @@ struct Args {
     f32 spin = 0.0f;      // --spin град/с: камера поворачивается сама (видео мерцания света при повороте, docs/lcache.md)
     f32 pivot_above = -1e9f;          // --pivot м: опора камеры от земли (крупные планы стенда; ниже нуля — под землёй)
     const char *video = nullptr;      // --video префикс: каждый кадр в префикс_NNNN.bmp, мир идёт ровно 1/30 с на кадр
+    const char *cam_test = nullptr;   // --cam-test файл.txt: проверка камеры записанным вводом без окна и выход
+    bool cam_play = false;            // --cam-play: камера окна по записанному показу (видео камеры, с --video)
     i32 select = -1;                  // --select место: выбрать человека (и --follow — камера за ним)
     bool follow = false;
     const char *mech = nullptr;       // --mech pack|stand|walk|show: шагающая турель в одном режиме (кадры и видео)
@@ -102,6 +104,9 @@ int run_replay(const Args &a, AppMemory &m);
 int run_terrain_map(const Args &a, AppMemory &m);
 int run_walk_map(const Args &a, AppMemory &m);
 int run_mech_trace(const Args &a, AppMemory &m);
+int run_cam_test(const Args &a, AppMemory &m);  // cam_test.cpp
+struct Input;
+void cam_show_input(f32 t, f32 t_prev, f32 t_next, f32 dt, i32 w, i32 h, Input &in);
 
 // Записать запись повтора в файл; false — ошибка с сообщением в журнале
 struct Recorder;
