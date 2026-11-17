@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Лист просмотра машины на костях (docs/vezha.md): кадр трассировкой Blender без игры, в позе.
 
-    python tools/parts/rig_preview.py <папка> [--shot имя поза cx cy cz tx ty tz]… [--lens 35] [--size 1200 800]
-                                      [--samples 48] [--hull град] [--gun град] [--parts]
+    python tools/parts/rig_preview.py <папка> [--rig vezha|tat] [--shot имя поза cx cy cz tx ty tz]… [--lens 35]
+                                      [--size 1200 800] [--samples 48] [--hull град] [--gun град] [--parts]
 
-Позы — vezha_pose.POSES (stand, turret, high, low). Каждый --shot — кадр <папка>/<имя>.jpg.
+Позы — vezha_pose.POSES (stand, pack, high, low) и tat_pose.POSES (stand, high, low, prone, pack). Каждый --shot —
+кадр <папка>/<имя>.jpg.
 
 Поверхности здесь не игровые: ровные цвета материалов, сколы краски — по доле износа вершины, затенение — из
 вершин. Нужен для формы, пропорций и поз; свет и узор оценивают в игре.
@@ -20,8 +21,6 @@ import numpy as np  # noqa: E402
 from mathutils import Matrix, Vector  # noqa: E402
 
 import rig as R  # noqa: E402
-import vezha  # noqa: E402
-import vezha_pose  # noqa: E402
 
 COLORS = {  # цвет, шероховатость, металл
     "vezha_paint": ((0.55, 0.24, 0.035), 0.6, 0.0), "vezha_worn": ((0.20, 0.17, 0.15), 0.5, 0.8),
@@ -29,7 +28,11 @@ COLORS = {  # цвет, шероховатость, металл
     "rubber_black": ((0.02, 0.02, 0.022), 0.8, 0.0), "vezha_glass": ((0.01, 0.012, 0.015), 0.08, 0.0),
     "vezha_eye": ((1.0, 0.07, 0.03), 0.4, 0.0), "vezha_mark": ((0.03, 0.028, 0.025), 0.7, 0.0),
     "vezha_brass": ((0.62, 0.45, 0.17), 0.35, 1.0), "vezha_canvas": ((0.20, 0.185, 0.13), 0.9, 0.0),
+    "tat_paint": ((0.075, 0.07, 0.06), 0.65, 0.0), "tat_worn": ((0.22, 0.20, 0.18), 0.45, 0.8),
+    "tat_iron": ((0.05, 0.048, 0.046), 0.55, 0.7), "tat_lens": ((0.45, 0.95, 0.55), 0.3, 0.0),
+    "tat_mark": ((0.42, 0.38, 0.30), 0.7, 0.0), "tat_net": ((0.17, 0.15, 0.10), 0.95, 0.0),
 }
+GLOW = ("vezha_eye", "tat_lens")
 
 
 def take(args, flag, n, default):
@@ -56,7 +59,15 @@ def main():
         del args[i:i + 9]
     if not shots:
         shots = [("stand", "stand", [3.2, 1.9, 3.4], [0.0, 0.95, 0.1])]
-    rig = vezha.make()
+    name = "vezha"
+    if "--rig" in args:
+        i = args.index("--rig")
+        name = args[i + 1]
+        del args[i:i + 2]
+    import importlib
+    global pose_mod
+    pose_mod = importlib.import_module(name + "_pose")
+    rig = importlib.import_module(name).make()
     built = R.build(rig, log=print if "--parts" in args else None)
     print("треугольников %d, незакрытых рёбер %d" % (len(built["tris"]), built["open"]))
     for name, pose_name, cam, to in shots:
@@ -64,7 +75,7 @@ def main():
 
 
 def render(rig, built, path, pose_name, cam, to, lens, size, samples, hull_deg, gun_deg):
-    rot, trans = vezha_pose.pose(rig, pose_name, hull=math.radians(hull_deg), gun=math.radians(gun_deg))
+    rot, trans = pose_mod.pose(rig, pose_name, hull=math.radians(hull_deg), gun=math.radians(gun_deg))
     mats = R.pose(rig, rot, trans)
     heads = np.asarray([b[2] for b in rig.bones])
     P = np.asarray([v[0] for v in built["verts"]], dtype=np.float64)
@@ -78,7 +89,7 @@ def render(rig, built, path, pose_name, cam, to, lens, size, samples, hull_deg, 
             out[sel] += w[sel, None] * ((P[sel] - heads[b]) @ Rm.T + p)
     bpy.ops.wm.read_factory_settings(use_empty=True)
     sc = bpy.context.scene
-    me = bpy.data.meshes.new("vezha")
+    me = bpy.data.meshes.new(rig.name)
     me.from_pydata([tuple(p) for p in out], [], built["tris"])
     wear = me.color_attributes.new("wear", 'FLOAT_COLOR', 'POINT')
     for i, v in enumerate(built["verts"]):
@@ -131,14 +142,14 @@ def render(rig, built, path, pose_name, cam, to, lens, size, samples, hull_deg, 
             nt.links.new(less.outputs[0], mr.inputs["Factor"])
             nt.links.new(mr.outputs["Result"], bs.inputs["Metallic"])
             bs.inputs["Roughness"].default_value = r0
-            if built["mats"][v[2]] == "vezha_eye":
+            if built["mats"][v[2]] in GLOW:
                 bs.inputs["Emission Color"].default_value = (*c0, 1)
                 bs.inputs["Emission Strength"].default_value = 6.0
             slots[key] = len(me.materials)
             me.materials.append(m)
         me.polygons[ti].material_index = slots[key]
     # нормали вершин — из сетки (гладкие грани)
-    ob = bpy.data.objects.new("vezha", me)
+    ob = bpy.data.objects.new(rig.name, me)
     sc.collection.objects.link(ob)
     for p in me.polygons:
         p.use_smooth = False

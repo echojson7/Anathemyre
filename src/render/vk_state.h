@@ -246,6 +246,7 @@ struct WorldGpu {
     VkDescriptorPool pool = VK_NULL_HANDLE;
     VkDescriptorSet set = VK_NULL_HANDLE;
     VkPipeline pipe_vis_mesh = VK_NULL_HANDLE, pipe_vis_ground = VK_NULL_HANDLE, pipe_style = VK_NULL_HANDLE;
+    VkPipeline pipe_vis_veil = VK_NULL_HANDLE;   // кластеры под мороком: сито пикселей (vis_veil.frag)
     VkPipeline pipe_cull_count = VK_NULL_HANDLE, pipe_cull_scan = VK_NULL_HANDLE, pipe_cull_write = VK_NULL_HANDLE;
     VkPipeline pipe_light[TILE_KINDS] = {}, pipe_tiles = VK_NULL_HANDLE, pipe_ground_bake = VK_NULL_HANDLE;
     u32 vis_clusters = 0;  // видимых кластеров в последнем прочитанном кадре
@@ -453,6 +454,7 @@ struct DiagGpu {
 // в data/shaders/common.glsl
 constexpr u32 GEOMETRY_MAX_CLUSTERS = 1u << 18;  // кластеров всех сеток
 constexpr u32 VIS_MAX_CLUSTERS = 1u << 18;       // видимых кластеров за кадр
+constexpr u32 VIS_VEIL_MAX = 4096;               // кластеров под мороком (docs/tat.md): места за списком кадра, VEIL_MAX в cull.glsl
 struct MeshGpu {
     u32 first_vertex, first_index, lod_count, pad;
     f32 sphere[4];  // сфера сетки в её осях

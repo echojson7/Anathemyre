@@ -104,11 +104,13 @@ struct MechView {
     MechRig rig[MECH_KINDS];
     Mech mech[MECH_MAX];
     u8 demo;
+    bool veil_demo;   // --mech veil: стоит, морок по кругу (только у Тати)
+    bool prone_demo;  // --mech prone: лёжка и выстрелы (только у Тати)
     i8 pick;          // за какой машиной камера и след (--mech-kind): вид или −1 — первая
 };
 
 void mech_view_init(MechView &mv);
-// Режим по слову ключа --mech (pack, stand, walk, show); false — слово не то
+// Режим по слову ключа --mech (pack, stand, walk, show; у Тати veil — морок по кругу, prone — лёжка); false — слово не то
 bool mech_view_demo(MechView &mv, const char *name);
 // Вид для --mech-kind (vezha, tat); false — слово не то
 bool mech_view_pick(MechView &mv, const char *name);

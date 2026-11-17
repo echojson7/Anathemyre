@@ -141,7 +141,7 @@ layout(buffer_reference, scalar) readonly buffer Clusters { Cluster v[]; };
 layout(buffer_reference, scalar) buffer VisClusters { uvec2 v[]; };  // экземпляр, кластер (номер в Clusters)
 layout(buffer_reference, scalar) buffer DrawCmds { DrawCmd v[]; };
 // Счёт отсечения: число вызовов (его читает vkCmdDrawIndexedIndirectCount), на экземпляр — видимые кластеры
-// и LOD (count | lod << 29) и начало его кластеров в списке кадра
+// и LOD (count | lod << 29) и начало его кластеров в списке кадра; veil_count — вызовы морока (места с vis_max)
 // Скиннинг людей (src/render/vk_skin.cpp, skin.comp): работа на человека, палитры костей (3 строки vec4 на
 // кость), запись общих вершин и кластеров
 struct SkinJob {
@@ -160,7 +160,7 @@ layout(buffer_reference, scalar) buffer ClustersW { Cluster v[]; };
 layout(buffer_reference, scalar) buffer SkinPrev { uvec2 v[]; };
 struct MeshPrev { int cx, cz; float x, y, z; uint rot_xy, rot_zw; float scale; uint frame, pad0, pad1, pad2; };
 layout(buffer_reference, scalar) readonly buffer MeshPrevs { MeshPrev v[]; };
-layout(buffer_reference, scalar) buffer CullData { uint draw_count, pad0, pad1, pad2; uint count[65536]; uint offset[65536]; };
+layout(buffer_reference, scalar) buffer CullData { uint draw_count, veil_count, pad1, pad2; uint count[65536]; uint offset[65536]; };
 
 // Не readonly: через него compute-шейдеры неба пишут свои таблицы (sky_*), сам буфер кадра никто не пишет
 layout(buffer_reference, scalar) buffer FrameData {

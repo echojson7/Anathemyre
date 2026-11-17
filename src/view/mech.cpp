@@ -22,7 +22,11 @@ bool mech_view_demo(MechView &mv, const char *name) {
         mv.demo = (u8)(MECH_DEMO_PACK + i);
         return true;
     }
-    return false;
+    if (strcmp(name, "veil") && strcmp(name, "prone")) return false;
+    mv.demo = MECH_DEMO_STAND;
+    mv.veil_demo = !strcmp(name, "veil");
+    mv.prone_demo = !mv.veil_demo;
+    return true;
 }
 
 bool mech_view_pick(MechView &mv, const char *name) {

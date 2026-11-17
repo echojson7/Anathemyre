@@ -55,7 +55,7 @@ struct Args {
     const char *video = nullptr;      // --video префикс: каждый кадр в префикс_NNNN.bmp, мир идёт ровно 1/30 с на кадр
     i32 select = -1;                  // --select место: выбрать человека (и --follow — камера за ним)
     bool follow = false;
-    const char *mech = nullptr;       // --mech pack|stand|walk|show: шагающая турель в одном режиме (кадры и видео)
+    const char *mech = nullptr;       // --mech pack|stand|walk|show|veil|prone: шагающая машина в одном режиме (кадры и видео)
     bool people_lines = false;        // --people-lines: капсулы шага, путь выбранного и след стоп (отладка, при отрезках)
     bool sides = false;               // --sides: стороны боя и цели (отладка, при отрезках; с --brawl — сами)
     const char *go = nullptr;         // --go "кадр место x z y аллюр; …": приказы «идти» по кадрам (видео, проверка)
