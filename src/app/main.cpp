@@ -32,7 +32,7 @@ static void usage() {
     log_info("           [--scans]                                                    поверхности из сканов CC0, где есть (docs/scans.md)");
     log_info("           [--smpages] [--smonly]                                       страницы теней поверх кадра, только тень (docs/shadow.md)");
     log_info("           [--sdfsky] [--sdffield] [--nosdf]                            видимость неба, поле расстояний, свет без поля (docs/sdf.md)");
-    log_info("           [--gionly] [--nogi]                                          только непрямой свет, свет без зондов (docs/gi.md)");
+    log_info("           [--gionly] [--nogi] [--gicells] [--nocells]                  только непрямой свет, без зондов, ячейки света, кадр без ячеек (docs/gi.md, docs/lcache.md)");
     log_info("           [--tonemap agx|aces] [--light low|medium|high|ultra]         тонмаппинг, качество света (docs/light.md)");
     log_info("           [--nolocal]                                                  без местной экспозиции (было/стало, docs/light.md)");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
@@ -45,6 +45,7 @@ static void usage() {
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
     log_info("           --look sun|moon град                                          взгляд по азимуту светила + поворот (с --cam: кадры неба)");
     log_info("           --frames N --video префикс                                   каждый кадр → префикс_0000.bmp… (стенд: 1/30 с на кадр)");
+    log_info("           [--spin град/с]                                              камера поворачивается сама (видео мерцания при повороте)");
     log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines] [--sides]  выбрать, камера за ним, приказы, отладка");
     log_info("           [--mech pack|stand|walk|show] [--mech-follow]                шагающая турель: лежит, стоит, обходит, показ всего по порядку; камера за ней (docs/vezha.md)");
     log_info("           --frames N --mech-trace файл.txt                             след её движения без окна: N кадров по 1/30 с, строка чисел на кадр");
@@ -155,6 +156,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--nosdf")) a.sdf_view = RENDER_SDF_OFF;
         else if (!strcmp(s, "--gionly")) a.gi_view = RENDER_GI_ONLY;
         else if (!strcmp(s, "--nogi")) a.gi_view = RENDER_GI_OFF;
+        else if (!strcmp(s, "--gicells")) a.gi_view = RENDER_GI_CELLS;
+        else if (!strcmp(s, "--nocells")) a.gi_view = RENDER_GI_PROBES;
         else if (!strcmp(s, "--nolocal")) a.local_off = true;
         else if (!strcmp(s, "--tonemap")) {
             a.tonemap = next && !strcmp(next, "agx") ? (i32)RENDER_TONEMAP_AGX : next && !strcmp(next, "aces") ? (i32)RENDER_TONEMAP_ACES : -1;
@@ -188,6 +191,10 @@ int main(int argc, char **argv) {
             for (u32 k = 0; next && k < ANA_COUNTOF(CLOCKS); ++k)
                 if (!strcmp(next, CLOCKS[k])) a.clock = (i32)k;
             ok = a.clock >= 0;
+            i++;
+        }
+        else if (!strcmp(s, "--spin")) {
+            ok = next && parse_f32(Str{next, (u32)strlen(next)}, a.spin);
             i++;
         }
         else if (!strcmp(s, "--look")) {

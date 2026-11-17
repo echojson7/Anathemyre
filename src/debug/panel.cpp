@@ -97,6 +97,10 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
         pair_value(f, "зонды: посчитано · лучей", in.work_gi[0], in.work_gi[1]);
         snprintf(t, sizeof t, "%u", in.work_gi[2]);
         ui_value(f, "зонды: выборок поля", t);
+        // Ячейки света (docs/lcache.md): живые и новые в кадре; посчитанные и их лучи; без места и отложенные
+        pair_value(f, "ячейки: живых · новых", in.work_lc[0], in.work_lc[1]);
+        pair_value(f, "ячейки: посчитано · лучей", in.work_lc[2], in.work_lc[3]);
+        pair_value(f, "ячейки: без места · ждут", in.work_lc[4], in.work_lc[5]);
     }
     // Переполнения (docs/graph.md «Переполнения»): что-то не нарисовано или считается медленным путём
     for (u32 i = 0; i < in.overflows && i < DEBUG_MAX_OVERFLOWS; ++i) {
@@ -164,7 +168,7 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_choice(f, "тени солнца", d.shadow_pages, SM_VIEWS, ANA_COUNTOF(SM_VIEWS));
     static const char *const SDF_VIEWS[] = {"кадр", "только небо", "поле", "выкл"};
     ui_choice(f, "поле расстояний", d.sdf_view, SDF_VIEWS, ANA_COUNTOF(SDF_VIEWS));
-    static const char *const GI_VIEWS[] = {"кадр", "только он", "без зондов"};
+    static const char *const GI_VIEWS[] = {"кадр", "только он", "без зондов", "ячейки", "без ячеек"};
     ui_choice(f, "непрямой свет", d.gi_view, GI_VIEWS, ANA_COUNTOF(GI_VIEWS));
     // Свет (docs/light.md): тонмаппинг на выбор по кадрам; освещённость земли и глаз — «Единицы», «Экспозиция»
     ui_section(f, "СВЕТ");

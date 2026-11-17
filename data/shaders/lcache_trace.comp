@@ -1,0 +1,232 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Лучи ячеек света (docs/lcache.md): группа — работа (ячейка), поток — луч. Точка ячейки — на поверхности внутри
+// её кубика: из центра с наружной стороны по полю против нормали до первой заслонки (земля — сетка высот лучей),
+// от мирового номера, не от пикселя. Лучи — полусфера над стороной нормали (решётка Фибоначчи, поворот — от
+// мирового номера и номера в круге из LC_K), тот же луч, что у зондов (gi_ray.glsl): в точке попадания солнце с
+// тенью, огни и свет зондов — второй отскок. Свет копится гармониками L1 (свёртка с косинусом уже внутри):
+// показывается средним за круг, молодая ячейка — бегущим средним каждый счёт. Снимок — полный круг за раз
+#include "gi_ray.glsl"
+#include "lcache.glsl"
+layout(local_size_x = 64) in;
+
+shared vec4 s_o;     // точка лучей (м от якоря); w — 1: поверхность нашлась
+shared uint s_back;  // лучей в обратную сторону граней (ячейка в заслонке)
+shared uint s_taps;
+shared vec4 s_r0[64], s_r1[64], s_r2[64];  // суммы гармоник потоков: a0.rgb ax.r | ax.gb ay.rg | ay.b az.rgb
+
+// Подъём точки над поверхностью: лучи начинаются чуть дальше (gi_ray), а поле у угла неточно на полвокселя
+float lc_lift(float s) { return 0.05 + 0.05 * s; }
+
+// Зазор от всех заслонок, не только своей: точка в углу (бок колонны у пола) иначе сидит в полу, и лучи вниз
+// попадают в обратную сторону его граней
+vec3 lc_clear(vec3 o, float s, bool soil) {
+    float lift = lc_lift(s);
+    for (int i = 0; i < 2; ++i) {
+        float d = gi_dist(o, 0, soil);
+        if (d >= lift) break;
+        vec3 gr = gi_grad(o, 0, soil);
+        float gl = length(gr);
+        if (gl < 1e-6) break;
+        o += gr / gl * (lift - d);
+    }
+    return o;
+}
+
+// Луч поиска из p против нормали до первой заслонки не дальше 1.5 стороны. Шаг не меньше 1/8 стороны: пол рядом
+// (бок колонны у пола) держит поле малым, и мелкие шаги не доходят до грани. Перешагнули — уточнить пополам
+bool lc_march(vec3 p, vec3 N, float s, float eps, bool soil, out vec3 o) {
+    float t = 0.0, tp = 0.0;
+    o = p;
+    for (int i = 0; i < 16; ++i) {
+        float d = gi_dist(p - N * t, 0, soil);
+        if (d < eps) {
+            for (int j = 0; j < 3; ++j) {
+                float tm = 0.5 * (tp + t);
+                if (gi_dist(p - N * tm, 0, soil) < eps) t = tm;
+                else tp = tm;
+            }
+            o = lc_clear(p - N * (t - lc_lift(s)), s, soil);
+            return true;
+        }
+        tp = t;
+        t += max(d, 0.125 * s);
+        if (t > 1.5 * s) break;
+    }
+    return false;
+}
+
+// Точка ячейки: от наружной стороны кубика (центр + 0.75 стороны по нормали) поиском против нормали. Старт в
+// заслонке (кубик стены захватил пол: центр в плите, а стена начинается над ней) или мимо — ещё 4 старта, сдвинутые
+// на 0.45 стороны поперёк нормали; порядок постоянный, значение — от мирового номера. Нет поверхности — w = 0
+vec4 lc_origin(uint key, ivec3 home) {
+    int k = lc_key_level(key), a = lc_key_axis(key);
+    float s = lc_size(k);
+    vec3 N = lc_axis_n(a);
+    vec3 c = lc_center(home, k, a);
+    if ((key & LC_GROUND) != 0u && a == 2) return vec4(c.x, gi_ground_h(c) + lc_lift(s), c.z, 1.0);
+    bool soil = gi_under(c);
+    vec3 p = c + N * (0.75 * s);
+    float eps = 0.01 + 0.04 * s;
+    vec3 t1 = vec3(0.0), t2 = vec3(0.0);
+    t1[((a >> 1) + 1) % 3] = 0.45 * s;
+    t2[((a >> 1) + 2) % 3] = 0.45 * s;
+    vec3 offs[5] = vec3[5](vec3(0.0), t1, -t1, t2, -t2);
+    for (int i = 0; i < 5; ++i) {
+        vec3 q = p + offs[i], o;
+        if (gi_dist(q, 0, soil) < eps) continue;
+        if (lc_march(q, N, s, eps, soil, o)) return vec4(o, 1.0);
+    }
+    // Мимо по оси (грань уже ячейки: бок колонны, мелкий предмет) — к ближней заслонке по наклону поля; годится, если
+    // она смотрит в сторону ячейки и не дальше стороны от оси кубика
+    vec3 q = p;
+    for (int i = 0; i < 6; ++i) {
+        float d = gi_dist(q, 0, soil);
+        vec3 gr = gi_grad(q, 0, soil);
+        float gl = length(gr);
+        if (gl < 1e-6) break;
+        gr /= gl;
+        if (d < eps) {
+            vec3 off = q - c;
+            off -= N * dot(off, N);
+            if (dot(gr, N) > 0.5 && max(abs(off.x), max(abs(off.y), abs(off.z))) < s) return vec4(lc_clear(q + N * lc_lift(s), s, soil), 1.0);
+            break;
+        }
+        q -= gr * d;
+    }
+    return vec4(p, 0.0);
+}
+
+// Поворот решётки вокруг нормали: от мирового номера, уровня, стороны и номера в круге (от кадра не зависит)
+float lc_turn(ivec3 home, uint key, uint k) {
+    uint h = lc_hash(uint(home.x) * 0x9E3779B1u ^ lc_hash(uint(home.y) * 0x85EBCA77u ^
+                     lc_hash(uint(home.z) ^ (key & 0x3Fu) * 0xC2B2AE3Du ^ k * 0x27D4EB2Fu)));
+    return 6.2831853 * float(h >> 8) / 16777216.0;
+}
+
+void main() {
+    FrameData f = pc.frame;
+    uint t = gl_LocalInvocationIndex;
+    uint g = gl_WorkGroupID.x;
+    uint nn = f.lc_jobs.cmd.w;
+    uint e = g < nn ? f.lc_jobs.v[g] : f.lc_jobs.v[LC_CAP + g - nn];
+    LcMeta m = f.lc_meta.v[e];
+    bool snap = f.lc_snap != 0u;
+    bool init = (m.state & (LC_INIT | LC_EMPTY)) != 0u;  // заново или была пустой: счёт с нуля
+    uint turn = init ? 0u : m.state & 3u;
+    if (t == 0u) {
+        s_o = lc_origin(m.key, m.home);
+        s_back = 0u;
+        s_taps = g_sdf_taps;
+        g_sdf_taps = 0u;
+    }
+    barrier();
+    vec4 o = s_o;
+    g_lamp_steps = max(lamp_steps(f.light_q) / 2u, 6u);
+    uint n = f.lc_rays_n;
+    int a = lc_key_axis(m.key);
+    vec3 N = lc_axis_n(a);
+    vec3 t1 = vec3(0.0), t2 = vec3(0.0);
+    t1[((a >> 1) + 1) % 3] = 1.0;
+    t2[((a >> 1) + 2) % 3] = 1.0;
+    vec3 a0 = vec3(0.0), ax = vec3(0.0), ay = vec3(0.0), az = vec3(0.0);
+    uint back = 0u;
+    uint rounds = snap ? LC_K : 1u;
+    if (o.w > 0.0 && t < n) {
+        for (uint q = 0u; q < rounds; ++q) {
+            // Полоса по высоте — своя у каждого поворота круга: за круг LC_K · n лучей лежат по высоте ровно
+            uint k = snap ? q : turn;
+            float z = 1.0 - (float(t) + (float(k) + 0.5) / float(LC_K)) / float(n);
+            float r = sqrt(max(1.0 - z * z, 0.0));
+            float ph = 2.39996323 * float(t) + lc_turn(m.home, m.key, k);
+            vec3 d = N * z + (t1 * cos(ph) + t2 * sin(ph)) * r;
+            bool b;
+            vec3 L = min(gi_ray(o.xyz, d, b).rgb, vec3(60000.0));
+            if (b) ++back;
+            // Гармоники L1 со свёрткой косинусом: E/π(n) = a0 + a1·n; у равномерной полусферы a0 = L/2, a1 = L·d
+            a0 += L;
+            ax += L * d.x;
+            ay += L * d.y;
+            az += L * d.z;
+        }
+    }
+    float inv = 1.0 / float(n * rounds);
+    a0 *= 0.5 * inv;
+    ax *= inv;
+    ay *= inv;
+    az *= inv;
+    s_r0[t] = vec4(a0, ax.r);
+    s_r1[t] = vec4(ax.gb, ay.rg);
+    s_r2[t] = vec4(ay.b, az);
+    if (back != 0u) atomicAdd(s_back, back);
+    atomicAdd(s_taps, g_sdf_taps);
+    barrier();
+    for (uint w = 32u; w > 0u; w >>= 1u) {
+        if (t < w) {
+            s_r0[t] += s_r0[t + w];
+            s_r1[t] += s_r1[t + w];
+            s_r2[t] += s_r2[t + w];
+        }
+        barrier();
+    }
+    if (t != 0u) return;
+    atomicAdd(f.stats.v[STAT_LC_TAPS], s_taps);
+    uint cnt = (m.state >> 2) & 7u;
+    // Поверхности нет или больше четверти лучей — в обратную сторону граней: ячейка пустая, свет её не читает;
+    // счёт как у старой (обновится в свой черёд — вдруг поверхность появилась)
+    if (o.w <= 0.0 || s_back * 4u > n * rounds) {
+        f.lc_meta.v[e].state = LC_EMPTY | LC_K << 2;
+        return;
+    }
+    atomicAdd(f.stats.v[STAT_LC_RAYS], n * rounds);
+    vec4 r0 = s_r0[0], r1 = s_r1[0], r2 = s_r2[0];
+    vec3 c0 = r0.rgb, cx = vec3(r0.a, r1.xy), cy = vec3(r1.zw, r2.x), cz = r2.yzw;
+    LcAcc acc = f.lc_acc.v[e];
+    vec3 s0, sx, sy, sz;
+    if (snap || init) {
+        acc.a = vec4(c0, cx.r);
+        acc.b = vec4(cx.gb, cy.rg);
+        acc.c = vec4(cy.b, cz);
+        s0 = c0;
+        sx = cx;
+        sy = cy;
+        sz = cz;
+        turn = snap ? 0u : 1u;
+        cnt = snap ? LC_K : 1u;
+        f.lc_show.v[e] = lc_pack(s0, sx, sy, sz);
+    } else {
+        if (turn == 0u) {
+            acc.a = r0;
+            acc.b = r1;
+            acc.c = r2;
+        } else {
+            acc.a += r0;
+            acc.b += r1;
+            acc.c += r2;
+        }
+        bool young = cnt < LC_K;
+        bool ease = f.lc_ease != 0u && !young;
+        bool show = young || ease || turn == LC_K - 1u;
+        if (show) {
+            vec4 m0 = acc.a / float(turn + 1u), m1 = acc.b / float(turn + 1u), m2 = acc.c / float(turn + 1u);
+            vec3 n0 = m0.rgb, nx = vec3(m0.a, m1.xy), ny = vec3(m1.zw, m2.x), nz = m2.yzw;
+            if (!young) {
+                // Конец круга: новое среднее со старым показанным долей lc_hyst (как у зондов). Быстрое светило
+                // (ускоренное время): каждый счёт малым шагом к среднему круга — за круг тот же сдвиг (gi_blend.comp)
+                vec3 o0, ox, oy, oz;
+                lc_unpack(f.lc_show.v[e], o0, ox, oy, oz);
+                float hy = ease ? 1.0 - (1.0 - f.lc_hyst) / float(LC_K) * 1.5 : f.lc_hyst;
+                n0 = mix(n0, o0, hy);
+                nx = mix(nx, ox, hy);
+                ny = mix(ny, oy, hy);
+                nz = mix(nz, oz, hy);
+            }
+            f.lc_show.v[e] = lc_pack(n0, nx, ny, nz);
+        }
+        turn = (turn + 1u) % LC_K;
+        cnt = min(cnt + 1u, LC_K);
+    }
+    f.lc_acc.v[e] = acc;
+    f.lc_meta.v[e].org = o.xyz;
+    f.lc_meta.v[e].state = turn | cnt << 2 | LC_LIT;
+}

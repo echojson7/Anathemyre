@@ -79,7 +79,7 @@ Res g_res[RG_MAX_RES];
 u32 g_nres = 1;  // 0 — «нет ресурса»
 Pass g_pass[RG_MAX_PASSES];
 u32 g_npass = 0;
-Use g_use[RG_MAX_PASSES * 8];
+Use g_use[RG_MAX_PASSES * 10];
 u32 g_nuse = 0;
 u32 g_barriers = 0;
 bool g_overflow_logged = false;

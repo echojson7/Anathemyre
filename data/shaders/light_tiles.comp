@@ -8,16 +8,27 @@
 // страница текселя отмечается прочитанной или заявляется на запекание. Пиксель земли мимо кеша (крутой склон)
 // уводит плитку в «землю на пиксель», а если в ней есть и сетки — в «смесь».
 // И заявки страниц теней солнца (docs/shadow.md): точка каждого пикселя земли и сеток заявляет страницы,
-// которые прочтёт свет его ячейки
+// которые прочтёт свет его ячейки. И заявки ячеек света (docs/lcache.md): ячейки под точкой пикселя; соседи по
+// плитке с той же главной ячейкой заявок не повторяют
 #define RESOLVE_GROUND true
 #define RESOLVE_MESH true
 #include "resolve.glsl"
 #include "gcache.glsl"
 #include "shadow.glsl"
+#define LC_CLAIM
+#include "lcache.glsl"
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0, r32ui) uniform readonly uimage2D u_vis;
 
 shared uint s_has;  // 1 — небо, 2 — земля, 4 — сетки, 8 — земля мимо кеша
+shared uint s_lc[64];  // главная ячейка света пикселя (0 — без ячеек)
+
+// Сетка пикселя движется сама (люди): ячейки мира ей не подходят, свет у неё — от зондов
+bool lc_dynamic(uint id) {
+    FrameData f = pc.frame;
+    uvec2 vc = f.vis.v[(id >> 7) - 1u];
+    return (f.meshes.v[f.vis_instances.v[vc.x].mesh].flags & MESH_DYNAMIC) != 0u;
+}
 
 // Страница текселя нужна кадру: прочитана — отметка кадра (по ней старые страницы отдаются первыми), нет —
 // заявка: запись окна → GC_REQ | кадр, ключ — в список заявок. Заявку ставит один пиксель (сравнение с обменом)
@@ -221,11 +232,19 @@ void main() {
     if (gl_LocalInvocationIndex == 0u) s_has = 0u;
     barrier();
     ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    uint t = gl_LocalInvocationIndex;
+    uint lc0 = 0u;
+    vec3 lc_rel = vec3(0.0), lc_n = vec3(0.0);
     if (px.x < int(f.viewport.x) && px.y < int(f.viewport.y)) {
         uint id = imageLoad(u_vis, px).r;
         uint has = id == 0u ? 1u : (id & VIS_GROUND) != 0u ? 2u : 4u;
         if (has != 1u) {
             Hit h = resolve(px, id);
+            if (has == 2u || !lc_dynamic(id)) {
+                lc_rel = h.rel;
+                lc_n = normalize(h.n);
+                lc0 = lc_primary(lc_rel, lc_n, has == 2u);
+            }
             PxFoot pf;
             float foot = 0.0;
             if (f.pixel == 0u) {
@@ -243,8 +262,13 @@ void main() {
         }
         atomicOr(s_has, has);
     }
+    s_lc[t] = lc0;
     barrier();
-    if (gl_LocalInvocationIndex != 0u) return;
+    // Ячейки света: заявляет пиксель, у которого главная ячейка не та же, что у соседа слева и сверху по плитке
+    uint lx = gl_LocalInvocationID.x, ly = gl_LocalInvocationID.y;
+    if (lc0 != 0u && (lx == 0u || s_lc[t - 1u] != lc0) && (ly == 0u || s_lc[t - 8u] != lc0))
+        lc_request(lc_rel, lc_n, (lc0 & LC_GROUND) != 0u);
+    if (t != 0u) return;
     uint has = s_has;
     uint kind = (has & 6u) == 6u ? TILE_MIX : (has & 8u) != 0u ? TILE_GROUND_PX : (has & 2u) != 0u ? TILE_GROUND
               : (has & 4u) != 0u ? TILE_MESH : TILE_SKY;
