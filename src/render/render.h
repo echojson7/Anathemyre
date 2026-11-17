@@ -197,7 +197,7 @@ constexpr u32 RENDER_MAX_MATERIALS = 1024;
 constexpr u32 RENDER_MAX_DECALS = 512;
 constexpr u32 RENDER_MAX_LIGHTS = 1024;
 constexpr u32 RENDER_MAX_SKINS = 64;       // источников скиннинга (сетка × скелет)
-constexpr u32 RENDER_MAX_SKINNED = 256;    // людей в кадре
+constexpr u32 RENDER_MAX_SKINNED = 768;    // сеток на костях в кадре: люди (48 × тело и до 10 вещей), машины
 constexpr u32 RENDER_MAX_BONES = 16384;    // матриц костей в кадре
 constexpr u32 RENDER_MAX_MORPHS = 48;     // как MESH_MAX_MORPHS и SkinJob в common.glsl
 
@@ -264,6 +264,7 @@ struct RenderBone {
 struct RenderSkinned {
     u32 instance;
     u32 first_bone;
+    u32 hide;  // области тела под одеждой (docs/wear.md, байт доли смеси вершины тела): не рисуются
     f32 morph[RENDER_MAX_MORPHS];
 };
 // Таблица материалов целиком (номер = место). Ждёт, пока GPU закончит кадры: только при загрузке

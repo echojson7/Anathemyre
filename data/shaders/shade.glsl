@@ -49,7 +49,13 @@ Surface mesh_surface(vec3 rel, vec3 n, uint mat0, uint mat1, float blend, float 
 #ifdef GC_ORIGIN_VAR
     ORIGIN_CHUNK = saved;
 #endif
-    if (dyn) s.normal = n;  // нормаль узора — в осях детали, свету нужна мировая
+    // Нормаль узора — в осях детали (бинд-поза), свету нужна мировая: тот же наклон от нормали детали к мировой
+    // (поворот ns → n; у материала без наклона нормали выходит ровно n)
+    if (dyn) {
+        vec3 c = cross(ns, n);
+        float d = dot(ns, n);
+        s.normal = d > -0.999 ? normalize(s.normal * d + cross(c, s.normal) + c * (dot(c, s.normal) / (1.0 + d))) : n;
+    }
     s = apply_decals(s, p - f.cam_off, n);
     s.ao *= ao;
     s.pos = p - f.cam_off;

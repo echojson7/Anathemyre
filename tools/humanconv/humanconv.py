@@ -315,6 +315,11 @@ def skin_weights(W, order, nv):
         if lst:
             a = np.array(lst)
             np.add.at(acc[:, k], a[:, 0].astype(int), a[:, 1])
+    return skin_quant(acc)
+
+
+def skin_quant(acc):
+    # Плотные веса (вершины × кости) → 4 кости u8 и веса u8 с суммой 255 (одежда — смесью весов вершин тела)
     top = np.argsort(-acc, axis=1, kind="stable")[:, :4]
     w = np.take_along_axis(acc, top, 1)
     s = w.sum(1, keepdims=True)
@@ -440,7 +445,7 @@ def cut(T, f, EI, EW):
     return np.array(out, np.int64), f, EI, EW
 
 
-def build(p, base, groups, Z, rigs, weights, data_dir, meshpack):
+def build(p, base, groups, Z, rigs, weights, data_dir, meshpack, regions):
     body_q, eye_q = groups["body"], np.concatenate([groups["helper-l-eye"], groups["helper-r-eye"]])
     used = np.unique(body_q)
 
@@ -490,9 +495,17 @@ def build(p, base, groups, Z, rigs, weights, data_dir, meshpack):
     T = np.concatenate([Tb, Te])
     tm = np.concatenate([bmat, np.concatenate([eye_mat, eye_mat])])
 
-    # Вершины делятся по материалу граней: край белья резкий. Вершина сетки — (вершина среза, материал)
-    key = T * len(MATERIALS) + tm[:, None]
+    # Область тела треугольника (скрытие под одеждой, wear_core.REGIONS): у большинства его вершин MakeHuman
+    dom3 = EI[T, np.argmax(EW[T], 2)]
+    r3 = regions[dom3]
+    treg = np.where(r3[:, 1] == r3[:, 2], r3[:, 1], r3[:, 0])
+    treg[len(Tb):] = 0
+    # Вершины делятся по материалу и области граней: край белья резкий, область скрывается целыми треугольниками.
+    # Вершина сетки — (вершина среза, материал, область); область — в байте доли смеси (у тела m0 == m1, docs/mesh.md)
+    key = (T * len(MATERIALS) + tm[:, None]) * 32 + treg[:, None]
     uk, inv = np.unique(key.ravel(), return_inverse=True)
+    vreg = uk % 32
+    uk = uk // 32
     src, vmat = uk // len(MATERIALS), uk % len(MATERIALS)
     T = inv.reshape(-1, 3)
     SI, SW = EI[src], EW[src]
@@ -507,7 +520,7 @@ def build(p, base, groups, Z, rigs, weights, data_dir, meshpack):
                                        ("blend", "u1"), ("ao", "u1")])
     vert["p"], vert["nx"], vert["nz"] = pos, nx, nz
     vert["m0"] = vert["m1"] = vmat
-    vert["blend"], vert["ao"] = 0, 255
+    vert["blend"], vert["ao"] = vreg, 255
 
     out = b"ANAMESH1"
     mn, mx = pos.min(0), pos.max(0)
@@ -605,8 +618,12 @@ def main():
         r = json.load(open(os.path.join(srcdir, "rig.%s.json" % s)))
         rigs[s] = r["bones"] if "bones" in r else r
         weights[s] = json.load(open(os.path.join(srcdir, "weights.%s.json" % s)))["weights"]
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # python -I не кладёт папку скрипта в путь
+    import wear  # одежда над этим телом (docs/wear.md)
+    body = wear.W.Body(base, groups, Z, rigs, weights)
     for p in PEOPLE:
-        build(p, base, groups, Z, rigs, weights, data_dir, meshpack)
+        build(p, base, groups, Z, rigs, weights, data_dir, meshpack, body.regions())
+    wear.build_all(body, data_dir, meshpack)
 
 
 if __name__ == "__main__":
