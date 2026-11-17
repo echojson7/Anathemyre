@@ -131,7 +131,10 @@ void vk_gcache_fill(FrameGpu &g, const RenderFrame &f, bool images) {
         c.reset = true;
     }
     c.tpc0 = tpc0;
-    if (++c.frame == 0) c.frame = 1;
+    if (++c.frame == 0) {
+        c.frame = 1;
+        c.lit_min = 0;  // счёт по кругу: старый порог иначе держал бы всё «устаревшим»
+    }
     g.gc_table = c.table.address;
     g.gc_pages = c.pages.address;
     g.gc_texels = c.texels.address;
@@ -161,6 +164,11 @@ void vk_gcache_light_fill(FrameGpu &g, const RenderFrame &f) {
     if (sig != c.lit_sig || !c.lit || c.reset || g_vk.gi.snapped || g.lc_snap || g_vk.shadow.sun_fast) c.lit_all = true;
     c.lit_sig = sig;
     c.lit = true;
+    // «Все заново» касается и страниц, которых этот кадр не читает: их свет — от прошлых зондов и ячеек (до скачка
+    // часов — дневной), а «свежим» он считался ещё круг; вернувшись в кадр, страница показала бы его белым
+    // прямоугольником на ночной земле (разбор 17.11). Свет старше lit_min пересчитывается при первом чтении
+    if (c.lit_all) c.lit_min = c.frame;
+    g.gc_lit_min = c.lit_min;
     g.gc_lmode = GC_LIGHT_ON | (c.lit_all ? GC_LIGHT_ALL : 0);
     g.gc_lperiod = GC_LIGHT_PERIOD;
     c.lit_all = false;

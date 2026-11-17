@@ -101,6 +101,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     out.style.gi_view = in.gi_view;
     out.style.dt = in.dt;
     out.style.eye_snap = in.eye_snap;
+    out.style.glow = !in.lamps_off;  // стекло выключенной лампы не светится (разбор 17.11: белые пятна без ламп)
     out.style.tonemap = in.tonemap;
     for (u32 k = 0; k < 3; ++k) out.style.local_tone[k] = assets.sky.local_tone[k];
     out.style.local_tone[3] = in.local_off ? 0.0f : 1.0f;

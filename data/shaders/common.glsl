@@ -264,6 +264,7 @@ layout(buffer_reference, scalar) buffer FrameData {
     int gc_tpc0;              // текселей уровня 0 на чанк (256 м / cell_min)
     uint gc_on;               // 0 — кеш выключен: вся земля на пиксель (F3, --nogcache)
     uint gc_lmode, gc_lperiod;  // свет в кеше: GC_LIGHT_ON, GC_LIGHT_ALL; страница пересчитывается раз в gc_lperiod кадров
+    uint gc_lit_min, gc_pad;    // свет страницы, посчитанный раньше этого кадра кеша, устарел (снимок, резкая смена света)
     // Карта горизонта земли (docs/horizon.md): H_DIRS/2 слов на узел сетки 8 м
     HMap h_map;
     uint h_on;                // 0 — карты нет (земли нет или ещё не собрана): тени земли нет
@@ -315,7 +316,8 @@ layout(buffer_reference, scalar) buffer FrameData {
     Vec4s gi_pos;
     ivec4 gi_lo[4];           // первый зонд окна уровня: мировой номер от якоря поля
     uint gi_on, gi_view, gi_rays_n, gi_pad0;  // зонды читаются; режим F3 (GI_VIEW_*); лучей на зонд
-    float gi_hyst, gi_pad1, gi_pad2, gi_pad3;  // доля старого значения при смешении
+    float gi_hyst, dbg_alpha, glow_gain, gi_pad3;  // доля старого при смешении; 1 — a HDR = свет места (--hdr);
+                                                // множитель свечения glow (0 — лампы выключены)
     // Ячейки света (docs/lcache.md, lcache.glsl): таблица, работы кадра; ступень — тангенс угла ячейки, дальность,
     // лучей на счёт, кадров между счётами видимой ячейки, пределы работ кадра
     LcKeys lc_keys;

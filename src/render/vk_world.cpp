@@ -194,7 +194,7 @@ static bool ensure_images() {
     destroy_image(w.id);
     destroy_image(w.hdr);
     if (!create_image(w.id, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT) ||
-        !create_image(w.hdr, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT))
+        !create_image(w.hdr, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
         return false;
     w.extent = g_vk.extent;
     vk_image_name(w.id.image, "мир: номера треугольников");

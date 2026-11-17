@@ -119,6 +119,7 @@ struct RenderStyle {
     f32 local_tone[4] = {1.0f, 0.05f, 1.0f, 1.0f};
     f32 dt = 0.0f;         // секунды кадра: привыкание глаза
     bool eye_snap = true;  // глаз привыкает сразу (первый кадр, --timelapse: кадр — свой час)
+    bool glow = true;      // светящиеся детали (стекло ламп, табло) светятся; выкл — вместе с лампами (F3, --nolamps)
 };
 
 // Главный свет (light.glsl): солнце, ночью луна
@@ -377,6 +378,10 @@ RenderCpuTimes render_cpu_times();
 // Снимок: render_capture_next() перед render_frame, затем render_capture_take() — пиксели RGBA8 sRGB
 // сверху вниз, память из арены. false — снимок не вышел
 void render_capture_next();
+// HDR-снимок (отладка света, --hdr): вместе со снимком — HDR кадра мира до сглаживания (RGBA половинками, уже
+// умножен на экспозицию; a — свет места, лк, для разбора местной экспозиции). Брать после render_capture_take
+void render_capture_hdr(bool on);
+bool render_capture_hdr_take(Arena &arena, u16 **rgba, u32 *width, u32 *height);
 bool render_capture_take(Arena &arena, u8 **rgba, u32 *width, u32 *height);
 
 // Интерфейс поверх кадра (src/ui, docs/ui.md): последний проход по готовой картинке, в пикселях окна.

@@ -372,6 +372,7 @@ bool render_init(const RenderConfig &cfg) {
     if (!create_frames()) return false;
     g_vk.rg_swap = rg_image("картинка кадра", VK_IMAGE_ASPECT_COLOR_BIT);
     g_vk.rg_capture = rg_buffer("снимок кадра");
+    g_vk.rg_capture_hdr = rg_buffer("снимок HDR");
     if (!vk_diag_init()) return false;
     if (!vk_geometry_init()) return false;
     if (!vk_pipeline_cache_open()) return false;
@@ -393,6 +394,7 @@ void render_shutdown() {
         vk_terrain_shutdown();
         vk_geometry_shutdown();
         vk_destroy_buffer(g_vk.capture);
+        vk_destroy_buffer(g_vk.capture_hdr_buf);
         vk_diag_shutdown();
         if (g_vk.queries) vkDestroyQueryPool(g_vk.device, g_vk.queries, nullptr);
         for (FrameSlot &f : g_vk.frames) {

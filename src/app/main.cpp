@@ -36,6 +36,7 @@ static void usage() {
     log_info("           [--gionly] [--nogi] [--gicells] [--nocells]                  только непрямой свет, без зондов, ячейки света, кадр без ячеек (docs/gi.md, docs/lcache.md)");
     log_info("           [--tonemap agx|aces] [--light low|medium|high|ultra]         тонмаппинг, качество света (docs/light.md)");
     log_info("           [--nolocal]                                                  без местной экспозиции (было/стало, docs/light.md)");
+    log_info("           [--hdr]                                                      со снимком — HDR кадра мира в <снимок>.hdr16 (tools/lightlab/hdr.py)");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z] [--pivot м]   снимок (градусы, метры; опора над землёй)");
     log_info("           [--work файл.txt]                                            счётчики работы освещения в файл (с --frames)");
@@ -164,6 +165,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--gicells")) a.gi_view = RENDER_GI_CELLS;
         else if (!strcmp(s, "--nocells")) a.gi_view = RENDER_GI_PROBES;
         else if (!strcmp(s, "--nolocal")) a.local_off = true;
+        else if (!strcmp(s, "--hdr")) a.hdr = true;
         else if (!strcmp(s, "--tonemap")) {
             a.tonemap = next && !strcmp(next, "agx") ? (i32)RENDER_TONEMAP_AGX : next && !strcmp(next, "aces") ? (i32)RENDER_TONEMAP_ACES : -1;
             ok = a.tonemap >= 0;

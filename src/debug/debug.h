@@ -191,6 +191,7 @@ void debug_inspect_mark(const World &w, const WorldInspect &wi, DebugDraw &dbg);
 void debug_inspect_pick(const World &w, WorldInspect &wi, const WPos &at);
 // Снимок кадра (render_capture_next перед кадром) → файл .bmp
 bool debug_write_shot(const char *path, Arena &scratch);
+bool debug_write_hdr(const char *path, Arena &scratch);  // HDR-снимок (--hdr, отладка света)
 // Карта земли сверху (отмывка рельефа и маски) → .bmp
 bool debug_write_terrain_map(const Terrain &t, const char *path, Arena &scratch);
 // Стенд людей (stand.cpp, docs/people.md «Стенд», docs/anim.md): до view_build — время клипа, поза и капсулы
@@ -229,6 +230,7 @@ inline void debug_panel(const DebugInfo &, const World &, DebugState &, WorldIns
 inline void debug_inspect_pick(const World &, WorldInspect &, const WPos &) {}
 inline void debug_inspect_mark(const World &, const WorldInspect &, DebugDraw &) {}
 inline bool debug_write_shot(const char *, Arena &) { return false; }
+inline bool debug_write_hdr(const char *, Arena &) { return false; }
 inline bool debug_write_terrain_map(const Terrain &, const char *, Arena &) { return false; }
 inline void debug_stand_update(DebugState &, const ViewAssets &, const Terrain &, f64, DebugDraw *) {}
 inline void debug_stand(const DebugState &, const ViewAssets &, Arena &, RenderFrame &) {}

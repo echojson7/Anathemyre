@@ -74,6 +74,7 @@ struct FrameGpu {
     u32 gc_w, gc_pages_n, gc_req_cap, gc_frame;
     i32 gc_tpc0;
     u32 gc_on, gc_lmode, gc_lperiod;
+    u32 gc_lit_min, gc_pad;  // свет страниц, посчитанный раньше этого кадра кеша, устарел (резкая смена света)
     // Карта горизонта земли (vk_horizon.cpp, docs/horizon.md)
     VkDeviceAddress h_map;
     u32 h_on;
@@ -110,7 +111,7 @@ struct FrameGpu {
     VkDeviceAddress gi_probes, gi_jobs, gi_rays, gi_pos;
     i32 gi_lo[4][4];
     u32 gi_on, gi_view, gi_rays_n, gi_pad0;
-    f32 gi_hyst, gi_pad1, gi_pad2, gi_pad3;
+    f32 gi_hyst, dbg_alpha, glow_gain, gi_pad3;  // dbg_alpha: 1 — a HDR = свет места (--hdr)
     // Ячейки света (vk_lcache.cpp, docs/lcache.md): ключи (они же по 4), места, показанный свет, сумма круга,
     // работы кадра; ступень
     VkDeviceAddress lc_keys, lc_keys4, lc_meta, lc_show, lc_filt, lc_acc, lc_jobs;
@@ -280,6 +281,7 @@ struct GcacheGpu {
     // (ступень света, режимы F3, что включено) — сменилось — все страницы заново
     bool lit = false, lit_all = true;
     u32 lit_sig = ~0u;
+    u32 lit_min = 0;  // кадр кеша последнего «все страницы заново»: свет старше — устарел у всех страниц, не только прочитанных
     VkPipeline pipe_scan = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE, pipe_bake = VK_NULL_HANDLE,
                pipe_light = VK_NULL_HANDLE;
     u8 rg_table = 0, rg_pages = 0, rg_texels = 0, rg_req = 0, rg_cells = 0, rg_light = 0;
@@ -607,6 +609,10 @@ struct VkState {
     GpuBuffer capture;
     u8 rg_capture = 0;
     VkExtent2D capture_extent = {};
+    // HDR-снимок (отладка света, --hdr): копия HDR кадра мира до сглаживания, RGBA16F; a — свет места, лк
+    bool capture_hdr = false;
+    GpuBuffer capture_hdr_buf;
+    u8 rg_capture_hdr = 0;
 
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipe_points = VK_NULL_HANDLE;

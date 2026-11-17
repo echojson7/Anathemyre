@@ -40,6 +40,7 @@ struct Args {
     u32 sdf_view = 0;               // --sdfsky, --sdffield, --nosdf: поле расстояний мира (docs/sdf.md, RENDER_SDF_*)
     u32 gi_view = 0;                // --gionly, --nogi: зонды непрямого света (docs/gi.md, RENDER_GI_*)
     bool local_off = false;         // --nolocal: без местной экспозиции (сравнение, docs/light.md)
+    bool hdr = false;               // --hdr: со снимком ещё HDR кадра мира в <снимок>.hdr16 (отладка света)
     i32 tonemap = -1;               // --tonemap agx|aces: тонмаппинг (снимки для сравнения); −1 — как в F3
     i32 light_quality = -1;         // --light low|medium|high|ultra: качество света; −1 — из настроек
     bool nohud = false;             // --nohud: без интерфейса (видео и снимки мира)

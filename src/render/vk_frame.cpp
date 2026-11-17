@@ -122,6 +122,7 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.scans = f.style.scans && g_vk.scans.layers ? 1u : 0u;
     g.dt = f.style.dt;
     g.eye_snap = f.style.eye_snap ? 1u : 0u;
+    g.glow_gain = f.style.glow ? 1.0f : 0.0f;
     g.tonemap = f.style.tonemap < RENDER_TONEMAPS ? f.style.tonemap : RENDER_TONEMAP_AGX;
     g.light_q = f.style.light_quality < RENDER_LIGHT_QUALITIES ? f.style.light_quality : RENDER_LIGHT_HIGH;
     for (u32 k = 0; k < 4; ++k) g.local_tone[k] = f.style.local_tone[k];
@@ -151,6 +152,13 @@ static void record_capture(VkCommandBuffer cmd, void *) {
     vkCmdCopyImageToBuffer(cmd, img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_vk.capture.buffer, 1, &c);
 }
 
+static void record_capture_hdr(VkCommandBuffer cmd, void *) {
+    VkBufferImageCopy c{};
+    c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    c.imageExtent = {g_vk.extent.width, g_vk.extent.height, 1};
+    vkCmdCopyImageToBuffer(cmd, g_vk.world.hdr.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_vk.capture_hdr_buf.buffer, 1, &c);
+}
+
 static void capture_pass(u32 img) {
     VkDeviceSize bytes = (VkDeviceSize)g_vk.extent.width * g_vk.extent.height * 4;
     if (g_vk.capture.size < bytes) {
@@ -163,6 +171,17 @@ static void capture_pass(u32 img) {
     rg_pass("снимок", nullptr, record_capture, nullptr);
     rg_use(g_vk.rg_swap, RG_IMG_COPY_READ);
     rg_use(g_vk.rg_capture, RG_COPY_WRITE);
+    if (g_vk.capture_hdr) {
+        if (g_vk.capture_hdr_buf.size < bytes * 2) {
+            vk_destroy_buffer(g_vk.capture_hdr_buf);
+            if (!vk_create_buffer(g_vk.capture_hdr_buf, bytes * 2, VK_BUFFER_USAGE_TRANSFER_DST_BIT)) return;
+            vk_buffer_name(g_vk.capture_hdr_buf, "снимок HDR");
+            rg_reset(g_vk.rg_capture_hdr);
+        }
+        rg_pass("снимок HDR", nullptr, record_capture_hdr, nullptr);
+        rg_use(g_vk.world.rg_hdr, RG_IMG_COPY_READ);
+        rg_use(g_vk.rg_capture_hdr, RG_COPY_WRITE);
+    }
     g_vk.capture_extent = g_vk.extent;
     g_vk.capture_ready = true;
 }
@@ -298,6 +317,20 @@ void render_wait_idle() {
 }
 
 void render_capture_next() { g_vk.capture_next = true; }
+void render_capture_hdr(bool on) { g_vk.capture_hdr = on; }
+
+bool render_capture_hdr_take(Arena &arena, u16 **rgba, u32 *width, u32 *height) {
+    if (!g_vk.capture_hdr || !g_vk.capture_hdr_buf.buffer) return false;
+    vkDeviceWaitIdle(g_vk.device);
+    u32 w = g_vk.capture_extent.width, h = g_vk.capture_extent.height;
+    vmaInvalidateAllocation(g_vk.vma, g_vk.capture_hdr_buf.alloc, 0, VK_WHOLE_SIZE);
+    u16 *out = arena_push<u16>(arena, (usize)w * h * 4);
+    memcpy(out, g_vk.capture_hdr_buf.mapped, (usize)w * h * 8);
+    *rgba = out;
+    *width = w;
+    *height = h;
+    return true;
+}
 
 bool render_capture_take(Arena &arena, u8 **rgba, u32 *width, u32 *height) {
     if (!g_vk.capture_ready) return false;

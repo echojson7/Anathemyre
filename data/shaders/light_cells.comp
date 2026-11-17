@@ -66,6 +66,7 @@ shared uint s_lead[64];    // поток ведущего пикселя той 
 shared uint s_rank[64];    // у ведущего — его место среди ведущих
 shared uint s_list[64];    // ведущие по порядку
 shared vec3 s_color[64];
+shared float s_elocal[64];  // свет места ведущего, лк (альфа HDR при --hdr)
 shared uint s_work[10];    // пиксели неба, земли, сеток; поверхности земли, сеток; выборки тени; земля на пиксель;
                            // выборки карты теней и без страницы; выборки поля расстояний
 shared uint s_bail;        // плитка земли уходит в «землю на пиксель»: текселя нет в кеше
@@ -197,7 +198,8 @@ void main() {
     bool inside = px.x < int(f.viewport.x) && px.y < int(f.viewport.y);
     if (TILE_KIND == TILE_SKY) {
         // Только небо: то же, что shade_hit() пустого пикселя
-        if (inside) imageStore(u_hdr, px, vec4(pre_exposed(sky_radiance(normalize(pixel_ray(px))), local_sky_e()), 1.0));
+        if (inside) imageStore(u_hdr, px, vec4(pre_exposed(sky_radiance(normalize(pixel_ray(px))), local_sky_e()),
+                                         f.dbg_alpha != 0.0 ? local_sky_e() : 1.0));
         if (inside && f.aa_mode == AA_TAA) {
             Hit hs;
             hs.kind = HIT_SKY;
@@ -299,13 +301,14 @@ void main() {
     if (t < nlead) {
         vec3 col = shade_hit(hl, phys);
         s_color[t] = pre_exposed(col, g_e_local);
+        s_elocal[t] = g_e_local;
         if (g_steps != 0u) atomicAdd(s_work[5], g_steps);
         if (g_sm_taps != 0u) atomicAdd(s_work[7], g_sm_taps);
         if (g_sm_miss != 0u) atomicAdd(s_work[8], g_sm_miss);
         if (g_sdf_taps != 0u) atomicAdd(s_work[9], g_sdf_taps);
     }
     barrier();
-    if (inside) imageStore(u_hdr, px, vec4(s_color[s_rank[s_lead[t]]], 1.0));
+    if (inside) imageStore(u_hdr, px, vec4(s_color[s_rank[s_lead[t]]], f.dbg_alpha != 0.0 ? s_elocal[s_rank[s_lead[t]]] : 1.0));
     if (inside && f.aa_mode == AA_TAA) imageStore(u_motion, px, mv);
     if (t == 0u) work_flush();
 }

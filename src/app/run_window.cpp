@@ -377,6 +377,10 @@ int run_window(const Args &a, AppMemory &m) {
     prof->rest = FP_REST;
     for (u32 i = 0; i < FP_COUNT; ++i) prof->names[i] = FP_NAMES[i];
     u64 frames = 0, frames_window = 0;
+    // Смена света скачком (docs/light.md, «Резкая смена света»): часы прыгнули — кадр как снимок: зонды, ячейки и тени
+    // заново, глаз сразу. cut_tick — тик, на котором скачок уже отработан (пара шагов живёт несколько кадров)
+    u64 cut_tick = ~0ull;
+    u32 cut_frames = 0;
     u64 last = platform_time_ns(), window_t0 = last;
     int rc_exit = 0;
     debug_print_help();
@@ -654,7 +658,18 @@ int run_window(const Args &a, AppMemory &m) {
         vi.time = (f32)sky_time;
         cloud_time = a.frames ? (f64)frames / 30.0 : cloud_time + dt;
         vi.cloud_time = cloud_time;
-        vi.eye_snap = frames < 2 || a.timelapse || a.shot;
+        {
+            const Clock &c0 = vi.prev->clock, &c1 = vi.cur->clock;
+            // Обычный ход — rate тиков за шаг (ускорение тоже ход); скачок — назад или вперёд больше двух минут суток
+            u64 lim = (u64)c1.rate * 2 + c1.day_ticks / 720;
+            bool jump = c1.tick < c0.tick || c1.tick - c0.tick > lim;
+            if (jump && c1.tick != cut_tick && frames >= 2) {
+                cut_tick = c1.tick;
+                cut_frames = 2;
+            }
+        }
+        vi.eye_snap = frames < 2 || a.timelapse || a.shot || cut_frames > 0;
+        if (cut_frames) --cut_frames;
         vi.tonemap = ds.tonemap;
         vi.local_off = a.local_off || ds.local_off;
         vi.scans = ds.scans;
@@ -700,6 +715,7 @@ int run_window(const Args &a, AppMemory &m) {
         prof_part(*prof, FP_VIEW, platform_time_ns());
         bool last_frame = a.frames && frames + 1 >= a.frames;
         if ((last_frame && a.shot) || a.timelapse || a.video) render_capture_next();
+        if (a.hdr && a.shot) render_capture_hdr(true);
         if (!render_frame(rf)) { rc_exit = 1; break; }
         if (frames == 0) {
             // Первый кадр тяжёлый (горизонт, поле расстояний, снимок зондов, кеш земли): дождаться его на GPU —
@@ -830,6 +846,11 @@ int run_window(const Args &a, AppMemory &m) {
                  (double)eye_info.lux_key, (double)eye_info.lux_sky, (double)eye_info.lux_eye, (double)eye_info.ev100,
                  (double)eye_info.ev100_goal, (double)eye_info.exposure);
     if (a.shot && !debug_write_shot(a.shot, m.load)) rc_exit = 1;
+    if (a.shot && a.hdr) {
+        char hp[512];
+        snprintf(hp, sizeof hp, "%s.hdr16", a.shot);
+        if (!debug_write_hdr(hp, m.load)) rc_exit = 1;
+    }
     if (a.work) {
         // Счётчики работы для сверки CI (tools/work_check.sh): «имя значение» по строке
         char t[1024];

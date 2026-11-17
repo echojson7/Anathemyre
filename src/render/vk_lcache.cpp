@@ -82,6 +82,9 @@ void vk_lcache_fill(FrameGpu &g, const RenderFrame &f) {
         return;
     }
     if (!s.on || gi.anchor[0] != s.anchor[0] || gi.anchor[1] != s.anchor[1]) s.clear = true;
+    // Снимок зондов (скачок часов, первый кадр, --shot) — и ячейки с нуля: невидимые сейчас ячейки иначе хранили бы
+    // свет прошлого часа и показали бы его, вернувшись в кадр (docs/light.md, «Резкая смена света»)
+    if (gi.snapped) s.clear = true;
     s.on = true;
     if (s.clear) {
         s.anchor[0] = gi.anchor[0];
