@@ -189,7 +189,9 @@ void sm_request_level(vec3 rel, float m, int set, int lv, bool bg) {
     if (lv >= SM_LEVELS) return;
     int k = set * SM_LEVELS + lv;
     float t = sm_texel(k);
-    float r = (m + 1.8 * t) / t + 1.5 + sm_search(t);
+    float rs = sm_search(t);
+    vec2 par = rs > 0.0 ? sm_par(set) / t : vec2(0.0);  // сдвиг выборки к настоящему светилу (sm_vis_set)
+    float r = (m + 1.8 * t) / t + 1.5 + rs + SM_PCSS_FAR * (abs(par.x) + abs(par.y));
     ivec2 lo, hi;
     if (!sm_rect(sm_window(rel, k), r, lo, hi)) return;
     ivec2 b = f.sm_base[k];

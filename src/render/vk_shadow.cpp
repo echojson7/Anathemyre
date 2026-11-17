@@ -221,8 +221,9 @@ static f32 sm_texel0(const RenderFrame &f) {
     return f.style.cell_min * (q == RENDER_LIGHT_LOW ? 4.0f : q == RENDER_LIGHT_MEDIUM ? 2.0f : 1.0f);
 }
 
-// Оси, высота камеры и окна уровней набора i в данные кадра
-static void sm_fill_set(FrameGpu &g, u32 i, const ShadowSet &st, const f64 cam[3], f32 t0) {
+// Оси, высота камеры и окна уровней набора i в данные кадра. sun — настоящее направление светила этого кадра:
+// сдвиг выборки к нему (docs/shadow.md, «Тень без ступенек») — в r.w и s.w набора
+static void sm_fill_set(FrameGpu &g, u32 i, const ShadowSet &st, const f64 cam[3], f32 t0, const f32 sun[3]) {
     f32 S[3];
     sm_key_dir(st.key, S);
     // Оси карты: r — горизонтальная поперёк светила, u = s × r (у светила в зените — r по x)
@@ -241,9 +242,12 @@ static void sm_fill_set(FrameGpu &g, u32 i, const ShadowSet &st, const f64 cam[3
         g.sm_u[i][c] = U[c];
         g.sm_s[i][c] = S[c];
     }
-    g.sm_r[i][3] = 0;
+    // Луч к настоящему светилу, поднявшись над точкой на 1 м вдоль s набора, уходит по r и u на столько метров
+    f32 ls = sun[0] * S[0] + sun[1] * S[1] + sun[2] * S[2];
+    bool near = ls > 0.99f;  // шаг светила — доли градуса; иначе (смена солнца на луну) сдвига нет
+    g.sm_r[i][3] = near ? (sun[0] * R[0] + sun[1] * R[1] + sun[2] * R[2]) / ls : 0.0f;
     g.sm_u[i][3] = (f32)(cam[0] * S[0] + cam[1] * S[1] + cam[2] * S[2] - st.anchor);
-    g.sm_s[i][3] = 0;
+    g.sm_s[i][3] = near ? (sun[0] * U[0] + sun[1] * U[1] + sun[2] * U[2]) / ls : 0.0f;
     // Окна уровней: камера — в странице SM_WIN/2 окна, начало окна — целая страница мировой решётки уровня
     f64 cr = cam[0] * R[0] + cam[1] * R[1] + cam[2] * R[2];
     f64 cu = cam[0] * U[0] + cam[1] * U[1] + cam[2] * U[2];
@@ -335,7 +339,8 @@ void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool image
     }
     fs.sm_frame = s.frame;
     // Старый набор, когда он не нужен, повторяет новый: шейдер его не читает и не заявляет
-    for (u32 i = 0; i < SM_SETS; ++i) sm_fill_set(g, i, s.old_on || i == s.cur ? s.set[i] : s.set[s.cur], cam, t0);
+    for (u32 i = 0; i < SM_SETS; ++i)
+        sm_fill_set(g, i, s.old_on || i == s.cur ? s.set[i] : s.set[s.cur], cam, t0, f.light.sun_dir);
     g.sm_cur = s.cur;
     g.sm_read = (s.building ? 0u : 1u << s.cur) | (s.old_on && s.mix < 1 ? 1u << (s.cur ^ 1) : 0u);
     g.sm_bg = s.building ? s.cur + 1 : 0;

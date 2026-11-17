@@ -89,6 +89,13 @@ int sm_find(int k, ivec2 page) {
 }
 
 // Радиус поиска заслонок PCSS на месте с текселем t, текселей; 0 — край жёсткий (2×2). На «Низко» PCSS нет
+// Сдвиг выборки к настоящему светилу (docs/shadow.md, «Тень без ступенек»): набор построен для шага светила, а
+// оно уже ушло на доли градуса. Луч из точки к настоящему светилу на высоте d над ней (вдоль s набора) проходит
+// столбец карты, сдвинутый на d · sm_par по r и u (метры): тень заслонки на расстоянии d — там. d — средняя высота
+// заслонок поиска PCSS. Кромка идёт за светилом каждый кадр, а не шагами; два набора при перетекании дают одно
+// и то же. Без поиска («Низко») сдвига нет
+vec2 sm_par(int set) { return vec2(pc.frame.sm_r[set].w, pc.frame.sm_s[set].w); }
+
 float sm_search(float t) {
     FrameData f = pc.frame;
     if (f.light_q < LIGHT_Q_MEDIUM) return 0.0;
@@ -162,9 +169,10 @@ float sm_vis_set(int set, vec3 pos, vec3 n, float depth) {
     float ns = max(dot(n, f.sm_s[set].xyz), 0.25);
     vec2 g = -vec2(dot(n, f.sm_r[set].xyz), dot(n, f.sm_u[set].xyz)) / ns * t;
     float rs = sm_search(t);
-    // Все выборки ниже (поиск, фильтр и их 2×2) — в квадрате w ± (rs + 2), и каждая сравнивает заслонку с высотой
-    // не ниже hr − (rs + 2)·(|g.x| + |g.y|): нет заслонки выше — свет, ровно 1, как дали бы сами выборки
-    float reach = rs + 2.0;
+    vec2 par = rs > 0.0 ? sm_par(set) / t : vec2(0.0);  // сдвиг, текселей на метр высоты заслонки
+    // Все выборки ниже (поиск, фильтр со сдвигом и их 2×2) — в квадрате w ± (rs + 2 + сдвиг), и каждая сравнивает
+    // заслонку с высотой не ниже hr − reach·(|g.x| + |g.y|): нет заслонки выше — свет, ровно 1, как дали бы выборки
+    float reach = rs + 2.0 + SM_PCSS_FAR * (abs(par.x) + abs(par.y));
     if (sm_clear(k, w, reach, hr - reach * (abs(g.x) + abs(g.y)))) return 1.0;
     if (rs == 0.0) return sm_pcf(k, w, hr, g);
     // PCSS: средняя высота заслонок над точкой в круге поиска → полутень → фильтр её радиуса
@@ -182,14 +190,19 @@ float sm_vis_set(int set, vec3 pos, vec3 n, float depth) {
             cnt++;
         }
     }
-    if (cnt == ns_taps) return 0.0;  // заслонки над всем кругом: полутень меньше круга, точка в тени
+    float d = cnt == 0 ? 0.0 : sum / float(cnt);
+    vec2 sh = par * d;  // к настоящему светилу; точка — по своей плоскости (высота hr + сдвиг · g)
+    // Заслонки над всем кругом, а сдвиг меньше полукруга: полутень меньше круга, точка в тени
+    if (cnt == ns_taps && dot(sh, sh) < 0.25 * rs * rs) return 0.0;
+    vec2 ws = w + sh;
+    float hs = hr + dot(sh, g);
     // Радиус фильтра — полутень без полутекселя, который уже даёт 2×2: от жёсткого края к мягкому без скачка
-    float pr = cnt == 0 ? 0.0 : min(sum / float(cnt) * f.sm_disc / t, rs) - 0.5;
-    if (pr <= 0.25) return sm_pcf(k, w, hr, g);
+    float pr = cnt == 0 ? 0.0 : min(d * f.sm_disc / t, rs) - 0.5;
+    if (pr <= 0.25) return sm_pcf(k, ws, hs, g);
     float v = 0.0;
     for (int i = 0; i < nf_taps; ++i) {
         vec2 o = sm_vogel(i, nf_taps) * pr;
-        v += sm_pcf(k, w + o, hr + dot(o, g), g);
+        v += sm_pcf(k, ws + o, hs + dot(o, g), g);
     }
     return v / float(nf_taps);
 }
