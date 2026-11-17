@@ -43,7 +43,7 @@ struct ViewBody {
     u32 hide;
     f32 carry_hip, carry_back;
 };
-constexpr u32 VIEW_MAX_WEAR = 24;
+constexpr u32 VIEW_MAX_WEAR = 32;
 // Клип захвата движения одного скелета (docs/anim.md): клип, запечённые дорожки и метки
 constexpr u32 VIEW_MAX_CLIPS = 64;
 struct ViewClip {

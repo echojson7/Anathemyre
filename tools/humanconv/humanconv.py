@@ -624,6 +624,8 @@ def main():
     for p in PEOPLE:
         build(p, base, groups, Z, rigs, weights, data_dir, meshpack, body.regions())
     wear.build_all(body, data_dir, meshpack)
+    import hair  # волосы над этим телом (docs/hair.md)
+    hair.build_all(body, data_dir, meshpack)
 
 
 if __name__ == "__main__":

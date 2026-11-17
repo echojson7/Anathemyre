@@ -491,3 +491,39 @@ material wear_steel flat
 material wear_sole flat
     color 0.035 0.03 0.028
     rough 0.85
+
+# Волосы, бороды, брови (docs/hair.md): вид hair — цвет от зерна (тёмность, седина, рыжина), пряди узором вдоль
+# направления. hair — от макушки (стрижки, распущенные), hair_back — зачёсанные назад; hair_stubble — щетина на
+# коже (color, color2 — тон кожи как у human_skin). Завязки — кожаный шнур и медное кольцо
+material hair hair
+    color 0.08 0.05 0.03
+    rough 0.42
+    extra 0.5 0.006 0 0
+
+material hair_back hair
+    color 0.08 0.05 0.03
+    rough 0.40
+    extra 0.5 0.006 2 0
+
+material hair_stubble hair
+    color 0.62 0.45 0.35
+    color2 0.17 0.10 0.065
+    rough 0.6
+    extra 0.2 0.003 1 0.7
+
+material hair_tie flat
+    color 0.10 0.065 0.04
+    rough 0.75
+
+material hair_ring metal
+    color 0.55 0.36 0.22
+    color2 0.10 0.12 0.08
+    rough 0.4
+    texel 0.00390625
+    extra 0.3 0.05 0.25 0
+    metal 1
+
+material hair_brow hair
+    color 0.08 0.05 0.03
+    rough 0.45
+    extra 0.2 0.003 3 0
