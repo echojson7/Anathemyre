@@ -485,11 +485,14 @@ def fields(v, J, vf, Jf, T, Z):
         for _ in range(3):
             path[1:-1] = 0.25 * path[:-2] + 0.5 * path[1:-1] + 0.25 * path[2:]
         dist, side = seg_side(vf, nrm_f, path)
-        near = (dist < 0.03) & (yf > lo) & (dist < s_d)  # на спине лямки скрещены: ближняя
+        # На спине лямки скрещены: ближняя. В точке скрещения расстояния равны, и шум последнего бита (numpy 1.26
+        # и 2.x считают по-разному) выбирал бы разные лямки: вторая берёт вершину, только если ближе на 1 мкм
+        near = (dist < 0.03) & (yf > lo) & (dist < s_d - 1e-6)
         s_a = np.where(near, 0.007 - side, s_a)
         s_b = np.where(near, 0.007 + side, s_b)
         s_d = np.where(near, dist, s_d)
-    out["strap_a"], out["strap_b"] = s_a, s_b
+    # Округление до 1 нм снимает разницу последнего бита между версиями numpy (cross, matmul)
+    out["strap_a"], out["strap_b"] = np.round(s_a, 9), np.round(s_b, 9)
     trunk = ax < np.abs(J["thigh_l"][0]) + 0.13  # кисти в A-позе висят сбоку, не задевать
     chest = (axf < np.abs(Jf["upperarm_l"][0]) - 0.01) & (yf < Jf["spine_03"][1] + 0.25) & (yf > lo - 0.02)
     face = (v[:, 2] > J["head"][2]) & (y > J["neck_01"][1])
