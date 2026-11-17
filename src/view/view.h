@@ -38,7 +38,12 @@ struct ViewBody {
     u64 morph_name[MESH_MAX_MORPHS];
     // Сдвиги суставов от морфов (кусок MRPJ): [морф][кость][4] — голова и длина, м; nullptr — у сетки их нет
     const f32 *joints[MESH_MAX_SKINS];
+    // Вещь одежды (docs/wear.md): сетка wear_* на скелетах тела людей — скрываемые области тела, толщина у мест
+    // ношения оружия
+    u32 hide;
+    f32 carry_hip, carry_back;
 };
+constexpr u32 VIEW_MAX_WEAR = 24;
 // Клип захвата движения одного скелета (docs/anim.md): клип, запечённые дорожки и метки
 constexpr u32 VIEW_MAX_CLIPS = 64;
 struct ViewClip {
@@ -56,6 +61,8 @@ struct ViewAssets {
     u32 rocks[SCATTER_MESHES] = {};                 // сетки камней рассыпки
     ViewBody bodies[VIEW_MAX_BODIES];               // тела с весами; [0] — тело людей (скелет game_engine), дальше машины
     u32 body_count = 0;
+    ViewBody wear[VIEW_MAX_WEAR];                   // вещи одежды людей (сетки wear_*, скелеты тела людей)
+    u32 wear_count = 0;
     ViewClip clips[VIEW_MAX_CLIPS];                 // клипы людей: имя × скелет
     u32 clip_count = 0;
     SkyDesc sky;                                    // небо и воздух (data/sky.txt)

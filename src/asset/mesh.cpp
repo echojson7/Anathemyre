@@ -161,6 +161,12 @@ bool mesh_parse(const u8 *data, usize size, Arena &arena, MeshData &out, const c
                 for (usize i = 0; i < per; ++i) j.data.data[k * per + i] = get_f32(b);
             }
             if (b.bad) { *err = "кусок MRPJ испорчен"; return false; }
+        } else if (chunk_is(c, "WEAR") && c.version == 1) {
+            out.wear = true;
+            out.wear_hide = get_u32(b);
+            out.wear_hip = get_f32(b);
+            out.wear_back = get_f32(b);
+            if (b.bad) { *err = "кусок WEAR испорчен"; return false; }
         } else if (chunk_is(c, "LODV") && c.version == 1) {
             u32 n = get_u32(b);
             if ((u64)n * 4 != b.size - b.pos) { *err = "кусок LODV испорчен"; return false; }

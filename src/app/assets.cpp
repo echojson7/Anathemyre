@@ -453,17 +453,28 @@ struct MeshLoad {
 
 // Тело человека: на каждый скелет из SKIN — файл data/people/<сетка>.<скелет>.skel (кости по имени, в том же
 // порядке, что в сетке) и источник скиннинга. Скелеты — в арене мира (живут весь запуск)
+// Вещь одежды (кусок WEAR, docs/wear.md) — на скелетах тела людей: data/people/human_m.<скелет>.skel
+static const char *const WEAR_SKEL_OWNER = "human_m";
+
 static bool load_body(MeshLoad &L, const char *file, const MeshData &md, u32 mesh) {
-    if (L.view->body_count >= VIEW_MAX_BODIES) { log_error("тел людей больше %u", VIEW_MAX_BODIES); return false; }
-    ViewBody &b = L.view->bodies[L.view->body_count];
+    const bool wear = md.wear;
+    u32 &count = wear ? L.view->wear_count : L.view->body_count;
+    const u32 cap = wear ? VIEW_MAX_WEAR : VIEW_MAX_BODIES;
+    if (count >= cap) { log_error("%s больше %u", wear ? "вещей одежды" : "тел людей", cap); return false; }
+    ViewBody &b = wear ? L.view->wear[count] : L.view->bodies[count];
     b = ViewBody{};
     usize nlen = strlen(file) - 5;
     b.name = hash_bytes(file, nlen);
     b.mesh = mesh;
+    b.hide = md.wear_hide;
+    b.carry_hip = md.wear_hip;
+    b.carry_back = md.wear_back;
+    const char *owner = wear ? WEAR_SKEL_OWNER : file;
+    const int olen = wear ? (int)strlen(WEAR_SKEL_OWNER) : (int)nlen;
     for (u32 k = 0; k < md.skin_count; ++k) {
         const MeshSkin &sk = md.skins[k];
         char rel[512];
-        snprintf(rel, sizeof rel, "people/%.*s.%.*s.skel", (int)nlen, file, (int)sk.skeleton.n, sk.skeleton.p);
+        snprintf(rel, sizeof rel, "people/%.*s.%.*s.skel", olen, owner, (int)sk.skeleton.n, sk.skeleton.p);
         u8 *data = nullptr;
         usize size = 0;
         const char *err = "";
@@ -502,8 +513,8 @@ static bool load_body(MeshLoad &L, const char *file, const MeshData &md, u32 mes
     }
     b.morph_count = md.morphs.count;
     for (u32 k = 0; k < md.morphs.count; ++k) b.morph_name[k] = str_hash(md.morphs.names[k]);
-    L.view->body_count++;
-    log_info("тело %.*s: скелетов %u, морфов %u", (int)nlen, file, b.skin_count, b.morph_count);
+    count++;
+    log_info("%s %.*s: скелетов %u, морфов %u", wear ? "одежда" : "тело", (int)nlen, file, b.skin_count, b.morph_count);
     return true;
 }
 

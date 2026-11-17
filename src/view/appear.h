@@ -6,9 +6,31 @@
 // (кусок MRPJ сетки, docs/mesh.md)
 #pragma once
 #include "../asset/skel.h"
+#include "../core/hash.h"
 #include "../render/render.h"
 
 struct ViewBody;
+
+// Байты зерна по порядку (hash_mix от счётчика): каждая черта берёт свои, новая черта дописывается в конец и
+// старых не сдвигает. Внешность (appear_make) и одежда (wear_make) — у каждой своя соль зерна
+struct Dice {
+    u64 h;
+    u32 left;
+    u64 next;
+    u32 byte() {
+        if (!left) {
+            h = hash_mix(next);
+            next += 0x9E3779B97F4A7C15ull;
+            left = 8;
+        }
+        u32 b = (u32)(h & 255);
+        h >>= 8;
+        left--;
+        return b;
+    }
+    f32 uni() { return (f32)byte() / 255.0f; }                            // 0..1 ровно
+    f32 bell() { return ((f32)byte() + (f32)byte() - 255.0f) / 255.0f; }  // −1..1, чаще у нуля
+};
 
 // Морфы тела по имени (tools/humanconv MORPHS): порядок здесь свой, место в сетке — AppearBind
 enum AppearMorph : u32 {

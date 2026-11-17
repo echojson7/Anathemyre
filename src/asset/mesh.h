@@ -79,6 +79,11 @@ struct MeshData {
     MeshJoints joints[MESH_MAX_SKINS];
     u32 joints_count = 0;
     Span<u32> lod_vertices;
+    // Одежда (кусок WEAR, docs/wear.md): вещь на теле людей — маска скрываемых областей тела и толщина у мест
+    // ношения оружия (у бедра, за спиной), м
+    bool wear = false;
+    u32 wear_hide = 0;
+    f32 wear_hip = 0.0f, wear_back = 0.0f;
 };
 
 // Разобрать файл; строки и массивы — в арене (данные файла можно освободить). false — ошибка в *err

@@ -9,26 +9,6 @@ const char *const APPEAR_MORPH_NAMES[AM_COUNT] = {
     "nose",   "nose_hump", "jaw", "chin", "lips", "eyes",  "cheeks",      "brow",        "ears",
 };
 
-// Байты зерна по порядку: каждая черта берёт свои, новая черта дописывается в конец и старых не сдвигает
-struct Dice {
-    u64 h;
-    u32 left;
-    u64 next;
-    u32 byte() {
-        if (!left) {
-            h = hash_mix(next);
-            next += 0x9E3779B97F4A7C15ull;
-            left = 8;
-        }
-        u32 b = (u32)(h & 255);
-        h >>= 8;
-        left--;
-        return b;
-    }
-    f32 uni() { return (f32)byte() / 255.0f; }                                 // 0..1 ровно
-    f32 bell() { return ((f32)byte() + (f32)byte() - 255.0f) / 255.0f; }       // −1..1, чаще у нуля
-};
-
 Appear appear_make(u32 seed) {
     Appear a{};
     Dice d{0, 0, (u64)seed | 0xB0D1000000000ull};
