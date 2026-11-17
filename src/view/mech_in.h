@@ -118,22 +118,24 @@ inline WPos mech_leg_now(const MechLeg &l) {
     p.y = mech_mix(l.from.y, l.to.y, e) + l.lift * 4.0f * l.t * (1.0f - l.t);
     return p;
 }
-// Две длины, которыми решается нога, и высота цели решения над осью лапы (у отвесной плюсны — голеностоп)
-inline void mech_leg_links(const MechLegRig &L, const MechLegDesc &D, f32 *la, f32 *lb, f32 *up) {
+// Две длины, которыми решается нога, и сдвиг цели решения от оси лапы (вынос, высота). Плюсна в режиме VERT
+// держит свой угол бинда к горизонту (у Вежи — отвесно, у Тати — вниз и чуть внутрь): цель — голеностоп
+inline void mech_leg_links(const MechLegRig &L, const MechLegDesc &D, f32 *la, f32 *lb, f32 *ox, f32 *oy) {
     bool vert = D.mode == MECH_LEG_VERT;
     *la = vert ? L.l1 : L.l1 + L.l3;
     *lb = L.l2;
-    *up = vert ? L.l3 : 0.0f;
+    *ox = vert ? -L.l3 * cosf(L.a3) : 0.0f;
+    *oy = vert ? -L.l3 * sinf(L.a3) : 0.0f;
 }
 // Самая короткая и самая длинная нога (от оси качания до цели решения)
 inline f32 mech_leg_min(const MechLegRig &L, const MechLegDesc &D) {
-    f32 la, lb, up;
-    mech_leg_links(L, D, &la, &lb, &up);
+    f32 la, lb, ox, oy;
+    mech_leg_links(L, D, &la, &lb, &ox, &oy);
     return f_abs(la - lb) + 0.0005f;
 }
 inline f32 mech_leg_max(const MechLegRig &L, const MechLegDesc &D) {
-    f32 la, lb, up;
-    mech_leg_links(L, D, &la, &lb, &up);
+    f32 la, lb, ox, oy;
+    mech_leg_links(L, D, &la, &lb, &ox, &oy);
     return la + lb - 0.02f;
 }
 // Углы бедра, голени и плюсны к горизонту для оси лапы в точке (x, y) от оси качания
