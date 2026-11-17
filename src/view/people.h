@@ -5,6 +5,7 @@
 // этого не видят: состояние только у вида
 #pragma once
 #include "appear.h"
+#include "wear.h"
 #include "../anim/gait.h"
 #include "arms.h"
 #include "../render/render.h"
@@ -15,6 +16,7 @@ struct ViewInput;
 struct Camera;
 
 constexpr u32 VIEW_BODIES_MAX = 48;      // людей с телом в кадре (ближние к глазу); копий сетки столько же
+static_assert(VIEW_BODIES_MAX <= WEAR_COPIES_MAX, "копий вещи — на каждого человека с телом");
 constexpr f32 VIEW_BODY_FAR_M = 400.0f;  // дальше тела нет
 constexpr f32 VIEW_IK_FAR_M = 60.0f;     // дальше — без IK и перестановки стоп
 constexpr u32 VIEW_TRAIL = 48;           // след касаний стоп на человека (отладка)
@@ -62,6 +64,11 @@ struct PeopleView {
     AppearFit fit[VIEW_BODIES_MAX];
     u32 fit_seed[VIEW_BODIES_MAX];
     bool fit_set[VIEW_BODIES_MAX];
+    // Одежда владельца копии (wear.h): набор и места копий вещей в запасах по виду вещи
+    WearBind wear;
+    Outfit outfit[VIEW_BODIES_MAX];
+    u8 outfit_copy[VIEW_BODIES_MAX][WEAR_MAX_ITEMS];
+    WearCopies wcopies;
     bool bound, failed;
     u32 body, skin;                   // тело (ViewAssets::bodies) и его скелет game_engine
     GaitSet gait;

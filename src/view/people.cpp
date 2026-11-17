@@ -112,6 +112,7 @@ static bool bind(PeopleView &pv, const ViewAssets &a) {
         pv.armed = false;
     }
     appear_bind(pv.appear, b);
+    wear_bind(pv.wear, a, b);
     pv.body = 0;
     pv.skin = k;
     pv.failed = false;
@@ -601,6 +602,8 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
         if (!keep[j]) {
             if (pv.copy_owner[j]) pv.look[pv.copy_owner[j] - 1].drawn = false;
             pv.copy_owner[j] = 0;
+            if (pv.fit_set[j]) wear_release(pv.wcopies, pv.outfit[j], pv.outfit_copy[j]);
+            pv.fit_set[j] = false;
         }
     for (u32 k = 0; k < np; ++k) {
         if (slot_copy[k] >= 0) continue;
@@ -629,6 +632,12 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
         appear_weights(pv.appear, pv.who[j], w);
         appear_fit(pv.fit[j], s, body.joints[pv.skin], body.morph_count, w, pv.who[j].height, pv.bones[B_PELVIS]);
         pv.fit[j].carry = appear_carry(pv.who[j]);
+        if (pv.fit_set[j]) wear_release(pv.wcopies, pv.outfit[j], pv.outfit_copy[j]);
+        pv.outfit[j] = wear_make(seed, pv.who[j], pv.wear, assets);
+        wear_take(pv.wcopies, pv.outfit[j], pv.outfit_copy[j], assets, pv.wear, pv.skin);
+        // Одежда отодвигает места ношения оружия на свою толщину
+        pv.fit[j].carry.hip += pv.outfit[j].hip;
+        pv.fit[j].carry.back += pv.outfit[j].back;
         pv.fit_seed[j] = seed;
         pv.fit_set[j] = true;
     }
@@ -636,7 +645,7 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
     usize nb0 = out.bones.count, ns0 = out.skinned.count;
     RenderBone *bones = arena_push<RenderBone>(frame, nb0 + (usize)np * nb);
     if (nb0) memcpy(bones, out.bones.data, nb0 * sizeof(RenderBone));
-    RenderSkinned *sk = arena_push<RenderSkinned>(frame, ns0 + np);
+    RenderSkinned *sk = arena_push<RenderSkinned>(frame, ns0 + (usize)np * (1 + WEAR_MAX_ITEMS));
     if (ns0) memcpy(sk, out.skinned.data, ns0 * sizeof(RenderSkinned));
     usize nbo = nb0, nso = ns0;
     for (u32 k = 0; k < np; ++k) {
@@ -665,7 +674,22 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
         o.instance = ni;
         o.first_bone = (u32)nbo;
         appear_weights(pv.appear, pv.who[cj], o.morph);
+        const Outfit &of = pv.outfit[cj];
+        o.hide = of.hide;
         ni++;
+        // Вещи: тот же экземпляр (место, поворот, рост), та же палитра костей и те же веса морфов
+        for (u32 w = 0; w < of.count && ni < RENDER_MAX_INSTANCES; ++w) {
+            if (pv.outfit_copy[cj][w] == WEAR_NO_COPY) continue;
+            RenderInstance &wi = inst[ni];
+            wi = it;
+            wi.mesh = pv.wcopies.mesh[of.kind[w]][pv.outfit_copy[cj][w]];
+            wi.seed = of.seed[w];
+            RenderSkinned &ws = sk[nso++];
+            ws = o;
+            ws.instance = ni;
+            ws.hide = 0;
+            ni++;
+        }
         nbo += nb;
         if (po.sword && ni < RENDER_MAX_INSTANCES) {
             RenderInstance &sw = inst[ni++];
