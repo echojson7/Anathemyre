@@ -28,7 +28,8 @@ struct Settings {
     u32 aa = 2;               // сглаживание (docs/aa.md): RENDER_AA_* — выкл, FXAA, TAA
     // Отладка
     bool debug = true;        // отладочные клавиши и панель
-    bool debug_panel = false; // панель отладки (F3)
+    bool debug_panel = false; // окна отладки (F3): отладка слева, показатели справа
+    bool debug_metrics = true; // показатели справа от отладки (кнопка в окне отладки)
     bool lines = true;        // отладочные отрезки и точки (L)
 };
 

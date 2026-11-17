@@ -38,7 +38,7 @@ static void usage() {
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z] [--pivot м]   снимок (градусы, метры; опора над землёй)");
     log_info("           [--work файл.txt]                                            счётчики работы освещения в файл (с --frames)");
-    log_info("           [--nohud] [--open menu|keys|debug|frame|world]               без интерфейса; открыть меню или панель");
+    log_info("           [--nohud] [--open menu|keys|ui|debug|light|people|world]  без интерфейса; открыть меню или отладку");
     log_info("           [--stand off|elbow|knee|mixamo|morphN|both|move|nocaps|clip=…|blend=…|w=…|speed=…|t=…,…]  стенд людей (docs/anim.md)");
     log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
     log_info("           [--clock 1|20|120|0]                                         скорость суток с начала, как T (видео ускоренного времени)");
@@ -49,7 +49,8 @@ static void usage() {
     log_info("           --frames N --video префикс --cam-play                        видео камеры: показ записанным вводом");
     log_info("           [--spin град/с]                                              камера поворачивается сама (видео мерцания при повороте)");
     log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines] [--sides]  выбрать, камера за ним, приказы, отладка");
-    log_info("           [--mech pack|stand|walk|show] [--mech-follow]                шагающая турель: лежит, стоит, обходит, показ всего по порядку; камера за ней (docs/vezha.md)");
+    log_info("           [--mech pack|stand|walk|show] [--mech-follow]                шагающие машины: лежат, стоят, обходят, показ всего по порядку; камера за машиной (docs/vezha.md, docs/tat.md)");
+    log_info("           [--mech-kind vezha|tat]                                      за какой машиной камера и след");
     log_info("           --frames N --mech-trace файл.txt                             след её движения без окна: N кадров по 1/30 с, строка чисел на кадр");
     log_info("           [--attack \"кадр место цель; …\"] [--slow кадр]  приказы «атаковать» по кадрам, замедление ×0.25 (видео удара)");
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
@@ -178,7 +179,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--open")) {
             a.open = next;
             ok = next && (!strcmp(next, "menu") || !strcmp(next, "keys") || !strcmp(next, "debug") || !strcmp(next, "world") ||
-                          !strcmp(next, "frame"));
+                          !strcmp(next, "frame") || !strcmp(next, "light") || !strcmp(next, "people") ||
+                          !strcmp(next, "ui"));
             i++;
         }
         else if (!strcmp(s, "--hour")) {
@@ -233,6 +235,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--terrain-map")) { a.terrain_map = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--walk-map")) { a.walk_map = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--mech-follow")) a.mech_follow = true;
+        else if (!strcmp(s, "--mech-kind")) {
+            a.mech_kind = next;
+            ok = next && (!strcmp(next, "vezha") || !strcmp(next, "tat"));
+            i++;
+        }
         else if (!strcmp(s, "--mech-trace")) { a.mech_trace = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--novsync")) a.vsync = false;
         else if (!strcmp(s, "--validation")) a.validation = true;

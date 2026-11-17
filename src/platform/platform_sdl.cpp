@@ -616,6 +616,12 @@ void platform_set_title(const char *title) {
     if (g_window) SDL_SetWindowTitle(g_window, title);
 }
 
+bool platform_clipboard_set(const char *text) {
+    if (SDL_SetClipboardText(text)) return true;
+    log_warn("буфер обмена: %s", SDL_GetError());
+    return false;
+}
+
 void platform_toggle_fullscreen() {
     if (!g_window) return;
     bool full = (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN) != 0;

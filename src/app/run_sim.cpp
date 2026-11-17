@@ -228,7 +228,7 @@ int run_walk_map(const Args &a, AppMemory &m) {
     return debug_write_walk_map(w, a.walk_map, m.load) ? 0 : 1;
 }
 
-// След движения шагающей турели без окна (docs/vezha.md, «Отладка движения»): мир как у --sim, жизнь машины —
+// След движения шагающей машины без окна (docs/vezha.md, «Отладка движения»): мир как у --sim, жизнь машины —
 // кадрами по 1/30 с, на кадр строка чисел (mech_view_trace). Люди стоят, где их поставила сцена
 int run_mech_trace(const Args &a, AppMemory &m) {
     World w;
@@ -236,19 +236,29 @@ int run_mech_trace(const Args &a, AppMemory &m) {
     Extract e;
     extract_init(e, m.world);
     sim_extract(w, e);
-    Skel skel;
-    if (!app_skel_load("people/vezha.vezha.skel", m, skel)) return 1;
     MechView *mv = arena_push<MechView>(m.world, 1);
     mech_view_init(*mv);
     if (a.mech) mech_view_demo(*mv, a.mech);
-    for (u32 i = 0; i < e.props_count; ++i)
-        if (e.prop_gen[i] && mech_view_is(e.prop_mesh[i]))
-            mech_view_place(*mv, i, WPos{e.prop_cx[i], e.prop_cz[i], e.prop_x[i], e.prop_y[i], e.prop_z[i]}, e.prop_yaw[i]);
+    if (a.mech_kind) mech_view_pick(*mv, a.mech_kind);
+    for (u32 i = 0; i < e.props_count; ++i) {
+        i32 kind = e.prop_gen[i] ? mech_view_kind(e.prop_mesh[i]) : -1;
+        if (kind >= 0)
+            mech_view_place(*mv, i, (u8)kind, WPos{e.prop_cx[i], e.prop_cz[i], e.prop_x[i], e.prop_y[i], e.prop_z[i]}, e.prop_yaw[i]);
+    }
+    // Скелеты — только видов, что стоят в сцене
+    Skel skels[MECH_KINDS] = {};
+    for (u32 k = 0; k < MECH_KINDS; ++k) {
+        bool used = false;
+        for (u32 i = 0; i < MECH_MAX; ++i) used = used || (mv->mech[i].live && mv->mech[i].kind == k);
+        char path[64];
+        snprintf(path, sizeof path, "people/%s.%s.skel", mech_kind_name((u8)k), mech_kind_name((u8)k));
+        if (used && !app_skel_load(path, m, skels[k])) return 1;
+    }
     u64 frames = a.frames ? a.frames : 300;
     usize cap = frames * 1024 + 64, len = 0;
     char *text = arena_push<char>(m.load, cap);
     for (u64 f = 0; f < frames; ++f) {
-        if (!mech_view_trace(*mv, skel, e, 1.0f / 30.0f, text + len, cap - len - 2)) { log_error("след: машины нет в сцене"); return 1; }
+        if (!mech_view_trace(*mv, skels, e, 1.0f / 30.0f, text + len, cap - len - 2)) { log_error("след: машины нет в сцене"); return 1; }
         len += strlen(text + len);
         text[len++] = '\n';
     }

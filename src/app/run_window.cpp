@@ -165,6 +165,7 @@ int run_window(const Args &a, AppMemory &m) {
     MechView *mechs = arena_push<MechView>(m.world, 1);
     mech_view_init(*mechs);
     if (a.mech) mech_view_demo(*mechs, a.mech);
+    if (a.mech_kind) mech_view_pick(*mechs, a.mech_kind);
     // Кеш эрозии рядом с игрой (docs/startup.md); снимки и запись повтора (--frames, --record) считают землю
     // заново, как --sim и CI
     char erode_path[1024];
@@ -326,12 +327,17 @@ int run_window(const Args &a, AppMemory &m) {
     debug_stand_args(ds, a.stand);
     if (a.people_lines) ds.people_lines = true;
     if (a.sides || (a.brawl[0] && a.brawl[1])) ds.people_sides = true;
-    if (a.open && (!strcmp(a.open, "menu") || !strcmp(a.open, "keys"))) {
+    if (a.open && (!strcmp(a.open, "menu") || !strcmp(a.open, "keys") || !strcmp(a.open, "ui"))) {
         menu.open = true;
-        menu.tab = !strcmp(a.open, "keys") ? HUD_TAB_CONTROLS : HUD_TAB_SCREEN;
+        menu.tab = !strcmp(a.open, "keys") ? HUD_TAB_CONTROLS : !strcmp(a.open, "ui") ? HUD_TAB_UI : HUD_TAB_SCREEN;
     } else if (a.open) {
         set.debug = set.debug_panel = true;
-        ds.tab = !strcmp(a.open, "world") ? DEBUG_TAB_WORLD : !strcmp(a.open, "frame") ? DEBUG_TAB_FRAME : DEBUG_TAB_MAIN;
+        // frame — прежняя вкладка «Кадр»: её числа теперь в окне показателей справа, оно открыто всегда
+        set.debug_metrics = true;
+        ds.tab = !strcmp(a.open, "world")    ? DEBUG_TAB_WORLD
+                 : !strcmp(a.open, "light")  ? DEBUG_TAB_LIGHT
+                 : !strcmp(a.open, "people") ? DEBUG_TAB_PEOPLE
+                                             : DEBUG_TAB_MAIN;
     }
     Input in{};
     TimeStat st_frame, st_step, st_cpu, st_gpu;
@@ -371,6 +377,7 @@ int run_window(const Args &a, AppMemory &m) {
         if (in.key_pressed[KEY_ESCAPE] && !hud_on) break;  // без интерфейса Esc по-прежнему закрывает окно
         if (in.key_pressed[KEY_F11]) set.fullscreen = !set.fullscreen;
         ds.lines = set.lines;
+        ds.metrics = set.debug_metrics;
         if (set.debug && !menu.open) {
             if (in.key_pressed[KEY_SPACE]) ds.pause_toggle = true;
             if (in.key_pressed[KEY_MINUS] && tc.speed > 0) ds.speed_set = (i32)tc.speed - 1;
@@ -383,7 +390,7 @@ int run_window(const Args &a, AppMemory &m) {
         prof_mark(*prof, platform_time_ns());
         if (hud_on) {
             UiConfig uc{set.ui_scale, set.text_scale};
-            ui_begin(ww, wh, uc, in);
+            ui_begin(ww, wh, uc, in, dt);
             hud_fps(set, hs);
             if (set.debug && set.debug_panel && !menu.open) {
                 WPos eye = view_eye(cam);
@@ -471,6 +478,7 @@ int run_window(const Args &a, AppMemory &m) {
         prof_part(*prof, FP_UI, platform_time_ns());
         if (set.debug) {
             set.lines = ds.lines;
+            set.debug_metrics = ds.metrics;
         }
         if (menu_was && !menu.open && menu.changed && save_settings) {
             settings_save(set, settings_path());

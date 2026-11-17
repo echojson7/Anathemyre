@@ -25,9 +25,9 @@ void hud_fps(const Settings &s, const HudStats &st) {
     f32 ww = warn[0] ? ui_text_width(UI_SMALL, warn) : 0;
     if (ww > w) w = ww;
     f32 h = lt + (s.fps == FPS_FULL ? ls + ui_px(2) : 0) + (warn[0] ? ls + ui_px(2) : 0);
-    f32 px = ui_px(22), py = ui_px(8);
+    f32 px = ui_px(16), py = ui_px(6);
     // Подложка едва видна: цифры читаются и на ярком небе
-    ui_soft(cx - w * 0.5f - px, y - py, w + 2 * px, h + 2 * py, ui_rgba(12, 13, 14, 120), ui_px(10));
+    ui_round(cx - w * 0.5f - px, y - py, w + 2 * px, h + 2 * py, ui_rgba(12, 13, 14, 150), ui_px(8));
     f32 x = cx - (wn + gap + wu) * 0.5f;
     ui_text(x, y, UI_TITLE, ui_col::TEXT, n);
     // Подпись — по линии букв числа
@@ -41,30 +41,27 @@ void hud_fps(const Settings &s, const HudStats &st) {
     if (warn[0]) ui_text_center(cx, yl, UI_SMALL, ui_col::WARN, warn);
 }
 
-static const char *const TABS[HUD_TABS] = {"ЭКРАН", "ИНТЕРФЕЙС", "УПРАВЛЕНИЕ", "ОТЛАДКА"};
+static const char *const TABS[HUD_TABS] = {"Графика", "Управление", "Интерфейс"};
 static const char *const FPS_NAMES[FPS_MODES] = {"выкл", "к/с", "подробно"};
-static const char *const QUALITY_NAMES[] = {"низко", "средне", "высоко", "ультра"};
+static const char *const QUALITY_NAMES[] = {"Низко", "Средне", "Высоко", "Ультра"};
 static const char *const AA_NAMES[] = {"выкл", "FXAA", "TAA"};
 
 static void tab_screen(UiForm &f, Settings &s, bool &ch) {
     ui_section(f, "ОКНО");
+    ui_tip(f, "Окно на весь экран; то же — клавиша F11");
     ch |= ui_toggle(f, "Весь экран", s.fullscreen);
+    ui_tip(f, "Кадр ждёт обновления экрана: без разрывов, к/с не выше частоты экрана");
     ch |= ui_toggle(f, "Вертикальная синхронизация", s.vsync);
-    ui_section(f, "КАМЕРА");
-    ch |= ui_slider(f, "Поле зрения", s.fov_deg, 40.0f, 100.0f, 1.0f, "%.0f°");
     // Ступени света (docs/light.md, «Ступени»): каждая — тот же облик, ниже — дешевле. Шаги этапа 6 добавляют свои
-    ui_section(f, "ГРАФИКА");
-    ch |= ui_choice(f, "Качество света", s.light_quality, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES));
+    ui_section(f, "КАЧЕСТВО");
+    ui_tip(f, "Тени солнца, отражённый свет, небо и огни; ниже — быстрее, облик тот же");
+    ch |= ui_segment(f, "Качество света", s.light_quality, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES));
     // Сглаживание краёв (docs/aa.md): TAA — края и мерцание мелочи, FXAA — только края, дешевле
-    ch |= ui_choice(f, "Сглаживание", s.aa, AA_NAMES, ANA_COUNTOF(AA_NAMES));
-}
-
-static void tab_ui(UiForm &f, Settings &s, bool &ch) {
-    ui_section(f, "РАЗМЕР");
-    ch |= ui_slider(f, "Масштаб интерфейса", s.ui_scale, 0.75f, 2.0f, 0.05f, "%.2f×");
-    ch |= ui_slider(f, "Размер текста", s.text_scale, 0.75f, 1.5f, 0.05f, "%.2f×");
-    ui_section(f, "НА ЭКРАНЕ");
-    ch |= ui_choice(f, "Счётчик к/с", s.fps, FPS_NAMES, FPS_MODES);
+    ui_tip(f, "TAA — края и мерцание мелочи; FXAA — только края, дешевле");
+    ch |= ui_segment(f, "Сглаживание", s.aa, AA_NAMES, ANA_COUNTOF(AA_NAMES));
+    ui_section(f, "КАМЕРА");
+    ui_tip(f, "Поле зрения по вертикали");
+    ch |= ui_slider(f, "Поле зрения", s.fov_deg, 40.0f, 100.0f, 1.0f, "%.0f°");
 }
 
 static void keys_column(UiForm &f, const char *title, const char *const (*rows)[2], u32 n) {
@@ -73,82 +70,115 @@ static void keys_column(UiForm &f, const char *title, const char *const (*rows)[
 }
 
 static void tab_controls(UiForm &f, Settings &s, bool &ch) {
-    ui_section(f, "МЫШЬ");
+    ui_section(f, "МЫШЬ И КАМЕРА");
+    ui_tip(f, "Скорость поворота камеры мышью");
     ch |= ui_slider(f, "Чувствительность", s.mouse_sens, 0.2f, 4.0f, 0.05f, "%.2f×");
     ch |= ui_toggle(f, "Инвертировать по вертикали", s.invert_y);
+    ui_tip(f, "Мышь вправо — взгляд влево");
     ch |= ui_toggle(f, "Инвертировать по горизонтали", s.invert_x);
+    ui_tip(f, "Сглаживание движения камеры; 0 — без сглаживания");
     ch |= ui_slider(f, "Плавность камеры", s.cam_smooth, 0.0f, 2.0f, 0.1f, "%.1f×");
     ui_section(f, "КАМЕРА");
+    ui_tip(f, "Вблизи вдоль земли, издалека сверху");
     ch |= ui_toggle(f, "Наклон от расстояния", s.cam_tilt_zoom);
+    ui_tip(f, "Колесо приближает к точке под курсором");
     ch |= ui_toggle(f, "Приближать к курсору", s.cam_zoom_cursor);
+    ui_tip(f, "Курсор у края экрана двигает камеру");
     ch |= ui_toggle(f, "Двигать у края экрана", s.cam_edge_pan);
+    ui_tip(f, "Скорость движения камеры клавишами");
     ch |= ui_slider(f, "Скорость движения", s.cam_pan_speed, 0.25f, 3.0f, 0.05f, "%.2f×");
-    // Справка по клавишам — два столбца
+    // Справка по клавишам — два столбца (клавиши — src/view/camera.cpp, src/app/orders.cpp, src/debug/debug.cpp)
     static const char *const CAM[][2] = {
         {"СКМ, Alt ПКМ", "вращать"}, {"Q  E", "повернуть"}, {"Shift СКМ", "тащить землю"}, {"Колесо", "ближе, дальше"},
-        {"W A S D", "двигать"}, {"Shift", "быстрее"}, {"C", "за выбранным"}, {"F", "полёт (Q E — вниз, вверх)"}};
-    static const char *const WORLD[][2] = {{"ЛКМ", "выбрать человека"}, {"ПКМ", "идти шагом"}, {"Ctrl ПКМ", "трусцой"},
-                                           {"Shift ПКМ", "бегом"}, {"ЛКМ мимо", "притянуть точки"}, {"Ctrl ЛКМ", "вспышка"},
-                                           {"R", "отпустить"}};
-    static const char *const MAIN[][2] = {{"Esc", "настройки"}, {"F11", "весь экран"}, {"F3", "панель отладки"}};
-    static const char *const DBG[][2] = {{"Space", "пауза"}, {".", "шаг на паузе"}, {"−  =", "скорость мира"},
-                                          {"[  ]", "час назад, вперёд"}, {"T", "ход суток"}, {"L", "отрезки"},
-                                          {"P", "ячейки (старое правило)"}, {"B", "стенд: согнуть кость"}};
-    f32 gap = ui_px(28), cw = (f.w - gap) * 0.5f;
+        {"W A S D", "двигать"},      {"Shift", "быстрее"},
+        {"F", "полёт (Q E — вниз, вверх)"},     {"C", "за выбранным"}};
+    static const char *const WORLD[][2] = {{"ЛКМ", "выбрать человека"}, {"ЛКМ мимо", "снять выбор"},
+                                           {"ПКМ", "идти шагом"},        {"Ctrl ПКМ", "трусцой"},
+                                           {"Shift ПКМ", "бегом"},       {"ПКМ по человеку", "напасть"}};
+    static const char *const MAIN[][2] = {{"Esc", "настройки"}, {"F11", "весь экран"}, {"F3", "отладка"}};
+    static const char *const DBG[][2] = {{"Space", "пауза"},       {".  ,", "шаг вперёд, назад"},
+                                          {"−  =", "скорость мира"}, {"[  ]", "час назад, вперёд"},
+                                          {"T", "ход суток"},        {"L", "отрезки и точки"},
+                                          {"P", "ячейки (старое)"},  {"B", "стенд: согнуть"},
+                                          {"F5", "перечитать данные"}, {"F1", "справка в журнал"}};
+    f32 gap = ui_px(28), cw = floorf((f.w - gap) * 0.5f);
     UiForm l = f, r = f;
     l.w = r.w = cw;
     r.x = f.x + cw + gap;
     keys_column(l, "КАМЕРА", CAM, ANA_COUNTOF(CAM));
-    keys_column(l, "МИР", WORLD, ANA_COUNTOF(WORLD));
+    keys_column(l, "ЛЮДИ", WORLD, ANA_COUNTOF(WORLD));
     keys_column(r, "ОБЩЕЕ", MAIN, ANA_COUNTOF(MAIN));
     if (s.debug) keys_column(r, "ОТЛАДКА", DBG, ANA_COUNTOF(DBG));
+    f.y = l.y > r.y ? l.y : r.y;
 }
 
-static void tab_debug(UiForm &f, Settings &s, bool &ch) {
+static void tab_ui(UiForm &f, Settings &s, bool &ch) {
+    ui_section(f, "РАЗМЕР");
+    ui_tip(f, "Размер окон и отступов; текст растёт вместе с ними");
+    ch |= ui_slider(f, "Масштаб интерфейса", s.ui_scale, 0.75f, 2.0f, 0.05f, "%.2f×");
+    ui_tip(f, "Размер букв отдельно от окон");
+    ch |= ui_slider(f, "Размер текста", s.text_scale, 0.75f, 1.5f, 0.05f, "%.2f×");
+    ui_section(f, "НА ЭКРАНЕ");
+    ui_tip(f, "Сверху по центру; «подробно» — ещё CPU, GPU и шаг мира");
+    ch |= ui_segment(f, "Счётчик к/с", s.fps, FPS_NAMES, FPS_MODES);
     ui_section(f, "ОТЛАДКА");
-    ch |= ui_toggle(f, "Отладочные клавиши и панель", s.debug);
+    ui_tip(f, "Клавиши отладки (Space, [ ], T, L, P…) и окна F3: отладка слева, показатели справа");
+    ch |= ui_toggle(f, "Отладка  (F3 и клавиши)", s.debug);
     if (!s.debug) {
-        ui_text(f.x, f.y + ui_px(6), UI_SMALL, ui_col::FAINT, "Выключено: клавиши отладки и F3 не работают");
-        return;
+        f.y += ui_px(4);
+        ui_text(f.x, f.y, UI_SMALL, ui_col::FAINT, "Выключено: клавиши отладки и F3 не работают");
+        f.y += ui_line(UI_SMALL);
     }
-    ch |= ui_toggle(f, "Панель отладки  (F3)", s.debug_panel);
-    ui_section(f, "ВИД");
-    ch |= ui_toggle(f, "Отрезки и точки  (L)", s.lines);
 }
+
+// Прокрутка содержимого меню (на малом окне или крупном масштабе вкладка может не влезть)
+static UiScroll g_menu_scroll[HUD_TABS];
 
 void hud_menu(HudMenu &m, Settings &s) {
     if (!m.open) return;
     f32 W = ui_width(), H = ui_height();
     ui_rect(0, 0, W, H, ui_col::SHADE);
     ui_block(0, 0, W, H);  // под меню мир мышь не получает
-    f32 pw = ui_px(700), ph = ui_px(700), pad = ui_px(34);
+    f32 pw = ui_px(900), ph = ui_px(660);
     if (pw > W - ui_px(20)) pw = W - ui_px(20);
+    if (ph > H - ui_px(20)) ph = H - ui_px(20);
     f32 x = floorf((W - pw) * 0.5f), y = floorf((H - ph) * 0.5f);
-    ui_soft(x, y, pw, ph, ui_col::PANEL, ui_px(14));
+    ui_panel(x, y, pw, ph);
 
-    f32 cx = x + pad, cw = pw - 2 * pad, cy = y + pad;
-    ui_text(cx, cy, UI_TITLE, ui_col::TEXT, "НАСТРОЙКИ", ui_px(2));
-    cy += ui_line(UI_TITLE) + ui_px(18);
-    ui_tabs(cx, cy, cw, TABS, HUD_TABS, m.tab);
-    cy += ui_line(UI_SMALL) + ui_px(10);
-    ui_hline(cx, cy, cw, ui_col::LINE);
-    cy += ui_px(8);
+    // Слева — заголовок, вкладки столбцом и выход внизу
+    f32 side = ui_px(220), pad = ui_px(28);
+    ui_rect(x + side, y + ui_px(1), ui_hair(), ph - ui_px(2), ui_col::LINE);
+    f32 sx = x + ui_px(14), sw = side - ui_px(28);
+    ui_text(sx + ui_px(16), y + pad, UI_TITLE, ui_col::TEXT, "Настройки");
+    f32 ty = y + pad + ui_line(UI_TITLE) + ui_px(22);
+    if (m.tab >= HUD_TABS) m.tab = HUD_TAB_SCREEN;
+    ui_tabs_column(sx, ty, sw, ui_px(40), TABS, HUD_TABS, m.tab);
+    f32 bh = ui_px(36);
+    if (ui_button(sx, y + ph - pad - bh, sw, bh, "Выйти из игры")) m.quit = true;
 
-    UiForm f = ui_form(cx, cy, cw);
+    // Справа — содержимое вкладки (листается), снизу подсказка строки под мышью и «Продолжить»
+    f32 cx = x + side + pad, cw = pw - side - 2 * pad;
+    f32 foot = bh + ui_px(26);
+    f32 top = y + pad - ui_px(12), room = ph - pad - foot - (top - y);
+    UiScroll &sc = g_menu_scroll[m.tab];
+    UiForm f = ui_form(cx, 0, cw - ui_px(14));
+    f.ctl = ui_px(300);
+    f.row = ui_px(40);
+    f.y = ui_scroll_begin(sc, cx - ui_px(10), top, cw + ui_px(20), room);
     bool ch = false;
     switch (m.tab) {
     case HUD_TAB_SCREEN: tab_screen(f, s, ch); break;
-    case HUD_TAB_UI: tab_ui(f, s, ch); break;
     case HUD_TAB_CONTROLS: tab_controls(f, s, ch); break;
-    default: tab_debug(f, s, ch); break;
+    default: tab_ui(f, s, ch); break;
     }
+    ui_scroll_end(sc, f.y + ui_px(8));
     m.changed |= ch;
 
-    // Низ: выход слева, «Продолжить» справа
-    f32 bh = ui_px(36), by = y + ph - pad - bh;
-    ui_hline(cx, by - ui_px(18), cw, ui_col::LINE);
-    f32 bw = ui_px(180);
-    if (ui_button(cx, by, bw, bh, "Выйти из игры")) m.quit = true;
-    if (ui_button(cx + cw - bw, by, bw, bh, "Продолжить")) m.open = false;
-    ui_text_right(cx + cw - bw - ui_px(16), by + (bh - ui_line(UI_SMALL)) * 0.5f, UI_SMALL, ui_col::FAINT, "Esc");
+    f32 by = y + ph - pad - bh;
+    ui_hline(cx, by - ui_px(14), cw, ui_col::LINE);
+    f32 bw = ui_px(170);
+    const char *tip = ui_tip_hovered();
+    if (tip) ui_text_fit(cx, floorf(by + (bh - ui_line(UI_TEXT)) * 0.5f), UI_TEXT, ui_col::DIM, tip, cw - bw - ui_px(60));
+    if (ui_button(cx + cw - bw, by, bw, bh, "Продолжить", false, true)) m.open = false;
+    ui_text_right(cx + cw - bw - ui_px(14), floorf(by + (bh - ui_line(UI_SMALL)) * 0.5f), UI_SMALL, ui_col::FAINT, "Esc");
 }

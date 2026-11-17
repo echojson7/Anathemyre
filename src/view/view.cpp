@@ -129,10 +129,12 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     u32 ni = 0;
     for (u32 i = 0; i < n && ni < RENDER_MAX_INSTANCES; ++i) {
         if (!cur.prop_gen[i]) continue;
-        // Шагающая турель (docs/vezha.md): объект сцены — её место, ведёт и рисует её вид
-        if (mech_view_is(cur.prop_mesh[i])) {
-            if (in.mech) mech_view_place(*in.mech, i, WPos{cur.prop_cx[i], cur.prop_cz[i], cur.prop_x[i], cur.prop_y[i], cur.prop_z[i]},
-                                         cur.prop_yaw[i]);
+        // Шагающая машина (docs/vezha.md, docs/tat.md): объект сцены — её место, ведёт и рисует её вид
+        i32 kind = mech_view_kind(cur.prop_mesh[i]);
+        if (kind >= 0) {
+            if (in.mech)
+                mech_view_place(*in.mech, i, (u8)kind, WPos{cur.prop_cx[i], cur.prop_cz[i], cur.prop_x[i], cur.prop_y[i], cur.prop_z[i]},
+                                cur.prop_yaw[i]);
             continue;
         }
         const ViewMesh *vm = find_mesh(assets, cur.prop_mesh[i]);

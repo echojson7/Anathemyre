@@ -40,7 +40,10 @@ struct DebugState {
     bool stand_inplace = true;  // на месте: корень клипа только поворачивает
     bool stand_caps = true;     // капсулы и клинок из запечённых дорожек
     bool stand_both = false;    // оба скелета рядом: game_engine слева, Mixamo справа
-    u32 tab = 0;              // вкладка панели: DEBUG_TAB_*
+    u32 tab = 0;              // вкладка окна отладки: DEBUG_TAB_*
+    bool metrics = true;      // окно показателей справа (правда — в настройках, debug_metrics)
+    u32 metrics_closed = 0;   // свёрнутые разделы показателей, бит на раздел (только вид)
+    u64 copied_ns = 0;        // когда показатели скопированы в буфер обмена (надпись «скопировано»)
     // Просьбы этого кадра от клавиш и панели (debug_clear_frame после исполнения)
     bool step_once = false;   // «.» на паузе — один шаг
     bool step_back = false;   // «,» на паузе — шаг назад (перемотка)
@@ -70,7 +73,8 @@ inline void debug_clear_frame(DebugState &d) {
 constexpr u32 CLOCK_SPEEDS[] = {1, 20, 120, 0};
 // Скорости клипа на стенде
 constexpr f32 STAND_SPEEDS[] = {1.0f, 0.5f, 0.25f, 0.1f};
-enum DebugTab : u32 { DEBUG_TAB_MAIN, DEBUG_TAB_FRAME, DEBUG_TAB_WORLD, DEBUG_TABS };
+// Вкладки окна отладки (слева): общее (время, сутки, камера, вид), свет, люди, таблицы мира (осмотр)
+enum DebugTab : u32 { DEBUG_TAB_MAIN, DEBUG_TAB_LIGHT, DEBUG_TAB_PEOPLE, DEBUG_TAB_WORLD, DEBUG_TABS };
 
 // Строк проходов GPU и переполнений в панели
 constexpr u32 DEBUG_MAX_PASSES = 24, DEBUG_MAX_OVERFLOWS = 8, DEBUG_MAX_FRAME_PARTS = PROF_MAX_PARTS;
@@ -175,8 +179,9 @@ void debug_duel_report(const World &w, u32 pairs);
 // Карта сетки ходимости у Остова и путь от входа на галерею (--walk-map файл.bmp)
 bool debug_write_walk_map(const World &w, const char *path, Arena &scratch);
 void debug_print_help();
-// Панель отладки (F3) справа сверху: числа кадра и мира, управление временем, сутками, камерой и видом;
-// вкладка «Мир» — осмотр таблиц. Пишет только просьбы в DebugState
+// Окна отладки (F3, docs/ui.md): слева — отладка (время, сутки, камера, вид, свет, люди, осмотр таблиц), справа —
+// показатели (только числа, разделы сворачиваются, «Скопировать всё» — текст в буфер обмена). Пишет только просьбы
+// в DebugState
 void debug_panel(const DebugInfo &info, const World &w, DebugState &d, WorldInspect &wi);
 // Метка выбранной строки в мире (столбик и крест отладочными отрезками)
 void debug_inspect_mark(const World &w, const WorldInspect &wi, DebugDraw &dbg);

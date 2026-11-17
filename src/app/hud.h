@@ -8,7 +8,8 @@ struct HudStats {
     const char *unfair;  // включённые отладочные режимы (docs/budget.md); пусто — замер честный
 };
 
-enum HudTab : u32 { HUD_TAB_SCREEN, HUD_TAB_UI, HUD_TAB_CONTROLS, HUD_TAB_DEBUG, HUD_TABS };
+// Вкладки меню: графика (окно, качество, камера), управление (мышь и клавиши), интерфейс (размеры, к/с, отладка)
+enum HudTab : u32 { HUD_TAB_SCREEN, HUD_TAB_CONTROLS, HUD_TAB_UI, HUD_TABS };
 
 struct HudMenu {
     bool open = false;

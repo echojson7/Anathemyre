@@ -116,7 +116,7 @@ SHADER_SPV := $(patsubst data/shaders/%,$(OUT)/shaders/%.spv,$(SHADER_SRC))
 $(shell ./tools/matgen.sh $(OUT))
 
 # Данные рядом с исполняемым файлом: описания и сетки (.mesh пишет tools/meshgen.py, лежат в data/meshes)
-DATA_SRC := data/materials.txt data/scene.txt data/sky.txt data/terrain.txt data/weapons.txt data/ui/plex.font $(sort $(wildcard data/meshes/*.mesh)) \
+DATA_SRC := data/materials.txt data/scene.txt data/sky.txt data/terrain.txt data/weapons.txt data/ui/inter.font $(sort $(wildcard data/meshes/*.mesh)) \
             $(sort $(wildcard data/dunes/*.dun)) $(sort $(wildcard data/prefabs/*.txt)) $(sort $(wildcard data/people/*.skel)) \
             $(sort $(wildcard data/anims/*.anim data/anims/*.trk data/anims/*.txt)) \
             $(sort $(wildcard data/actions/*.txt)) data/duel.txt data/group.txt
