@@ -19,6 +19,13 @@ struct RenderInstance {
 };
 static_assert(sizeof(RenderInstance) == 48, "RenderInstance — 48 байт");
 constexpr u32 RENDER_NO_MATERIAL = 0xFFFFFFFFu;
+// Морок (docs/tat.md): material ≥ RENDER_VEIL — подмены нет (материалы вершин), младший байт — видимость 0..255;
+// RENDER_NO_MATERIAL — то же, что «видна целиком»
+constexpr u32 RENDER_VEIL = 0xFFFFFF00u;
+inline u32 render_veil_material(f32 veil) {
+    f32 v = veil < 0.0f ? 0.0f : (veil > 1.0f ? 1.0f : veil);
+    return RENDER_VEIL | (u32)((1.0f - v) * 255.0f + 0.5f);
+}
 
 // Декаль (docs/ostov.md, «Декали»): коробка проекции относительно камеры, вид узора, материал, зерно. 48 байт,
 // как Decal в data/shaders/common.glsl

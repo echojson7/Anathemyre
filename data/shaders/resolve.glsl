@@ -111,7 +111,7 @@ Hit resolve(ivec2 px, uint id) {
     // Материалы — у первой вершины треугольника, как flat у растра (провоцирующая вершина)
     h.m0 = va.mats & 0xFFFFu;
     h.m1 = va.mats >> 16;
-    if (it.material != 0xFFFFFFFFu) h.m0 = h.m1 = it.material;
+    if (it.material < 0xFFFFFF00u) h.m0 = h.m1 = it.material;   // выше — без подмены, младший байт — морок (RENDER_VEIL)
     h.seed = it.seed;
     if ((m.flags & MESH_DYNAMIC) != 0u) {
         // Копия со скиннингом — те же номера вершин у источника в бинд-позе; жёсткая движущаяся сетка — свои вершины

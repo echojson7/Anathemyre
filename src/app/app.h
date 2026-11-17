@@ -63,7 +63,8 @@ struct Args {
     const char *attack = nullptr;     // --attack "кадр место цель; …": приказы «атаковать» по кадрам (видео удара)
     const char *terrain_map = nullptr;  // --terrain-map файл.bmp: карта земли сверху и выход
     const char *walk_map = nullptr;     // --walk-map файл.bmp: сетка ходимости у Остова и выход
-    bool mech_follow = false;         // --mech-follow: опора камеры идёт за первой турелью (видео)
+    bool mech_follow = false;         // --mech-follow: опора камеры идёт за машиной (видео)
+    const char *mech_kind = nullptr;  // --mech-kind vezha|tat: за какой машиной камера и след (по умолчанию — первая)
     const char *mech_trace = nullptr;   // --mech-trace файл.txt: след движения шагающей турели без окна (с --frames N) и выход
 };
 
