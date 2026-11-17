@@ -189,7 +189,7 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
             r = mech_leg_reach(L, quat_rotate(quat_conj(tilt), b));
         }
         f32 a, sh, ta;
-        mech_leg_solve(L, LD, mech_leg_meta(D, k, m.h), r.x, r.y, &a, &sh, &ta);
+        mech_leg_solve(L, LD, mech_leg_meta(L, D, k, m.h), r.x, r.y, &a, &sh, &ta);
         // Ось сгиба ноги в бинде: поперёк ноги, x ноги × вверх
         Vec3 z = cross(L.dir, Y);
         f32 da = a - L.a1, ds = sh - L.a2, dt = ta - L.a3;

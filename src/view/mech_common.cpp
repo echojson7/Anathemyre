@@ -4,8 +4,8 @@
 static constexpr f32 DEG = PI_F / 180.0f;
 
 // Вежа — четыре паучьи ноги из трёх звеньев (колено вверх, плюсна почти отвесна; лёжа рама на брюхе, лапы на
-// земле, ноги повёрнуты к носу и корме, колени торчат вверх); Тать — четыре одинаковые паучьи ноги из-под углов
-// крыши (tools/parts/tat_leg.py, стойка голеностопа отвесна), тело висит под ними, лёжа лапы остаются на земле.
+// земле, ноги повёрнуты к носу и корме, колени торчат вверх); Тать — четыре одинаковые ноги с двумя суставами (колено
+// выше крыши, плюсна держит угол бинда — tools/parts/tat_leg.py), тело висит под ними, лёжа лапы остаются на земле.
 // Порядок ног — fr, fl, rl, rr (по кругу). Числа Вежи — как в tools/parts/vezha_leg.py и vezha_pose.py
 const MechDesc MECH_DESC[MECH_KINDS] = {
     {"vezha", 0.21f, 0.82f, 1.0f, 0.58f, 0.4f, 3.0f, 16.0f, 0.3f, 0.45f,
@@ -14,10 +14,10 @@ const MechDesc MECH_DESC[MECH_KINDS] = {
       {MECH_LEG_VERT, 1.0f, 0.14f, -40.0f * DEG, 105.0f * DEG, 0.92f, 0.92f, {-20.0f * DEG, 1.1f, -0.07f}, 1.3f, 0.1f, -75.0f * DEG, -80.0f * DEG},
       {MECH_LEG_VERT, 1.0f, 0.14f, -40.0f * DEG, 105.0f * DEG, 0.92f, 0.92f, {20.0f * DEG, 1.1f, -0.07f}, 1.3f, 0.1f, -75.0f * DEG, -80.0f * DEG}}},
     {"tat", 0.37f, 0.62f, 0.74f, 0.50f, 0.5f, 2.4f, 24.0f, 0.37f, 0.25f,
-     {{MECH_LEG_VERT, 1.0f, 0.045f, -50.0f * DEG, 95.0f * DEG, 0.32f, 0.44f, {0.0f, 0.32f, -0.325f}, 1.0f, 0.0f, -90.0f * DEG, -90.0f * DEG},
-      {MECH_LEG_VERT, 1.0f, 0.045f, -50.0f * DEG, 95.0f * DEG, 0.32f, 0.44f, {0.0f, 0.32f, -0.325f}, 1.0f, 0.0f, -90.0f * DEG, -90.0f * DEG},
-      {MECH_LEG_VERT, 1.0f, 0.045f, -50.0f * DEG, 95.0f * DEG, 0.32f, 0.44f, {0.0f, 0.32f, -0.325f}, 1.0f, 0.0f, -90.0f * DEG, -90.0f * DEG},
-      {MECH_LEG_VERT, 1.0f, 0.045f, -50.0f * DEG, 95.0f * DEG, 0.32f, 0.44f, {0.0f, 0.32f, -0.325f}, 1.0f, 0.0f, -90.0f * DEG, -90.0f * DEG}}},
+     {{MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND},
+      {MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND},
+      {MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND},
+      {MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND}}},
 };
 
 const char *mech_kind_name(u8 kind) { return kind < MECH_KINDS ? MECH_DESC[kind].name : "?"; }
@@ -38,7 +38,7 @@ void mech_leg_solve(const MechLegRig &L, const MechLegDesc &D, f32 meta, f32 x, 
 void mech_leg_hlimit(const MechView &mv, const Mech &m, u32 k, f32 &hmin, f32 &hmax) {
     const MechLegRig &L = mech_rig(mv, m).leg[k];
     const MechLegDesc &D = mech_desc(m).leg[k];
-    Vec2 o = mech_leg_off(L, D, mech_leg_meta(mech_desc(m), k, m.h));
+    Vec2 o = mech_leg_off(L, D, mech_leg_meta(L, mech_desc(m), k, m.h));
     MechReach r = mech_leg_reach(L, mech_world_chassis(m, m.leg[k].at, D.foot_h));
     f32 lo = mech_leg_min(L, D), hi = mech_leg_max(L, D);
     f32 tx = r.x + o.x;

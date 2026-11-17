@@ -21,8 +21,9 @@ struct MechLegDesc {
     f32 lift;         // высота дуги шага, доля от обычной
     f32 fold_arc;     // лапа на пути складывания поднимается ещё на столько, м (лёжа лапы на земле — переступают)
     f32 meta_lie, meta_stand;      // MECH_LEG_VERT: плюсна к горизонту лёжа и стоя, рад (−π/2 — отвесна; между —
-                                   // по высоте тела, как вынос лап)
+                                   // по высоте тела, как вынос лап; MECH_META_BIND — держать угол бинда)
 };
+static constexpr f32 MECH_META_BIND = 10.0f;   // плюсна держит свой угол бинда (у Тати — вниз и чуть внутрь)
 
 // Вид машины: имя сетки и скелета, высоты, скорости, ноги. Числа Вежи — прежние константы MECH_*
 struct MechDesc {
@@ -127,7 +128,8 @@ inline void mech_leg_links(const MechLegRig &L, const MechLegDesc &D, f32 *la, f
     *lb = L.l2;
 }
 // Угол плюсны к горизонту при высоте осей бёдер h (tools/parts/vezha_leg.py, meta_at)
-inline f32 mech_leg_meta(const MechDesc &d, u32 k, f32 h) {
+inline f32 mech_leg_meta(const MechLegRig &L, const MechDesc &d, u32 k, f32 h) {
+    if (d.leg[k].meta_lie == MECH_META_BIND) return L.a3;
     return mech_mix(d.leg[k].meta_lie, d.leg[k].meta_stand, mech_smooth((h - d.reach_h0) / d.reach_span));
 }
 // Сдвиг цели решения от оси лапы к скакательному суставу (MECH_LEG_VERT: плюсна под углом meta; иначе — нет)
