@@ -8,10 +8,10 @@ constexpr f32 TAT_STEP_STALK = 0.26f;    // шаг крадучись, с
 constexpr f32 TAT_STEP_DASH = 0.12f;     // шаг перебежки, с
 constexpr f32 TAT_VEIL_IN = 1.2f;        // морок наводится, с
 constexpr f32 TAT_VEIL_OUT = 0.25f;      // морок спадает, с
-constexpr f32 TAT_TURRET_X = 0.19f;      // станок винтовки правее оси машины (tools/parts/tat.py)
+constexpr f32 TAT_TURRET_X = 0.10f;      // станок винтовки на крыше правее оси машины (tools/parts/tat.py)
 constexpr f32 TAT_TURRET_MAX = 0.35f;    // станок доворачивает не дальше, рад: дальше на цель поворачивает рама
 constexpr f32 TAT_HEAD_MAX = 0.6f;       // голова на шее поворачивается не дальше, рад
-constexpr f32 TAT_GUN_MIN = -0.1f, TAT_GUN_MAX = 0.35f;   // возвышение ствола: выше короб затвора упрётся в раму
+constexpr f32 TAT_GUN_MIN = -0.12f, TAT_GUN_MAX = 0.35f;  // возвышение ствола: дальше буфер ляжет на станок
 
 // Крадучись ноги идут по кругу «зад-лево → перед-лево → зад-право → перед-право» (fr = 0, fl = 1, rl = 2, rr = 3)
 static const u8 TAT_SEQ[MECH_LEGS] = {2, 1, 3, 0};
@@ -572,7 +572,7 @@ static void tat_springs(const MechView &mv, Mech &m, const Extract &c, const Mec
     f32 gun_to = f_clamp(elev + m.pitch * ch - m.roll * sh, TAT_GUN_MIN, TAT_GUN_MAX);
     if (m.stow > 0.5f && m.state == MECH_PACKED) gun_to = 0.0f;
     mech_spring(m.gun, m.gun_v, gun_to, m.state == MECH_PRONE ? 14.0f : 9.0f, 0.8f, dt);
-    m.gun = f_clamp(m.gun, TAT_GUN_MIN - 0.05f, TAT_GUN_MAX + 0.05f);   // отдача не загоняет короб в раму
+    m.gun = f_clamp(m.gun, TAT_GUN_MIN - 0.05f, TAT_GUN_MAX + 0.05f);   // отдача не загоняет буфер в станок
     f32 sv = 1.0f / 0.7f;
     m.stow += f_clamp(m.stow_to - m.stow, -sv * dt, sv * dt);
     // Антенны

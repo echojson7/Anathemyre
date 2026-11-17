@@ -1,5 +1,6 @@
 #include "appear.h"
 #include "view.h"
+#include "../sim/world.h"
 #include "../core/hash.h"
 #include "../core/mathf.h"
 
@@ -61,6 +62,52 @@ Appear appear_make(u32 seed) {
     m[AM_CHEEKS] = f_clamp(d.bell() * 0.8f - m[AM_THIN] * 0.2f + m[AM_FULL] * 0.3f, -1.0f, 1.0f);
     m[AM_BROW] = f_clamp(d.bell() * 0.7f + (a.female ? -0.2f : 0.15f), -1.0f, 1.0f);
     m[AM_EARS] = d.bell() * 0.8f;
+    return a;
+}
+
+// Ряд показа: женщины слева направо, потом мужчины. Морфы сложения — те же, что даёт appear_make, у краёв её разброса
+struct ShowBody {
+    bool female;
+    f32 height, full, thin, strong, old, belly, shoulders;
+};
+static const ShowBody SHOW_BODIES[] = {
+    {true, 1.66f, 0.0f, 0.1f, 0.15f, 0.05f, 0.0f, 0.0f},   // средняя
+    {true, 1.55f, 0.0f, 0.75f, 0.0f, 0.0f, 0.0f, -0.3f},   // невысокая худая
+    {true, 1.77f, 0.0f, 0.0f, 0.55f, 0.05f, 0.0f, 0.4f},   // высокая сильная
+    {true, 1.63f, 0.8f, 0.0f, 0.1f, 0.1f, 0.4f, 0.0f},     // полная
+    {true, 1.60f, 0.0f, 0.2f, 0.0f, 0.7f, 0.3f, -0.2f},    // старая
+    {false, 1.78f, 0.0f, 0.1f, 0.25f, 0.05f, 0.0f, 0.1f},  // средний
+    {false, 1.90f, 0.0f, 0.75f, 0.0f, 0.05f, 0.0f, -0.2f}, // высокий худой
+    {false, 1.82f, 0.0f, 0.0f, 0.85f, 0.05f, 0.0f, 0.6f},  // сильный
+    {false, 1.74f, 0.85f, 0.0f, 0.2f, 0.15f, 0.7f, 0.1f},  // полный
+    {false, 1.70f, 0.0f, 0.2f, 0.1f, 0.75f, 0.4f, -0.1f},  // старый
+};
+static_assert(ANA_COUNTOF(SHOW_BODIES) <= SCENE_SHOW_MAX, "обликов показа не больше ряда сцены");
+
+Appear appear_show(u32 k, u32 seed, u32 *look_seed) {
+    const ShowBody &b = SHOW_BODIES[k % ANA_COUNTOF(SHOW_BODIES)];
+    // Зерно того же пола: лицо и челюсть у appear_make зависят от пола
+    u32 s = seed;
+    Appear a = appear_make(s);
+    for (u32 t = 1; a.female != b.female && t < 64; ++t) a = appear_make(s = seed + t * 0x9E3779B9u);
+    f32 *m = a.morph;
+    const f32 fem = a.female ? 1.0f : 0.0f;
+    a.height = b.height;
+    m[AM_FULL] = b.full;
+    m[AM_THIN] = b.thin;
+    m[AM_STRONG] = b.strong;
+    m[AM_OLD] = b.old;
+    m[AM_BELLY] = b.belly;
+    m[AM_SHOULDERS] = b.shoulders;
+    m[AM_FEMALE_FULL] = fem * b.full;
+    m[AM_FEMALE_THIN] = fem * b.thin;
+    m[AM_FEMALE_STRONG] = fem * b.strong;
+    // Пропорции от зерна — вполсилы: в ряду сравнивают сложение, а не случайные длины
+    m[AM_HIPS] *= 0.5f;
+    m[AM_LEGS] *= 0.5f;
+    m[AM_TORSO] *= 0.5f;
+    m[AM_ARMS] *= 0.5f;
+    if (look_seed) *look_seed = s;
     return a;
 }
 

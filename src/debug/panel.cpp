@@ -86,6 +86,7 @@ static void tab_people(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_section(f, "ЛЮДИ МИРА");
     ui_toggle(f, "капсулы, путь и след стоп", d.people_lines);
     ui_toggle(f, "стороны боя и цели", d.people_sides);
+    ui_toggle(f, "показ тел: поза привязки, без одежды", d.people_show);
     // Стенд людей (stand.cpp): человек у Остова, проверка весов, морфов и клипов
     ui_section(f, "СТЕНД");
     ui_toggle(f, "человек у Остова", d.stand);

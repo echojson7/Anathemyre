@@ -25,6 +25,7 @@ struct DebugState {
     u32 tonemap = 0;          // тонмаппинг: 0 — AgX, 1 — ACES (RENDER_TONEMAP_*; docs/light.md), выбор по кадрам
     // Стенд людей (stand.cpp): человек у Остова, кость согнута (B), скелет, морф (0 — нет, k — морф k − 1)
     bool people_lines = false; // люди мира: капсулы шага, путь выбранного, след касаний стоп (при отрезках L)
+    bool people_show = false;  // показ тел (docs/body.md, «Показ»): поза привязки, без одежды и оружия; ставит start show
     bool people_sides = false; // группа (этап 12): круг стороны под ногами, линия к цели, место вокруг цели
     bool stand = false;       // выкл.: у людей мира есть тела (9б); включается в F3 и --stand
     bool stand_bend = false;

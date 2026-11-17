@@ -8,6 +8,9 @@
 #include "../core/log.h"
 #include "../core/mathf.h"
 
+// skin_bounds.comp читает индексы кластера без цикла: до 6 на поток группы из 64
+static_assert(MESH_MAX_CLUSTER_TRIS * 3 <= 6 * 64, "skin_bounds.comp: индексов кластера больше 6 × 64");
+
 constexpr f32 LOD_PIXELS = 0.75f;  // как в cull.glsl
 // Сфера сетки человека: бинд-поза × запас (руки вверх и в стороны выходят из сферы A-позы)
 constexpr f32 SKIN_SPHERE_GROW = 1.6f;
