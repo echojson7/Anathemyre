@@ -4,9 +4,9 @@
 static constexpr f32 DEG = PI_F / 180.0f;
 
 // Вежа — четыре паучьи ноги (колено вверх, стойка голеностопа отвесна; лёжа рама на брюхе, лапы на земле, ноги
-// повёрнуты к носу и корме, колени торчат вверх); Тать — четыре одинаковые паучьи ноги из-под углов крыши
-// (tools/parts/tat_leg.py), тело висит под ними, лёжа лапы остаются на земле. Порядок ног — fr, fl, rl, rr (по кругу).
-// Числа Вежи — как в tools/parts/vezha_leg.py и vezha_pose.py
+// повёрнуты к носу и корме, колени торчат вверх); Тать — четыре одинаковые ноги с двумя суставами (колено выше
+// крыши, плюсна наклонна — tools/parts/tat_leg.py), тело висит под ними, лёжа лапы остаются на земле.
+// Порядок ног — fr, fl, rl, rr (по кругу). Числа Вежи — как в tools/parts/vezha_leg.py и vezha_pose.py
 const MechDesc MECH_DESC[MECH_KINDS] = {
     {"vezha", 0.21f, 0.82f, 1.0f, 0.58f, 0.4f, 3.0f, 16.0f, 0.3f, 0.45f,
      {{MECH_LEG_VERT, 1.0f, 0.065f, -40.0f * DEG, 95.0f * DEG, 0.92f, 0.92f, {-20.0f * DEG, 0.95f, -0.145f}, 1.3f, 0.1f},
@@ -14,36 +14,37 @@ const MechDesc MECH_DESC[MECH_KINDS] = {
       {MECH_LEG_VERT, 1.0f, 0.065f, -40.0f * DEG, 95.0f * DEG, 0.92f, 0.92f, {-20.0f * DEG, 0.95f, -0.145f}, 1.3f, 0.1f},
       {MECH_LEG_VERT, 1.0f, 0.065f, -40.0f * DEG, 95.0f * DEG, 0.92f, 0.92f, {20.0f * DEG, 0.95f, -0.145f}, 1.3f, 0.1f}}},
     {"tat", 0.37f, 0.62f, 0.74f, 0.50f, 0.5f, 2.4f, 24.0f, 0.37f, 0.25f,
-     {{MECH_LEG_VERT, 1.0f, 0.045f, -50.0f * DEG, 95.0f * DEG, 0.32f, 0.44f, {0.0f, 0.32f, -0.325f}, 1.0f, 0.0f},
-      {MECH_LEG_VERT, 1.0f, 0.045f, -50.0f * DEG, 95.0f * DEG, 0.32f, 0.44f, {0.0f, 0.32f, -0.325f}, 1.0f, 0.0f},
-      {MECH_LEG_VERT, 1.0f, 0.045f, -50.0f * DEG, 95.0f * DEG, 0.32f, 0.44f, {0.0f, 0.32f, -0.325f}, 1.0f, 0.0f},
-      {MECH_LEG_VERT, 1.0f, 0.045f, -50.0f * DEG, 95.0f * DEG, 0.32f, 0.44f, {0.0f, 0.32f, -0.325f}, 1.0f, 0.0f}}},
+     {{MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f},
+      {MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f},
+      {MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f},
+      {MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f}}},
 };
 
 const char *mech_kind_name(u8 kind) { return kind < MECH_KINDS ? MECH_DESC[kind].name : "?"; }
 
 void mech_leg_solve(const MechLegRig &L, const MechLegDesc &D, f32 x, f32 y, f32 *thigh, f32 *shin, f32 *tarsus) {
-    f32 la, lb, up;
-    mech_leg_links(L, D, &la, &lb, &up);
-    f32 ty = y + up;
-    f32 d = f_clamp(f_sqrt(x * x + ty * ty), mech_leg_min(L, D), la + lb - 1e-4f);
-    f32 a = atan2f(ty, x) + D.knee * acosf(f_clamp((la * la + d * d - lb * lb) / (2.0f * la * d), -1.0f, 1.0f));
+    f32 la, lb, ox, oy;
+    mech_leg_links(L, D, &la, &lb, &ox, &oy);
+    f32 tx = x + ox, ty = y + oy;
+    f32 d = f_clamp(f_sqrt(tx * tx + ty * ty), mech_leg_min(L, D), la + lb - 1e-4f);
+    f32 a = atan2f(ty, tx) + D.knee * acosf(f_clamp((la * la + d * d - lb * lb) / (2.0f * la * d), -1.0f, 1.0f));
     a = f_clamp(a, D.th_min, D.th_max);
     *thigh = a;
-    *shin = atan2f(ty - la * sinf(a), x - la * cosf(a));
-    *tarsus = D.mode == MECH_LEG_VERT ? -0.5f * PI_F : a;
+    *shin = atan2f(ty - la * sinf(a), tx - la * cosf(a));
+    *tarsus = D.mode == MECH_LEG_VERT ? L.a3 : a;
 }
 
 void mech_leg_hlimit(const MechView &mv, const Mech &m, u32 k, f32 &hmin, f32 &hmax) {
     const MechLegRig &L = mech_rig(mv, m).leg[k];
     const MechLegDesc &D = mech_desc(m).leg[k];
-    f32 la, lb, up;
-    mech_leg_links(L, D, &la, &lb, &up);
+    f32 la, lb, ox, oy;
+    mech_leg_links(L, D, &la, &lb, &ox, &oy);
     MechReach r = mech_leg_reach(L, mech_world_chassis(m, m.leg[k].at, D.foot_h));
     f32 lo = mech_leg_min(L, D), hi = mech_leg_max(L, D);
-    f32 drop = m.h + r.y + up;   // на столько цель решения выше, чем была бы при высоте 0
-    if (r.x < lo) hmin = f_max(hmin, f_sqrt(lo * lo - r.x * r.x) + drop);
-    if (r.x < hi) hmax = f_min(hmax, f_sqrt(hi * hi - r.x * r.x) + drop);
+    f32 tx = r.x + ox;
+    f32 drop = m.h + r.y + oy;   // на столько цель решения выше, чем была бы при высоте 0
+    if (tx < lo) hmin = f_max(hmin, f_sqrt(lo * lo - tx * tx) + drop);
+    if (tx < hi) hmax = f_min(hmax, f_sqrt(hi * hi - tx * tx) + drop);
 }
 
 Vec3 mech_polar(const MechView &mv, const Mech &m, u32 k, Vec3 pol) {
