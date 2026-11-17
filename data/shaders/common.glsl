@@ -148,7 +148,7 @@ struct SkinJob {
     uint src_vertex, dst_vertex, vertex_count, first_bone;
     Words skin, morphs;  // 2 слова на вершину (кости, веса); 3 слова на вершину на морф
     uint morph_count, first_cluster, cluster_count, first_index;
-    uint hide, pad_hide; // маска областей тела под одеждой (docs/wear.md)
+    uint hide, pad_hide; // надетые вещи: закрытые ими вершины (misc >> 16) не рисуются (docs/wear.md)
     float morph[48];     // веса морфов (RENDER_MAX_MORPHS)
     float step[48];      // шаг морфа, м на единицу сдвига
 };

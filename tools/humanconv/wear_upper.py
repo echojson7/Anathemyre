@@ -30,7 +30,7 @@ def jacket(b):
     f = F(b)
     M = ["wear_indigo", "wear_band", "wear_quilt", "wear_dust", "wear_lining"]
     m = mats(M)
-    g = W.Garment("wear_jacket", M, hide=W.mask("waist", "chest", "uparm", "elbow", "forearm"), carry=(0.016, 0.016))
+    g = W.Garment("wear_jacket", M, margin=0.05, carry=(0.016, 0.016))
     w = b.wrist
     cuff = w - 0.028
     hemy = b.y_pelvis - 0.075
@@ -99,7 +99,7 @@ def coat(b):
     f = F(b)
     M = ["wear_coat", "wear_leather", "wear_dust", "wear_lining", "wear_strap", "wear_steel"]
     m = mats(M)
-    g = W.Garment("wear_coat", M, hide=W.mask("waist", "chest", "uparm", "elbow", "forearm"), carry=(0.03, 0.022))
+    g = W.Garment("wear_coat", M, margin=0.08, carry=(0.03, 0.022))
     w, k = b.wrist, b.knee
     cuff = w - 0.035
     hem = k + 0.20
@@ -159,7 +159,7 @@ def vest(b):
     f = F(b)
     M = ["wear_tech", "wear_quilt", "wear_strap", "wear_steel", "wear_dust"]
     m = mats(M)
-    g = W.Garment("wear_vest", M, hide=W.mask("waist", "chest"), carry=(0.0, 0.03))
+    g = W.Garment("wear_vest", M, margin=0.05, carry=(0.0, 0.03))
     lv = LAYER["vest"]
     hemy = b.y_pelvis + 0.0
     yn = b.y_neck - 0.02
@@ -205,7 +205,7 @@ def sash(b):
     f = F(b)
     M = ["wear_sash", "wear_strap", "wear_dust"]
     m = mats(M)
-    g = W.Garment("wear_sash", M, carry=(0.022, 0.024))
+    g = W.Garment("wear_sash", M, margin=0.02, carry=(0.022, 0.024))
     y0, y1 = b.y_pelvis - 0.01, b.y_pelvis + 0.13
     ls = LAYER["belt"] - 0.002
 
@@ -247,7 +247,7 @@ def belt(b):
     f = F(b)
     M = ["wear_leather", "wear_steel", "wear_strap", "wear_dust"]
     m = mats(M)
-    g = W.Garment("wear_belt", M, carry=(0.03, 0.0))
+    g = W.Garment("wear_belt", M, margin=0.012, carry=(0.03, 0.0))
     yw = b.y_pelvis + 0.06
     y0, y1 = yw - 0.045, yw - 0.005
     lb = LAYER["belt"]
@@ -278,7 +278,7 @@ def wraps_arm(b):
     f = F(b)
     M = ["wear_wrap", "wear_strap", "wear_dust"]
     m = mats(M)
-    g = W.Garment("wear_wraps_arm", M, hide=W.mask("forearm", "wrist"))
+    g = W.Garment("wear_wraps_arm", M, margin=0.02)
     e, w = b.elbow, b.wrist
     lo, hi = e + 0.06, w + 0.035
     pitch = 0.045
@@ -307,7 +307,7 @@ def hood(b):
     f = F(b)
     M = ["wear_wrap", "wear_coat", "wear_dust", "wear_lining"]
     m = mats(M)
-    g = W.Garment("wear_hood", M, carry=(0.0, 0.03))
+    g = W.Garment("wear_hood", M, margin=0.04, carry=(0.0, 0.03))
     yn = b.y_neck
     lh = LAYER["hood"]
 
@@ -346,7 +346,7 @@ def pauldron(b):
     f = F(b)
     M = ["wear_metal", "wear_leather", "wear_strap", "wear_steel"]
     m = mats(M)
-    g = W.Garment("wear_pauldron", M)
+    g = W.Garment("wear_pauldron", M, margin=0.05)
     lp = LAYER["pauldron"]
     c = b.J["upperarm_l"]
     R0 = 0.104  # купол вокруг плечевого сустава
@@ -390,7 +390,7 @@ def gloves(b):
     f = F(b)
     M = ["wear_leather", "wear_strap"]
     m = mats(M)
-    g = W.Garment("wear_gloves", M, hide=W.mask("wrist"))
+    g = W.Garment("wear_gloves", M, margin=0.015)
     w = b.wrist
     lo, hi = w - 0.07, w + 0.075
     lg = LAYER["gloves"]

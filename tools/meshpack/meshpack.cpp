@@ -81,7 +81,7 @@ struct Cluster {
 };
 
 
-// Поток вершин сверх VERT (SKIN, MRPH): шапка куска как есть, дальше записи по stride байт на вершину
+// Поток вершин сверх VERT (SKIN, MRPH, COVR): шапка куска как есть, дальше записи по stride байт на вершину
 struct Stream {
     const Chunk *chunk;
     size_t head, stride;
@@ -192,6 +192,10 @@ int main(int argc, char **argv) {
             if (!skin_stream(c, verts.size(), s)) return die("кусок SKIN не сходится с VERT", in_path), 1;
         } else if (!memcmp(c.tag, "MRPH", 4)) {
             if (!morph_stream(c, verts.size(), s)) return die("кусок MRPH не сходится с VERT", in_path), 1;
+        } else if (!memcmp(c.tag, "COVR", 4)) {
+            // Биты закрывающих вещей (одежда, docs/wear.md): u16 на вершину, без шапки
+            s = Stream{&c, 0, 2, {}};
+            if (c.body.size() != verts.size() * 2) return die("кусок COVR не сходится с VERT", in_path), 1;
         } else {
             continue;
         }
@@ -357,7 +361,7 @@ int main(int argc, char **argv) {
         for (uint32_t n : lod_verts) put(b, n);
         put_chunk(out, "LODV", b);
     }
-    static const char *const known[] = {"HEAD", "MATS", "VERT", "INDX", "CLUS", "LODS", "SKIN", "MRPH", "LODV"};
+    static const char *const known[] = {"HEAD", "MATS", "VERT", "INDX", "CLUS", "LODS", "SKIN", "MRPH", "COVR", "LODV"};
     for (const Chunk &c : chunks) {
         bool skip = false;
         for (const char *k : known) skip |= !memcmp(c.tag, k, 4);

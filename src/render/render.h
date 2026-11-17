@@ -271,7 +271,7 @@ struct RenderBone {
 struct RenderSkinned {
     u32 instance;
     u32 first_bone;
-    u32 hide;  // области тела под одеждой (docs/wear.md, байт доли смеси вершины тела): не рисуются
+    u32 hide;  // надетые вещи (биты WearKind): вершины, закрытые ими (биты misc >> 16), не рисуются (docs/wear.md)
     f32 morph[RENDER_MAX_MORPHS];
 };
 // Таблица материалов целиком (номер = место). Ждёт, пока GPU закончит кадры: только при загрузке

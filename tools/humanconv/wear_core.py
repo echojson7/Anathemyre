@@ -30,18 +30,19 @@ ARM_BONES = ("upperarm", "lowerarm", "hand", "index", "middle", "ring", "pinky",
 LEG_BONES = ("thigh", "calf", "foot", "ball")
 TORSO, ARM_L, ARM_R, LEG_L, LEG_R = range(5)
 
-# Области тела для скрытия под одеждой (номер — в байте доли смеси вершины тела, docs/mesh.md; маска — бит номера).
-# Границы — с запасом 5–8 см внутрь от отверстий вещей: у края вещи кожа под ней видна, в рукав не видно насквозь
-REGIONS = ("none", "foot", "ankle", "shin", "knee", "thigh", "hips", "waist", "chest", "shoulder",
-           "uparm", "elbow", "forearm", "wrist")
-R = {n: i for i, n in enumerate(REGIONS)}
-
-
-def mask(*names):
-    m = 0
-    for n in names:
-        m |= 1 << R[n]
-    return m
+# Виды одежды — порядок WearKind (src/view/wear.h): бит вида в маске скрытия. Вершина тела или нижней вещи хранит
+# биты вещей, которые закрывают её целиком (кусок COVR, docs/wear.md); скиннинг сжимает её, если такая вещь надета
+KINDS = ("wear_trousers", "wear_hakama", "wear_shirt", "wear_jacket", "wear_coat", "wear_vest", "wear_sash",
+         "wear_belt", "wear_wraps_leg", "wear_wraps_arm", "wear_boots", "wear_hood", "wear_pauldron", "wear_gloves")
+# Порядок надевания (снизу вверх): закрыть нижнюю вещь может только вещь выше по нему. Иначе две вещи, вошедшие друг
+# в друга, скрыли бы друг друга — и в этом месте была бы дыра
+RANK = dict(wear_shirt=0, wear_gloves=1, wear_wraps_arm=1, wear_trousers=2, wear_boots=3, wear_wraps_leg=4,
+            wear_hakama=5, wear_jacket=6, wear_coat=7, wear_vest=8, wear_sash=9, wear_belt=10, wear_hood=11,
+            wear_pauldron=12)
+# Тела проверки «нижнее под верхним» (крайние сложения): закрыто, только если закрыто у всех
+COVER_SHAPES = ("female", "full", "thin", "strong", "belly", "female_full", "female_thin")
+COVER_GAP = 0.0015   # нижняя поверхность глубже верхней хотя бы на столько (м)
+COVER_REACH = 0.15   # и верхняя не дальше этого (иначе это не та вещь над ней)
 
 
 class Body:
@@ -207,30 +208,36 @@ class Body:
             d += 0.05 * np.abs(np.angle(np.exp(1j * (self.th[idx] - th))))
         return int(idx[np.argmin(d)])
 
-    def regions(self):
-        # Область вершины тела для скрытия под одеждой (REGIONS), по параметрам стенда
-        reg = np.zeros(self.nv, np.int64)
-        al, y = self.along, self.y
-        leg = (self.limb == LEG_L) | (self.limb == LEG_R)
-        arm = (self.limb == ARM_L) | (self.limb == ARM_R)
-        tor = self.limb == TORSO
-        k, a = self.knee, self.ankle
-        reg[leg & (al > a + 0.02)] = R["foot"]
-        reg[leg & (al <= a + 0.02) & (al > a - 0.07)] = R["ankle"]
-        reg[leg & (al <= a - 0.07) & (al > k + 0.10)] = R["shin"]
-        reg[leg & (al <= k + 0.10) & (al > k - 0.12)] = R["knee"]
-        reg[leg & (al <= k - 0.12)] = R["thigh"]
-        yw = self.y_pelvis + 0.06
-        reg[tor & (y < yw)] = R["hips"]
-        reg[tor & (y >= yw) & (y < self.y_chest)] = R["waist"]
-        reg[tor & (y >= self.y_chest) & (y < self.y_neck - 0.10)] = R["chest"]
-        reg[tor & (y >= self.y_neck - 0.10) & (y < self.y_neck + 0.01)] = R["shoulder"]
-        e, w = self.elbow, self.wrist
-        reg[arm & (al < e - 0.07)] = R["uparm"]
-        reg[arm & (al >= e - 0.07) & (al < e + 0.07)] = R["elbow"]
-        reg[arm & (al >= e + 0.07) & (al < w - 0.07)] = R["forearm"]
-        reg[arm & (al >= w - 0.07) & (al < w + 0.02)] = R["wrist"]
-        return reg
+    def inner_dist(self, inside):
+        # Расстояние по рёбрам тела стенда от вершины внутри области до ближней вершины вне её (м); вне — 0.
+        # Дейкстра от всех вершин вне области сразу
+        import heapq
+        L = np.linalg.norm(self.V[self.E[:, 0]] - self.V[self.E[:, 1]], axis=1)
+        if not hasattr(self, "_adj"):
+            adj = [[] for _ in range(self.nv)]
+            for (a, b), w in zip(self.E.tolist(), L.tolist()):
+                adj[a].append((b, w))
+                adj[b].append((a, w))
+            self._adj = adj
+        d = np.full(self.nv, np.inf)
+        src = np.where(~inside & (self.deg > 0))[0]
+        d[src] = 0.0
+        d[~inside & (self.deg == 0)] = 0.0
+        heap = [(0.0, int(i)) for i in src]
+        heapq.heapify(heap)
+        dl = d.tolist()
+        while heap:
+            x, i = heapq.heappop(heap)
+            if x > dl[i]:
+                continue
+            for j, w in self._adj[i]:
+                y = x + w
+                if y < dl[j]:
+                    dl[j] = y
+                    heapq.heappush(heap, (y, j))
+        d = np.array(dl)
+        d[~np.isfinite(d)] = 0.0
+        return d
 
     def vparams(self, EI, EW):
         # Параметры вершин-смесей: непрерывные — смесью, угол — через cos/sin, часть — у главной вершины
@@ -300,6 +307,10 @@ class Part:
         EW[:, 0] = 1.0
         # Только треугольники, где все поля области ≥ запаса, — до резки (резка — по всему телу дорого)
         F = [f for f in keep]
+        # Область куска на теле стенда (вершины тела): по ней считается, что вещь закрывает (cover)
+        self.foot = np.ones(B.nv, bool)
+        for f in F:
+            self.foot &= np.broadcast_to(f, (B.nv,)) > 0
         pre = np.ones(len(T), bool)
         for f in F:
             pre &= f[T].max(1) > -1e-9
@@ -318,9 +329,12 @@ class Part:
 class Garment:
     """Вещь: куски над телом (Part) и жёсткие детали (пряжки, подсумки) на точках тела. Пишет .mesh."""
 
-    def __init__(self, name, materials, hide=0, carry=(0.0, 0.0)):
-        self.name, self.materials, self.hide, self.carry = name, list(materials), hide, carry
+    def __init__(self, name, materials, margin=0.04, carry=(0.0, 0.0)):
+        # margin — сколько от края вещи (по телу) нижнее ещё видно: в рукав, под подол, в пройму заглядывают
+        self.name, self.materials, self.margin, self.carry = name, list(materials), margin, carry
+        self.hide = 1 << KINDS.index(name) if name in KINDS else 0
         self.parts, self.rigid = [], []
+        self.cover = None  # биты вещей, закрывающих вершину (cover_all), до деления вершин
 
     def add(self, part):
         self.parts.append(part)
@@ -339,9 +353,11 @@ class Garment:
         self.walls = 0
         base = 0
 
-        VL = []
+        VL, VK = [], []
 
-        def push(ei, ew, hh, mm):
+        def push(ei, ew, hh, mm, kind=0):
+            # kind: 0 — лицо вещи, 1 — низ кромки, 2 — подкладка
+            VK.append(np.full(len(hh), kind, np.int64))
             VL.append(np.full(len(hh), bool(P.loose)))
             VI.append(ei)
             VW.append(ew)
@@ -428,7 +444,7 @@ class Garment:
                     lm[:, 3] = np.minimum(lm[:, 3], 110)
                     lm[:, 1] = lm[:, 0]
                     lm[:, 2] = 0
-                    push(P.EI[uv], P.EW[uv], hmin - P.thick, lm)
+                    push(P.EI[uv], P.EW[uv], hmin - P.thick, lm, 2)
                     low = vinv + n_all
                     tris.append(low[Tn][:, ::-1] + base)
                     tmat.append(mt)
@@ -437,7 +453,7 @@ class Garment:
                     bv = np.unique(np.array([[a_, b_] for a_, b_, _ in rim_e]).ravel())
                     lm = mv[bv].copy()
                     lm[:, 3] = np.minimum(lm[:, 3], 150)
-                    push(P.EI[src[bv]], P.EW[src[bv]], hv[bv] - P.thick, lm)
+                    push(P.EI[src[bv]], P.EW[src[bv]], hv[bv] - P.thick, lm, 1)
                     low = np.full(nv, -1, np.int64)
                     low[bv] = n_all + np.arange(len(bv))
                     n_all += len(bv)
@@ -473,9 +489,32 @@ class Garment:
         self.VW = np.concatenate(VW) if VW else np.zeros((0, 8))
         self.VH = np.concatenate(VH) if VH else np.zeros(0)
         self.VL = np.concatenate(VL)[: len(self.VH)] if VL else np.zeros(0, bool)
+        self.VK = np.concatenate(VK)[: len(self.VH)] if VK else np.zeros(0, np.int64)
         self.VM = np.concatenate(VM).astype(np.int64)
         self.Tc = np.concatenate(tris).astype(np.int64)
         self.Tm = np.concatenate(tmat).astype(np.int64)
+
+    def split_cover(self):
+        # Вершины ткани делятся по закрытости треугольника (биты закрывших вещей у всех трёх углов): треугольник
+        # скрывается целиком, а не тянется к сжатой вершине. orig — номер старой вершины у новой
+        nc = self.ncloth
+        nv = len(self.VM)
+        cov = self.cover if self.cover is not None else np.zeros(nc, np.int64)
+        T = self.Tc
+        cl = (T < nc).all(1)
+        tc = np.zeros(len(T), np.int64)
+        tc[cl] = cov[T[cl, 0]] & cov[T[cl, 1]] & cov[T[cl, 2]]
+        corner = T.ravel()
+        is_c = corner < nc
+        key = np.where(is_c, corner * 65536 + np.repeat(tc, 3), -1)
+        uk, inv = np.unique(key[is_c], return_inverse=True)
+        n_new = len(uk)
+        out = np.empty_like(corner)
+        out[is_c] = inv.ravel()
+        out[~is_c] = corner[~is_c] - nc + n_new
+        self.orig = np.concatenate([uk // 65536, np.arange(nc, nv)])
+        self.vcover = np.concatenate([uk % 65536, np.zeros(nv - nc, np.int64)])
+        self.Ts = out.reshape(-1, 3)
 
     def positions(self, shape):
         # Положения всех вершин вещи в теле shape (V, N, S, Ns)
@@ -517,16 +556,19 @@ class Garment:
 
     def write(self, body, data_dir, meshpack, lods):
         self.body = body
-        self.topology()
-        T = self.Tc
+        if not hasattr(self, "Tc"):
+            self.topology()
+        self.split_cover()
+        T0, T, o = self.Tc, self.Ts, self.orig
         base_shape = body.shape(H.BASE)
-        pos = H.grid(self.positions(base_shape), 17)
-        n = H.normals(pos, T)
+        pos0 = H.grid(self.positions(base_shape), 17)
+        pos = pos0[o]
+        n = H.normals(pos0, T0)[o]   # нормали — до деления: на линии закрытости шва нет
         nv = len(pos)
         nx, nz = H.oct_encode(n)
         vert = np.zeros(nv, dtype=[("p", "<f4", 3), ("nx", "<u2"), ("nz", "<u2"), ("m0", "u1"), ("m1", "u1"),
                                    ("blend", "u1"), ("ao", "u1")])
-        vm = self.VM
+        vm = self.VM[o]
         vert["p"], vert["nx"], vert["nz"] = pos, nx, nz
         vert["m0"], vert["m1"] = vm[:, 0], vm[:, 1]
         vert["blend"], vert["ao"] = vm[:, 2], vm[:, 3]
@@ -539,6 +581,7 @@ class Garment:
         for s in H.SKELETONS:
             order = body.order[s]
             bones, wq = self.weights(s)
+            bones, wq = bones[o], wq[o]
             b = H.name_bytes(s) + struct.pack("<I", len(order)) + b"".join(H.name_bytes(nm) for nm in order)
             rec = np.zeros(nv, dtype=[("b", "u1", 4), ("w", "u1", 4)])
             rec["b"], rec["w"] = bones, wq
@@ -552,7 +595,7 @@ class Garment:
             k = json.dumps(q, sort_keys=True)
             if k not in cache:
                 pk = H.grid(self.positions(body.shape(q)), 17)
-                cache[k] = (pk, H.normals(pk, T))
+                cache[k] = (pk[o], H.normals(pk, T0)[o])
             return cache[k]
         for name, terms in H.MORPHS:
             dp, dn = np.zeros_like(pos), np.zeros_like(pos)
@@ -569,6 +612,8 @@ class Garment:
         for k, (ip, inn) in enumerate(recs):
             rec["m"]["p"][:, k], rec["m"]["n"][:, k] = ip, inn
         out += H.chunk(b"MRPH", head + rec.tobytes())
+        # Биты вещей, под которыми вершина не видна (cover_all)
+        out += H.chunk(b"COVR", self.vcover.astype("<u2").tobytes())
         # Вещь: какие области тела скрывает, насколько отодвигает места ношения оружия (у бедра, за спиной)
         out += H.chunk(b"WEAR", struct.pack("<I2f", self.hide, *self.carry))
         with tempfile.TemporaryDirectory() as tmp:
@@ -582,5 +627,72 @@ class Garment:
                     lv.append(n)
             subprocess.run([meshpack, "--prune", "--lods", ",".join(str(x) for x in lv), raw,
                             os.path.join(data_dir, "meshes", self.name + ".mesh")], check=True)
-        print("одежда: %-16s вершин %5d, треугольников %5d, стенок %4d" % (self.name, nv, len(T), self.walls))
+        print("одежда: %-16s вершин %5d, треугольников %5d, стенок %4d, скрываемых %5d" % (
+            self.name, nv, len(T), self.walls, int((self.vcover != 0).sum())))
         return pos, T, vm
+
+
+def cloth_normals(g, P):
+    # Нормали вершин ткани вещи g в положении P (все вершины вещи)
+    cl = g.Tc[(g.Tc < g.ncloth).all(1)]
+    return H.normals(P, cl)[: g.ncloth]
+
+
+def nearest(P, Q, chunk=512):
+    # Ближняя точка Q к каждой точке P (перебором кусками, float32 хватает для выбора)
+    P32, Q32 = P.astype(np.float32), Q.astype(np.float32)
+    qq = (Q32 * Q32).sum(1)
+    out = np.zeros(len(P), np.int64)
+    for i in range(0, len(P), chunk):
+        p = P32[i:i + chunk]
+        d = qq[None, :] - 2.0 * (p @ Q32.T)
+        out[i:i + chunk] = np.argmin(d, 1)
+    return out
+
+
+def cover_shapes(body):
+    # Тела проверки: стенд и крайние сложения (первое тело суммы морфа)
+    qs = [H.BASE] + [terms[0][1] for name, terms in H.MORPHS if name in COVER_SHAPES]
+    return [body.shape(q) for q in qs]
+
+
+def cover_all(body, garments):
+    """Что чем закрыто (docs/wear.md, «Скрытие»). Вещь G закрывает точку тела, если точка в области G дальше
+    G.margin от её края (по телу). Вершину нижней вещи X — если сверх того поверхность X под поверхностью G у
+    стенда и у всех крайних тел (COVER_SHAPES). Возвращает расстояние до края по телу для каждой вещи (имя → массив
+    на вершинах тела) — тело берёт свои биты по нему же; у вещей заполняет g.cover."""
+    dist = {}
+    for g in garments:
+        g.body = body
+        if not hasattr(g, "Tc"):
+            g.topology()
+        if not g.hide:
+            continue
+        foot = np.zeros(body.nv, bool)
+        for p in g.parts:
+            foot |= p.foot
+        dist[g.name] = body.inner_dist(foot)
+    shapes = cover_shapes(body)
+    PS = {g.name: [g.positions(sh) for sh in shapes] for g in garments}
+    NS = {g.name: [cloth_normals(g, P) for P in PS[g.name]] for g in garments}
+    for X in garments:
+        nc = X.ncloth
+        cov = np.zeros(nc, np.int64)
+        for G in garments:
+            if G is X or G.name not in dist or RANK.get(G.name, -1) <= RANK.get(X.name, 99):
+                continue
+            dX = H.ext_eval(dist[G.name], X.VI, X.VW)
+            idx = np.where(dX >= G.margin)[0]
+            face = np.where(G.VK == 0)[0]
+            for k in range(len(shapes)):
+                if not len(idx):
+                    break
+                p = PS[X.name][k][idx]
+                q, n = PS[G.name][k][face], NS[G.name][k][face]
+                j = nearest(p, q)
+                s_ = ((p - q[j]) * n[j]).sum(1)
+                d_ = np.linalg.norm(p - q[j], axis=1)
+                idx = idx[(s_ < -COVER_GAP) & (d_ < COVER_REACH)]
+            cov[idx] |= G.hide
+        X.cover = cov
+    return dist

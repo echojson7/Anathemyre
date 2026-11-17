@@ -498,7 +498,7 @@ struct SkinJobGpu {
     u32 src_vertex, dst_vertex, vertex_count, first_bone;
     VkDeviceAddress skin, morphs;
     u32 morph_count, first_cluster, cluster_count, first_index;
-    u32 hide, pad;                 // маска областей тела под одеждой (docs/wear.md): их вершины стягиваются в точку
+    u32 hide, pad;                 // надетые вещи (docs/wear.md): закрытые ими вершины стягиваются в точку
     f32 morph[RENDER_MAX_MORPHS];  // веса морфов
     f32 step[RENDER_MAX_MORPHS];   // шаг морфа, м на единицу сдвига
 };

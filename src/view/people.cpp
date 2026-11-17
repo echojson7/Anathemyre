@@ -686,8 +686,7 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
             wi.seed = of.seed[w];
             RenderSkinned &ws = sk[nso++];
             ws = o;
-            ws.instance = ni;
-            ws.hide = 0;
+            ws.instance = ni;  // скрытие то же: нижняя вещь под верхней не рисуется
             ni++;
         }
         nbo += nb;

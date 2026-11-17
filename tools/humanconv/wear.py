@@ -104,7 +104,7 @@ def trousers(b):
     f = F(b)
     M = ["wear_canvas", "wear_patch", "wear_band", "wear_dust"]
     m = mats(M)
-    g = W.Garment("wear_trousers", M, hide=W.mask("shin", "knee", "thigh", "hips"), carry=(0.012, 0.0))
+    g = W.Garment("wear_trousers", M, margin=0.05, carry=(0.012, 0.0))
     yw = b.y_pelvis + 0.075   # пояс
     yb = yw - 0.045
     k, a = b.knee, b.ankle
@@ -169,7 +169,7 @@ def hakama(b):
     f = F(b)
     M = ["wear_canvas", "wear_band", "wear_dust", "wear_lining"]
     m = mats(M)
-    g = W.Garment("wear_hakama", M, hide=W.mask("knee", "thigh", "hips"), carry=(0.02, 0.0))
+    g = W.Garment("wear_hakama", M, margin=0.20, carry=(0.02, 0.0))
     yw = b.y_pelvis + 0.11
     k, a = b.knee, b.ankle
     hem = a - 0.02
@@ -218,7 +218,7 @@ def shirt(b):
     f = F(b)
     M = ["wear_cotton", "wear_band", "wear_dust"]
     m = mats(M)
-    g = W.Garment("wear_shirt", M, hide=W.mask("waist", "chest", "uparm", "elbow", "forearm"))
+    g = W.Garment("wear_shirt", M, margin=0.04)
     e, w = b.elbow, b.wrist
     cuff = w - 0.012
     hemy = b.y_pelvis - 0.005
@@ -262,7 +262,7 @@ def boots(b):
     f = F(b)
     M = ["wear_leather", "wear_sole", "wear_strap", "wear_steel", "wear_dust"]
     m = mats(M)
-    g = W.Garment("wear_boots", M, hide=W.mask("foot", "ankle"))
+    g = W.Garment("wear_boots", M, margin=0.04)
     a = b.ankle
     top = a - 0.22
     lb = LAYER["boots"]
@@ -316,7 +316,7 @@ def wraps_leg(b):
     f = F(b)
     M = ["wear_wrap", "wear_strap", "wear_dust"]
     m = mats(M)
-    g = W.Garment("wear_wraps_leg", M, hide=W.mask("shin"))
+    g = W.Garment("wear_wraps_leg", M, margin=0.02)
     k, a = b.knee, b.ankle
     lo, hi = a - 0.25, k + 0.05
     pitch = 0.055
@@ -361,9 +361,9 @@ def catalog(b):
     return [trousers(b), hakama(b), shirt(b), boots(b), wraps_leg(b)] + U.catalog(b)
 
 
-def build_all(b, data_dir, meshpack):
+def build_all(b, data_dir, meshpack, clothes):
     out = []
-    for g in catalog(b):
+    for g in clothes:
         g.write(b, data_dir, meshpack, LODS)
         out.append(g)
     return out

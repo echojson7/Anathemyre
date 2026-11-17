@@ -24,7 +24,7 @@ struct Outfit {
     u32 count;
     u8 kind[WEAR_MAX_ITEMS];   // снизу вверх по слоям
     u32 seed[WEAR_MAX_ITEMS];  // зерно экземпляра вещи: младший байт — тон ткани, следующий — износ (cloth.glsl)
-    u32 hide;                  // области тела под одеждой
+    u32 hide;                  // надетые вещи (биты WearKind): закрытое ими у тела и нижних вещей не рисуется
     f32 hip, back;             // толщина одежды у мест ношения оружия, м
 };
 Outfit wear_make(u32 seed, const Appear &a, const WearBind &b, const ViewAssets &assets);

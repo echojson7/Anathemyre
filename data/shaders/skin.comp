@@ -33,9 +33,10 @@ void main() {
     if (i >= j.vertex_count) return;
     Vertex v = f.vertices.v[j.src_vertex + i];
     vec3 p = vec3(v.px, v.py, v.pz);
-    // Область тела под одеждой (docs/wear.md): у тела m0 == m1, байт доли смеси — номер области. Её вершины — в одну
-    // точку: треугольники области целиком (вершины разделены по областям) пропадают из кадра
-    if (j.hide != 0u && (v.mats & 0xFFFFu) == (v.mats >> 16) && ((j.hide >> (v.misc & 31u)) & 1u) != 0u) {
+    // Закрытое одеждой (docs/wear.md, «Скрытие»): у вершины тела или нижней вещи в старших битах misc — вещи, под
+    // которыми она не видна, у работы — надетые вещи. Такие вершины — в одну точку: треугольники целиком (вершины
+    // разделены по закрытости) пропадают из кадра
+    if (((v.misc >> 16) & j.hide) != 0u) {
         Vertex old = f.vertices_w.v[j.dst_vertex + i];
         f.skin_prev.v[j.dst_vertex + i] = uvec2(packHalf2x16(vec2(old.px, old.py)), packHalf2x16(vec2(old.pz, 0.0)));
         f.vertices_w.v[j.dst_vertex + i] = Vertex(0.0, 1.0, 0.0, v.normal, v.mats, v.misc);

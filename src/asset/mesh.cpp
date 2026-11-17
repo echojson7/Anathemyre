@@ -145,6 +145,12 @@ bool mesh_parse(const u8 *data, usize size, Arena &arena, MeshData &out, const c
         } else if (chunk_is(c, "MRPH") && c.version == 1) {
             if (!verts) { *err = "MRPH раньше VERT"; return false; }
             if (!read_morphs(b, arena, nverts, out.morphs)) { *err = "кусок MRPH испорчен"; return false; }
+        } else if (chunk_is(c, "COVR") && c.version == 1) {
+            // Одежда (docs/wear.md): биты вещей, под которыми вершина не видна — в старшие 16 бит misc
+            if (!verts) { *err = "COVR раньше VERT"; return false; }
+            if ((u64)nverts * 2 != b.size) { *err = "размер COVR не сходится с VERT"; return false; }
+            for (u32 i = 0; i < nverts; ++i) out.vertices.data[i].misc |= (u32)get_u16(b) << 16;
+            if (b.bad) { *err = "кусок COVR испорчен"; return false; }
         } else if (chunk_is(c, "MRPJ") && c.version == 1) {
             if (out.joints_count >= MESH_MAX_SKINS) { *err = "кусков MRPJ больше 4"; return false; }
             MeshJoints &j = out.joints[out.joints_count++];
