@@ -314,7 +314,24 @@ int run_window(const Args &a, AppMemory &m) {
     }
     // Люди окна у точки старта: намерение первого шага, поэтому запись окна их повторяет, а --sim не трогает
     const bool brawl = a.brawl[0] && a.brawl[1];
-    if (w.start.set && w.start.people && !brawl && !a.lineup) {
+    // Показ тел (docs/body.md, «Показ»): ряд поперёк взгляда камеры старта, лицом к ней, вместо людей старта
+    const bool show = w.start.set && w.start.show && !brawl && !a.lineup;
+    if (show) {
+        const f32 deg = PI_F / 180.0f, gap = 2.0f;
+        const f32 rx = cos_f(w.start.yaw * deg), rz = sin_f(w.start.yaw * deg);
+        // Курс к камере: глаз от опоры — (sin yaw, −cos yaw), курс человека — (sin h, cos h), h = 180° − yaw
+        const i32 face = ((i32)(128.0f - w.start.yaw * (256.0f / 360.0f) + 0.5f) % 256 + 256) % 256;
+        for (u32 k = 0; k < w.start.show; ++k) {
+            const f32 o = ((f32)k - 0.5f * (f32)(w.start.show - 1)) * gap;
+            WPos at;
+            at.x = w.start.x + rx * o;
+            at.z = w.start.z + rz * o;
+            wpos_rebase(at);
+            pending.push_back({0, INTENT_PEOPLE_SPAWN, at, 1ull | (1ull << 40) | ((u64)face << 41)});
+        }
+        ds.people_show = true;
+    }
+    if (w.start.set && w.start.people && !brawl && !a.lineup && !show) {
         WPos at;
         at.x = w.start.x;
         at.z = w.start.z;
@@ -636,6 +653,7 @@ int run_window(const Args &a, AppMemory &m) {
         vi.aa = a.aa >= 0 ? (u32)a.aa : set.aa;
         if (!ds.lines) vi.dbg = nullptr;
         vi.people_debug = vi.dbg && ds.people_lines;
+        vi.people_show = ds.people_show;
         vi.mech = mechs;
         RenderFrame rf;
         u32 dbg_keep = dbg.count;  // метка осмотра — только на этот кадр, шаг мира её не видит

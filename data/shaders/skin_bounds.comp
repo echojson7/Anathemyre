@@ -9,6 +9,31 @@ layout(local_size_x = 64) in;
 shared vec3 s_lo[64], s_hi[64];
 shared float s_r[64];
 
+// Индексов кластера ≤ 124 × 3 = 372 (MESH_MAX_CLUSTER_TRIS, src/asset/mesh.h): поток берёт до 6 через 64. Чтение
+// буфера и свёртка — без циклов: lavapipe под GPU-AV падал на доступе к буферу в цикле шейдера с barrier()
+// (docs/graph.md, «Циклы с буфером»); положения читаются раз и держатся в локальных для второго прохода
+#define SB_READ(r)                                                              \
+    {                                                                           \
+        uint k = t + (r) * 64u;                                                 \
+        if (k < n) {                                                            \
+            Vertex v = f.vertices.v[j.dst_vertex + f.indices.v[first + k]];     \
+            pos[r] = vec3(v.px, v.py, v.pz);                                    \
+            lo = min(lo, pos[r]);                                               \
+            hi = max(hi, pos[r]);                                               \
+        }                                                                       \
+    }
+#define SB_FAR(r) \
+    if (t + (r) * 64u < n) r2 = max(r2, dot(pos[r] - mid, pos[r] - mid));
+#define SB_BOX(s)                                          \
+    if (t < (s)) {                                         \
+        s_lo[t] = min(s_lo[t], s_lo[t + (s)]);             \
+        s_hi[t] = max(s_hi[t], s_hi[t + (s)]);             \
+    }                                                      \
+    barrier();
+#define SB_RAD(s)                                          \
+    if (t < (s)) s_r[t] = max(s_r[t], s_r[t + (s)]);       \
+    barrier();
+
 void main() {
     FrameData f = pc.frame;
     SkinJob j = f.skin_jobs.v[gl_WorkGroupID.y];
@@ -16,36 +41,19 @@ void main() {
     uint t = gl_LocalInvocationIndex;
     uint ci = j.first_cluster + gl_WorkGroupID.x;
     Cluster c = f.clusters.v[ci];
-    uint n = c.tri_count * 3u, first = j.first_index + c.first_index;
+    uint n = min(c.tri_count, 124u) * 3u, first = j.first_index + c.first_index;
     vec3 lo = vec3(1e30), hi = vec3(-1e30);
-    for (uint k = t; k < n; k += 64u) {
-        Vertex v = f.vertices.v[j.dst_vertex + f.indices.v[first + k]];
-        vec3 p = vec3(v.px, v.py, v.pz);
-        lo = min(lo, p);
-        hi = max(hi, p);
-    }
+    vec3 pos[6] = vec3[6](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0));
+    SB_READ(0u) SB_READ(1u) SB_READ(2u) SB_READ(3u) SB_READ(4u) SB_READ(5u)
     s_lo[t] = lo;
     s_hi[t] = hi;
     barrier();
-    for (uint s = 32u; s > 0u; s >>= 1u) {
-        if (t < s) {
-            s_lo[t] = min(s_lo[t], s_lo[t + s]);
-            s_hi[t] = max(s_hi[t], s_hi[t + s]);
-        }
-        barrier();
-    }
+    SB_BOX(32u) SB_BOX(16u) SB_BOX(8u) SB_BOX(4u) SB_BOX(2u) SB_BOX(1u)
     vec3 mid = (s_lo[0] + s_hi[0]) * 0.5;
     float r2 = 0.0;
-    for (uint k = t; k < n; k += 64u) {
-        Vertex v = f.vertices.v[j.dst_vertex + f.indices.v[first + k]];
-        vec3 d = vec3(v.px, v.py, v.pz) - mid;
-        r2 = max(r2, dot(d, d));
-    }
+    SB_FAR(0u) SB_FAR(1u) SB_FAR(2u) SB_FAR(3u) SB_FAR(4u) SB_FAR(5u)
     s_r[t] = r2;
     barrier();
-    for (uint s = 32u; s > 0u; s >>= 1u) {
-        if (t < s) s_r[t] = max(s_r[t], s_r[t + s]);
-        barrier();
-    }
+    SB_RAD(32u) SB_RAD(16u) SB_RAD(8u) SB_RAD(4u) SB_RAD(2u) SB_RAD(1u)
     if (t == 0u) f.clusters_w.v[ci].sphere = vec4(mid, sqrt(s_r[0]) * 1.0001 + 1e-4);
 }

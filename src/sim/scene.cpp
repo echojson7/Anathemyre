@@ -11,11 +11,11 @@ static u32 turn_from_deg(f32 deg) {
 }
 
 // Ключи вида «слово значение» после обязательных слов: yaw, scale, lift, material, seed; у start — pitch, dist,
-// people, radius
+// people, radius, show
 struct SceneKeys {
     f32 yaw = 0, scale = 1, lift = 0;
     f32 pitch = 14, dist = 34;
-    u32 seed = 0, people = 0, radius = 4;
+    u32 seed = 0, people = 0, radius = 4, show = 0;
     u64 material = 0;
 };
 static bool scene_keys(const TextLine &l, u32 from, SceneKeys &k, const char *allowed, char *err, usize err_cap) {
@@ -40,6 +40,7 @@ static bool scene_keys(const TextLine &l, u32 from, SceneKeys &k, const char *al
         else if (str_eq(key, "dist")) ok = parse_f32(v, k.dist) && k.dist >= 0;
         else if (str_eq(key, "radius")) ok = parse_u32(v, k.radius) && k.radius > 0 && k.radius < 256;
         else if (str_eq(key, "people")) ok = parse_u32(v, k.people) && k.people <= PEOPLE_CAPACITY;
+        else if (str_eq(key, "show")) ok = parse_u32(v, k.show) && k.show <= SCENE_SHOW_MAX;
         else if (str_eq(key, "material")) k.material = str_hash(v);
         if (!ok) { text_err(err, err_cap, l.line, "плохое число"); return false; }
     }
@@ -147,7 +148,7 @@ static bool prefab_load(World &w, const u8 *text, usize size, const WPos &o, u32
 
 // prop <сетка> <x> <z> [yaw <градусы>] [scale <k>] [lift <м>] [material <имя>] [seed <n>]
 // prefab <имя> <x> <z> [yaw 0|90|180|270]
-// start <x> <z> [yaw град] [pitch град] [dist м] [people n] [radius м]
+// start <x> <z> [yaw град] [pitch град] [dist м] [people n] [radius м] [show n]
 // x, z — метры от начала чанка 0, 0; высота — земля под точкой плюс lift
 bool scene_load(World &w, const u8 *text, usize size, ScenePrefabFn prefab, void *ctx, char *err, usize err_cap) {
     TextReader r = text_reader(text, size);
@@ -171,17 +172,18 @@ bool scene_load(World &w, const u8 *text, usize size, ScenePrefabFn prefab, void
             // start: где окно ставит камеру и рожает людей (docs/text.md); миру не нужна
             SceneStart &st = w.start;
             if (l.count < 3 || !parse_f32(l.w[1], st.x) || !parse_f32(l.w[2], st.z)) {
-                text_err(err, err_cap, l.line, "start <x> <z> [yaw] [pitch] [dist] [people] [radius]");
+                text_err(err, err_cap, l.line, "start <x> <z> [yaw] [pitch] [dist] [people] [radius] [show]");
                 return false;
             }
             SceneKeys k;
-            if (!scene_keys(l, 3, k, "yaw pitch dist people radius", err, err_cap)) return false;
+            if (!scene_keys(l, 3, k, "yaw pitch dist people radius show", err, err_cap)) return false;
             st.set = true;
             st.yaw = k.yaw;
             st.pitch = k.pitch;
             st.dist = k.dist;
             st.people = k.people;
             st.radius = k.radius;
+            st.show = k.show;
             continue;
         }
         bool is_prop = str_eq(l.w[0], "prop"), is_prefab = str_eq(l.w[0], "prefab");
