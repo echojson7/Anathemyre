@@ -7,6 +7,8 @@
 const char *const WEAR_NAMES[WK_COUNT] = {
     "wear_trousers", "wear_hakama", "wear_shirt",     "wear_jacket",    "wear_coat",  "wear_vest",     "wear_sash",
     "wear_belt",     "wear_wraps_leg", "wear_wraps_arm", "wear_boots", "wear_hood",  "wear_pauldron", "wear_gloves",
+    "hair_brows",    "hair_shaved",    "hair_crop",      "hair_topknot", "hair_tail", "hair_braid",   "hair_bun",
+    "hair_shag",     "beard_stubble",  "beard_short",    "beard_full",   "beard_goatee", "beard_long",
 };
 
 void wear_bind(WearBind &b, const ViewAssets &a, const ViewBody &human) {
@@ -26,10 +28,61 @@ void wear_bind(WearBind &b, const ViewAssets &a, const ViewBody &human) {
     }
 }
 
+// Зерно волос для hair.glsl: младший байт — тон кожи (смесь с кожей у линии роста, щетина), байт 1 — тёмность,
+// байт 2 — седина, младшие 4 бита байта 3 — рыжина, старшие — узор
+static u32 hair_seed(Dice &d, const Appear &a) {
+    const u32 skin = (u32)(a.skin * 255.0f + 0.5f);
+    // Тёмные волосы у всех, у смуглых — чёрные; у светлокожих изредка русые и рыжие
+    f32 mel = 0.62f + 0.38f * a.skin + 0.22f * d.bell();
+    const u32 light = d.byte(), red = d.byte();
+    if (a.skin < 0.4f && light < 45) mel = 0.08f + 0.35f * d.uni();
+    mel = mel < 0.0f ? 0.0f : mel > 1.0f ? 1.0f : mel;
+    u32 rd = (a.skin < 0.45f && red < 22) ? 6u + (red & 7u) : 0u;
+    // Седина — с возрастом (морф old: у стариков 0.35–0.75), у остальных редкие седые волоски
+    const f32 old = a.morph[AM_OLD];
+    f32 grey = old > 0.3f ? 0.25f + (old - 0.3f) * 1.6f + 0.15f * d.bell() : old * 0.25f * d.uni();
+    grey = grey < 0.0f ? 0.0f : grey > 1.0f ? 1.0f : grey;
+    const u32 noise = d.byte() & 0xF0u;
+    return skin | ((u32)(mel * 255.0f + 0.5f) << 8) | ((u32)(grey * 255.0f + 0.5f) << 16) | ((noise | rd) << 24);
+}
+
+// Причёска и борода по полу и возрасту. Байты зерна берутся после одежды: набор одежды прежний
+static void hair_pick(Dice &d, const Appear &a, bool want[WK_COUNT]) {
+    want[WK_BROWS] = true;
+    const u32 h = d.byte();
+    const u32 bd = d.byte();
+    const bool old = a.morph[AM_OLD] > 0.3f;
+    if (a.female) {
+        static const u8 cut[] = {80, 135, 185, 225, 245, 255};  // коса, пучок, хвост, лохматые, стрижка, бритая
+        static const WearKind kind[] = {WK_HAIR_BRAID, WK_HAIR_BUN, WK_HAIR_TAIL, WK_HAIR_SHAG, WK_HAIR_CROP,
+                                        WK_HAIR_SHAVED};
+        u32 i = 0;
+        while (h >= cut[i]) ++i;
+        want[want[WK_HOOD] && (kind[i] == WK_HAIR_TAIL || kind[i] == WK_HAIR_BRAID) ? WK_HAIR_BUN : kind[i]] = true;
+        return;
+    }
+    // Мужчины: бритые, стрижка, узел на макушке, хвост, коса, лохматые; старики чаще бритые и стриженые
+    static const u8 cut[] = {45, 105, 140, 175, 195, 255};
+    static const WearKind kind[] = {WK_HAIR_SHAVED, WK_HAIR_CROP, WK_HAIR_TOPKNOT, WK_HAIR_TAIL, WK_HAIR_BRAID,
+                                    WK_HAIR_SHAG};
+    u32 hh = old ? h * 2 / 3 : h;
+    u32 i = 0;
+    while (hh >= cut[i]) ++i;
+    // Шарф и капюшон лежат там, где висят коса и хвост: с капюшоном — узел на макушке
+    want[want[WK_HOOD] && (kind[i] == WK_HAIR_TAIL || kind[i] == WK_HAIR_BRAID) ? WK_HAIR_TOPKNOT : kind[i]] = true;
+    // Борода: нет, щетина, короткая, полная, усы с бородкой, длинная (у стариков чаще)
+    static const u8 bcut[] = {60, 120, 170, 200, 230, 255};
+    static const WearKind bkind[] = {WK_COUNT, WK_BEARD_STUBBLE, WK_BEARD_SHORT, WK_BEARD_FULL, WK_BEARD_GOATEE,
+                                     WK_BEARD_LONG};
+    u32 bb = old ? 120 + bd * 135 / 255 : bd;
+    u32 j = 0;
+    while (bb >= bcut[j]) ++j;
+    if (bkind[j] != WK_COUNT) want[bkind[j]] = true;
+}
+
 // Набор: штаны или хакама, рубаха, верх (куртка, длинная куртка, жилет или ничего), пояс или оби, ботинки, к ним —
 // обмотки, капюшон, наплечник, перчатки. Тон вещей — около общего тона набора: один человек одет в одной гамме
 Outfit wear_make(u32 seed, const Appear &a, const WearBind &b, const ViewAssets &assets) {
-    (void)a;
     Outfit o{};
     Dice d{0, 0, (u64)seed | 0x3EA2000000000ull};
     const u32 theme = d.byte();
@@ -51,8 +104,9 @@ Outfit wear_make(u32 seed, const Appear &a, const WearBind &b, const ViewAssets 
     else if (hands < 140) want[WK_GLOVES] = true;
     if (d.byte() < 90) want[WK_HOOD] = true;
     if (d.byte() < 55) want[WK_PAULDRON] = true;
-    // Порядок — слоями снизу вверх (порядок перечисления), зерно вещи: тон около темы, износ — свой
-    for (u32 k = 0; k < WK_COUNT && o.count < WEAR_MAX_ITEMS; ++k) {
+    // Порядок — слоями снизу вверх (порядок перечисления), зерно вещи: тон около темы, износ — свой. Одежды не
+    // больше WEAR_MAX_CLOTHES (как до волос: лишняя верхняя вещь не надевается)
+    for (u32 k = 0; k < WK_BROWS && o.count < WEAR_MAX_CLOTHES; ++k) {
         if (!want[k] || b.at[k] < 0) continue;
         const ViewBody &w = assets.wear[b.at[k]];
         i32 tone = (i32)theme + (i32)(d.bell() * 70.0f);
@@ -64,6 +118,14 @@ Outfit wear_make(u32 seed, const Appear &a, const WearBind &b, const ViewAssets 
         o.hide |= w.hide;
         o.hip = f_max(o.hip, w.carry_hip);
         o.back = f_max(o.back, w.carry_back);
+    }
+    // Волосы — байтами после одежды (набор одежды у людей прежний). Цвет один на брови, причёску и бороду
+    hair_pick(d, a, want);
+    const u32 hseed = hair_seed(d, a);
+    for (u32 k = WK_BROWS; k < WK_COUNT && o.count < WEAR_MAX_ITEMS; ++k) {
+        if (!want[k] || b.at[k] < 0) continue;
+        o.kind[o.count] = (u8)k;
+        o.seed[o.count++] = hseed;
     }
     return o;
 }

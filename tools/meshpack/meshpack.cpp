@@ -239,6 +239,8 @@ int main(int argc, char **argv) {
         const std::vector<uint32_t> &src = lods.back();
         size_t target = skinned ? lod_tris[lods.size() - 1] * 3 : (size_t)((float)src.size() * LOD_STEP) / 3 * 3;
         if (target < 36) break;
+        // С отсечением мелких кусков (--prune) прошлый LOD мог выйти мельче цели этого: цепочка кончена
+        if (prune && target >= src.size()) break;
         std::vector<uint32_t> dst(src.size());
         float err = 0.0f;
         size_t n = meshopt_simplify(dst.data(), src.data(), src.size(), &v[0].p[0], nv, sizeof(Vert), target,
