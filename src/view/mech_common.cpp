@@ -3,20 +3,20 @@
 
 static constexpr f32 DEG = PI_F / 180.0f;
 
-// Вежа — спереди стойки-телескопы (локоть назад, лёжа лапа у плеча, как у лежащей собаки), сзади рычаги-пантографы
-// (лёжа сложены ножом прямо назад); Тать — четыре разные ноги, лёжа лапы остаются на земле. Порядок ног — fr, fl,
-// rl, rr (по кругу)
+// Вежа — четыре паучьи ноги (колено вверх, стойка голеностопа отвесна; лёжа рама на брюхе, лапы на земле, ноги
+// повёрнуты к носу и корме, колени торчат вверх); Тать — четыре разные ноги, лёжа лапы остаются на земле. Порядок
+// ног — fr, fl, rl, rr (по кругу). Числа Вежи — как в tools/parts/vezha_leg.py и vezha_pose.py
 const MechDesc MECH_DESC[MECH_KINDS] = {
-    {"vezha", 0.20f, 0.86f, 1.16f, 0.50f, 1.5f, 3.3f, 16.0f, 0.26f, 0.5f,
-     {{MECH_LEG_SLIDE, -1.0f, 0.08f, -190.0f * DEG, -35.0f * DEG, 0.25f, 0.34f, {-12.0f * DEG, 0.25f, -0.12f}, 1.35f},   // стойка
-      {MECH_LEG_SLIDE, -1.0f, 0.08f, -190.0f * DEG, -35.0f * DEG, 0.25f, 0.34f, {12.0f * DEG, 0.25f, -0.12f}, 1.35f},
-      {MECH_LEG_PAR, 1.0f, 0.08f, -88.0f * DEG, 32.0f * DEG, 0.48f, 0.40f, {-15.0f * DEG, 0.0f, 0.0f}, 0.9f},          // рычаг
-      {MECH_LEG_PAR, 1.0f, 0.08f, -88.0f * DEG, 32.0f * DEG, 0.48f, 0.40f, {15.0f * DEG, 0.0f, 0.0f}, 0.9f}}},
+    {"vezha", 0.21f, 0.82f, 1.0f, 0.58f, 0.4f, 3.0f, 16.0f, 0.3f, 0.45f,
+     {{MECH_LEG_VERT, 1.0f, 0.065f, -40.0f * DEG, 95.0f * DEG, 0.92f, 0.92f, {-20.0f * DEG, 0.95f, -0.145f}, 1.3f, 0.1f},
+      {MECH_LEG_VERT, 1.0f, 0.065f, -40.0f * DEG, 95.0f * DEG, 0.92f, 0.92f, {20.0f * DEG, 0.95f, -0.145f}, 1.3f, 0.1f},
+      {MECH_LEG_VERT, 1.0f, 0.065f, -40.0f * DEG, 95.0f * DEG, 0.92f, 0.92f, {-20.0f * DEG, 0.95f, -0.145f}, 1.3f, 0.1f},
+      {MECH_LEG_VERT, 1.0f, 0.065f, -40.0f * DEG, 95.0f * DEG, 0.92f, 0.92f, {20.0f * DEG, 0.95f, -0.145f}, 1.3f, 0.1f}}},
     {"tat", 0.15f, 0.62f, 0.80f, 0.44f, 0.45f, 3.0f, 24.0f, 0.15f, 0.45f,
-     {{MECH_LEG_PAR, 1.0f, 0.06f, -70.0f * DEG, 30.0f * DEG, 0.30f, 0.42f, {-58.0f * DEG, 0.22f, -0.09f}, 0.8f},      // упор
-      {MECH_LEG_VERT, 1.0f, 0.045f, -40.0f * DEG, 78.0f * DEG, 0.36f, 0.50f, {62.0f * DEG, 0.30f, -0.105f}, 1.5f},   // ходуля
-      {MECH_LEG_VERT, 1.0f, 0.04f, -62.0f * DEG, 55.0f * DEG, 0.32f, 0.40f, {-55.0f * DEG, 0.30f, -0.11f}, 0.6f},    // лыжа
-      {MECH_LEG_PAR, 1.0f, 0.05f, -70.0f * DEG, 30.0f * DEG, 0.30f, 0.40f, {52.0f * DEG, 0.24f, -0.10f}, 1.1f}}},    // жало
+     {{MECH_LEG_PAR, 1.0f, 0.06f, -70.0f * DEG, 30.0f * DEG, 0.30f, 0.42f, {-58.0f * DEG, 0.22f, -0.09f}, 0.8f, 0.0f},      // упор
+      {MECH_LEG_VERT, 1.0f, 0.045f, -40.0f * DEG, 78.0f * DEG, 0.36f, 0.50f, {62.0f * DEG, 0.30f, -0.105f}, 1.5f, 0.0f},   // ходуля
+      {MECH_LEG_VERT, 1.0f, 0.04f, -62.0f * DEG, 55.0f * DEG, 0.32f, 0.40f, {-55.0f * DEG, 0.30f, -0.11f}, 0.6f, 0.0f},    // лыжа
+      {MECH_LEG_PAR, 1.0f, 0.05f, -70.0f * DEG, 30.0f * DEG, 0.30f, 0.40f, {52.0f * DEG, 0.24f, -0.10f}, 1.1f, 0.0f}}},    // жало
 };
 
 const char *mech_kind_name(u8 kind) { return kind < MECH_KINDS ? MECH_DESC[kind].name : "?"; }
@@ -30,7 +30,7 @@ void mech_leg_solve(const MechLegRig &L, const MechLegDesc &D, f32 x, f32 y, f32
     a = f_clamp(a, D.th_min, D.th_max);
     *thigh = a;
     *shin = atan2f(ty - la * sinf(a), x - la * cosf(a));
-    *tarsus = D.mode == MECH_LEG_VERT ? -0.5f * PI_F : (D.mode == MECH_LEG_SLIDE ? *shin : a);
+    *tarsus = D.mode == MECH_LEG_VERT ? -0.5f * PI_F : a;
 }
 
 void mech_leg_hlimit(const MechView &mv, const Mech &m, u32 k, f32 &hmin, f32 &hmax) {
