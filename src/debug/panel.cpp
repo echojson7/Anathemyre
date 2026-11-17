@@ -1,7 +1,7 @@
-// Панель отладки (F3, docs/ui.md): справа сверху, три вкладки; не выше окна, вкладка листается колесом и полосой.
-// «Общее» — числа кадра и мира, время, сутки, камера, вид; «Мир» — осмотр таблиц мира по столбцам (только чтение).
-// Мир панель не меняет: всё, что она просит, run_window превращает в намерения или настройки кадра
-#include "debug.h"
+// Окно отладки (F3, слева; docs/ui.md): четыре вкладки — общее (время, сутки, камера, вид), свет (тонмаппинг, слои,
+// сравнения), люди (отрезки людей и стенд), таблицы (осмотр мира по столбцам, только чтение). Справа от него — окно
+// показателей (metrics.cpp). Мир окна не меняют: всё, что они просят, run_window превращает в намерения или настройки
+#include "panel_util.h"
 #include "../core/hash.h"
 #include "../sim/world.h"
 #include "../ui/ui.h"
@@ -9,123 +9,21 @@
 #include <stdio.h>
 #include <string.h>
 
-static constexpr f32 WIDTH = 360.0f;   // единицы ui_s
-static constexpr f32 EDGE = 20.0f;     // от края окна
-static constexpr f32 PAD = 18.0f;      // внутри панели
+static constexpr f32 WIDTH = 380.0f;    // единицы ui_s: окно отладки
+static constexpr f32 METRICS_W = 420.0f; // окно показателей
+static constexpr f32 EDGE = 16.0f;      // от края окна
+static constexpr f32 PAD = 16.0f;       // внутри окна
 
-static const char *const TABS[DEBUG_TABS] = {"ОБЩЕЕ", "КАДР", "МИР"};
-static const char *const DAY_SPEEDS[] = {"обычный", "×20", "×120", "стоп"};
-static_assert(sizeof DAY_SPEEDS / sizeof *DAY_SPEEDS == sizeof CLOCK_SPEEDS / sizeof *CLOCK_SPEEDS, "скорости суток");
-
-static void hm(f64 hour, char *out, usize n) {
-    i32 m = (i32)(hour * 60.0) % 1440;
-    if (m < 0) m += 1440;
-    snprintf(out, n, "%02d:%02d", m / 60, m % 60);
-}
-
-// Счётчик коротко: 950, 12.3к, 862к, 4.56М
-static void count_str(u64 v, char *out, usize n) {
-    if (v < 10000) snprintf(out, n, "%llu", (unsigned long long)v);
-    else if (v < 100000) snprintf(out, n, "%.1fк", (double)v / 1e3);
-    else if (v < 1000000) snprintf(out, n, "%.0fк", (double)v / 1e3);
-    else snprintf(out, n, "%.2fМ", (double)v / 1e6);
-}
-
-// Два счётчика в строку: «a · b»
-static void pair_value(UiForm &f, const char *label, u64 a, u64 b) {
-    char sa[24], sb[24], t[64];
-    count_str(a, sa, sizeof sa);
-    count_str(b, sb, sizeof sb);
-    snprintf(t, sizeof t, "%s · %s", sa, sb);
-    ui_value(f, label, t);
-}
+static const char *const TABS[DEBUG_TABS] = {"ОБЩЕЕ", "СВЕТ", "ЛЮДИ", "ТАБЛИЦЫ"};
 
 static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
-    char t[96];
-    ui_section(f, "КАДР");
-    // Замер с отладочным режимом нельзя сравнивать с бюджетом (docs/budget.md) — первой строкой
-    if (in.unfair && in.unfair[0]) ui_value(f, "! не для замера", in.unfair, ui_col::WARN);
-    else ui_value(f, "замер", "честный");
-    snprintf(t, sizeof t, "%.0f · %.2f мс", in.fps, in.frame_ms);
-    ui_value(f, "к/с · кадр", t);
-    snprintf(t, sizeof t, "%.2f мс", in.frame_max_ms);
-    ui_value(f, "худший кадр", t);
-    snprintf(t, sizeof t, "%.2f мс", in.cpu_ms);
-    ui_value(f, "CPU кадра", t);
-    snprintf(t, sizeof t, "%.2f мс", in.gpu_ms);
-    ui_value(f, "GPU", t);
-    // Проходы кадра на GPU по меткам времени (docs/frame.md, «Замер»)
-    for (u32 i = 0; i < in.passes && i < DEBUG_MAX_PASSES; ++i) {
-        snprintf(t, sizeof t, "%.2f мс", in.pass_ms[i]);
-        char name[48];
-        snprintf(name, sizeof name, "  %s", in.pass_names[i] ? in.pass_names[i] : "?");
-        ui_value(f, name, t);
-    }
-    snprintf(t, sizeof t, "%u", in.vis_clusters);
-    ui_value(f, "видимых кластеров", t);
-    // Работа освещения (docs/tiles.md): сколько чего посчитано, а не за сколько
-    if (in.work) {
-        pair_value(f, "плитки неба · земли", in.work_tiles[0], in.work_tiles[1]);
-        pair_value(f, "плитки сеток · смеси", in.work_tiles[2], in.work_tiles[3]);
-        count_str(in.work_tiles[4], t, sizeof t);
-        ui_value(f, "плитки земли на пиксель", t);
-        pair_value(f, "пиксели земли · сеток", in.work_px[1], in.work_px[2]);
-        pair_value(f, "поверхности земли · сеток", in.work_surf[0], in.work_surf[1]);
-        count_str(in.work_shadow, t, sizeof t);
-        ui_value(f, "выборки тени земли", t);
-        // Кеш земли (docs/gcache.md): страниц в кадре и запечено за кадр; поверхности земли мимо кеша
-        if (in.gc_off) {
-            snprintf(t, sizeof t, "выкл: %s", in.gc_off);
-            ui_value(f, "! кеш земли", t, ui_col::WARN);  // вся земля — на пиксель, кадр медленнее
-        } else {
-            pair_value(f, "кеш земли: страниц · запечено", in.work_gc[0], in.work_gc[1]);
-        }
-        pair_value(f, "земля мимо кеша · без места", in.work_gc[3], in.work_gc[2]);
-        // Тени солнца страницами (docs/shadow.md): страниц в кадре и нарисовано в нём; без места и выборок без
-        // страницы (оба должны быть 0); вызовы кластеров в новые страницы
-        pair_value(f, "тени: страниц · нарисовано", in.work_sm[0], in.work_sm[1]);
-        pair_value(f, "тени: без места · без страницы", in.work_sm[2], in.work_sm[3]);
-        pair_value(f, "тени: вызовов · выборок", in.work_sm[4], in.work_sm[5]);
-        // Шаг светила (6б-2): страниц нового набора, отложенных стройкой в фоне, и сколько света уже на нём
-        snprintf(t, sizeof t, "%u · %u %%", in.work_sm[6], in.work_sm[7]);
-        ui_value(f, "тени: стройка шага · перетекание", t);
-        // Поле расстояний мира (docs/sdf.md): выборки светом; засыпка и сборка — только когда кирпичи грязные
-        pair_value(f, "поле: выборок · кирпичей", in.work_sdf[0], in.work_sdf[2]);
-        snprintf(t, sizeof t, "%u", in.work_sdf[1]);
-        ui_value(f, "поле: треугольников засыпки", t);
-        // Зонды непрямого света (docs/gi.md): посчитаны в кадре и их лучи; выборки поля лучами
-        pair_value(f, "зонды: посчитано · лучей", in.work_gi[0], in.work_gi[1]);
-        snprintf(t, sizeof t, "%u", in.work_gi[2]);
-        ui_value(f, "зонды: выборок поля", t);
-        // Ячейки света (docs/lcache.md): живые и новые в кадре; посчитанные и их лучи; без места и отложенные
-        pair_value(f, "ячейки: живых · новых", in.work_lc[0], in.work_lc[1]);
-        pair_value(f, "ячейки: посчитано · лучей", in.work_lc[2], in.work_lc[3]);
-        pair_value(f, "ячейки: без места · ждут", in.work_lc[4], in.work_lc[5]);
-    }
-    // Переполнения (docs/graph.md «Переполнения»): что-то не нарисовано или считается медленным путём
-    for (u32 i = 0; i < in.overflows && i < DEBUG_MAX_OVERFLOWS; ++i) {
-        if (in.over_cap[i]) snprintf(t, sizeof t, "%llu из %llu", (unsigned long long)in.over_want[i],
-                                     (unsigned long long)in.over_cap[i]);
-        else snprintf(t, sizeof t, "%llu", (unsigned long long)in.over_want[i]);
-        char name[64];
-        snprintf(name, sizeof name, "! %s", in.over_what[i] ? in.over_what[i] : "?");
-        ui_value(f, name, t);
-    }
-    snprintf(t, sizeof t, "%.3f мс", in.step_ms);
-    ui_value(f, "шаг мира", t);
-    ui_value(f, "видеокарта", in.gpu_name ? in.gpu_name : "—");
-
     ui_section(f, "ВРЕМЯ МИРА");
-    snprintf(t, sizeof t, "%llu", (unsigned long long)in.step);
-    ui_value(f, "шаг", t);
-    snprintf(t, sizeof t, "%016llx", (unsigned long long)in.hash);
-    ui_value(f, "хеш", t);
-    // Пауза и шаг — кнопками в строку
-    f.y += ui_px(6);
-    f32 bh = f.row, gap = ui_px(8), bw = (f.w - gap) * 0.5f;
+    // Пауза и шаг — кнопками в строку (клавиши Space и «.»)
+    f.y += ui_px(4);
+    f32 bh = f.row - ui_px(4), gap = ui_px(8), bw = floorf((f.w - gap) * 0.5f);
     if (ui_button(f.x, f.y, bw, bh, in.paused ? "Пауза" : "Идёт", in.paused)) d.pause_toggle = true;
     if (ui_button(f.x + bw + gap, f.y, bw, bh, "Шаг")) d.step_once = true;
-    f.y += bh + ui_px(4);
+    f.y += bh + ui_px(6);
     char names[8][16];
     const char *np[8];
     u32 ns = in.nspeeds < 8 ? in.nspeeds : 8;
@@ -139,153 +37,91 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
     ui_section(f, "СУТКИ");
     f32 h = (f32)in.hour;
     char hs[16];
-    hm(in.hour, hs, sizeof hs);
+    dbg_hm(in.hour, hs, sizeof hs);
     if (ui_slider(f, "час", h, 0.0f, 23.75f, 0.25f, "", hs)) {
         d.hour_set = true;
         d.hour = h;
     }
     u32 cs = in.clock_speed;
-    if (ui_choice(f, "ход суток", cs, DAY_SPEEDS, ANA_COUNTOF(DAY_SPEEDS))) d.clock_speed_set = (i32)cs;
+    if (ui_choice(f, "ход суток", cs, dbg_day_speeds(), ANA_COUNTOF(CLOCK_SPEEDS))) d.clock_speed_set = (i32)cs;
 
-    ui_section(f, "КАМЕРА");
-    snprintf(t, sizeof t, "%.0f  %.0f  %.0f", in.cam[0], in.cam[1], in.cam[2]);
-    ui_value(f, "x  y  z, м", t);
-    snprintf(t, sizeof t, "%.1f м", in.cam_above);
-    ui_value(f, "над землёй", t);
+    ui_section(f, "КАМЕРА И ВИД");
     bool fl = in.cam_free;
-    if (ui_toggle(f, "свободный полёт", fl)) d.flight_toggle = true;
+    if (ui_toggle(f, "свободный полёт  (F)", fl)) d.flight_toggle = true;
+    ui_toggle(f, "отрезки и точки  (L)", d.lines);
+}
 
-    ui_section(f, "ВИД");
-    ui_toggle(f, "отрезки и точки", d.lines);
-    ui_toggle(f, "ячейки (старое правило)", d.pixel);
-    ui_toggle(f, "тестовые огни", d.test_lights);
+static void tab_light(UiForm &f, DebugState &d) {
+    // Свет (docs/light.md): тонмаппинг на выбор по кадрам, местная экспозиция
+    ui_section(f, "СВЕТ");
+    static const char *const TONEMAPS[] = {"AgX", "ACES"};
+    ui_segment(f, "тонмаппинг", d.tonemap, TONEMAPS, ANA_COUNTOF(TONEMAPS));
+    bool local = !d.local_off;
+    if (ui_toggle(f, "местная экспозиция", local)) d.local_off = !local;
     bool lamps = !d.lamps_off;
     if (ui_toggle(f, "лампы карты", lamps)) d.lamps_off = !lamps;
-    ui_toggle(f, "огни по клеткам", d.froxel_heat);
-    ui_toggle(f, "без кеша земли", d.gcache_off);
-    ui_toggle(f, "сканы CC0", d.scans);
+    // Слои: что из света показать отдельно (docs/shadow.md, docs/sdf.md, docs/gi.md)
+    ui_section(f, "СЛОИ");
     static const char *const SM_VIEWS[] = {"кадр", "страницы", "только тень"};
     ui_choice(f, "тени солнца", d.shadow_pages, SM_VIEWS, ANA_COUNTOF(SM_VIEWS));
     static const char *const SDF_VIEWS[] = {"кадр", "только небо", "поле", "выкл"};
     ui_choice(f, "поле расстояний", d.sdf_view, SDF_VIEWS, ANA_COUNTOF(SDF_VIEWS));
     static const char *const GI_VIEWS[] = {"кадр", "только он", "без зондов", "ячейки", "без ячеек"};
     ui_choice(f, "непрямой свет", d.gi_view, GI_VIEWS, ANA_COUNTOF(GI_VIEWS));
-    // Свет (docs/light.md): тонмаппинг на выбор по кадрам; освещённость земли и глаз — «Единицы», «Экспозиция»
-    ui_section(f, "СВЕТ");
-    static const char *const TONEMAPS[] = {"AgX", "ACES"};
-    ui_choice(f, "тонмаппинг", d.tonemap, TONEMAPS, ANA_COUNTOF(TONEMAPS));
-    bool local = !d.local_off;
-    if (ui_toggle(f, "местная экспозиция", local)) d.local_off = !local;
-    if (in.light) {
-        snprintf(t, sizeof t, "%.4g · %.4g лк", (double)in.lux_key, (double)in.lux_sky);
-        ui_value(f, "светило · небо", t);
-        snprintf(t, sizeof t, "%.4g лк", (double)in.lux_eye);
-        ui_value(f, "у глаза (с заслонкой)", t);
-        snprintf(t, sizeof t, "%.2f → %.2f", (double)in.ev100, (double)in.ev100_goal);
-        ui_value(f, "EV100 глаза → цель", t);
-    }
+    // Сравнения: старое и упрощённое рядом с нынешним
+    ui_section(f, "СРАВНЕНИЕ");
+    ui_toggle(f, "ячейки, старое правило  (P)", d.pixel);
+    ui_toggle(f, "без кеша земли", d.gcache_off);
+    ui_toggle(f, "тестовые огни", d.test_lights);
+    ui_toggle(f, "огни по клеткам", d.froxel_heat);
+    ui_toggle(f, "сканы CC0", d.scans);
+    f.y += ui_px(6);
+    ui_text(f.x, f.y, UI_SMALL, ui_col::FAINT, "слои и сравнения — «не для замера» в показателях");
+    f.y += ui_line(UI_SMALL) + ui_px(4);
+}
 
+static void tab_people(UiForm &f, const DebugInfo &in, DebugState &d) {
     // Люди мира: капсулы шага поверх тел, путь выбранного, след касаний стоп (отрезки отладки, L)
-    ui_section(f, "ЛЮДИ");
+    ui_section(f, "ЛЮДИ МИРА");
     ui_toggle(f, "капсулы, путь и след стоп", d.people_lines);
     ui_toggle(f, "стороны боя и цели", d.people_sides);
-    // Стенд людей (stand.cpp): человек у Остова, проверка весов и морфов
-    ui_section(f, "ЛЮДИ: СТЕНД");
+    // Стенд людей (stand.cpp): человек у Остова, проверка весов, морфов и клипов
+    ui_section(f, "СТЕНД");
     ui_toggle(f, "человек у Остова", d.stand);
-    ui_toggle(f, "согнуть кость (B)", d.stand_bend);
+    if (!d.stand) {
+        f.y += ui_px(6);
+        ui_text(f.x, f.y, UI_SMALL, ui_col::FAINT, "кость, скелет, морф и клипы — при включённом стенде");
+        f.y += ui_line(UI_SMALL) + ui_px(4);
+        return;
+    }
+    ui_toggle(f, "согнуть кость  (B)", d.stand_bend);
     static const char *const BONES[] = {"локоть", "колено"};
-    ui_choice(f, "кость", d.stand_bone, BONES, ANA_COUNTOF(BONES));
+    ui_segment(f, "кость", d.stand_bone, BONES, ANA_COUNTOF(BONES));
     static const char *const SKELS[] = {"game_engine", "mixamo"};
     ui_choice(f, "скелет", d.stand_skel, SKELS, ANA_COUNTOF(SKELS));
+    ui_toggle(f, "оба скелета рядом", d.stand_both);
     // Морфы тела в порядке сетки (tools/humanconv MORPHS)
     static const char *const MORPHS[] = {"нет", "женщина", "полнее", "худее", "сильнее", "старше", "живот",
                                          "ж: полнее", "ж: худее", "ж: сильнее", "плечи", "бёдра", "ноги", "торс",
                                          "руки", "шея", "голова", "род 1", "род 2", "нос", "горбинка", "челюсть",
                                          "подбородок", "губы", "глаза", "скулы", "брови", "уши"};
     ui_choice(f, "морф", d.stand_morph, MORPHS, ANA_COUNTOF(MORPHS));
-    ui_toggle(f, "оба скелета рядом", d.stand_both);
     u32 nclips = 0;
     const char *const *clips = debug_stand_clip_names(&nclips);
     if (nclips) {
+        ui_section(f, "СТЕНД: КЛИП");
         ui_choice(f, "клип", d.stand_clip, clips, nclips);
         ui_choice(f, "смешать с", d.stand_clip_b, clips, nclips);
         if (d.stand_clip_b) ui_slider(f, "доля второго", d.stand_blend, 0.0f, 1.0f, 0.05f, "%.2f");
         static const char *const SPEEDS[] = {"×1", "×0.5", "×0.25", "×0.1"};
         static_assert(ANA_COUNTOF(SPEEDS) == ANA_COUNTOF(STAND_SPEEDS), "скорости стенда");
-        ui_choice(f, "скорость клипа", d.stand_speed, SPEEDS, ANA_COUNTOF(SPEEDS));
+        ui_segment(f, "скорость клипа", d.stand_speed, SPEEDS, ANA_COUNTOF(SPEEDS));
         ui_toggle(f, "пауза клипа", d.stand_pause);
-        if (ui_button_row(f, "с начала")) d.stand_restart = true;
         ui_toggle(f, "на месте", d.stand_inplace);
         ui_toggle(f, "капсулы дорожек", d.stand_caps);
+        if (ui_button_row(f, "С начала")) d.stand_restart = true;
     }
-    char sv[24];
-    count_str(in.work_skin, sv, sizeof sv);
-    ui_value(f, "скинено вершин", in.work ? sv : "—");
-}
-
-// --- Кадр по частям (docs/frame_time.md): график последних кадров и части за секунду ---
-static void frame_graph(UiForm &f, const FrameProf &p) {
-    f32 h = ui_px(64), hair = ui_hair();
-    f32 bw = floorf(f.w / (f32)PROF_HISTORY);
-    if (bw < 1) bw = 1;
-    u32 shown = (u32)(f.w / bw);
-    if (shown > p.hist_count) shown = p.hist_count;
-    f32 top_y = f.y + ui_line(UI_SMALL) + ui_px(4);
-    // Верх графика — ближайшая сверху ступень: так масштаб не прыгает от кадра к кадру
-    f32 peak = 0;
-    for (u32 k = 0; k < shown; ++k) {
-        f32 v = p.hist[(p.hist_pos + PROF_HISTORY - 1 - k) % PROF_HISTORY];
-        if (v > peak) peak = v;
-    }
-    static const f32 STEPS[] = {1, 2, 4, 8, 16, 33, 66, 133, 266};
-    f32 scale = STEPS[ANA_COUNTOF(STEPS) - 1];
-    for (f32 st : STEPS)
-        if (peak <= st) { scale = st; break; }
-    char t[32];
-    snprintf(t, sizeof t, "%g мс", (double)scale);
-    ui_text(f.x, f.y, UI_SMALL, ui_col::DIM, t);
-    snprintf(t, sizeof t, "%u кадров", shown);
-    ui_text_right(f.x + f.w, f.y, UI_SMALL, ui_col::FAINT, t);
-    ui_hline(f.x, top_y, f.w, ui_col::LINE);
-    ui_hline(f.x, top_y + h, f.w, ui_col::LINE);
-    // 60 к/с — отметка, если влезает
-    if (scale > 16.7f) ui_hline(f.x, top_y + h - h * 16.7f / scale, f.w, ui_col::LINE);
-    // Кадры справа налево, новый — справа; вдвое длиннее среднего — ярче
-    f32 avg = (f32)p.total_avg_last;
-    for (u32 k = 0; k < shown; ++k) {
-        f32 v = p.hist[(p.hist_pos + PROF_HISTORY - 1 - k) % PROF_HISTORY];
-        f32 bh = h * (v < scale ? v : scale) / scale;
-        if (bh < hair) bh = hair;
-        f32 x = f.x + f.w - (f32)(k + 1) * bw;
-        ui_rect(x, top_y + h - bh, bw, bh, avg > 0 && v > 2 * avg ? ui_col::TEXT : ui_col::DIM);
-    }
-    f.y = top_y + h + ui_px(8);
-}
-
-static void tab_frame(UiForm &f, const DebugInfo &in) {
-    char t[96];
-    ui_section(f, "КАДР ЗА СЕКУНДУ");
-    snprintf(t, sizeof t, "%.0f · %.2f мс", in.fps, in.frame_ms);
-    ui_value(f, "к/с · кадр", t);
-    snprintf(t, sizeof t, "%.2f мс", in.frame_max_ms);
-    ui_value(f, "худший кадр", t);
-    snprintf(t, sizeof t, "%.2f · %.2f мс", in.gpu_ms, in.gpu_max_ms);
-    ui_value(f, "GPU · худший", t);
-    if (!in.prof) return;
-    const FrameProf &p = *in.prof;
-    f.y += ui_px(6);
-    frame_graph(f, p);
-    // Части: среднее, наибольшее за секунду и сколько эта часть заняла в худшем кадре секунды
-    ui_section(f, "ПО ЧАСТЯМ, МС");
-    ui_value(f, "", "сред · макс · худш");
-    for (u32 i = 0; i < p.nparts && i < DEBUG_MAX_FRAME_PARTS; ++i) {
-        snprintf(t, sizeof t, "%.2f · %.2f · %.2f", p.avg_last[i], p.max_last[i], p.worst_last[i]);
-        ui_value(f, p.names[i] ? p.names[i] : "?", t);
-    }
-    snprintf(t, sizeof t, "%.2f", p.worst_total_last);
-    ui_value(f, "худший кадр целиком", t);
-    ui_text(f.x, f.y + ui_px(6), UI_SMALL, ui_col::FAINT, "ожидание, картинка, показ — CPU ждёт");
-    f.y += ui_px(6) + ui_line(UI_SMALL);
+    (void)in;
 }
 
 // --- Осмотр мира: таблицы — приставки имён столбцов до точки ---
@@ -348,12 +184,12 @@ static void value_text(const Column &c, u32 i, char *t, usize n) {
 
 // Строка «имя — значение» с меткой изменения слева: светлая, пока столбец менялся в последние полсекунды
 static void col_row(UiForm &f, const char *name, const char *value, bool changed) {
-    f32 row = ui_px(22);
-    f32 y = f.y + (row - ui_line(UI_TEXT)) * 0.5f;
-    f32 m = ui_px(4);
-    ui_rect(f.x, f.y + (row - m) * 0.5f, m, m, changed ? ui_col::ON : ui_col::OFF);
-    ui_text(f.x + ui_px(12), y, UI_TEXT, ui_col::DIM, name);
-    ui_text_right(f.x + f.w, y, UI_TEXT, ui_col::TEXT, value);
+    f32 row = ui_line(UI_DATA) + ui_px(7);
+    f32 y = floorf(f.y + (row - ui_line(UI_DATA)) * 0.5f);
+    f32 m = ui_px(6);
+    ui_round(f.x, floorf(f.y + (row - m) * 0.5f), m, m, changed ? ui_col::ON : ui_col::OFF, m * 0.5f);
+    f32 nx = ui_text(f.x + ui_px(14), y, UI_DATA, ui_col::DIM, name);
+    ui_text_fit(nx + ui_px(10), y, UI_DATA, ui_col::TEXT, value, f.x + f.w - nx - ui_px(10), true);
     f.y += row;
 }
 
@@ -435,7 +271,7 @@ static void tab_world(UiForm &f, const World &w, WorldInspect &wi) {
         value_text(c, (u32)wi.row, v, sizeof v);
         col_row(f, c.name + strlen(t.name) + 1, v, changed(i));
     }
-    ui_text(f.x, f.y + ui_px(6), UI_SMALL, ui_col::FAINT, "клик по точке в мире выбирает строку");
+    ui_text(f.x, f.y + ui_px(6), UI_SMALL, ui_col::FAINT, "клик по человеку в мире выбирает строку");
     f.y += ui_px(6) + ui_line(UI_SMALL);
 }
 
@@ -444,30 +280,45 @@ static UiScroll g_scroll[DEBUG_TABS];
 
 void debug_panel(const DebugInfo &info, const World &w, DebugState &d, WorldInspect &wi) {
     f32 pw = ui_px(WIDTH), pad = ui_px(PAD), edge = ui_px(EDGE);
-    f32 x = ui_width() - edge - pw, y = edge;
-    u32 bg = ui_reserve();
+    f32 x = edge, y = edge;
+    f32 max_h = ui_height() - 2 * edge;
+    // Справа — показатели (отдельное окно; кнопка «Показатели» в заголовке прячет его)
+    if (d.metrics) {
+        f32 mw = ui_px(METRICS_W);
+        f32 mx = ui_width() - edge - mw;
+        if (mx < x + pw + edge) mx = x + pw + edge;  // узкое окно: не наезжать на отладку
+        debug_metrics_panel(info, d, mx, y, mw, max_h);
+    }
+    u32 bg = ui_panel_reserve();
     UiForm f = ui_form(x + pad, y + pad, pw - 2 * pad);
     f.row = ui_px(30);
-    f.ctl = ui_px(160);
-    ui_text(f.x, f.y, UI_SMALL, ui_col::DIM, "ОТЛАДКА", ui_px(1.2f));
-    ui_text_right(f.x + f.w, f.y, UI_SMALL, ui_col::FAINT, "F3");
-    f.y += ui_line(UI_SMALL) + ui_px(14);
+    f.ctl = ui_px(176);
+    // Заголовок: имя окна, клавиша и переключатель окна показателей
+    f32 bh = ui_line(UI_SMALL) + ui_px(12);
+    f32 ty = f.y + floorf((bh - ui_line(UI_STRONG)) * 0.5f);
+    f32 tx = ui_text(f.x, ty, UI_STRONG, ui_col::TEXT, "Отладка");
+    ui_text(tx + ui_px(8), f.y + floorf((bh - ui_line(UI_SMALL)) * 0.5f), UI_SMALL, ui_col::FAINT, "F3");
+    f32 bw = ui_text_width(UI_STRONG, "Показатели") + ui_px(24);
+    if (ui_button(f.x + f.w - bw, f.y, bw, bh, "Показатели", d.metrics)) d.metrics = !d.metrics;
+    f.y += bh + ui_px(10);
+    if (d.tab >= DEBUG_TABS) d.tab = DEBUG_TAB_MAIN;
     ui_tabs(f.x, f.y, f.w, TABS, DEBUG_TABS, d.tab);
-    f.y += ui_line(UI_SMALL) + ui_px(10);
-    ui_hline(f.x, f.y, f.w, ui_col::LINE);
-    f.y += ui_px(2);
-    // Вкладка листается: панель не ниже окна, заголовок и вкладки стоят на месте. Область — во всю ширину
-    // панели (подсветка строк выходит за поля), полоса прокрутки — в правом поле
-    UiScroll &sc = g_scroll[d.tab < DEBUG_TABS ? d.tab : 0];
+    f.y += ui_line(UI_SMALL) + ui_px(14);
+    // Вкладка листается: окно не ниже экрана, заголовок и вкладки стоят на месте. Область — во всю ширину окна
+    // (подсветка строк выходит за поля), полоса прокрутки — в правом поле
+    UiScroll &sc = g_scroll[d.tab];
     f32 top = f.y, bottom_pad = ui_px(8);
-    f32 room = ui_height() - edge - pad - top;
-    f.y = ui_scroll_begin(sc, x, top, pw - pad + ui_px(12), room);
-    if (d.tab == DEBUG_TAB_WORLD) tab_world(f, w, wi);
-    else if (d.tab == DEBUG_TAB_FRAME) tab_frame(f, info);
-    else tab_main(f, info, d);
+    f32 room = y + max_h - pad - top;
+    f.y = ui_scroll_begin(sc, x, top, pw - pad + ui_px(10), room);
+    switch (d.tab) {
+    case DEBUG_TAB_LIGHT: tab_light(f, d); break;
+    case DEBUG_TAB_PEOPLE: tab_people(f, info, d); break;
+    case DEBUG_TAB_WORLD: tab_world(f, w, wi); break;
+    default: tab_main(f, info, d); break;
+    }
     f32 shown = ui_scroll_end(sc, f.y + bottom_pad);
     f32 ph = top + shown + pad - bottom_pad - y;
-    ui_soft_at(bg, x, y, pw, ph, ui_col::PANEL, ui_px(10));
+    ui_panel_at(bg, x, y, pw, ph);
     ui_block(x, y, pw, ph);
 }
 
