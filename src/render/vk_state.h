@@ -9,7 +9,7 @@ constexpr u32 FRAMES_IN_FLIGHT = 2;
 constexpr u32 GPU_MAX_MARKS = RENDER_MAX_PASSES + 1;
 constexpr u32 MAX_SWAPCHAIN_IMAGES = 8;
 // Общие буферы сеток (docs/frame.md): вершины и индексы всех сеток, место выдаёт виртуальный блок VMA
-constexpr VkDeviceSize GEOMETRY_VERTEX_BYTES = 64ull << 20;
+constexpr VkDeviceSize GEOMETRY_VERTEX_BYTES = 128ull << 20;  // с копиями тел и одежды людей (docs/wear.md)
 constexpr VkDeviceSize GEOMETRY_INDEX_BYTES = 32ull << 20;
 // Освобождённое место сетки отдаётся через столько кадров: GPU точно дорисовал всё, что её читало
 constexpr u32 FREE_DELAY_FRAMES = FRAMES_IN_FLIGHT + 1;
@@ -489,7 +489,7 @@ struct MeshSlot {
 
 // Скиннинг (vk_skin.cpp, docs/people.md «Скиннинг»): данные источников в одном буфере видеопамяти (только
 // растёт, до render_shutdown), работы кадра — в буфере слота. Раскладка SkinJobGpu — SkinJob в skin.comp
-constexpr VkDeviceSize SKIN_DATA_BYTES = 32ull << 20;
+constexpr VkDeviceSize SKIN_DATA_BYTES = 64ull << 20;  // тело и 14 вещей одежды на два скелета — около 40 МБ
 struct SkinSource {
     u32 mesh = 0, vertex_count = 0, bone_count = 0, morph_count = 0;
     VkDeviceAddress skin = 0, morphs = 0;  // слова весов (2 на вершину) и морфов (3 на вершину на морф)
@@ -500,10 +500,11 @@ struct SkinJobGpu {
     u32 src_vertex, dst_vertex, vertex_count, first_bone;
     VkDeviceAddress skin, morphs;
     u32 morph_count, first_cluster, cluster_count, first_index;
+    u32 hide, pad;                 // маска областей тела под одеждой (docs/wear.md): их вершины стягиваются в точку
     f32 morph[RENDER_MAX_MORPHS];  // веса морфов
     f32 step[RENDER_MAX_MORPHS];   // шаг морфа, м на единицу сдвига
 };
-static_assert(sizeof(SkinJobGpu) == 112, "SkinJobGpu — как SkinJob в common.glsl");
+static_assert(sizeof(SkinJobGpu) == 56 + 8 * RENDER_MAX_MORPHS && RENDER_MAX_MORPHS == 48, "SkinJobGpu — как SkinJob в common.glsl");
 struct SkinGpu {
     GpuBuffer data;
     VkDeviceSize used = 0;

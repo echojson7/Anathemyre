@@ -33,6 +33,14 @@ void main() {
     if (i >= j.vertex_count) return;
     Vertex v = f.vertices.v[j.src_vertex + i];
     vec3 p = vec3(v.px, v.py, v.pz);
+    // Область тела под одеждой (docs/wear.md): у тела m0 == m1, байт доли смеси — номер области. Её вершины — в одну
+    // точку: треугольники области целиком (вершины разделены по областям) пропадают из кадра
+    if (j.hide != 0u && (v.mats & 0xFFFFu) == (v.mats >> 16) && ((j.hide >> (v.misc & 31u)) & 1u) != 0u) {
+        Vertex old = f.vertices_w.v[j.dst_vertex + i];
+        f.skin_prev.v[j.dst_vertex + i] = uvec2(packHalf2x16(vec2(old.px, old.py)), packHalf2x16(vec2(old.pz, 0.0)));
+        f.vertices_w.v[j.dst_vertex + i] = Vertex(0.0, 1.0, 0.0, v.normal, v.mats, v.misc);
+        return;
+    }
     vec3 n = oct_decode(v.normal);
     // Морфы: i16 × шаг для положения, i8 / 127 для нормали (MeshMorphs, src/asset/mesh.h)
     for (uint k = 0u; k < j.morph_count; ++k) {

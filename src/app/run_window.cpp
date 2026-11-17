@@ -313,7 +313,7 @@ int run_window(const Args &a, AppMemory &m) {
     }
     // Люди окна у точки старта: намерение первого шага, поэтому запись окна их повторяет, а --sim не трогает
     const bool brawl = a.brawl[0] && a.brawl[1];
-    if (w.start.set && w.start.people && !brawl) {
+    if (w.start.set && w.start.people && !brawl && !a.lineup) {
         WPos at;
         at.x = w.start.x;
         at.z = w.start.z;
@@ -321,6 +321,7 @@ int run_window(const Args &a, AppMemory &m) {
         pending.push_back({0, INTENT_PEOPLE_SPAWN, at, (u64)w.start.people | ((u64)w.start.radius << 16)});
     }
     if (brawl) brawl_intents(w, a.brawl, pending, 0.0f, -17.0f);  // стенка на стенку на площадке Остова (видео группы)
+    if (a.lineup) lineup_intents(w, a.lineup, pending);
     ds.lines = set.lines;
     debug_stand_args(ds, a.stand);
     if (a.people_lines) ds.people_lines = true;

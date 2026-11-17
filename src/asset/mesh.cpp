@@ -145,6 +145,28 @@ bool mesh_parse(const u8 *data, usize size, Arena &arena, MeshData &out, const c
         } else if (chunk_is(c, "MRPH") && c.version == 1) {
             if (!verts) { *err = "MRPH раньше VERT"; return false; }
             if (!read_morphs(b, arena, nverts, out.morphs)) { *err = "кусок MRPH испорчен"; return false; }
+        } else if (chunk_is(c, "MRPJ") && c.version == 1) {
+            if (out.joints_count >= MESH_MAX_SKINS) { *err = "кусков MRPJ больше 4"; return false; }
+            MeshJoints &j = out.joints[out.joints_count++];
+            j.skeleton = read_name(b, arena);
+            j.bones = get_u32(b);
+            j.morphs = get_u32(b);
+            if (b.bad || j.bones > 255 || j.morphs > MESH_MAX_MORPHS) { *err = "кусок MRPJ испорчен"; return false; }
+            usize per = (usize)j.bones * 4;
+            j.names = {arena_push<Str>(arena, j.morphs), j.morphs};
+            j.data = {arena_push<f32>(arena, per * j.morphs), per * j.morphs};
+            for (u32 k = 0; k < j.morphs && !b.bad; ++k) {
+                j.names.data[k] = read_name(b, arena);
+                if ((u64)per * 4 > b.size - b.pos) { b.bad = true; break; }
+                for (usize i = 0; i < per; ++i) j.data.data[k * per + i] = get_f32(b);
+            }
+            if (b.bad) { *err = "кусок MRPJ испорчен"; return false; }
+        } else if (chunk_is(c, "WEAR") && c.version == 1) {
+            out.wear = true;
+            out.wear_hide = get_u32(b);
+            out.wear_hip = get_f32(b);
+            out.wear_back = get_f32(b);
+            if (b.bad) { *err = "кусок WEAR испорчен"; return false; }
         } else if (chunk_is(c, "LODV") && c.version == 1) {
             u32 n = get_u32(b);
             if ((u64)n * 4 != b.size - b.pos) { *err = "кусок LODV испорчен"; return false; }

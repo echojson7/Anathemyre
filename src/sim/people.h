@@ -96,8 +96,9 @@ struct People {
 struct World;
 struct StepCtx;
 void people_init(People &p, Arena &arena);
-// Родить человека на ходимом месте у at (RNG мира); false — мест нет
-bool people_spawn(World &w, const WPos &at, f32 radius, u32 side = 0);
+// Родить человека на ходимом месте у at (RNG мира); false — мест нет. face ≥ 0 — лицом по курсу face / 256
+// оборота (ряд людей отладки), иначе курс случайный; чисел RNG уходит столько же
+bool people_spawn(World &w, const WPos &at, f32 radius, u32 side = 0, i32 face = -1);
 void people_kill(World &w, u32 slot);
 // Приказ идти: человек по номеру с поколением (чужое поколение — приказ пропадает). Приказ игрока снимает и
 // приказ «атаковать» (player)

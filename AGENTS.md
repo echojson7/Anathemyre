@@ -9,7 +9,7 @@
 земля `docs/terrain.md`, небо и сутки `docs/sky.md`, облака `docs/clouds.md`, интерфейс и настройки `docs/ui.md`, здание (Остов) `docs/ostov.md`,
 граф кадра, сбой GPU и проверки `docs/graph.md`, время кадра по частям, журнал и кеш конвейеров
 `docs/frame_time.md`, плитки кадра по видам и счётчики работы `docs/tiles.md`, кеш поверхности земли
-`docs/gcache.md`, люди, шаг мира и путь `docs/people.md`, клипы захвата
+`docs/gcache.md`, люди, шаг мира и путь `docs/people.md`, тело и внешность людей `docs/body.md`, одежда людей `docs/wear.md`, клипы захвата
 движения `docs/anim.md`, свет (этап 6) `docs/light.md`, тени солнца страницами `docs/shadow.md`, поле расстояний мира `docs/sdf.md`,
 зонды непрямого света `docs/gi.md`, ячейки отражённого света на поверхностях `docs/lcache.md`, огни и их тени `docs/lamps.md`,
 фабрика деталей (здания и предметы) `docs/parts.md`, оружие `docs/weapons.md`, подземная станция (Исподь) `docs/ispod.md`, сканы CC0 (проба) `docs/scans.md`,

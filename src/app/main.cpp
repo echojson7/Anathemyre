@@ -54,6 +54,7 @@ static void usage() {
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
     log_info("           --sim N --duel P                                             P пар бьются друг с другом (бенч ИИ поединка)");
     log_info("           [--sim N] --brawl AxB                                        стенка на стенку A против B (бенч и видео группы)");
+    log_info("           --lineup N                                                   ряд из N людей на площадке Остова (сложение, вещи)");
     log_info("           --replay файл.rec                                            проверка повтора");
     log_info("           --terrain-map файл.bmp                                       карта земли сверху");
     log_info("           --walk-map файл.bmp                                          сетка ходимости у Остова и путь");
@@ -116,6 +117,7 @@ int main(int argc, char **argv) {
             a.brawl[1] = (u32)n1;
             i++;
         }
+        else if (!strcmp(s, "--lineup")) { u64 n = 0; ok = parse_u64(next, n) && n > 0 && n <= 64; a.lineup = (u32)n; i++; }
         else if (!strcmp(s, "--duel")) { u64 n = 0; ok = parse_u64(next, n) && n > 0 && n <= 256; a.duel = (u32)n; i++; }
         else if (!strcmp(s, "--frames")) { ok = parse_u64(next, a.frames); i++; }
         else if (!strcmp(s, "--window")) {

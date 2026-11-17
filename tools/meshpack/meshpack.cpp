@@ -245,7 +245,8 @@ int main(int argc, char **argv) {
                                     LOD_MAX_ERROR / scale,
                                     skinned ? (prune ? (unsigned)meshopt_SimplifyPrune : 0u) : (unsigned)meshopt_SimplifyLockBorder, &err);
         if (n == 0 || (float)n > (float)src.size() * LOD_MIN_GAIN) {
-            if (skinned) return die("LOD из --lods не вышел: упрощение остановилось", in_path), 1;
+            // Одежда и машины (--prune): цепочка кончается там, где упрощение встало (швы ступеней и материалов)
+            if (skinned && !prune) return die("LOD из --lods не вышел: упрощение остановилось", in_path), 1;
             break;
         }
         dst.resize(n);

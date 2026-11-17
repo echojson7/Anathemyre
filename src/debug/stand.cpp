@@ -447,7 +447,9 @@ void debug_stand_args(DebugState &d, const char *spec) {
         else if (is("both")) d.stand_both = true;
         else if (is("move")) d.stand_inplace = false;
         else if (is("nocaps")) d.stand_caps = false;
-        else if (n == 6 && !memcmp(p, "morph", 5) && p[5] >= '1' && p[5] <= '8') d.stand_morph = (u32)(p[5] - '0');
+        else if ((n == 6 || n == 7) && !memcmp(p, "morph", 5) && p[5] >= '0' && p[5] <= '9' &&
+                 (n == 6 || (p[6] >= '0' && p[6] <= '9')))  // morphN: N — место морфа в сетке с единицы
+            d.stand_morph = n == 6 ? (u32)(p[5] - '0') : (u32)((p[5] - '0') * 10 + (p[6] - '0'));
         else if (val("clip=", g_want[0], sizeof g_want[0]) || val("blend=", g_want[1], sizeof g_want[1])) {}
         else if (n > 4 && !memcmp(p, "seq=", 4)) {  // seq=a+b+c
             g_seq_count = 0;

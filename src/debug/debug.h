@@ -161,6 +161,9 @@ struct GroupDesc;
 void brawl_intents(const World &w, const u32 n[2], FixedArray<Intent> &out, f32 x0 = -40.0f, f32 z0 = -30.0f);
 void debug_brawl_step(const World &w, BrawlStats &b);
 void debug_brawl_report(const World &w, const BrawlStats &b, const u32 n[2]);
+// Ряд людей (--lineup N, docs/people.md «Тело»): в шаге 0 N человек в ряд через метр на площадке Остова, лицом
+// на юг, без сторон и приказов — посмотреть сложение, одежду и причёски разных зёрен
+void lineup_intents(const World &w, u32 n, FixedArray<Intent> &out);
 // Клавиши отладки за кадр
 void debug_keys(const Input &in, DebugState &d);
 // Подставной игрок для --sim: намерения из своего RNG (не RNG мира) по номеру шага
@@ -209,6 +212,7 @@ inline void autoplay_intents(const World &, Rng &, FixedArray<Intent> &) {}
 inline void duel_intents(const World &, u32, FixedArray<Intent> &) {}
 inline void debug_duel_report(const World &, u32) {}
 inline void brawl_intents(const World &, const u32[2], FixedArray<Intent> &, f32 = 0.0f, f32 = 0.0f) {}
+inline void lineup_intents(const World &, u32, FixedArray<Intent> &) {}
 inline void debug_brawl_step(const World &, BrawlStats &) {}
 inline void debug_sides(const World &, DebugDraw &) {}
 inline void debug_brawl_report(const World &, const BrawlStats &, const u32[2]) {}

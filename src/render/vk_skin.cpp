@@ -279,8 +279,12 @@ void vk_skin_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
         w.skin = s.skin;
         w.morphs = s.morphs;
         w.morph_count = s.morph_count;
+        w.hide = p.hide;
+        // Морф, чей наибольший сдвиг вершин (32767 шагов) мельче ошибки этого LOD, на экране не виден: черты лица
+        // вдали не считаются (у людей до 48 морфов, а вершин скинятся тысячи)
+        f32 small = m.lods[lod].error * 2.0f;
         for (u32 i = 0; i < s.morph_count; ++i) {
-            w.morph[i] = p.morph[i];
+            w.morph[i] = s.step[i] * 32767.0f * f_abs(p.morph[i]) < small ? 0.0f : p.morph[i];
             w.step[i] = s.step[i];
         }
         // Кластеры этого LOD и грубее идут подряд до конца кластеров сетки
