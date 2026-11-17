@@ -1,0 +1,34 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Ячейки света: работы кадра (docs/lcache.md). Поток — место таблицы. Не видели дольше LC_AGE кадров — место
+// свободно. Видимые в этом кадре: молодые (заявлены заново или не прошли круг) — в список молодых, считаются каждый
+// кадр; остальные — в список обновления раз в lc_period кадров (фаза — от ключа, не от места). Снимок — все видимые
+// в список молодых, полным кругом. Списки переполнились — ячейки ждут следующего кадра (lcache_args.comp)
+#include "lcache.glsl"
+layout(local_size_x = 256) in;
+
+void main() {
+    FrameData f = pc.frame;
+    uint e = gl_GlobalInvocationID.x;
+    if (e >= LC_CAP) return;
+    uint key = f.lc_keys.v[e];
+    if (key == 0u) return;
+    LcMeta m = f.lc_meta.v[e];
+    uint age = f.lc_frame - m.seen;
+    if (age > LC_AGE) {
+        f.lc_keys.v[e] = 0u;
+        f.lc_meta.v[e].key = 0u;
+        return;
+    }
+    atomicAdd(f.lc_jobs.live_n, 1u);
+    if (age != 0u) return;  // не видна в этом кадре: значение ждёт
+    uint counts = (m.state >> 2) & 7u;
+    bool young = (m.state & LC_INIT) != 0u || counts < LC_K;
+    if (young || f.lc_snap != 0u) {
+        uint i = atomicAdd(f.lc_jobs.new_n, 1u);
+        if (i < LC_CAP) f.lc_jobs.v[i] = e;
+    } else if ((lc_hash(key) + f.lc_frame) % f.lc_period == 0u) {
+        uint i = atomicAdd(f.lc_jobs.ref_n, 1u);
+        if (i < LC_CAP) f.lc_jobs.v[LC_CAP + i] = e;
+    }
+}

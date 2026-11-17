@@ -164,6 +164,7 @@ void vk_gi_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     const SdfGpu &sd = g_vk.sdf;
     g_gi_frame = fs.frame.address;
     s.jobs_n = s.chunks = 0;
+    s.snapped = false;
     g.gi_on = 0;
     u32 view = f.style.gi_view < RENDER_GI_VIEWS ? f.style.gi_view : RENDER_GI_FRAME;
     g.gi_view = view;
@@ -187,6 +188,7 @@ void vk_gi_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     }
     gi_windows(s, cam);
     s.reset = false;
+    s.snapped = snap;
 
     u32 q = g.light_q < RENDER_LIGHT_QUALITIES ? g.light_q : RENDER_LIGHT_HIGH;
     s.rays_n = GI_Q_RAYS[q];

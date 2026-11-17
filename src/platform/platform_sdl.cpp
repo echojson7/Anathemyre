@@ -307,7 +307,13 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep) {
     crash_line("%s", msg);
     // Стек: раскрутка по таблицам исключений x64 (без dbghelp)
     CONTEXT ctx = *ep->ContextRecord;
-    for (int i = 0; i < 24 && ctx.Rip; ++i) {
+    int i = 0;
+    if (!ctx.Rip) {  // вызов по пустому указателю (функции, которой нет): таблиц для адреса 0 нет, адрес возврата на вершине стека
+        crash_line("  %2d ?+0x0 (вызов по пустому указателю)", i++);
+        ctx.Rip = *(DWORD64 *)(uintptr_t)ctx.Rsp;
+        ctx.Rsp += 8;
+    }
+    for (; i < 24 && ctx.Rip; ++i) {
         crash_where(ctx.Rip, where, sizeof where);
         crash_line("  %2d %s", i, where);
         DWORD64 base = 0;

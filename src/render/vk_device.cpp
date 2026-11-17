@@ -29,6 +29,48 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL on_debug(VkDebugUtilsMessageSeverityFlagBi
     return VK_FALSE;
 }
 
+// Указатели функций после volkLoadDevice. Драйвер может назвать расширение, но не дать его функцию (старые
+// драйверы AMD: VK_AMD_buffer_marker без vkCmdWriteBufferMarker2AMD) — тогда вызов прыгнул бы на адрес 0.
+// Нет функции разбора сбоя — идём без неё; нет функции ядра 1.2–1.3 — понятная ошибка вместо падения
+static bool check_device_functions() {
+    DiagGpu &d = g_vk.diag;
+    if (d.nv_checkpoints && (!vkCmdSetCheckpointNV || !vkGetQueueCheckpointDataNV)) {
+        log_warn("драйвер назвал VK_NV_device_diagnostic_checkpoints, но не дал его функций: без меток проходов");
+        d.nv_checkpoints = false;
+    }
+    if (d.amd_marker && !vkCmdWriteBufferMarker2AMD) {
+        d.amd_marker1 = vkCmdWriteBufferMarkerAMD != nullptr;
+        if (d.amd_marker1) log_info("метки AMD: драйвер без vkCmdWriteBufferMarker2AMD, старый вызов");
+        else {
+            log_warn("драйвер назвал VK_AMD_buffer_marker, но не дал его функций: без меток проходов");
+            d.amd_marker = false;
+        }
+    }
+    if (d.device_fault && !vkGetDeviceFaultInfoEXT) {
+        log_warn("драйвер назвал VK_EXT_device_fault, но не дал vkGetDeviceFaultInfoEXT: без сведений драйвера о сбое");
+        d.device_fault = false;
+    }
+    const struct {
+        bool ok;
+        const char *name;
+    } core[] = {
+        {vkCmdBeginRendering != nullptr, "vkCmdBeginRendering"},
+        {vkCmdEndRendering != nullptr, "vkCmdEndRendering"},
+        {vkCmdPipelineBarrier2 != nullptr, "vkCmdPipelineBarrier2"},
+        {vkCmdWriteTimestamp2 != nullptr, "vkCmdWriteTimestamp2"},
+        {vkQueueSubmit2 != nullptr, "vkQueueSubmit2"},
+        {vkCmdDrawIndexedIndirectCount != nullptr, "vkCmdDrawIndexedIndirectCount"},
+        {vkGetBufferDeviceAddress != nullptr, "vkGetBufferDeviceAddress"},
+    };
+    bool ok = true;
+    for (const auto &c : core)
+        if (!c.ok) {
+            log_error("драйвер «%s» не дал %s из Vulkan 1.3: обнови драйвер видеокарты", g_vk.gpu_name, c.name);
+            ok = false;
+        }
+    return ok;
+}
+
 static bool create_device() {
     PFN_vkGetInstanceProcAddr gipa = (PFN_vkGetInstanceProcAddr)platform_vk_get_instance_proc_addr();
     if (!gipa) { log_error("нет vkGetInstanceProcAddr"); return false; }
@@ -129,6 +171,7 @@ static bool create_device() {
     vkb::Device vd = dev.value();
     g_vk.device = vd.device;
     volkLoadDevice(g_vk.device);
+    if (!check_device_functions()) return false;
     auto q = vd.get_queue(vkb::QueueType::graphics);
     auto qi = vd.get_queue_index(vkb::QueueType::graphics);
     if (!q || !qi) { log_error("нет очереди графики"); return false; }

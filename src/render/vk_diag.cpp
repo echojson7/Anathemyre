@@ -104,6 +104,7 @@ void vk_diag_begin(VkCommandBuffer cmd, u32 pass, const char *name) {
     const DiagGpu &d = g_vk.diag;
     u32 v = encode(g_frame, pass, false);
     if (d.nv_checkpoints) vkCmdSetCheckpointNV(cmd, (const void *)(uintptr_t)v);
+    else if (d.amd_marker1) vkCmdWriteBufferMarkerAMD(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, d.markers.buffer, 0, v);
     else if (d.amd_marker) vkCmdWriteBufferMarker2AMD(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, d.markers.buffer, 0, v);
 }
 
@@ -111,6 +112,7 @@ void vk_diag_end(VkCommandBuffer cmd, u32 pass) {
     const DiagGpu &d = g_vk.diag;
     u32 v = encode(g_frame, pass, true);
     if (d.nv_checkpoints) vkCmdSetCheckpointNV(cmd, (const void *)(uintptr_t)v);
+    else if (d.amd_marker1) vkCmdWriteBufferMarkerAMD(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, d.markers.buffer, 4, v);
     else if (d.amd_marker) vkCmdWriteBufferMarker2AMD(cmd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, d.markers.buffer, 4, v);
 }
 
@@ -297,6 +299,13 @@ bool render_work(RenderWork &out) {
     out.gi_probes = w.work[STAT_GI_PROBES];
     out.gi_rays = w.work[STAT_GI_RAYS];
     out.gi_taps = w.work[STAT_GI_TAPS];
+    out.lc_live = w.work[STAT_LC_LIVE];
+    out.lc_new = w.work[STAT_LC_NEW];
+    out.lc_jobs = w.work[STAT_LC_JOBS];
+    out.lc_rays = w.work[STAT_LC_RAYS];
+    out.lc_over = w.work[STAT_LC_OVER];
+    out.lc_taps = w.work[STAT_LC_TAPS];
+    out.lc_wait = w.work[STAT_LC_WAIT];
     out.sm_blend = vk_shadow_blend();
     out.gc_off = g_vk.gcache.off;
     return true;

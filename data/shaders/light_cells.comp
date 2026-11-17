@@ -124,6 +124,7 @@ vec3 shade_hit(Hit h, int phys) {
         s.pos = h.rel;
     }
     g_ground = h.kind == HIT_MESH ? 0.0 : 1.0;
+    g_moving = h.kind == HIT_MESH && h.dyn ? 1.0 : 0.0;
     vec3 c = light_surface(s);
     // F3: страницы теней поверх кадра; «только тень» — серая карта 50 % под светилом с его видимостью
     if (pc.frame.sm_debug == 1u) c = sm_debug_tint(c, s.pos);
@@ -133,7 +134,7 @@ vec3 shade_hit(Hit h, int phys) {
     if (pc.frame.sdf_view == SDF_VIEW_SKY) c = vec3(0.5 / A_PI * lux_sky * sdf_sky(s.pos, s.normal).x);
     if (pc.frame.sdf_view == SDF_VIEW_FIELD) c = sdf_field_view(s.pos, s.normal, lux_sky);
     // F3 «непрямой свет»: только он — серая карта 50 % под светом зондов (docs/gi.md)
-    if (pc.frame.gi_view == GI_VIEW_ONLY) c = light_indirect_view(s);
+    if (pc.frame.gi_view == GI_VIEW_ONLY || pc.frame.gi_view == GI_VIEW_CELLS) c = light_indirect_view(s);
     return pc.frame.froxel_heat != 0u ? froxel_heat(c, s.pos) : c;
 }
 

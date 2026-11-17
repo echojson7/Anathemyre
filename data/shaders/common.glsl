@@ -78,6 +78,22 @@ layout(buffer_reference, scalar) buffer GiProbes { GiProbe v[]; };
 layout(buffer_reference, scalar) buffer GiRays { uvec2 v[]; };
 layout(buffer_reference, scalar) buffer GiJobs { uint v[]; };
 
+// Ячейки света на поверхностях (docs/lcache.md, lcache.glsl): таблица ключей корзинами по 8, на место —
+// мировой номер, кадр последнего взгляда, состояние; показанный свет (половинки) и сумма круга
+const uint STAT_LC_LIVE = 32u, STAT_LC_NEW = 33u, STAT_LC_JOBS = 34u, STAT_LC_RAYS = 35u, STAT_LC_OVER = 36u,
+           STAT_LC_TAPS = 37u, STAT_LC_WAIT = 38u;
+struct LcMeta { ivec3 home; uint seen; uint key; uint state; vec3 org; uint pad; };  // org — точка лучей, м от якоря
+struct LcSh { uvec4 a; uvec2 b; };      // a0.rgb, a1x.rgb, a1y.rgb, a1z.rgb половинками
+struct LcAcc { vec4 a, b, c; };         // те же 12 чисел суммой круга
+layout(buffer_reference, scalar) buffer LcKeys { uint v[]; };
+layout(buffer_reference, scalar) readonly buffer LcKeys4 { uvec4 v[]; };  // те же ключи по 4: корзина — два чтения
+layout(buffer_reference, scalar) buffer LcMetas { LcMeta v[]; };
+layout(buffer_reference, scalar) buffer LcShs { LcSh v[]; };
+layout(buffer_reference, scalar) buffer LcAccs { LcAcc v[]; };
+// Работы кадра: молодых и на обновление (до предела), живых; косвенный dispatch лучей; молодые — с v[0], на
+// обновление — с v[LC_CAP]
+layout(buffer_reference, scalar) buffer LcJobs { uint new_n, ref_n, live_n, pad; uvec4 cmd; uint v[]; };
+
 // Плитки 8×8 кадра мира по видам (docs/tiles.md, light_tiles.comp): небо — пусто; земля — земля из кеша
 // (docs/gcache.md) и, может быть, небо; сетки — сетки и, может быть, небо; смесь — земля и сетки; земля на
 // пиксель — земля, которой нет в кеше (крутые склоны), и, может быть, небо. На вид — косвенный dispatch и список
@@ -291,6 +307,19 @@ layout(buffer_reference, scalar) buffer FrameData {
     ivec4 gi_lo[4];           // первый зонд окна уровня: мировой номер от якоря поля
     uint gi_on, gi_view, gi_rays_n, gi_pad0;  // зонды читаются; режим F3 (GI_VIEW_*); лучей на зонд
     float gi_hyst, gi_pad1, gi_pad2, gi_pad3;  // доля старого значения при смешении
+    // Ячейки света (docs/lcache.md, lcache.glsl): таблица, работы кадра; ступень — тангенс угла ячейки, дальность,
+    // лучей на счёт, кадров между счётами видимой ячейки, пределы работ кадра
+    LcKeys lc_keys;
+    LcKeys4 lc_keys4;
+    LcMetas lc_meta;
+    LcShs lc_show;
+    LcShs lc_filt;            // показанный свет, сглаженный по соседям (его читает свет)
+    LcAccs lc_acc;
+    LcJobs lc_jobs;
+    uint lc_on, lc_frame, lc_rays_n, lc_period;  // ячейки есть; кадр таблицы (с 1); лучей на счёт; кадров между счётами
+    uint lc_cap_new, lc_cap_ref, lc_snap, lc_ease;  // пределы работ кадра; 1 — снимок: все видимые полным кругом;
+                                                    // 1 — быстрое светило: показ каждый счёт (как у зондов)
+    float lc_angle, lc_far, lc_hyst, lc_pad1;       // тангенс угла ячейки; дальность, м; доля старого в конце круга
     vec4 t_hole[4];           // проёмы земли (docs/terrain.md): x0, z0, x1, z1 от камеры, м
     uint t_hole_n, t_hole_pad0, t_hole_pad1, t_hole_pad2;
     // Сглаживание (docs/aa.md, vk_aa.cpp): режим (AA_*), дрожание точки пикселя этого кадра (пиксели, ±0.5),

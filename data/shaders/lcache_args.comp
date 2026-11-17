@@ -1,0 +1,16 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Ячейки света: сколько работ считается в этом кадре (docs/lcache.md). Молодые — до lc_cap_new, на обновление —
+// до lc_cap_ref; не влезшие ждут следующего кадра (счётчик LC_WAIT). Косвенный dispatch лучей: группа на работу
+#include "lcache.glsl"
+layout(local_size_x = 1) in;
+
+void main() {
+    FrameData f = pc.frame;
+    uint nn = min(f.lc_jobs.new_n, f.lc_snap != 0u ? LC_CAP : f.lc_cap_new);
+    uint nr = min(f.lc_jobs.ref_n, f.lc_cap_ref);
+    f.lc_jobs.cmd = uvec4(nn + nr, 1u, 1u, nn);
+    atomicAdd(f.stats.v[STAT_LC_LIVE], f.lc_jobs.live_n);
+    atomicAdd(f.stats.v[STAT_LC_JOBS], nn + nr);
+    atomicAdd(f.stats.v[STAT_LC_WAIT], f.lc_jobs.new_n - nn + f.lc_jobs.ref_n - nr);
+}
