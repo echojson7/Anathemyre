@@ -7,10 +7,9 @@
 #include "../sim/ground.h"
 #include <string.h>
 
-// Поза покоя: клипа покоя пока нет — верх тела из шага в середине опоры на левую (ключ 30 из 33: руки у бёдер, корпус
-// прямой), стопы ставит IK на ширину бинда (ноги из этого ключа — на полушаге)
-static const char *const IDLE_CLIP = "walk";
-constexpr f32 IDLE_T = 1.0f;
+// Покой — петля idle (стоит, дышит, переносит вес; docs/people.md «Походка и покой»), у каждого своё время петли
+static const char *const IDLE_CLIP = "idle";
+constexpr f32 IDLE_T = 0.0f;  // рука у бедра для оружия (docs/arms.md) — поза покоя в начале петли
 // Стойка с оружием вне действий (docs/arms.md): верх тела из начала клипа выпада — меч двумя руками перед грудью
 static const char *const STANCE_CLIP = "lunge";
 constexpr f32 STANCE_T = 0.0f;
@@ -88,21 +87,16 @@ static bool bind(PeopleView &pv, const ViewAssets &a) {
     while (k < b.skin_count && b.skel_name[k] != ge) ++k;
     if (k == b.skin_count) { log_warn("люди: у тела нет скелета game_engine"); return false; }
     const Skel &s = b.skel[k];
-    const ViewClip *idle = find_clip(a, IDLE_CLIP, ge), *walk = find_clip(a, "walk", ge), *run = find_clip(a, "run", ge);
-    if (!idle || !walk || !run ||
-        !gait_bind(pv.gait, s, &idle->clip, IDLE_T, &walk->clip, &walk->labels, &run->clip, &run->labels)) {
-        log_warn("люди: нет клипов %s, walk или run для game_engine — тел не будет", IDLE_CLIP);
+    const ViewClip *idle = find_clip(a, IDLE_CLIP, ge), *walk = find_clip(a, "walk", ge), *jog = find_clip(a, "jog", ge),
+                   *run = find_clip(a, "run", ge);
+    if (!idle || !walk || !jog || !run ||
+        !gait_bind(pv.gait, s, &idle->clip, &walk->clip, &walk->labels, &jog->clip, &jog->labels, &run->clip, &run->labels)) {
+        log_warn("люди: нет клипов %s, walk, jog или run для game_engine — тел не будет", IDLE_CLIP);
         return false;
     }
     for (u32 i = 0; i < B_COUNT; ++i) {
         pv.bones[i] = skel_find(s, hash_str(BONE_NAMES[i]));
         if (pv.bones[i] < 0) { log_warn("люди: в скелете нет кости %s", BONE_NAMES[i]); return false; }
-    }
-    // Стопы в покое: как в бинде (ширина бёдер), вдоль хода — под тазом
-    const SkelBone &pel = s.bones.data[pv.bones[B_PELVIS]];
-    for (u32 f = 0; f < 2; ++f) {
-        const SkelBone &fb = s.bones.data[pv.bones[B_FOOT + f]];
-        pv.rest_foot[f] = Vec3{fb.pos[0], fb.pos[1], fb.pos[2] - pel.pos[2]};
     }
     const ViewClip *stance = find_clip(a, STANCE_CLIP, ge);
     pv.armed = a.weapons.issue_sum > 0.0f;
@@ -358,18 +352,14 @@ static WPos pose_feet(PoseWork &pw, f32 any, bool debug) {
     WPos base;
     // Подгонка длины шага: стопа вдоль хода — от таза в k раз, чтобы стоящая стопа не скользила. Шаг клипа у
     // человека ростом S — в S раз длиннее, шаг мира у всех один
-    f32 nat = (c.gait->walk_len + (c.gait->run_len - c.gait->walk_len) * m.run) * S;
+    f32 nat = gait_natural_len(pv.gait, m) * S;
     f32 k = 1.0f + (gait_cycle_len(*c.gait, r.v) / nat - 1.0f) * m.move;
     f32 pz = wp[B[B_PELVIS]].z;
     WPos want[2];
     f32 ankle_h[2], toe_dz[2];
     for (u32 f = 0; f < 2; ++f) {
+        // Стопы — из позы: у покоя своя петля, где стопы стоят на месте (клип очищен, docs/anim.md «Очистка»)
         Vec3 a = wp[B[B_FOOT + f]];
-        f32 mv = f_max(m.move, any);  // в действии стопы — из клипа
-        if (mv < 1.0f) {  // покой: стопы — как в бинде под тазом
-            Vec3 rest = pv.rest_foot[f] + Vec3{0, 0, pz};
-            a = rest + (a - rest) * mv;
-        }
         f32 z = pz + (a.z - pz) * (k + (1.0f - k) * any), wx, wz;
         body_to_world(r.yaw, a.x * S, z * S, &wx, &wz);
         want[f] = add(r.at, wx, 0, wz);
@@ -491,12 +481,15 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const Appea
     L.acc = fresh ? 0.0f : approach(L.acc, f_clamp(r.acc, -8.0f, 8.0f), 6.0f, dt);
     L.side = fresh ? 0.0f : approach(L.side, f_clamp(r.v * r.yaw_rate, -8.0f, 8.0f), 6.0f, dt);
 
-    Quat rot[SKEL_MAX_BONES], tmp[SKEL_MAX_BONES], wr[SKEL_MAX_BONES];
+    Quat rot[SKEL_MAX_BONES], tmp[SKEL_MAX_BONES], tmp2[SKEL_MAX_BONES], wr[SKEL_MAX_BONES];
     Vec3 wp[SKEL_MAX_BONES];
     const Extract &pe = *in.prev;
     PoseWork pw{pv, in, c, pe, s, fit.scale, r, L, B, i, nb, pv.gait.trans_bone, dt, fresh,
                pe.person_gen[i] == c.person_gen[i], rot, tmp, wr, wp, {}, {}, gait_mix(r.v)};
-    gait_pose(pv.gait, nb, pw.m, r.phase, rot, &pw.trans, tmp, pw.contact);
+    if (fresh) L.idle_t = (f32)(c.person_seed[i] % 1000u) * 0.01f;
+    else L.idle_t += dt;
+    if (L.idle_t > 3600.0f) L.idle_t -= 3600.0f;
+    gait_pose(pv.gait, nb, pw.m, r.phase, L.idle_t, rot, &pw.trans, tmp, tmp2, pw.contact);
     const i32 tb = pw.tb;
     Vec3 &trans = pw.trans;
 

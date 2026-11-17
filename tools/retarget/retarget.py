@@ -12,6 +12,7 @@ import bpy
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from animlib import Skel, Anim, KEYS_PER_S, LOOP, m_to_q, rot_between, yaw_m, read_labels  # noqa: E402
+import clean  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 RAW = os.path.join(ROOT, 'downloads', 'anims')
@@ -116,7 +117,7 @@ def tip_name(src_or_tgt, canon, kind):
     return None
 
 
-def read_source(path, t0, t1):
+def read_source(path, t0, t1, smooth=0.0):
     """Мир костей источника в осях игры: покой и ключи 30/с на [t0, t1]. Оси: лево источника → −x, верх → +y,
     лицо в покое → +z (зеркало правой тройки Blender в левую тройку игры)."""
     src = Source(path)
@@ -143,12 +144,32 @@ def read_source(path, t0, t1):
         return {n: (M @ r @ M.T, M @ p) for n, (r, p) in d.items()}
     rest = conv(rest)
     nkeys = int(np.floor((t1 - t0) * KEYS_PER_S + 1e-6)) + 1
-    keys = [conv(src.sample(allnames, t0 + k / KEYS_PER_S)) for k in range(nkeys)]
-    data = {}
+    if smooth > 0:
+        # Очистка (clean.py): кадры источника как есть, сглаживание шума маркеров (sigma, с; у носка — втрое, он
+        # у CMU дрожит сильнее всего) и только потом прореживание в 30/с — иначе шум складывается в рывки ключей
+        pad = int(np.ceil(4 * smooth * 3 * src.fps)) + 2
+        f0 = max(0, int(np.floor(t0 * src.fps)) - pad)
+        f1 = min(int(np.floor(src.length * src.fps)), int(np.ceil(t1 * src.fps)) + pad)
+        frames = [conv(src.sample(allnames, f / src.fps)) for f in range(f0, f1 + 1)]
+        data = {}
+        for c in CANON:
+            n = src.bone(c)
+            r = np.array([fr[n][0] for fr in frames])
+            p = np.array([fr[n][1] for fr in frames])
+            sg = smooth * src.fps * (3.0 if c.endswith('ToeBase') else 1.0)
+            r = clean.smooth_rot(r, sg)
+            p = clean.gauss(p, sg)
+            r, p = clean.resample(r, p, src.fps, t0 * src.fps - f0, nkeys)
+            data[c] = {'rest_r': rest[n][0], 'rest_p': rest[n][1], 'r': r, 'p': p}
+    else:
+        keys = [conv(src.sample(allnames, t0 + k / KEYS_PER_S)) for k in range(nkeys)]
+        data = {}
+        for c in CANON:
+            n = src.bone(c)
+            data[c] = {'rest_r': rest[n][0], 'rest_p': rest[n][1],
+                       'r': np.array([k[n][0] for k in keys]), 'p': np.array([k[n][1] for k in keys])}
     for c in CANON:
         n = src.bone(c)
-        data[c] = {'rest_r': rest[n][0], 'rest_p': rest[n][1],
-                   'r': np.array([k[n][0] for k in keys]), 'p': np.array([k[n][1] for k in keys])}
         if c in tips:
             data[c]['rest_tip'] = rest[tips[c]][1]
     if src.kind == 'cmu':
@@ -158,7 +179,7 @@ def read_source(path, t0, t1):
     return data, nkeys, src.kind
 
 
-def retarget(data, nkeys, sk, skname, face_hands, head_fix=None):
+def retarget(data, nkeys, sk, skname, face_hands, head_fix=None, inplace=False):
     """Повороты костей цели после бинда (ключ × кость), голова кости переноса (мм), корень."""
     tmap = TGT[skname]
     tidx = {c: sk.index[tmap[c]] for c in CANON}
@@ -182,8 +203,10 @@ def retarget(data, nkeys, sk, skname, face_hands, head_fix=None):
             W[i] = rot_between(W[i] @ dloc, want) @ W[i]
     off = {c: data[c]['rest_r'].T @ W[tidx[c]] for c in CANON}
     if head_fix is not None:
-        # Поправка головы актёра (строка level в clips.txt): поворот в осях самой кости головы
-        off['Head'] = off['Head'] @ head_fix
+        # Поправка головы актёра (строка level в clips.txt): поворот в осях самой кости головы. Словарь — поправки
+        # нескольких костей (headself: шея и голова)
+        for c, m in (head_fix.items() if isinstance(head_fix, dict) else (('Head', head_fix),)):
+            off[c] = off[c] @ m
 
     # Масштаб — по длине ног (покой у части файлов CMU стоит не на земле, высота таза в нём ненадёжна).
     # Перенос — середина голов бёдер источника в масштабе; таз цели — от середины своих бёдер, как в бинде
@@ -212,6 +235,20 @@ def retarget(data, nkeys, sk, skname, face_hands, head_fix=None):
         ryaw = ryaw + np.radians(np.round(np.degrees(np.arctan2(loc[0], loc[2])) / 5) * 5)
     rpos = hp[idx].mean(axis=1)
     rpos[:, 1] = 0
+    if inplace:
+        # Цикл шага, бега, покоя (clean.py): корень — прямая с постоянной скоростью (или точка), курс — по ходу.
+        # Тогда стопа на опоре стоит в мире клипа и при той же скорости в игре, а подгонка шага остаётся растяжкой
+        K = nkeys - 1
+        D = (hp[K] - hp[0]) * np.array([1.0, 0.0, 1.0])
+        t = np.arange(nkeys)[:, None] / K
+        if np.linalg.norm(D) < 0.2:
+            D = np.zeros(3)
+            ryaw = np.full(nkeys, np.arctan2(np.mean(np.sin(yaw)), np.mean(np.cos(yaw))))
+        else:
+            ryaw = np.full(nkeys, np.arctan2(D[0], D[2]))
+        base = (hp - D[None] * t).mean(axis=0)
+        rpos = base[None] + D[None] * t
+        rpos[:, 1] = 0
     # Начало клипа: корень в нуле, лицом на +z
     y0, p0 = ryaw[0], rpos[0].copy()
     Y0 = yaw_m(y0).T
@@ -255,11 +292,11 @@ def best_loop(data, k0, k1, span=10):
     return bk
 
 
-def head_bias(sk, skname, rot, trans, hb):
-    """Обратный среднему повороту головы от бинда (оси корня), в осях кости головы: после него голова в среднем
-    стоит как в бинде."""
+def head_bias(sk, skname, rot, trans, hb, canon='Head'):
+    """Обратный среднему повороту кости (голова, шея) от бинда (оси корня), в осях самой кости: после него кость
+    в среднем стоит как в бинде."""
     W, _ = sk.fk(rot, hb, trans / 1000.0)
-    i = sk.index[TGT[skname]['Head']]
+    i = sk.index[TGT[skname][canon]]
     mean = ortho(np.mean(W[:, i] @ sk.bind[i].T, axis=0))
     return sk.bind[i].T @ mean.T @ sk.bind[i]
 
@@ -316,31 +353,75 @@ def write_labels(clip, src_file, kind, nkeys):
             f.write('weapon sword2\n')
 
 
+def flag(clip, name, default=None):
+    """Флаг строки clip: «имя» → True, «имя=значение» → строка значения."""
+    for f in clip['flags']:
+        if f == name:
+            return True
+        if f.startswith(name + '='):
+            return f[len(name) + 1:]
+    return default
+
+
+# Ноги цели для закрепления стоп: бедро, голень, стопа, носок
+LEGS = {'game_engine': [('thigh_' + k, 'calf_' + k, 'foot_' + k, 'ball_' + k) for k in ('l', 'r')],
+        'mixamo': [('mixamorig:' + s + b) for s in ('Left', 'Right') for b in ('UpLeg', 'Leg', 'Foot', 'ToeBase')]}
+LEGS['mixamo'] = [tuple(LEGS['mixamo'][i:i + 4]) for i in (0, 4)]
+
+
 def run_clip(clip, sources, levels):
     rel = sources[clip['src']]
     path = os.path.join(RAW, rel)
     if not os.path.exists(path):
         print(f"retarget: {clip['name']}: нет {path} (fetch.sh или папка Mixamo)")
         return False
-    data, nkeys, kind = read_source(path, clip['t0'], clip['t1'])
+    smooth = float(flag(clip, 'smooth', '0'))
+    data, nkeys, kind = read_source(path, clip['t0'], clip['t1'], smooth)
     loop = 'loop' in clip['flags']
-    if loop:
+    cyc = flag(clip, 'cycle')
+    note = ''
+    if loop and cyc:
+        # Цикл петли ищется по всему окну (clean.py): длина от и до, с; остаток шва разносится после ретаргета
+        lo, hi = (int(round(float(v) * KEYS_PER_S)) for v in cyc.split('-'))
+        a, b = clean.find_cycle(data, CANON, lo, hi)
+        for c in CANON:
+            for f in ('r', 'p'):
+                data[c][f] = data[c][f][a:b + 1]
+        nkeys = b - a + 1
+        note = f' цикл с {clip["t0"] + a / KEYS_PER_S:.2f} с'
+    elif loop:
         k1 = best_loop(data, 0, nkeys - 1)
         for c in CANON:
             for f in ('r', 'p'):
                 data[c][f] = data[c][f][:k1 + 1]
         nkeys = k1 + 1
     os.makedirs(OUT, exist_ok=True)
+    log = []
     for skname in SKELS:
         sk = Skel(os.path.join(ROOT, 'data', 'people', f'{BODY}.{skname}.skel'))
         fix = head_level(levels[clip['src']], sources, sk, skname) if clip['src'] in levels else None
-        rot, trans, root, hb = retarget(data, nkeys, sk, skname, any(f.startswith('sword') for f in clip['flags']), fix)
+        sword = any(f.startswith('sword') for f in clip['flags'])
+        inplace = bool(flag(clip, 'inplace'))
+        if flag(clip, 'headself'):
+            # Шея и голова по самому клипу: в шаге, беге и покое человек в среднем смотрит прямо и шею не тянет
+            # (маркеры у каждого актёра CMU свои: у актёра покоя шея шла вперёд на 40°). Повороты костей переносятся
+            # в мире, поэтому поправка шеи голову не трогает
+            rot, trans, _, hb = retarget(data, nkeys, sk, skname, sword, None, inplace)
+            fix = {c: head_bias(sk, skname, rot, trans, hb, c) for c in ('Neck', 'Head')}
+        rot, trans, root, hb = retarget(data, nkeys, sk, skname, sword, fix, inplace)
+        if loop and cyc:
+            rot, trans = clean.loop_fix(rot, trans)
+            trans = np.floor(trans + 0.5).astype(np.int64)
+        if flag(clip, 'plant'):
+            legs = [tuple(sk.index[n] for n in leg) for leg in LEGS[skname]]
+            rot = clean.plant(sk, rot, trans, root, hb, legs, loop, log if skname == 'game_engine' else None)
         a = Anim()
         a.skel, a.flags, a.bones, a.trans_bone = skname, LOOP if loop else 0, sk.names, hb
         a.rot, a.trans, a.root = rot, trans, root
         a.write(os.path.join(OUT, f"{clip['name']}.{skname}.anim"))
     write_labels(clip, rel, kind, nkeys)
-    print(f"retarget: {clip['name']}: ключей {nkeys} ({(nkeys - 1) / KEYS_PER_S:.2f} с){' петля' if loop else ''}")
+    print(f"retarget: {clip['name']}: ключей {nkeys} ({(nkeys - 1) / KEYS_PER_S:.2f} с){' петля' if loop else ''}{note}"
+          f"{'; ' + '; '.join(log) if log else ''}")
     return True
 
 
