@@ -3,19 +3,19 @@
 
 static constexpr f32 DEG = PI_F / 180.0f;
 
-// Вежа — прежние константы (ноги одинаковые, лапа поднимается в пачку у рамы); Тать — четыре разные ноги, лёжа
-// лапы остаются на земле. Порядок ног — fr, fl, rl, rr (по кругу)
+// Вежа — прежние константы (лапа поднимается в пачку у рамы); Тать — четыре одинаковые паучьи ноги из-под углов
+// крыши (tools/parts/tat_leg.py), тело висит под ними, лёжа лапы остаются на земле. Порядок ног — fr, fl, rl, rr
 const MechDesc MECH_DESC[MECH_KINDS] = {
     {"vezha", 0.20f, 0.86f, 1.16f, 0.50f, 1.5f, 3.3f, 16.0f, 0.26f, 0.5f,
      {{MECH_LEG_PAR, 1.0f, 0.08f, -1.536f, 0.558f, 0.48f, 0.40f, {-2.3561945f, 0.0f, 0.0f}, 1.0f},
       {MECH_LEG_PAR, 1.0f, 0.08f, -1.536f, 0.558f, 0.48f, 0.40f, {-2.3561945f, 0.0f, 0.0f}, 1.0f},
       {MECH_LEG_PAR, 1.0f, 0.08f, -1.536f, 0.558f, 0.48f, 0.40f, {-2.3561945f, 0.0f, 0.0f}, 1.0f},
       {MECH_LEG_PAR, 1.0f, 0.08f, -1.536f, 0.558f, 0.48f, 0.40f, {-2.3561945f, 0.0f, 0.0f}, 1.0f}}},
-    {"tat", 0.15f, 0.62f, 0.80f, 0.44f, 0.5f, 2.4f, 24.0f, 0.15f, 0.45f,
-     {{MECH_LEG_PAR, 1.0f, 0.06f, -70.0f * DEG, 30.0f * DEG, 0.30f, 0.42f, {-58.0f * DEG, 0.22f, -0.09f}, 0.8f},      // упор
-      {MECH_LEG_VERT, 1.0f, 0.045f, -40.0f * DEG, 78.0f * DEG, 0.36f, 0.50f, {62.0f * DEG, 0.30f, -0.105f}, 1.5f},   // ходуля
-      {MECH_LEG_VERT, 1.0f, 0.04f, -62.0f * DEG, 55.0f * DEG, 0.32f, 0.40f, {-55.0f * DEG, 0.30f, -0.11f}, 0.6f},    // лыжа
-      {MECH_LEG_PAR, 1.0f, 0.05f, -70.0f * DEG, 30.0f * DEG, 0.30f, 0.40f, {52.0f * DEG, 0.24f, -0.10f}, 1.1f}}},    // жало
+    {"tat", 0.37f, 0.62f, 0.74f, 0.50f, 0.5f, 2.4f, 24.0f, 0.37f, 0.25f,
+     {{MECH_LEG_VERT, 1.0f, 0.045f, -50.0f * DEG, 95.0f * DEG, 0.32f, 0.44f, {0.0f, 0.32f, -0.325f}, 1.0f},
+      {MECH_LEG_VERT, 1.0f, 0.045f, -50.0f * DEG, 95.0f * DEG, 0.32f, 0.44f, {0.0f, 0.32f, -0.325f}, 1.0f},
+      {MECH_LEG_VERT, 1.0f, 0.045f, -50.0f * DEG, 95.0f * DEG, 0.32f, 0.44f, {0.0f, 0.32f, -0.325f}, 1.0f},
+      {MECH_LEG_VERT, 1.0f, 0.045f, -50.0f * DEG, 95.0f * DEG, 0.32f, 0.44f, {0.0f, 0.32f, -0.325f}, 1.0f}}},
 };
 
 const char *mech_kind_name(u8 kind) { return kind < MECH_KINDS ? MECH_DESC[kind].name : "?"; }
@@ -115,5 +115,5 @@ void mech_stand_now(const MechView &mv, Mech &m, const Extract &c) {
     m.state = MECH_STAND;
     m.wait = 1.0f;
     m.points_left = 3;
-    m.mast = m.mast_to = 0.0f;
+    m.stow = m.stow_to = 0.0f;
 }

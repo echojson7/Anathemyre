@@ -2,14 +2,14 @@
 #extension GL_GOOGLE_include_directive : require
 #include "common.glsl"
 // Морок (docs/tat.md): машина остаётся долей своих пикселей — сито по шуму экрана, новое каждый кадр, сглаживание
-// (TAA) сводит его в полупрозрачность. Морок поднимается от лап к мачте полосой с рваным краем; под ним остаётся
+// (TAA) сводит его в полупрозрачность. Морок поднимается от лап к крыше полосой с рваным краем; под ним остаётся
 // дрожащая рябь, сильнее на гранях взгляда — читается как марево над песком, а не как дыра
 layout(location = 0) flat in uint v_slot;
 layout(location = 1) flat in float v_vis;
 layout(location = 2) in vec3 v_local;
 layout(location = 0) out uint o_id;
 
-const float VEIL_TOP = 1.25;    // выше мачты, м от подошвы
+const float VEIL_TOP = 1.0;     // выше крыши, м от подошвы
 const float VEIL_BAND = 0.22;   // ширина рваного края, м
 const float VEIL_KEEP = 0.07;   // доля пикселей, что остаётся под мороком
 

@@ -3,23 +3,21 @@
 // последовательность, тело переносит вес на три опоры) и перебегает парами «перед — зад» с качкой
 #include "mech_in.h"
 
-constexpr f32 TAT_H_PRONE = 0.19f;       // оси бёдер над опорой в лёжке: брюхо почти на земле
+constexpr f32 TAT_H_PRONE = 0.39f;       // оси бёдер над опорой в лёжке: брюхо почти на песке (лежит — 0.37)
 constexpr f32 TAT_STEP_STALK = 0.26f;    // шаг крадучись, с
 constexpr f32 TAT_STEP_DASH = 0.12f;     // шаг перебежки, с
 constexpr f32 TAT_VEIL_IN = 1.2f;        // морок наводится, с
 constexpr f32 TAT_VEIL_OUT = 0.25f;      // морок спадает, с
-constexpr f32 TAT_BIPOD_LEG = 0.44f;     // нога сошек от шарнира (tools/parts/tat.py)
-constexpr f32 TAT_BIPOD_UP = 0.226f;     // шарнир сошек над осями бёдер при ровном стволе
-constexpr f32 TAT_BIPOD_AHEAD = 0.72f;   // шарнир сошек впереди оси машины
-constexpr f32 TAT_BIPOD_DIP = 0.0785f;   // нога сошек в бинде опущена от ствола, рад
-constexpr f32 TAT_TURRET_X = 0.12f;      // башенка правее оси машины
-constexpr f32 TAT_TURRET_MAX = 1.75f;    // башенка доворачивает не дальше, рад: дальше мешает мачта
+constexpr f32 TAT_TURRET_X = 0.19f;      // станок винтовки правее оси машины (tools/parts/tat.py)
+constexpr f32 TAT_TURRET_MAX = 0.35f;    // станок доворачивает не дальше, рад: дальше на цель поворачивает рама
+constexpr f32 TAT_HEAD_MAX = 0.6f;       // голова на шее поворачивается не дальше, рад
+constexpr f32 TAT_GUN_MIN = -0.1f, TAT_GUN_MAX = 0.35f;   // возвышение ствола: выше короб затвора упрётся в раму
 
 // Крадучись ноги идут по кругу «зад-лево → перед-лево → зад-право → перед-право» (fr = 0, fl = 1, rl = 2, rr = 3)
 static const u8 TAT_SEQ[MECH_LEGS] = {2, 1, 3, 0};
 constexpr f32 TAT_FEET_GAP = 0.32f;   // лапы не ближе друг к другу, м
 // Лёжка: поворот бедра от бинда и вынос оси лапы от оси качания — передние ноги раскинуты вперёд, задние назад
-static const f32 TAT_PRONE[MECH_LEGS][2] = {{-0.49f, 0.77f}, {0.52f, 0.66f}, {0.21f, 0.52f}, {-0.31f, 0.91f}};
+static const f32 TAT_PRONE[MECH_LEGS][2] = {{-0.35f, 0.70f}, {0.35f, 0.70f}, {-0.30f, 0.66f}, {0.30f, 0.66f}};
 
 // Где лапе k стоять сейчас: под своим углом рамы (в лёжке — раскинута), со сдвигом вперёд по ходу и повороту
 static WPos tat_ideal(const MechView &mv, const Mech &m, u32 k, f32 ahead) {
@@ -127,7 +125,7 @@ static void tat_show(Mech &m, const Extract &c) {
     }
 }
 
-// Поведение: что делать дальше. Только меняет цель, высоту, мачту, сошки, морок и состояние; тело и лапы едут сами
+// Поведение: что делать дальше. Только меняет цель, высоту, походное положение, морок и состояние; тело и лапы едут сами
 static void tat_brain(const MechView &mv, Mech &m, const Extract &c, const MechTarget &tg, f32 dt) {
     const MechDesc &md = mech_desc(m);
     m.state_t += dt;
@@ -141,7 +139,7 @@ static void tat_brain(const MechView &mv, Mech &m, const Extract &c, const MechT
     switch (m.state) {
     case MECH_PACKED:
         m.h_to = md.belly;
-        m.mast_to = 1.0f;
+        m.stow_to = 1.0f;
         m.wait -= dt;
         if (mv.demo == MECH_DEMO_PACK) break;
         if (m.wait <= 0.0f || (tg.on && tg.dist < 6.0f && m.state_t > 1.5f) || (mv.demo == MECH_DEMO_SHOW && m.state_t > 2.0f)) {
@@ -169,7 +167,7 @@ static void tat_brain(const MechView &mv, Mech &m, const Extract &c, const MechT
         }
         if (planted) {
             m.h_to = md.h_stand;
-            if (m.h > md.h_stand * 0.6f) m.mast_to = 0.0f;   // мачта поднимается, когда тело уже встаёт
+            if (m.h > md.h_stand * 0.8f) m.stow_to = 0.0f;   // голова и ствол оживают, когда тело уже встаёт
             if (m.h > md.h_stand - 0.06f) {
                 m.wait = 0.8f + mech_rnd(m.rng);
                 m.show = 0;
@@ -181,8 +179,7 @@ static void tat_brain(const MechView &mv, Mech &m, const Extract &c, const MechT
     case MECH_STAND: {
         m.mood_t -= dt;
         if (m.mood_t <= 0.0f) m.h_to = md.h_stand;
-        m.mast_to = 0.0f;
-        m.bipod_to = 0.0f;
+        m.stow_to = 0.0f;
         m.wait -= dt;
         if (m.wait > 0.0f) break;
         if (mv.demo == MECH_DEMO_SHOW) {
@@ -244,15 +241,14 @@ static void tat_brain(const MechView &mv, Mech &m, const Extract &c, const MechT
     }
     case MECH_PRONE: {
         m.h_to = TAT_H_PRONE;
-        m.mast_to = 0.0f;
+        m.stow_to = 0.0f;
         // Цель — человек, если виден; иначе прежняя точка
         if (tg.on && mv.demo == MECH_DEMO_AUTO) {
             m.aim = tg.at;
             m.aim.y += 1.25f;
         }
-        bool low = m.h < TAT_H_PRONE + 0.04f && planted;
-        m.bipod_to = low ? 1.0f : 0.0f;
-        if (low && m.bipod > 0.9f) m.aim_t -= dt;
+        // Брюхо на песке, лапы стоят — целится
+        if (m.h < TAT_H_PRONE + 0.02f && planted) m.aim_t -= dt;
         if (m.aim_t <= 0.0f && m.shots < 2) {
             // Выстрел: откат тела, ствол подбрасывает, антенны хлещут, морок спадает
             m.kick_v += 1.5f;
@@ -269,7 +265,6 @@ static void tat_brain(const MechView &mv, Mech &m, const Extract &c, const MechT
             m.aim_t = 2.5f;
         }
         if (m.shots >= 2 && m.aim_t <= 0.0f) {
-            m.bipod_to = 0.0f;
             m.aim_on = false;
             m.wait = mv.demo == MECH_DEMO_SHOW ? 0.9f : 1.0f + mech_rnd(m.rng);
             mech_enter(m, MECH_STAND);
@@ -281,7 +276,7 @@ static void tat_brain(const MechView &mv, Mech &m, const Extract &c, const MechT
         break;
     }
     case MECH_FOLD:
-        m.mast_to = 1.0f;
+        m.stow_to = 1.0f;
         m.veil_to = 0.0f;
         if (m.state_t < 0.05f) m.h_to = md.belly;
         if (m.h < md.belly + 0.012f && (planted || m.wait < 0.0f)) {
@@ -329,10 +324,10 @@ static void tat_body(Mech &m, f32 dt) {
             want = Vec3{d.x / dist * v, 0, d.y / dist * v};
         }
     } else if (m.state == MECH_PRONE && m.aim_on) {
-        // Рама доворачивает к цели, пока башенке далеко; тонко правит башенка
+        // Рама доворачивает к цели, пока станку далеко; тонко правит станок
         Vec2 d = wpos_delta_xz(m.at, m.aim);
         f32 to = atan2f(d.x, d.y);
-        if (f_abs(mech_wrap(to - m.yaw)) > 0.35f || m.h > TAT_H_PRONE + 0.1f) yaw_to = to;
+        if (f_abs(mech_wrap(to - m.yaw)) > 0.25f || m.h > TAT_H_PRONE + 0.1f) yaw_to = to;
         wmax = 0.6f;
     }
     Vec3 dv = want - m.vel;
@@ -434,7 +429,7 @@ static void tat_legs(const MechView &mv, Mech &m, const Extract &c, f32 dt) {
     if (pair == 2 && speed > 1.5f) m.h_v += 0.18f;   // толчок задней парой
 }
 
-// Опора высоты, наклон, перенос веса, пружины башенки, ствола, мачты, сошек, отдачи, антенн, морок
+// Опора высоты, наклон, перенос веса, пружины станка, ствола, головы, отдачи, антенн, морок
 static void tat_springs(const MechView &mv, Mech &m, const Extract &c, const MechTarget &tg, f32 dt) {
     f32 sum = 0.0f, sz = 0.0f, sx = 0.0f, zz = 0.0f, xx = 0.0f;
     f32 hmin = 0.0f, hmax = 10.0f;
@@ -551,18 +546,18 @@ static void tat_springs(const MechView &mv, Mech &m, const Extract &c, const Mec
         }
         aim = m.look;
     }
-    // Прибор на мачте — быстрый, скачками; башенка с винтовкой — плавно, в своих пределах
+    // Голова — быстрая, скачками; станок с винтовкой — плавно, в своих пределах
     f32 want = mech_wrap(aim - m.yaw);
     m.eye_wait -= dt;
     if (m.eye_wait <= 0.0f) {
         f32 jitter = track ? 0.0f : (mech_rnd(m.rng) - 0.5f) * 0.6f;
-        m.eye_to = f_clamp(want + jitter, -2.6f, 2.6f);
+        m.eye_to = f_clamp(want + jitter, -TAT_HEAD_MAX, TAT_HEAD_MAX);
         m.eye_wait = track ? 0.1f : 0.4f + 1.1f * mech_rnd(m.rng);
     }
-    m.eye += (m.eye_to - m.eye) * f_min(1.0f, (m.mast > 0.5f ? 4.0f : 12.0f) * dt);
-    // Башенка смещена от оси: поправка на выстрел из её точки (на дальней цели — доли градуса)
+    m.eye += (m.eye_to - m.eye) * f_min(1.0f, (m.stow > 0.5f ? 4.0f : 12.0f) * dt);
+    // Станок смещён от оси: поправка на выстрел из его точки (на дальней цели — доли градуса)
     f32 hull_to = f_clamp(track ? want : (m.state == MECH_WALK ? want * 0.5f : want), -TAT_TURRET_MAX, TAT_TURRET_MAX);
-    if (m.mast > 0.5f) hull_to = 0.0f;   // мачта сложена — башенка по курсу
+    if (m.stow > 0.5f) hull_to = 0.0f;   // по-походному — ствол по курсу
     if (track) {
         Vec2 d = wpos_delta_xz(m.at, target);
         f32 dist = f_max(length(d), 1.0f);
@@ -572,25 +567,14 @@ static void tat_springs(const MechView &mv, Mech &m, const Extract &c, const Mec
     m.hull_v += (w * w * (hull_to - m.hull) - 2.0f * 0.95f * w * m.hull_v) * dt;
     m.hull_v = f_clamp(m.hull_v, -1.6f, 1.6f);
     m.hull += m.hull_v * dt;
-    // Ствол держит возвышение (наклон рамы гасится), сошки на земле — ствол почти не качается
+    // Ствол держит возвышение (наклон рамы гасится); брюхо на песке — ствол почти не качается
     f32 ch = cosf(m.hull), sh = sinf(m.hull);
-    f32 gun_to = f_clamp(elev + m.pitch * ch - m.roll * sh, -0.12f, 0.5f);
-    if (m.mast > 0.5f && m.state == MECH_PACKED) gun_to = -0.04f;
-    mech_spring(m.gun, m.gun_v, gun_to, m.bipod > 0.5f ? 14.0f : 9.0f, 0.8f, dt);
-    // Мачта и сошки
-    f32 mv_ = 1.0f / 0.7f;
-    m.mast += f_clamp(m.mast_to - m.mast, -mv_ * dt, mv_ * dt);
-    f32 b_to = 0.0f;
-    if (m.bipod_to > 0.0f) {
-        // Угол сошек — по высоте шарнира над землёй под ним: ноги упираются в грунт
-        f32 hy = m.h + TAT_BIPOD_UP + TAT_BIPOD_AHEAD * sinf(m.gun - m.pitch);
-        Vec3 w2 = mech_to_world(m.yaw + m.hull, Vec3{0, 0, TAT_BIPOD_AHEAD});
-        WPos g = mech_moved(m.at, w2.x + mech_to_world(m.yaw, Vec3{TAT_TURRET_X, 0, 0}).x, w2.z + mech_to_world(m.yaw, Vec3{TAT_TURRET_X, 0, 0}).z);
-        hy += m.at.y - mech_support(c, g, m.at.y + 0.5f, nullptr);
-        b_to = asinf(f_clamp(hy / TAT_BIPOD_LEG, 0.0f, 1.0f)) - TAT_BIPOD_DIP + m.gun;
-    }
-    f32 bmax = 2.0f * dt;
-    m.bipod += f_clamp(b_to * m.bipod_to - m.bipod, -bmax, bmax);
+    f32 gun_to = f_clamp(elev + m.pitch * ch - m.roll * sh, TAT_GUN_MIN, TAT_GUN_MAX);
+    if (m.stow > 0.5f && m.state == MECH_PACKED) gun_to = 0.0f;
+    mech_spring(m.gun, m.gun_v, gun_to, m.state == MECH_PRONE ? 14.0f : 9.0f, 0.8f, dt);
+    m.gun = f_clamp(m.gun, TAT_GUN_MIN - 0.05f, TAT_GUN_MAX + 0.05f);   // отдача не загоняет короб в раму
+    f32 sv = 1.0f / 0.7f;
+    m.stow += f_clamp(m.stow_to - m.stow, -sv * dt, sv * dt);
     // Антенны
     Vec3 ah = mech_to_body(m.yaw, m.acc);
     for (u32 a = 0; a < 2; ++a) {
