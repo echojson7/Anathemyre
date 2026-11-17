@@ -1,0 +1,58 @@
+# Подготовка машины под окно lavapipe (docs/build.md, «CI»): пакеты, кеш компиляторов и SDL3, кеш шейдеров Mesa,
+# сборка. Общая для окон ci.yml и задания GPU-AV (gpuav.yml). Сохранение кеша Mesa — в самом задании, в конце
+# (`if: always()`): у составного действия нет шага «после задания»
+name: lvp
+description: Пакеты, кеши и сборка под окно lavapipe
+inputs:
+  kind:
+    description: вид окна (asan, gpuav, shot, same) — свой кеш шейдеров Mesa
+    required: true
+  mode:
+    description: режим сборки (release, debug)
+    required: true
+outputs:
+  mesa-hit:
+    description: кеш шейдеров Mesa взят по точному ключу (тогда не сохранять)
+    value: ${{ steps.mesa.outputs.cache-hit }}
+  mesa-key:
+    description: ключ кеша шейдеров Mesa для сохранения
+    value: ${{ steps.key.outputs.key }}
+runs:
+  using: composite
+  steps:
+    - name: Кеш компиляторов и SDL3
+      id: tc
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/anathemyre
+          build/third_party
+        key: tc-window-${{ runner.os }}-${{ hashFiles('tools/versions.sh', 'tools/toolchain.sh', 'tools/third_party.sh') }}
+    - name: Пакеты
+      shell: bash
+      run: |
+        tools/ci_apt.sh "${{ steps.tc.outputs.cache-hit }}" glslang-tools spirv-tools mesa-vulkan-drivers vulkan-validationlayers xvfb
+    # Ключ со своим номером прогона, сохраняется и после падения или снятия по пределу: иначе упавшая задача кеш
+    # не сохраняла, следующая снова шла с холодным (вдвое дольше) и снова падала. Берётся последний с теми же
+    # шейдерами, иначе последний вообще (неизменные шейдеры в нём есть)
+    - name: Ключ кеша шейдеров Mesa
+      id: key
+      shell: bash
+      run: |
+        echo "prefix=lvp-${{ inputs.kind }}-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}-" >> "$GITHUB_OUTPUT"
+        echo "key=lvp-${{ inputs.kind }}-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+    - name: Кеш шейдеров Mesa
+      id: mesa
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.cache/mesa_shader_cache
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: |
+          ${{ steps.key.outputs.prefix }}
+          lvp-${{ inputs.kind }}-
+    - name: Компиляторы и SDL3
+      shell: bash
+      run: make toolchain third_party TARGET=linux
+    - name: Сборка
+      shell: bash
+      run: make -s -j$(nproc) WERROR=1 MODE=${{ inputs.mode }}

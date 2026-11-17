@@ -9,6 +9,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Новый пуш в тот же PR снимает старый прогон: его итог уже никому не нужен, а машины нужны следующему.
+# В v2 каждый коммит проверяется до конца
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Сборки, слои, сетки, хеши clang -O2 и gcc, запись для Windows. Отладочная сборка — в задаче debug
   linux:
@@ -16,19 +22,17 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Пакеты
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake ninja-build glslang-tools spirv-tools \
-            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev \
-            libxkbcommon-dev libasound2-dev libpulse-dev python3-numpy
       - name: Кеш компиляторов и SDL3
+        id: tc
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/anathemyre
             build/third_party
           key: tc-${{ runner.os }}-${{ hashFiles('tools/versions.sh', 'tools/toolchain.sh', 'tools/third_party.sh') }}
+      - name: Пакеты
+        run: |
+          tools/ci_apt.sh "${{ steps.tc.outputs.cache-hit }}" glslang-tools spirv-tools python3-numpy
       - name: Компиляторы и SDL3
         run: |
           make toolchain third_party TARGET=linux
@@ -87,19 +91,17 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
-      - name: Пакеты
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake ninja-build glslang-tools spirv-tools \
-            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev \
-            libxkbcommon-dev libasound2-dev libpulse-dev
       - name: Кеш компиляторов и SDL3
+        id: tc
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/anathemyre
             build/third_party
           key: tc-window-${{ runner.os }}-${{ hashFiles('tools/versions.sh', 'tools/toolchain.sh', 'tools/third_party.sh') }}
+      - name: Пакеты
+        run: |
+          tools/ci_apt.sh "${{ steps.tc.outputs.cache-hit }}" glslang-tools spirv-tools
       - name: Компиляторы и SDL3
         run: make toolchain third_party TARGET=linux
       - name: Сборки отладка и релиз
@@ -118,8 +120,9 @@ jobs:
           par_wait 3
 
   # Окно под Xvfb + lavapipe со слоями проверки Vulkan. lavapipe медленный: конвейеры создаются ~0.5 мин на
-  # запуск, первый кадр (горизонт, кеш земли, зонды, JIT шейдеров) — минуты. Четыре машины: ASan, GPU-AV, снимок,
-  # сверка кадров. Три запуска разом на одной машине шли втрое дольше одного: первый кадр lavapipe считает всеми ядрами
+  # запуск, первый кадр (горизонт, кеш земли, зонды, JIT шейдеров) — минуты. Три машины: ASan, снимок, сверка
+  # кадров; GPU-AV — своим заданием в gpuav.yml (в v2 после влития и на PR по метке gpuav, docs/build.md).
+  # Три запуска разом на одной машине шли втрое дольше одного: первый кадр lavapipe считает всеми ядрами
   # Кеш шейдеров Mesa (~/.cache/mesa_shader_cache) между прогонами снимает JIT неизменных шейдеров
   # (машинный код тот же, кадр побайтно тот же); конвейеры lavapipe не кеширует (docs/frame_time.md)
   window:
@@ -129,38 +132,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kind: [asan, gpuav, shot, same]
+        kind: [asan, shot, same]
     steps:
       - uses: actions/checkout@v4
-      - name: Пакеты
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake ninja-build glslang-tools spirv-tools \
-            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev \
-            libxkbcommon-dev libasound2-dev libpulse-dev mesa-vulkan-drivers vulkan-validationlayers xvfb
-      - name: Кеш компиляторов и SDL3
-        uses: actions/cache@v4
+      - name: Пакеты, кеши, сборка
+        id: lvp
+        uses: ./.github/actions/lvp
         with:
-          path: |
-            ~/.cache/anathemyre
-            build/third_party
-          key: tc-window-${{ runner.os }}-${{ hashFiles('tools/versions.sh', 'tools/toolchain.sh', 'tools/third_party.sh') }}
-      # Ключ со своим номером прогона, сохраняется и после падения или снятия по пределу: иначе упавшая задача кеш
-      # не сохраняла, следующая снова шла с холодным (вдвое дольше) и снова падала. Берётся последний с теми же
-      # шейдерами, иначе последний вообще (неизменные шейдеры в нём есть)
-      - name: Кеш шейдеров Mesa
-        id: mesa
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/mesa_shader_cache
-          key: lvp-${{ matrix.kind }}-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}-${{ github.run_id }}
-          restore-keys: |
-            lvp-${{ matrix.kind }}-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}-
-            lvp-${{ matrix.kind }}-
-      - name: Компиляторы и SDL3
-        run: make toolchain third_party TARGET=linux
-      - name: Сборка
-        run: make -s -j$(nproc) WERROR=1 MODE=${{ matrix.kind == 'asan' && 'debug' || 'release' }}
+          kind: ${{ matrix.kind }}
+          mode: ${{ matrix.kind == 'asan' && 'debug' || 'release' }}
       - name: Отладка с ASan и слоями проверки
         if: matrix.kind == 'asan'
         env:
@@ -175,22 +155,6 @@ jobs:
           par asan 600 xvfb-run -n 91 -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation \
             --window 640 360
           par_wait 40
-      - name: Проверка на GPU (GPU-AV)
-        if: matrix.kind == 'gpuav'
-        run: |
-          . tools/ci_par.sh
-          # чтение и запись мимо буферов по адресам, кадр мира (docs/graph.md «Проверки»).
-          # Пять шейдеров lavapipe под GPU-AV не тянет (падает, съедает ~14 ГБ или считает минуты) — без проверки;
-          # лучи зондов (gi_trace) — снимок 4 × 49 152 зонда под GPU-AV идёт дольше 10 мин; лучи ячеек света
-          # (lcache_trace) — тот же луч
-          # Камера у стенда людей с согнутой костью и морфом: скиннинг и сферы кластеров тоже под проверкой
-          # Свет «Средне»: шейдеры и ветки те же, что на «Высоко», меньше лишь размеры (карта облаков 1024² вместо
-          # 1536², зондов за кадр 1024 вместо 1536). Первый кадр собирает всю карту облаков, под GPU-AV это была
-          # половина прогона (docs/graph.md, «Проверки»). «Высоко» идёт в окнах asan, shot и same
-          par gpuav 720 xvfb-run -n 92 -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 4 --window 640 360 \
-            --gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp,lcache_trace.comp \
-            --cam 45 5 6 11698 -2348.5 --stand elbow,morph1 --light medium
-          par_wait 5
       - name: Снимок сцены
         if: matrix.kind == 'shot'
         run: |
@@ -231,11 +195,11 @@ jobs:
           # молча уводит всю землю на пиксель, а кадр при этом верный — ловим по счётчику, отдельно от допуска эталона
           awk '$1 == "gc_used" { ok = $2 > 0 } END { if (!ok) { print "кеш земли пуст: gc_used = 0"; exit 1 } }' work_1.txt
       - name: Сохранить кеш шейдеров Mesa
-        if: always() && steps.mesa.outputs.cache-hit != 'true'
+        if: always() && steps.lvp.outputs.mesa-key != '' && steps.lvp.outputs.mesa-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/mesa_shader_cache
-          key: lvp-${{ matrix.kind }}-${{ hashFiles('data/shaders/**', 'data/materials.txt', 'tools/matgen.sh') }}-${{ github.run_id }}
+          key: ${{ steps.lvp.outputs.mesa-key }}
       - uses: actions/upload-artifact@v4
         if: matrix.kind == 'same'
         with:
