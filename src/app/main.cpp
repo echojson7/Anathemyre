@@ -38,7 +38,7 @@ static void usage() {
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z] [--pivot м]   снимок (градусы, метры; опора над землёй)");
     log_info("           [--work файл.txt]                                            счётчики работы освещения в файл (с --frames)");
-    log_info("           [--nohud] [--open menu|keys|debug|frame|world]               без интерфейса; открыть меню или панель");
+    log_info("           [--nohud] [--open menu|keys|ui|debug|light|people|world]  без интерфейса; открыть меню или отладку");
     log_info("           [--stand off|elbow|knee|mixamo|morphN|both|move|nocaps|clip=…|blend=…|w=…|speed=…|t=…,…]  стенд людей (docs/anim.md)");
     log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
     log_info("           [--clock 1|20|120|0]                                         скорость суток с начала, как T (видео ускоренного времени)");
@@ -177,7 +177,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--open")) {
             a.open = next;
             ok = next && (!strcmp(next, "menu") || !strcmp(next, "keys") || !strcmp(next, "debug") || !strcmp(next, "world") ||
-                          !strcmp(next, "frame"));
+                          !strcmp(next, "frame") || !strcmp(next, "light") || !strcmp(next, "people") ||
+                          !strcmp(next, "ui"));
             i++;
         }
         else if (!strcmp(s, "--hour")) {

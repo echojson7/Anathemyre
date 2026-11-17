@@ -382,11 +382,13 @@ bool render_capture_take(Arena &arena, u8 **rgba, u32 *width, u32 *height);
 struct RenderUiQuad {
     f32 x0, y0, x1, y1;  // пиксели окна, от левого верхнего угла
     f32 u0, v0, u1, v1;  // пиксели атласа букв; u0 < 0 — заливка без атласа
+    f32 cx0, cy0, cx1, cy1;  // обрезка (область прокрутки): вне неё не рисуется; форма — по полному прямоугольнику
     u32 rgba;            // sRGB
     f32 feather;         // мягкий край внутрь, пикселей (0 — резкий)
-    u32 pad[2];
+    f32 radius;          // скругление углов, пикселей (0 — прямые)
+    f32 stroke;          // толщина обводки, пикселей (0 — заливка)
 };
-static_assert(sizeof(RenderUiQuad) == 48, "RenderUiQuad — 48 байт");
+static_assert(sizeof(RenderUiQuad) == 64, "RenderUiQuad — 64 байта");
 // Атлас букв R8 (ширина кратна 4) — в видеопамять, при загрузке
 bool render_ui_font(const u8 *atlas, u32 width, u32 height);
 // Прямоугольники интерфейса следующего render_frame (рисуются по порядку); без вызова кадр без интерфейса
