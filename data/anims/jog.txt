@@ -1,0 +1,8 @@
+# Метки клипа jog (docs/anim.md). Источник: cmu/016/16_35.bvh 0.05–1.33 с; CMU Graphics Lab Motion Capture Database (BVH Б. Хане), свободно
+# трусца, один цикл
+# Время — ключи 30/с от начала клипа. Строки foot ставит tools/retarget/bake.py, остальное — руками
+keys 25
+loop
+foot l 0 2
+foot l 21 24
+foot r 9 13

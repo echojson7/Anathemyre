@@ -13,20 +13,23 @@ struct GaitClip {
 struct GaitSet {
     bool ok;
     i32 trans_bone;  // таз в скелете
-    GaitClip idle, walk, run;
-    f32 idle_t;      // момент клипа покоя, с
+    GaitClip idle, walk, jog, run;
+    f32 len[3];      // длина цикла шага, трусцы и бега по корню клипа, м (рост сетки)
 };
 
-// Доли: move — от покоя к ходьбе, run — от шага к бегу (по скорости, м/с)
+// Доли: move — от покоя к ходьбе, jog — от шага к трусце, run — от трусцы к бегу (по скорости, м/с)
 struct GaitMix {
-    f32 move, run;
+    f32 move, jog, run;
 };
 
-// Привязать клипы к скелету. idle — клип, из которого берётся поза покоя в момент idle_t; walk и run — петли
-// с метками стоп. false — клипа нет или скелет не тот
-bool gait_bind(GaitSet &g, const Skel &s, const AnimClip *idle, f32 idle_t, const AnimClip *walk, const AnimLabels *walk_l,
-               const AnimClip *run, const AnimLabels *run_l);
+// Привязать клипы к скелету. idle — петля покоя (стоит, дышит, переносит вес); walk, jog и run — петли по одному
+// циклу с метками стоп, один актёр. false — клипа нет или скелет не тот
+bool gait_bind(GaitSet &g, const Skel &s, const AnimClip *idle, const AnimClip *walk, const AnimLabels *walk_l,
+               const AnimClip *jog, const AnimLabels *jog_l, const AnimClip *run, const AnimLabels *run_l);
 GaitMix gait_mix(f32 speed);
-// Поза: повороты rot (nbones), таз trans; tmp — ещё nbones поворотов под второй клип. contact — касание стоп
-// (0 — в воздухе, 1 — на опоре) по меткам главного клипа
-void gait_pose(const GaitSet &g, u32 nbones, GaitMix m, u32 phase, Quat *rot, Vec3 *trans, Quat *tmp, f32 contact[2]);
+// Естественная длина цикла смеси клипов при долях m, м (рост сетки)
+f32 gait_natural_len(const GaitSet &g, GaitMix m);
+// Поза: повороты rot (nbones), таз trans; tmp и tmp2 — ещё по nbones поворотов под другие клипы. idle_t — время
+// покоя человека, с (у каждого своё). contact — касание стоп (0 — в воздухе, 1 — на опоре) по меткам главного клипа
+void gait_pose(const GaitSet &g, u32 nbones, GaitMix m, u32 phase, f32 idle_t, Quat *rot, Vec3 *trans, Quat *tmp,
+               Quat *tmp2, f32 contact[2]);
