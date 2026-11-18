@@ -21,7 +21,7 @@ budget ostov_* 60000
 budget weapon_* 14000
 budget human_m 40000
 budget old_body_* 22000
-budget hair_pony 32000
+budget hair_pony 36000
 budget hair_* 14000
 budget beard_* 7000
 budget wear_* 18000
@@ -31,10 +31,10 @@ budget tex_probe 1000
 allow human_m chord 3564 — сетка MakeHuman, упрощённая как у беты (decimate.py, 16 000 треугольников): LOD 0 задан числом треугольников, не хордой; гладкость — путь Б (docs/body.md)
 allow old_body_* open 6 — тела беты на скелете v2: открыты глаза и рот по сетке MakeHuman (docs/body.md)
 allow old_body_* chord 3947 — сетка MakeHuman беты: LOD 0 задан числом треугольников, не хордой
-allow hair_pony open 175 — карточки прядей — плоские ленты с альфой, не тела (docs/hair.md, «Карточки»)
-allow hair_pony tjunc 16 — карточки зачёса сходятся к завязке хвоста, корни на одной линии (docs/hair.md)
-allow hair_pony gap 434 — слои карточек лежат друг над другом с зазором по замыслу: так волосы держат объём
-allow hair_pony chord 3332 — изгиб карточки по 4 точкам поперёк: силуэт пряди даёт альфа, а не сетка
+allow hair_pony open 431 — карточки прядей — плоские ленты с альфой, не тела (docs/hair.md, «Карточки»)
+allow hair_pony tjunc 31 — полосы хвоста сходятся в завязку: корни лежат на рёбрах соседних
+allow hair_pony gap 4608 — слои карточек лежат друг над другом с зазором по замыслу: так волосы держат объём
+allow hair_pony chord 4204 — изгиб карточки по 4 точкам поперёк: силуэт пряди даёт альфа, а не сетка
 allow hair_* open 157 — волосы — оболочки над черепом и пряди-ленты, не замкнутые тела (docs/hair.md); путь Б — карточки
 allow hair_* gap 162 — пряди и пучки лежат на оболочке с зазором по замыслу (docs/hair.md)
 allow hair_* chord 1649 — пряди из колец по 6–10 точек: LOD 0 по бюджету волос; путь Б — карточки с альфой

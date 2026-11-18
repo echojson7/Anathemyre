@@ -312,7 +312,7 @@ class Hair(W.Garment):
                               m1=np.full(len(V), mat if m1 is None else m1, np.int64),
                               blend=np.zeros(len(V)) + blend, ao=a, G=G))
 
-    def card(self, G, width, mat, col, out=None, curl=0.22, ao=(0.7, 1.0), across=4):
+    def card(self, G, width, mat, col, out=None, curl=0.22, ao=(0.7, 1.0), across=4, v0=0.0, rigid=False):
         """Карточка с атласом прядей (docs/hair.md, «Карточки»): полоса по направляющей G, развёртка — столбец col
         атласа (CARD_COLS столбцов, корень наверху); затенение вершины — глубже к телу темнее, у корня темнее"""
         hd = self.hd
@@ -325,9 +325,13 @@ class Hair(W.Garment):
         a = (ao[0] + (ao[1] - ao[0]) * (0.4 + 0.6 * depth)) * (0.8 + 0.2 * ss(0.0, 0.2, vv))
         u0 = (col + CARD_PAD) / CARD_COLS
         u1 = (col + 1 - CARD_PAD) / CARD_COLS
-        uv = np.stack([u0 + (u1 - u0) * uu, CARD_V0 + (CARD_V1 - CARD_V0) * vv], 1)
+        # v0 — начало полосы в столбце: у длинных полос разный, чтобы укороченные волоски атласа кончались на
+        # разной высоте, а не одной ступенькой поперёк хвоста
+        vs = v0 + (1.0 - v0) * vv
+        uv = np.stack([u0 + (u1 - u0) * uu, CARD_V0 + (CARD_V1 - CARD_V0) * vs], 1)
         self.free.append(dict(V=V, T=T, ring=ring, mat=np.full(len(T), mat, np.int64),
-                              m1=np.full(len(V), mat, np.int64), blend=np.zeros(len(V)), ao=a, G=G, uv=uv))
+                              m1=np.full(len(V), mat, np.int64), blend=np.zeros(len(V)), ao=a, G=G, uv=uv,
+                              rigid=rigid))
 
     def rigid_free(self, V, T, mat, ao=1.0, anchor=None):
         # Жёсткая деталь на прядях (завязка, бусина): вершины свободные, держатся за ближнюю вершину тела
@@ -347,6 +351,10 @@ class Hair(W.Garment):
             # Привязка: кольцо держится за вершину тела, ближнюю к точке направляющей
             gi, _ = hd.nearest(G)
             a = gi[np.clip(ring, 0, len(G) - 1)]
+            if it.get("rigid"):
+                # Вся полоса — в осях вершины у корня (хвост от завязки): ряды не расходятся ступенькой, когда стойка
+                # или морф сдвигают голову и шею по-разному; веса костей — по-прежнему от ближних вершин рядов
+                a = np.full(len(V), gi[0], np.int64)
             o, x, y, z = hd.frame(shape, a)
             d = V - o
             FA.append(a)
@@ -485,27 +493,6 @@ def frames(G, hd):
         o -= t * (o * t).sum(1, keepdims=True)
     o /= np.linalg.norm(o, axis=1, keepdims=True)
     return t, o, np.cross(t, o)
-
-
-def along(hd, pts, step=0.008, head=0.009, body=0.03):
-    """Направляющая по опорным точкам (сплайн Кэтмелла — Рома) ровным шагом, с запасом над телом (Head.clearance):
-    для прядей, чей путь задан рисунком причёски (чёлка набок, пряди у лица), а не ростом"""
-    Q = np.asarray(pts, np.float64)
-    Q = np.concatenate([Q[:1] * 2 - Q[1:2], Q, Q[-1:] * 2 - Q[-2:-1]])
-    out = []
-    for i in range(1, len(Q) - 2):
-        p0, p1, p2, p3 = Q[i - 1], Q[i], Q[i + 1], Q[i + 2]
-        for t in np.linspace(0.0, 1.0, 16, endpoint=False):
-            out.append(0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t
-                              + (3 * p1 - p0 - 3 * p2 + p3) * t ** 3))
-    out.append(Q[-2])
-    G = resample(np.array(out), step)
-    for _ in range(3):
-        idx, h = hd.nearest(G)
-        c = hd.clearance(idx, head, body)
-        # Не дальше 1.5 см за шаг: рисунок задан у кожи, а ближняя вершина у макушки может дать ложную глубину
-        G = G + hd.Ns[idx] * np.clip(c - h, 0.0, 0.015)[:, None]
-    return G
 
 
 def resample(G, step):

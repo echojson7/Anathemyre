@@ -46,17 +46,6 @@ def unit(x):
     return x / np.maximum(np.linalg.norm(x, axis=-1, keepdims=True), 1e-12)
 
 
-def on_head(hd, d, off):
-    """Точка над кожей головы в направлении d от середины черепа, на off от кожи (рисунок причёски)"""
-    d = unit(np.asarray(d, np.float64))
-    hv = np.where(hd.is_head & np.isin(np.arange(hd.b.nv), hd.b.used))[0]
-    rel = hd.S[hv] - C.HEAD_C
-    r = np.linalg.norm(rel, axis=1)
-    cosv = (rel @ d) / np.maximum(r, 1e-9)
-    R = r[np.argsort(-cosv, kind="stable")[:12]].max()   # кожа — по дюжине вершин ближе всех к лучу
-    return C.HEAD_C + d * (R + off)
-
-
 def nape_point(hd, y=1.665, h=0.012):
     # Место завязки на затылке: над кожей на высоте h
     i, _ = hd.nearest(np.array([[0.0, y, -0.12]]), np.where(hd.is_head)[0])
@@ -293,98 +282,19 @@ def braid_style(b, hd):
 
 # ---------------------------------------------------------------- высокий хвост карточками (концепт пользователя)
 def pony(b, hd):
-    """Высокий длинный хвост и пряди у лица, карточками с атласом прядей (docs/hair.md, «Карточки»): шапка под
-    карточками (кожа не просвечивает), зачёс карточками к завязке, хвост слоями вокруг пути, чёлка набок, пряди
-    у висков до груди"""
+    """Высокий длинный хвост, чёлка от бокового пробора, пряди у лица (концепт пользователя): причёска волосками
+    (groom.py) → карточки по пучкам (cards.py), под ними — шапка цвета волос (кожа не просвечивает)"""
+    import cards
+    import groom
     M = ["hair_back", "human_skin", "hair_tie", "hair_card"]
     m = mats(M)
     g = C.Hair("hair_pony", M, hd)
-    rng = Rng(g.name)
-    i, _ = hd.nearest(np.array([[0.0, 1.80, -0.075]]), np.where(hd.is_head)[0])
-    K = hd.S[i[0]] + hd.Ns[i[0]] * 0.016
-    nK = hd.Ns[i[0]]
-    combed(g, hd, m, K, "hair_back", lift=0.005, base=0.0035)
-    col = lambda *c: c[int(rng.u() * len(c)) % len(c)]  # noqa: E731
-    # Зачёс: от линии роста к завязке, прижат к голове. Первый ряд — по самой линии роста (лоб, виски, затылок),
-    # дальше — корни по шапке; ближние к завязке ложатся поверх
-    f = hd.scalp()
-    edge = np.where((f > 0.002) & (f < 0.009))[0]
-    edge = edge[np.isin(edge, hd.b.used)]
-    rows = []
-    for a_ in np.linspace(-170.0, 170.0, 44):
-        d = np.abs(((np.degrees(hd.az[edge]) - a_) + 180.0) % 360.0 - 180.0)
-        rows.append(edge[np.argmin(d)])
-    inner = C.roots(hd, np.where(f > 0.015, f, -1.0), 0.021, rng, margin=0.0)
-    for layer, (R, hh, wd) in enumerate(((np.array(rows), 0.004, 0.030), (inner, 0.0065, 0.034))):
-        for r_ in R:
-            root = hd.S[r_] + hd.Ns[r_] * hh
-            dist = float(np.linalg.norm(K - root))
-            if dist < 0.035:
-                continue
-            G = C.grow(hd, root[None], C.tangent_to(hd, np.array([r_]), K), np.array([dist * 1.25]), step=0.008,
-                       gravity=0.0, stiff=0.55, pull=lambda P: unit(K - P) * 0.9, flat=0.9, head=hh + 0.002)[0]
-            G = C.cut_at(G, K, 0.012)
-            if len(G) < 3:
-                continue
-            u = np.linspace(0.0, 1.0, len(G))
-            w = (wd + 0.008 * rng.u()) * (1.0 - 0.6 * u ** 1.5)
-            g.card(G, w, m["hair_card"], col(0, 1, 2), curl=0.08)
-
-    # Хвост: путь от завязки назад-вверх и вниз с тяжестью; карточки слоями вокруг пути, сечение — овал шире
-    # поперёк спины
-    path = C.grow(hd, K[None], unit(nK * 0.6 + np.array([0.0, 0.35, -0.75]))[None], np.array([0.62]), step=0.01,
-                  gravity=0.9, stiff=0.55, flat=0.1, head=0.03, body=0.035)[0]
-    path = C.resample(path, 0.012)
-    t, o, s_ = C.frames(path, hd)
-    L = len(path)
-    U = np.linspace(0.0, 1.0, L)
-    # Слои: число, радиус у завязки, разлёт к концу, столбцы атласа, ширина, доля длины не меньше
-    layers = ((12, 0.008, 0.022, (7,), 0.050, 0.9), (22, 0.016, 0.040, (0, 1, 2), 0.046, 0.82),
-              (16, 0.022, 0.055, (3, 4, 5), 0.036, 0.68), (9, 0.026, 0.07, (6,), 0.020, 0.55))
-    for n_, r0, spread, cols, w0, lmin in layers:
-        for k in range(n_):
-            a = TAU * (k + rng.u() * 0.7) / n_
-            cut = max(4, int(L * (lmin + (1.0 - lmin) * rng.u())))
-            u = U[:cut]
-            rad = np.cos(a) * s_[:cut] * 1.7 + np.sin(a) * o[:cut]
-            out = np.cos(a) * s_[:cut] + np.sin(a) * o[:cut] * 1.7
-            off = (r0 + spread * u ** 1.4 * (1.0 - 0.5 * u)) * (0.8 + 0.4 * rng.u())
-            G = path[:cut] + rad * off[:, None]
-            G[0] = path[0] + rad[0] * r0 * 0.4   # корень — у самой завязки, под резинкой
-            uu = np.linspace(0.0, 1.0, cut)
-            w = w0 * (0.85 + 0.3 * rng.u()) * (0.55 + 0.45 * ss(0.0, 0.08, uu)) * (1.0 - 0.45 * uu ** 1.3)
-            g.card(G, w, m["hair_card"], col(*cols), out=out, curl=0.2)
-    band(g, hd, m, path[0] + t[0] * 0.004, t[0], 0.016, h=0.016)
-
-    # Чёлка набок (рисунком): от пробора справа через лоб над левой бровью, вниз у левой щеки до челюсти
-    for k in range(16):
-        q = k / 15.0
-        jt = 0.05 * rng.bell(1)[0]
-        pts = [on_head(hd, (0.30 - 0.1 * q, 0.95, 0.10 + 0.2 * q), 0.005),
-               on_head(hd, (0.15 - 0.12 * q, 0.55 - 0.1 * q + jt, 1.0), 0.008),
-               on_head(hd, (-0.20 - 0.1 * q, 0.22 - 0.06 * q + jt, 1.0), 0.010),
-               on_head(hd, (-0.62 - 0.06 * q, 0.02 - 0.08 * q, 0.85), 0.012),
-               on_head(hd, (-0.95, -0.40 - 0.15 * q, 0.5), 0.016),
-               on_head(hd, (-0.85, -0.95 - 0.2 * q + jt, 0.35), 0.022)]
-        G = C.along(hd, pts, head=0.008 + 0.004 * (1.0 - q))
-        u = np.linspace(0.0, 1.0, len(G))
-        w = (0.036 + 0.01 * rng.u()) * (0.6 + 0.4 * ss(0.0, 0.12, u)) * (1.0 - 0.6 * u ** 1.4)
-        g.card(G, w, m["hair_card"], col(0, 1, 3, 4) if k < 13 else col(5, 6), curl=0.18)
-
-    # Пряди у лица справа: от виска перед ухом вниз мимо щеки, по ключице на грудь
-    for k in range(5):
-        q = k / 4.0
-        P0 = on_head(hd, (0.80, 0.25 - 0.1 * q, 0.55), 0.008)
-        P1 = on_head(hd, (0.95, -0.45, 0.45 + 0.1 * q), 0.016)
-        pts = [P0, P1, P1 + np.array([0.01 + 0.006 * q, -0.10, 0.01]),
-               np.array([0.098 + 0.012 * q, 1.47 - 0.025 * q, 0.10 + 0.008 * q])]
-        G = C.along(hd, pts, head=0.010, body=0.02)
-        u = np.linspace(0.0, 1.0, len(G))
-        w = (0.030 + 0.006 * rng.u()) * (0.6 + 0.4 * ss(0.0, 0.1, u)) * (1.0 - 0.5 * u ** 1.3)
-        # Лицом наружу от оси шеи: без перекрута полосы на изгибе у ключицы
-        out = G - np.array([0.0, 0.0, 0.02])
-        out[:, 1] = 0.0
-        g.card(G, w, m["hair_card"], col(5, 6) if k == 4 else col(0, 1, 3), out=out, curl=0.2)
+    gr = groom.pony(hd)
+    rng = Rng(g.name + "-карточки")
+    K, nK = gr.tie
+    combed(g, hd, m, K, "hair_back", lift=0.002, base=0.0008)
+    cards.build(g, gr, m["hair_card"], hd, rng)
+    band(g, hd, m, K, nK, 0.014, h=0.016)
     return g
 
 
