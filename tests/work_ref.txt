@@ -13,12 +13,12 @@ gc_used 5953
 gc_baked 216
 gc_over 0
 gc_direct 4410
-skin_verts 76495
+skin_verts 45842
 sm_used 96
 sm_new 4
 sm_over 0
 sm_miss 0
-sm_draws 250
+sm_draws 285
 sm_taps 1325292
 sm_wait 0
 sdf_taps 2334235
