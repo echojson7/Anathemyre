@@ -1,0 +1,7 @@
+# Метки клипа idle (docs/anim.md). Источник: cmu/113/113_21.bvh 0.8–11.2 с; CMU Graphics Lab Motion Capture Database (BVH Б. Хане), свободно
+# стоит: дышит, переносит вес
+# Время — ключи 30/с от начала клипа. Строки foot ставит tools/retarget/bake.py, остальное — руками
+keys 155
+loop
+foot l 0 154
+foot r 0 154

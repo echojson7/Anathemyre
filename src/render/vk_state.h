@@ -10,7 +10,7 @@ constexpr u32 GPU_MAX_MARKS = RENDER_MAX_PASSES + 1;
 constexpr u32 MAX_SWAPCHAIN_IMAGES = 8;
 // Общие буферы сеток (docs/frame.md): вершины и индексы всех сеток, место выдаёт виртуальный блок VMA
 constexpr VkDeviceSize GEOMETRY_VERTEX_BYTES = 128ull << 20;  // с копиями тел и одежды людей (docs/wear.md)
-constexpr VkDeviceSize GEOMETRY_INDEX_BYTES = 32ull << 20;
+constexpr VkDeviceSize GEOMETRY_INDEX_BYTES = 64ull << 20;  // все LOD всех сеток: круги по хорде (docs/assetlint.md) и пробные комнаты — 40 МБ на 18.11
 // Освобождённое место сетки отдаётся через столько кадров: GPU точно дорисовал всё, что её читало
 constexpr u32 FREE_DELAY_FRAMES = FRAMES_IN_FLIGHT + 1;
 constexpr u32 MAX_PENDING_FREES = 256;

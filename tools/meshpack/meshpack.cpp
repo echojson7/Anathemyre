@@ -420,7 +420,7 @@ int main(int argc, char **argv) {
         for (uint32_t n : lod_verts) put(b, n);
         put_chunk(out, "LODV", b);
     }
-    static const char *const known[] = {"HEAD", "MATS", "VERT", "INDX", "CLUS", "LODS", "SKIN", "MRPH", "LODV", "VUV0", "LODI"};
+    static const char *const known[] = {"HEAD", "MATS", "VERT", "INDX", "CLUS", "LODS", "SKIN", "MRPH", "LODV", "LODI", "VUV0"};
     for (const Chunk &c : chunks) {
         bool skip = false;
         for (const char *k : known) skip |= !memcmp(c.tag, k, 4);

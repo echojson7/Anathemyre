@@ -15,9 +15,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(HERE, "..", "parts"))
 sys.path.append(os.path.join(HERE, ".."))
-from kit import Body, cross, dot, sub, unit  # noqa: E402
-from export import canonical, open_edges, triangles  # noqa: E402
-from meshgen import Mesh  # noqa: E402
+from kit import Body, seg_for, unit  # noqa: E402
+from export import build_mesh, canonical, open_edges, triangles  # noqa: E402
 
 # Материалы игры (data/materials.txt, раздел «Оружие»): ключ скрипта → имя
 MAT = {
@@ -69,9 +68,21 @@ def spline(ctrl, n):
     return out
 
 
+# Число точек круглых сечений внутри одной протяжки (Weapon.loft): первый проход собирает, сколько нужно по
+# допуску хорды, второй строит все сечения с этим числом — у колец одной протяжки число точек одно
+_RING = {"auto": False, "need": 0, "force": 0}
+
+
 def ring(r, n=16, m=0, rz=None, phase=0.0):
-    """Сечение-эллипс: полуоси r по Y и rz по Z."""
+    """Сечение-эллипс: полуоси r по Y и rz по Z. В круглой протяжке (shade smooth или bands) n — нижняя
+    граница, сверх неё — по допуску хорды (kit.seg_for); в гранёной (strips, flat) — ровно n."""
     rz = r if rz is None else rz
+    if _RING["auto"]:
+        if _RING["force"]:
+            n = max(n, _RING["force"])
+        else:
+            n = max(n, seg_for(max(r, rz)))
+            _RING["need"] = max(_RING["need"], n)
     return [(r * math.cos(phase + 2 * math.pi * i / n), rz * math.sin(phase + 2 * math.pi * i / n), m) for i in range(n)]
 
 
@@ -128,9 +139,15 @@ class Weapon:
     def loft(self, xs, section, mats, shade="strips", cap0=True, cap1=True):
         """Тело протяжкой: section(x) → [(y, z, мат)] одинаковой длины, мат — номер в mats грани после точки.
         shade: strips — полосы вдоль, bands — пояса поперёк, smooth — круглое, flat — плоские грани."""
-        rings = []
-        for x in xs:
-            rings.append([((x, y, z), mats[m]) for y, z, m in section(x)])
+        _RING.update(auto=shade in ("smooth", "bands"), need=0, force=0)
+        try:
+            secs = [section(x) for x in xs]
+            if _RING["auto"] and (_RING["need"] or len({len(q) for q in secs}) > 1):
+                _RING["force"] = _RING["need"]
+                secs = [section(x) for x in xs]
+        finally:
+            _RING.update(auto=False, need=0, force=0)
+        rings = [[((x, y, z), mats[m]) for y, z, m in sec] for x, sec in zip(xs, secs)]
         self.rings(rings, shade, cap0, cap1)
 
     def rings(self, rings, shade="strips", cap0=True, cap1=True):
@@ -175,11 +192,16 @@ class Weapon:
         """Брусок по границам; bevel — фаска по контуру сечения YZ (рёбра вдоль X остаются)."""
         b = min(bevel, (y1 - y0) * 0.4, (z1 - z0) * 0.4)
         if b > 0:
-            sec = [(y0 + b, z1), (y1 - b, z1), (y1, z1 - b), (y1, z0 + b), (y1 - b, z0), (y0 + b, z0), (y0, z0 + b),
-                   (y0, z1 - b)]
+            # скругление четвертью круга из 4 отрезков на каждом углу (не одна фаска)
+            sec = []
+            for cy, cz, a0 in ((y1 - b, z1 - b, 0.5), (y1 - b, z0 + b, 0.0), (y0 + b, z0 + b, -0.5), (y0 + b, z1 - b, -1.0)):
+                for k in range(5):
+                    a = math.pi * (a0 - 0.5 * k / 4)
+                    sec.append((cy + b * math.cos(a), cz + b * math.sin(a)))
+            self.loft([x0, x1], lambda x: [(yy, zz, 0) for yy, zz in sec], [mat], shade="smooth", cap0=True, cap1=True)
         else:
             sec = [(y0, z1), (y1, z1), (y1, z0), (y0, z0)]
-        self.loft([x0, x1], lambda x: [(yy, zz, 0) for yy, zz in sec], [mat], shade="flat")
+            self.loft([x0, x1], lambda x: [(yy, zz, 0) for yy, zz in sec], [mat], shade="flat")
 
     def boxc(self, c, size, mat, bevel=0.0015):
         """Брусок с фаской на всех рёбрах (kit.Body.box), середина c, размеры size — в осях скрипта."""
@@ -195,7 +217,9 @@ class Weapon:
         self.body.faces += [(p, m, g if s else 0) for p, m, s in b.faces]
 
     def torus(self, c, axis, R, r, mat, seg=28, rseg=8):
-        """Кольцо: середина c, ось axis ('x' | 'y' | 'z'), радиус R, сечение r ."""
+        """Кольцо: середина c, ось axis ('x' | 'y' | 'z'), радиус R, сечение r. seg и rseg — нижние границы,
+        сверх них — по допуску хорды."""
+        seg = max(seg, seg_for(R + r))
         out = []
         for k in range(seg + 1):
             a = 2 * math.pi * k / seg
@@ -208,8 +232,10 @@ class Weapon:
         g = self._g()
         self.body.faces += [(p, m, g if s else 0) for p, m, s in b.faces]
 
-    def disc_y(self, x, z, y, r, depth, mat, seg=12, phase=0.0):
-        """Цилиндр поперёк вещи (ось Y): отверстие-вкладыш, шляпка болта, колесо навершия."""
+    def disc_y(self, x, z, y, r, depth, mat, seg=12, phase=0.0, exact=False):
+        """Цилиндр поперёк вещи (ось Y): отверстие-вкладыш, шляпка болта, колесо навершия. seg — нижняя граница
+        (сверх неё — по допуску хорды), exact — гранёный по замыслу (гайка), ровно seg."""
+        seg = seg if exact else max(seg, seg_for(r))
         pts = [(x + r * math.cos(phase + 2 * math.pi * k / seg), z + r * math.sin(phase + 2 * math.pi * k / seg))
                for k in range(seg)]
         y0, y1 = y - depth / 2, y + depth / 2
@@ -223,6 +249,7 @@ class Weapon:
 
     def dome_y(self, x, z, y, r, h, mat, side=-1, seg=12):
         """Головка заклёпки или болта: купол поперёк вещи, основание на y, вершина на y + side·h."""
+        seg = max(seg, seg_for(r))
         prof = [(1.0, 0.0), (0.92, 0.45), (0.7, 0.8), (0.38, 0.97), (0.0, 1.0)]
         rings = []
         for k, (rr, hh) in enumerate(prof):
@@ -238,7 +265,7 @@ class Weapon:
 
     def nut_y(self, x, z, y, r, mat):
         """Шестигранная гайка поперёк вещи (ось Y)."""
-        self.disc_y(x, z, y, r, r * 0.8, mat, seg=6, phase=math.pi / 6)
+        self.disc_y(x, z, y, r, r * 0.8, mat, seg=6, phase=math.pi / 6, exact=True)
 
     def plate(self, outline, y0, y1, mat, mat_rim=None):
         """Пластина по контуру в плоскости XZ (простой многоугольник), толщина от y0 до y1."""
@@ -266,42 +293,10 @@ def build(w, fist):
     return canonical(triangles(b))
 
 
-def mesh_of(tris, cos_smooth=0.5):
-    """Треугольники → Mesh: нормаль угла — сумма нормалей граней той же группы у этой вершины (площадью), не
-    круче 60° к своей. Плоская грань (группа 0) — своя нормаль."""
-    mats = sorted({t[3] for t in tris})
-    mi = {m: k for k, m in enumerate(mats)}
-    nrm = []
-    for a, b, c, _, _ in tris:
-        n = cross(sub(b, a), sub(c, a))
-        l = dot(n, n) ** 0.5
-        nrm.append((n, (n[0] / l, n[1] / l, n[2] / l) if l > 1e-15 else None))
-    at = {}
-    for k, (a, b, c, _, g) in enumerate(tris):
-        if g and nrm[k][1] is not None:
-            for p in (a, b, c):
-                at.setdefault((p, g), []).append(k)
-    m = Mesh(mats)
-    for k, (a, b, c, mat, g) in enumerate(tris):
-        own = nrm[k][1]
-        for p in (a, b, c):
-            n = own
-            if g and own is not None:
-                sx = sy = sz = 0.0
-                for j in at[(p, g)]:
-                    if dot(nrm[j][1], own) >= cos_smooth:
-                        sx += nrm[j][0][0]
-                        sy += nrm[j][0][1]
-                        sz += nrm[j][0][2]
-                l = (sx * sx + sy * sy + sz * sz) ** 0.5
-                if l > 1e-15:
-                    n = (sx / l, sy / l, sz / l)
-            if n is None:
-                n = (0.0, 1.0, 0.0)
-            m.verts.append((p[0], p[1], p[2], n[0], n[1], n[2], mi[mat], mi[mat], 0, 255))
-        base = len(m.verts) - 3
-        m.indices += [base, base + 1, base + 2]
-    return m
+def mesh_of(tris):
+    """Треугольники → Mesh: группа грани (0 — плоская) — группа сглаживания, нормали взвешенные
+    (export.build_mesh: плоская грань остаётся плоской до кромки)."""
+    return build_mesh(tris)
 
 
 def write(name, tris, out_dir, meshpack):
