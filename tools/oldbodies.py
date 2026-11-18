@@ -5,7 +5,7 @@ stage0/test-room, data/meshes/mh_*.mesh) → неподвижные сетки v
     python3 tools/oldbodies.py data/meshes build/tools/meshpack [ветка беты]
 
 Скелет и веса отброшены: сетка стоит как деталь сцены, морфы беты запечены по таблице BODIES. Цвета вершин беты
-сведены к материалам людей v2 (кожа, бельё, резинка, белок, радужка, брови). Не в CI: ветки беты там нет.
+сведены к материалам людей v2 (кожа, губы, ореол, сосок, бельё, резинка, белок, радужка, брови). Не в CI: ветки беты там нет.
 """
 import math
 import os
@@ -27,7 +27,8 @@ BODIES = (
     ("male", {2: 1.0}),
     ("male", {0: 0.7, 3: 0.6}),
 )
-MATS = ["human_skin", "human_linen", "human_band", "human_eye", "human_iris", "hair_brow"]
+MATS = ["human_skin", "human_linen", "human_band", "human_eye", "human_iris", "hair_brow", "human_lip", "human_areola",
+        "human_nipple"]
 
 
 def read_amsh(data):
@@ -44,8 +45,9 @@ def read_amsh(data):
     return verts, idx, nm, morph
 
 
-def material(v):
-    """Номер в MATS по материалу беты, классу оттенка и цвету вершины."""
+def material(v, skin_r):
+    """Номер в MATS по материалу беты, классу оттенка и цвету вершины. Губы и соски беты — кожа темнее в долях
+    (губы 0.93, ореол 0.80, сосок 0.70 по красному): по доле от кожи этого тела."""
     mat, tint, r = v[10], v[12], v[6]
     if mat == 3:  # бельё беты: светлый холст и тёмная резинка
         return 1 if r > 55 else 2
@@ -53,11 +55,14 @@ def material(v):
         return 5
     if tint == 0:
         return 3 if r > 60 else 4
-    return 0
+    k = r / skin_r
+    return 8 if k < 0.75 else 7 if k < 0.87 else 6 if k < 0.97 else 0
 
 
 def build(data, weights):
     verts, idx, nm, morph = read_amsh(data)
+    reds = [v[6] for v in verts if v[12] == 1 and v[10] != 3]
+    skin_r = max(set(reds), key=reds.count)  # самый частый красный кожи — тон тела
     m = Mesh(MATS)
     for i, v in enumerate(verts):
         p = list(v[0:3])
@@ -68,7 +73,7 @@ def build(data, weights):
                 p[a] += w * morph[b + a] / 32767.0 * MORPH_POS
                 n[a] += w * morph[b + 3 + a] / 32767.0 * MORPH_NRM
         ln = math.sqrt(sum(c * c for c in n)) or 1.0
-        mi = material(v)
+        mi = material(v, skin_r)
         m.verts.append((p[0], p[1], p[2], n[0] / ln, n[1] / ln, n[2] / ln, mi, mi, 0, 255))
     # Низ сетки — на нуле (морф полноты может опустить стопы)
     y0 = min(v[1] for v in m.verts)

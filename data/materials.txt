@@ -159,26 +159,80 @@ material stone rock
     extra 0.18 0.0625 0.7 0.3
 
 # Люди (стенд этапа 7, docs/people.md): временные ровные цвета — кожа и бельё «по-настоящему» после света (этап 6)
-# Кожа: вид skin — тон между color (светлый) и color2 (тёмный) по зерну человека (src/view/appear.h)
+# Кожа: вид skin — тон между color (светлый) и color2 (тёмный) по зерну человека (src/view/appear.h).
+# Бельё на одной сетке у мужчин и женщин разное (tools/humanconv PAIR): extra a — чем грань будет по полу
+# (materials/skin.glsl): 1 — у женщины цвет extra b c d, у мужчины кожа; 2 — наоборот; 3 — у мужчины color, у женщины
+# extra b c d. Холст и резинка — как бельё беты
 material human_skin skin
     color 0.62 0.45 0.35
     color2 0.17 0.10 0.065
     rough 0.6
 
-# Лиф: у женщины — холст белья (extra b c d), у мужчины — та же кожа
+# Губы и соски — кожа темнее в долях беты (губы 0.93 0.84 0.82, ореол 0.80 0.68 0.64, сосок 0.70 0.56 0.52)
+material human_lip skin
+    color 0.577 0.378 0.287
+    color2 0.158 0.084 0.053
+    rough 0.45
+
+# Ореол и сосок: у мужчины кожа темнее, у женщины — холст лифа
+material human_areola skin
+    color 0.496 0.306 0.224
+    color2 0.136 0.068 0.042
+    rough 0.55
+    extra 1 0.33 0.31 0.26
+
+material human_nipple skin
+    color 0.434 0.252 0.182
+    color2 0.119 0.056 0.034
+    rough 0.55
+    extra 1 0.33 0.31 0.26
+
+# Лиф и его резинка: у женщины холст, у мужчины кожа
 material human_bra skin
     color 0.62 0.45 0.35
     color2 0.17 0.10 0.065
     rough 0.6
-    extra 1 0.55 0.50 0.42
+    extra 1 0.33 0.31 0.26
+
+material human_bra_band skin
+    color 0.62 0.45 0.35
+    color2 0.17 0.10 0.065
+    rough 0.6
+    extra 1 0.17 0.16 0.13
+
+# Трусы мужчины ниже слипов женщины: у мужчины холст и резинка, у женщины кожа
+material human_boxer skin
+    color 0.62 0.45 0.35
+    color2 0.17 0.10 0.065
+    rough 0.6
+    extra 2 0.33 0.31 0.26
+
+material human_boxer_band skin
+    color 0.62 0.45 0.35
+    color2 0.17 0.10 0.065
+    rough 0.6
+    extra 2 0.17 0.16 0.13
+
+# Где резинка у одного и холст у другого
+material human_lb skin
+    color 0.33 0.31 0.26
+    color2 0.33 0.31 0.26
+    rough 0.9
+    extra 3 0.17 0.16 0.13
+
+material human_bl skin
+    color 0.17 0.16 0.13
+    color2 0.17 0.16 0.13
+    rough 0.9
+    extra 3 0.33 0.31 0.26
 
 # Бельё из небелёного холста и тёмная резинка
 material human_linen flat
-    color 0.55 0.50 0.42
+    color 0.33 0.31 0.26
     rough 0.9
 
 material human_band flat
-    color 0.18 0.16 0.14
+    color 0.17 0.16 0.13
     rough 0.8
 
 # Глаза: белок и радужка

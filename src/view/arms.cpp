@@ -19,6 +19,8 @@ constexpr f32 PALM_OUT = 0.028f;   // ось рукояти над ладонь�
 // Сжатая кисть: сгиб трёх фаланг пальца, большой палец — к ладони и вдоль неё (рад)
 constexpr f32 CURL[3] = {1.15f, 1.4f, 0.6f};
 constexpr f32 THUMB[3] = {0.45f, 0.5f, 0.6f};
+// Свободная кисть (как в бете): доля сжатия по пальцам — указательный, средний, безымянный, мизинец, большой
+constexpr f32 RELAX[5] = {0.28f, 0.34f, 0.40f, 0.46f, 0.22f};
 
 static f32 smooth(f32 x) {
     x = f_clamp(x, 0.0f, 1.0f);
@@ -211,6 +213,12 @@ static void carry_place(const ArmsBind &b, const WeaponHold &h, const Quat *wr, 
     const Quat rel = quat_mul(wr[at_bone], unbind);
     *q = quat_mul(rel, weapon_quat(dir, edge));
     *at = wp[at_bone] + quat_rotate(rel, hang - dir * h.carry_at - base);
+}
+
+void arms_relax(const ArmsBind &b, Quat *rot) {
+    if (!b.ok) return;
+    for (u32 k = 0; k < 2; ++k)
+        for (u32 f = 0; f < ARMS_FINGERS; ++f) rot[b.finger[k][f]] = nlerp(rot[b.finger[k][f]], b.curl[k][f], RELAX[f / 3]);
 }
 
 ArmsWeapon arms_pose_weapon(const ArmsBind &b, const Skel &s, const WeaponHold &h, const ArmsState &a, f32 act_any,
