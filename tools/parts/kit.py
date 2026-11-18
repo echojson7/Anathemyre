@@ -375,6 +375,13 @@ def fillet_path(pts, radius, n=6, r_out=0.0, max_turn=None):
         if ang > math.pi - 1e-3 or (max_turn is not None and math.pi - ang >= max_turn):
             out.append(b)
             continue
+        if max_turn is not None:
+            # Путь уже частый (кольцо, провис): дуга через соседние точки и так держит допуск — угол не трогать
+            ln = min(length(sub(a, b)), length(sub(c, b)))
+            rr = ln / (2.0 * math.tan((math.pi - ang) / 2))
+            if seg_for(rr + r_out, math.pi - ang, tol=CHORD * 1.05) <= 1:
+                out.append(b)
+                continue
         t = min(radius / math.tan(ang / 2), length(sub(a, b)) * 0.45, length(sub(c, b)) * 0.45)
         r = t * math.tan(ang / 2)
         cen = add(b, mul(unit(add(d1, d2)), r / math.sin(ang / 2)))
