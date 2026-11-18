@@ -1,5 +1,8 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_vote : require
 // Тени солнца (docs/shadow.md): высота заслонки — в тексель страницы, только у страниц, нарисованных в этом
 // кадре (остальные уже готовы). Атомарный максимум: порядок кластеров не важен, страница от запуска к запуску
 // одна и та же. Картинок у прохода нет.
@@ -35,6 +38,12 @@ void main() {
     uint he = sm_enc(h);
     atomicMax(f.sm_texels.v[phys * uint(SM_PAGE * SM_PAGE) + uint((t.y & 127) * SM_PAGE + (t.x & 127))], he);
     // Самая высокая заслонка страницы (sm_clear): атомарно — только если выше уже записанной, иначе все фрагменты
-    // страницы толпились бы на одном слове
-    if (he > pg.top && he > f.sm_pages.v[phys].top) atomicMax(f.sm_pages.v[phys].top, he);
+    // страницы толпились бы на одном слове. Подгруппа над одной страницей сводит максимум сама и пишет одной
+    // дорожкой: человек выше неподвижного на странице, и раньше атомик слова делал почти каждый его фрагмент.
+    // Вспомогательные дорожки (производные четвёрки) не в счёт: их запись видеокарта отбрасывает
+    uint cand = he > pg.top && !gl_HelperInvocation ? he : 0u;
+    if (subgroupAllEqual(phys)) {
+        uint m = subgroupMax(cand);
+        if (m != 0u && gl_SubgroupInvocationID == subgroupBallotFindLSB(subgroupBallot(cand == m))) atomicMax(f.sm_pages.v[phys].top, m);
+    } else if (cand != 0u && cand > f.sm_pages.v[phys].top) atomicMax(f.sm_pages.v[phys].top, cand);
 }

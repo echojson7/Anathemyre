@@ -49,7 +49,7 @@ sdf_final.comp           -        16      0     1
 sdf_splat.comp           -        48      0     4
 shadow_alloc.comp        -        16      0     2
 shadow_args.comp         -        16      0     1
-shadow_cull.comp         -        72      0    10
+shadow_cull.comp         -        80      0    11
 shadow_dyn.comp          -        24      0     4
 shadow_inval.comp        -        24      0     1
 shadow_scan.comp         -         8      0     1

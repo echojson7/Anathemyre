@@ -238,7 +238,7 @@ struct RenderConfig {
 };
 
 constexpr u32 RENDER_MAX_POINTS = 4096;
-constexpr u32 RENDER_MAX_PASSES = 32;  // строк времени проходов GPU (F3)
+constexpr u32 RENDER_MAX_PASSES = 40;  // строк времени проходов GPU (F3)
 constexpr u32 RENDER_MAX_LINE_VERTICES = 32768;
 constexpr u32 RENDER_MAX_INSTANCES = 65536;
 constexpr u32 RENDER_MAX_MESHES = 4096;
