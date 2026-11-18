@@ -131,5 +131,6 @@ visibility buffer при готовых швах — это замена дву�
 
 ## Инструменты разработки
 - git + GitHub (`echojson7/Anathemyre`), ветка v2 — `claude/project-v2`.
-- Python 3 + numpy для конвертеров, bpy 5.x (`pip install bpy`) для ретаргета, ffmpeg для видео стенда, Xvfb + lavapipe для кадров без окна.
+- Python 3 + numpy для конвертеров, bpy 5.x (`pip install bpy`) для ретаргета и конвейера ассетов (главный
+  офлайн-инструмент моделей: детальная модель, игровая, развёртка, запекание; `docs/assets_pipeline_review.md`), ffmpeg для видео стенда, Xvfb + lavapipe для кадров без окна.
 - `tools/run.sh`: `git pull`, сборка, запуск. Пользователь запускает только его.
