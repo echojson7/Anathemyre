@@ -72,9 +72,18 @@ float spec_occlusion(float nv, float ao, float a) {
     return clamp(pow(nv + ao, exp2(-16.0 * a - 1.0)) - 1.0 + ao, 0.0, 1.0);
 }
 
+// Цвет свечения стекла (docs/lamps.md, «Стекло»): светящаяся поверхность внутри тела огня (ближе size + 12 см к
+// его отрезку) светит цветом этого огня — материал стекла один на все лампы, а лампы разных кельвинов и цветов.
+// Ставит light_lamps: g_glow_d — расстояние до ближайшего такого огня (1e9 — нет), g_glow_c — его цвет
+float g_glow_d = 1e9;
+vec3 g_glow_c = vec3(1.0);
+const float LAMP_GLOW_R = 0.12;  // м сверх радиуса тела
+const float LAMP_PLACE_NEAR = 3.0, LAMP_PLACE_FAR = 8.0;  // м: огонь в свете места без тени → с тенью
+
 // Огни клетки на поверхность s: рассеянное kd/π и отражение GGX (как у солнца в light.glsl). v — к глазу,
 // a, a2 — α и α², f0, comp — Френель и поправка многократного рассеяния
 vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd, vec3 f0, vec3 comp) {
+    g_glow_d = 1e9;
     uint fi = froxel_at(s.pos);
     uint cnt = froxel_light_count(fi);
     if (cnt == 0u) return vec3(0.0);
@@ -83,6 +92,7 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
 #endif
     FrameData f = pc.frame;
     uint steps = lamp_steps(f.light_q);
+    float skip = lamp_e_skip();
     vec3 r = reflect(-v, n);
     vec3 c = vec3(0.0);
     for (uint k = 0u; k < cnt; ++k) {
@@ -94,10 +104,18 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
         vec3 q = lamp_closest(l, s.pos);
         vec3 dl = q - s.pos;
         float d = length(dl);
+        if (d < l.size + LAMP_GLOW_R && d < g_glow_d) {
+            g_glow_d = d;
+            g_glow_c = l.color;
+        }
         if (d >= l.radius || d < 1e-4) continue;
         float w = lamp_window(d, l.radius) * lamp_face(l, -dl / d);
         float e = lamp_irr(l, s.pos, n) * w;
-        if (e * max(l.color.r, max(l.color.g, l.color.b)) < LAMP_E_SKIP) continue;
+        float em = e * max(l.color.r, max(l.color.g, l.color.b));
+        float ks = lamp_skip_k(em, skip);
+        if (ks <= 0.0) continue;
+        e *= ks;
+        w *= ks;
         // Отражение: точка отрезка, ближайшая к лучу отражения, потом точка шара тела у луча (Karis 2013)
         vec3 L0 = l.c - l.axis - s.pos, Ld = 2.0 * l.axis;
         vec3 lc = L0;
@@ -125,10 +143,16 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
             float es = nls / (ds * ds + l.size * l.size) * w;
             spec = brdf_d(nh, a2) * brdf_v(nv, nls, a2) * brdf_f(vh, f0) * comp * (norm * es);
         }
-        float sh = lamp_shadow(s.pos, n, l, q, steps);
+        float soft;
+        uint st = lamp_lod_steps(em, steps, soft);
+        float sh = lamp_shadow(s.pos, n, l, q, st, soft);
         c += (kd * (e / A_PI) + spec) * l.color * sh;
-        g_e_local += e * dot(l.color, vec3(0.2126, 0.7152, 0.0722));
-        g_c_local += e * l.color;
+        // Свет места: ближний огонь — без тени (свет и тень одного места сдвигаются вместе), дальний — с тенью:
+        // его заслоняют стены, и лампы соседнего зала за стеной в свет места не идут (иначе в зале станции глаз
+        // привыкал к 40 лк вместо 6 и кадр темнел втрое — после дальности ламп по глазу, разбор 18.11)
+        float el = e * mix(1.0, sh, smoothstep(LAMP_PLACE_NEAR, LAMP_PLACE_FAR, d));
+        g_e_local += el * dot(l.color, vec3(0.2126, 0.7152, 0.0722));
+        g_c_local += el * l.color;
     }
     return c;
 }
@@ -290,7 +314,13 @@ vec3 light_surface(Surface s) {
     c += light_lamps(s, n, v, nv, a, a2, kd, f0, comp);
     float lit;
     c += light_indirect(s, n, nv, a, rd, blur, irr, env, kd, fss_ess, fms * ems, lit);
-    c += s.emissive;
+    // Свечение: у стекла лампы — цветом её огня при той же яркости (g_glow_*, light_lamps)
+    vec3 em = s.emissive;
+    if (g_glow_d < 1e8) {
+        const vec3 YE = vec3(0.2126, 0.7152, 0.0722);
+        em = dot(em, YE) * g_glow_c / max(dot(g_glow_c, YE), 1e-9);
+    }
+    c += em;
     // Воздух отрезка освещён как у точки вдали и как у глаза вблизи (глаз — eye.comp, sky_out [5].w)
     float lc = clamp(f.sky_out.v[SKY_OUT_EYE2].w, 0.0, 1.0);
     // Свет места: к непрямому свету и огням — светило на землю в доле открытости небу (lit: под открытым небом

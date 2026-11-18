@@ -703,6 +703,7 @@ int run_window(const Args &a, AppMemory &m) {
         vi.scans = ds.scans;
         vi.gclight_off = ds.gclight_off;
         vi.lamps_off = a.lamps_off || ds.lamps_off;
+        vi.eye_exposure = eye_have ? eye_info.exposure : 0.0f;
         vi.shadow_pages = a.shadow_pages ? a.shadow_pages : ds.shadow_pages;
         vi.sdf_view = a.sdf_view ? a.sdf_view : ds.sdf_view;
         vi.gi_view = a.gi_view ? a.gi_view : ds.gi_view;

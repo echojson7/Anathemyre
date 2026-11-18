@@ -9,8 +9,36 @@
 #include "sdf.glsl"
 #include "froxel.glsl"
 
-const float LAMP_E_SKIP = 0.25;   // лк: слабее — без тени и без счёта
 const float LAMP_AWAY = 0.25;     // м: цель тени отходит от стены по face (иначе конус трётся о стену лампы)
+
+// Порог счёта огня (docs/lamps.md, «Дальность»): белая стена под ним на экране — LAMP_SKIP_D до кривой (вчетверо
+// ниже порога дальности lamps.cpp, ~1/1000 белого после кривой). Слабее — без тени и без счёта; от порога до
+// двух порогов свет плавно уходит в ноль, без ступеньки. От экспозиции кадра: в зале и ночью — сотые доли люкса
+// (было 0.25 лк постоянно: ночью это четверть всего света, и край пятна лампы был виден)
+const float LAMP_SKIP_D = 0.0005;
+// Экспозиция кадра для порогов огней (множитель HDR, sky_out [4].x); 0 — её ещё нет (первый кадр, буфер пуст)
+float lamp_ex() {
+    float ex = pc.frame.sky_out.v[SKY_OUT_EYE].x;
+    return ex > 1e-7 && ex < 1e4 ? ex : 0.0;
+}
+// Порог счёта, лк; без глаза — 0.02 лк, как у глаза в зале станции
+float lamp_e_skip() {
+    float ex = lamp_ex();
+    return ex > 0.0 ? LAMP_SKIP_D * 3.14159265 / ex : 0.02;
+}
+// Множитель у порога: 0 — ниже t, 1 — от 2t (em — освещённость в самом сильном канале)
+float lamp_skip_k(float em, float t) { return smoothstep(t, 2.0 * t, em); }
+
+// Тень слабого огня дешевле (docs/lamps.md, «Цена дальних ламп»): белая стена под огнём на экране (до кривой) от
+// 0.02 — все шаги и узкий конус; к 0.004 (~1/250 после кривой) — вдвое меньше шагов и конус не уже 0.08 рад
+// (мягче, крупнее шаг): тени такого огня глазу не видно, а дальние лампы зала иначе удваивали цену света.
+// em — освещённость в самом сильном канале, лк; soft — наименьшая ширина конуса
+uint lamp_lod_steps(float em, uint steps, out float soft) {
+    float ex = lamp_ex();
+    float k = ex > 0.0 ? clamp(log2(max(em * ex / 3.14159265, 1e-12) / 0.004) / 2.3219, 0.0, 1.0) : 1.0;
+    soft = 0.08 * (1.0 - k);
+    return uint(mix(float(max(steps / 2u, 6u)), float(steps), k) + 0.5);
+}
 
 // Доля силы света лампы в сторону dir (от лампы к точке, единичный)
 float lamp_face(Light l, vec3 dir) {
@@ -49,8 +77,8 @@ float lamp_irr(Light l, vec3 p, vec3 n) {
 }
 
 // Тень огня: конус по полю от точки pos (м от камеры, нормаль n) к телу света у точки tgt; ширина конуса — размер
-// тела на расстоянии до него, конец — не доходя до тела (его самого и его стены в поле нет смысла видеть)
-float lamp_shadow(vec3 pos, vec3 n, Light l, vec3 tgt, uint steps) {
+// тела на расстоянии до него (не уже soft), конец — не доходя до тела (его самого и его стены в поле нет смысла видеть)
+float lamp_shadow(vec3 pos, vec3 n, Light l, vec3 tgt, uint steps, float soft) {
     FrameData f = pc.frame;
     if (f.sdf_on == 0u || (l.flags & LIGHT_SHADOW) == 0u) return 1.0;
     // Старт — над поверхностью на полвокселя уровня у точки (как sdf_cones)
@@ -61,15 +89,15 @@ float lamp_shadow(vec3 pos, vec3 n, Light l, vec3 tgt, uint steps) {
     float d = length(to);
     float tmax = d - (l.size + 0.15);
     if (tmax <= vs) return 1.0;
-    float th = clamp((l.size + 0.3 * length(l.axis)) / d, 0.02, 0.5);
+    float th = clamp(max((l.size + 0.3 * length(l.axis)) / d, soft), 0.02, 0.5);
     return sdf_cone(o + f.sdf_cam.xyz, to / d, th, vs, tmax, steps).x;
 }
 
 // Шагов конуса тени на ступени качества
 uint lamp_steps(uint q) { return q == LIGHT_Q_LOW ? 8u : q == LIGHT_Q_MEDIUM ? 12u : q == LIGHT_Q_HIGH ? 16u : 24u; }
 
-// Освещённость точки (p, n) огнём l с тенью, лк (rgb): для зондов и глаза — без отражения
-vec3 lamp_e(Light l, vec3 p, vec3 n, uint steps) {
+// Освещённость точки (p, n) огнём l с тенью, лк (rgb): для зондов и глаза — без отражения; skip — порог счёта, лк
+vec3 lamp_e(Light l, vec3 p, vec3 n, uint steps, float skip) {
     vec3 q = lamp_closest(l, p);
     vec3 dl = q - p;
     float d = length(dl);
@@ -77,8 +105,12 @@ vec3 lamp_e(Light l, vec3 p, vec3 n, uint steps) {
     float w = lamp_window(d, l.radius) * lamp_face(l, -dl / d);
     float e = lamp_irr(l, p, n) * w;
     vec3 c = l.color * e;
-    if (max(c.r, max(c.g, c.b)) < LAMP_E_SKIP) return vec3(0.0);
-    return c * lamp_shadow(p, n, l, q, steps);
+    float em = max(c.r, max(c.g, c.b));
+    float k = lamp_skip_k(em, skip);
+    if (k <= 0.0) return vec3(0.0);
+    float soft;
+    uint st = lamp_lod_steps(em, steps, soft);
+    return c * (k * lamp_shadow(p, n, l, q, st, soft));
 }
 
 #endif

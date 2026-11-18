@@ -200,7 +200,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     if (in.mech) mech_view_build(*in.mech, assets, in, frame, inst, ni, out);
     out.instances = {inst, ni};
     if (cur.decals) build_decals(*cur.decals, assets, eye, frame, out);
-    lamps_build(in.lamps_off ? nullptr : cur.lamps, in.test_lights, cam, cur.terrain, eye, frame, out);
+    lamps_build(in.lamps_off ? nullptr : cur.lamps, in.test_lights, cam, cur.terrain, eye, in.eye_exposure, frame, out);
 
     u32 ndbg = in.dbg ? in.dbg->count : 0;
     if (ndbg || npl) {

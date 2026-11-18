@@ -102,7 +102,7 @@ void main() {
         float d = length(q);
         if (d >= l.radius || d < 1e-3) continue;
         vec3 to = q / d;
-        c_lamp += lamp_e(l, vec3(0.0), to, 24u) * (0.5 + 0.5 * max(to.y, 0.0));
+        c_lamp += lamp_e(l, vec3(0.0), to, 24u, lamp_e_skip()) * (0.5 + 0.5 * max(to.y, 0.0));
     }
     float e_lamp = max(dot(c_lamp, Y), 0.0);
     float e_cam = max(e_amb + e_key * vis_key + e_lamp, 1e-6);

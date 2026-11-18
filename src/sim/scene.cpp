@@ -69,18 +69,26 @@ static WPos offset_pos(const WPos &o, f32 dx, f32 dy, f32 dz) {
 }
 
 // Лампа заготовки (огни 6е, docs/lamps.md), все числа — в осях заготовки:
-//   light <x> <y> <z> <ax> <ay> <az> <fx> <fy> <fz> <назад> <лм> <К> <радиус>
-// a — полуось трубки (нули — колба), f — куда светит (нули — во все стороны), назад — доля света к стене
+//   light <x> <y> <z> <ax> <ay> <az> <fx> <fy> <fz> <назад> <лм> <К> <радиус> [<r> <g> <b>]
+// a — полуось трубки (нули — колба), f — куда светит (нули — во все стороны), назад — доля света к стене.
+// Цветная лампа (табло, сигнальный огонь): К = 0 и цвет r g b — линейный sRGB, яркость не важна (её задают люмены)
 static bool prefab_lamp(World &w, const TextLine &l, const WPos &o, u32 quarter, char *err, usize err_cap) {
-    if (l.count != 14) {
-        text_err(err, err_cap, l.line, "light <x> <y> <z> <ax> <ay> <az> <fx> <fy> <fz> <назад> <лм> <К> <радиус>");
+    if (l.count != 14 && l.count != 17) {
+        text_err(err, err_cap, l.line,
+                 "light <x> <y> <z> <ax> <ay> <az> <fx> <fy> <fz> <назад> <лм> <К> <радиус> [<r> <g> <b>]");
         return false;
     }
-    f32 v[13];
-    for (u32 i = 0; i < 13; ++i)
+    f32 v[16];
+    for (u32 i = 0; i + 1 < l.count; ++i)
         if (!parse_f32(l.w[1 + i], v[i])) { text_err(err, err_cap, l.line, "у light только числа"); return false; }
-    if (v[9] < 0 || v[9] > 1 || v[10] <= 0 || v[11] < 1000 || v[11] > 20000 || v[12] <= 0) {
-        text_err(err, err_cap, l.line, "light: назад 0..1, лм > 0, К 1000..20000, радиус > 0");
+    bool rgb = l.count == 17;
+    bool kelvin_ok = rgb ? v[11] == 0 : v[11] >= 1000 && v[11] <= 20000;
+    if (v[9] < 0 || v[9] > 1 || v[10] <= 0 || !kelvin_ok || v[12] <= 0) {
+        text_err(err, err_cap, l.line, "light: назад 0..1, лм > 0, К 1000..20000 (с цветом r g b — 0), радиус > 0");
+        return false;
+    }
+    if (rgb && (v[13] < 0 || v[14] < 0 || v[15] < 0 || v[13] + v[14] + v[15] <= 0)) {
+        text_err(err, err_cap, l.line, "light: цвет r g b — не меньше нуля и не все нули");
         return false;
     }
     f32 fl = v[6] * v[6] + v[7] * v[7] + v[8] * v[8];
@@ -89,7 +97,7 @@ static bool prefab_lamp(World &w, const TextLine &l, const WPos &o, u32 quarter,
     quarter_rotate(quarter, v[3], v[5]);
     quarter_rotate(quarter, v[6], v[8]);
     WPos q = offset_pos(o, v[0], v[1], v[2]);
-    if (!lamps_add(w, q, v + 3, v + 6, v[9], v[10], v[11], v[12])) {
+    if (!lamps_add(w, q, v + 3, v + 6, v[9], v[10], v[11], v[12], rgb ? v + 13 : nullptr)) {
         text_err(err, err_cap, l.line, "таблица ламп полна");
         return false;
     }

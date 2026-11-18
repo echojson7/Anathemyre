@@ -71,7 +71,8 @@ struct Decals {
 constexpr u32 LAMPS_CAPACITY = 256;
 
 // Лампы карты (огни 6е, docs/lamps.md): светильник постройки — середина тела света, полуось трубки (0 — колба),
-// куда светит (0 — во все стороны) и доля света назад, поток в люменах, цвет кельвинами, радиус тела. Ставит
+// куда светит (0 — во все стороны) и доля света назад, поток в люменах, цвет кельвинами или цветом (r g b,
+// линейный sRGB; нули — по кельвинам), радиус тела. Ставит
 // описание сцены (строки light заготовок), шаг мира их не читает и не меняет; кадр читает таблицу напрямую, как
 // землю. Как и коллайдеры, в хеш шага не входят: их текст — в хеше описаний (хеш заготовки)
 struct Lamps {
@@ -81,6 +82,7 @@ struct Lamps {
     f32 *fx, *fy, *fz;  // куда светит (единичный) или нули
     f32 *back;          // доля света назад, к стене, 0..1
     f32 *lm, *kelvin, *size;
+    f32 *r, *g, *b;     // цвет тела (линейный sRGB, яркость не важна) или нули — цвет кельвинами
     u32 count;
 };
 
@@ -124,7 +126,8 @@ bool props_add_at(World &w, u64 mesh, u64 material, const WPos &at, u32 yaw, f32
 // Декаль: at — середина коробки (с высотой), h — половины сторон. false — таблица полна
 bool decals_add(World &w, u64 kind, u64 material, const WPos &at, u32 yaw, const f32 h[3], u32 seed);
 // Лампа: at — середина (с высотой), axis — полуось трубки, face — куда светит, все в осях мира. false — таблица полна
-bool lamps_add(World &w, const WPos &at, const f32 axis[3], const f32 face[3], f32 back, f32 lm, f32 kelvin, f32 size);
+bool lamps_add(World &w, const WPos &at, const f32 axis[3], const f32 face[3], f32 back, f32 lm, f32 kelvin, f32 size,
+               const f32 rgb[3]);
 // После сцены: коллайдеры построек (коробки COLL деталей — читает app) и сетка ходимости по ним.
 // false — коробок или чанков с ними больше предела
 bool world_build_static(World &w, const CollBoxIn *boxes, u32 n, const GaitTable &gait, Arena &arena, Arena &scratch);

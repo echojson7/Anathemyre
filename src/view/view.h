@@ -89,6 +89,7 @@ struct ViewInput {
     Turn show_old_yaw = 0;
     MechView *mech = nullptr;      // шагающие машины (состояние вида между кадрами, docs/vezha.md, docs/tat.md), может быть nullptr
     bool lamps_off = false;        // лампы карты не светят (F3 «лампы карты», --nolamps): сравнение было/стало
+    f32 eye_exposure = 0.0f;       // экспозиция глаза прочитанного кадра (render_light), 0 — нет: дальность ламп
     // Свет (docs/light.md): секунды кадра и «привыкнуть сразу» для глаза, тонмаппинг (F3), качество (меню)
     f32 dt = 0.0f;
     f32 time = 0.0f;  // время от запуска, с (мерцание звёзд, docs/sky.md); в снимках — номер кадра / 30
