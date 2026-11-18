@@ -132,7 +132,8 @@ jobs:
   window:
     name: window (${{ matrix.kind }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # 30 мин: шаг «Пакеты, кеши, сборка» на медленной машине — до 11 мин (18.11, shot и same), а предел ASan — 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -212,6 +213,30 @@ jobs:
           path: |
             same_1_0003.bmp
             work_1.txt
+          retention-days: 7
+
+  # Регистры, память потока (scratch) и код compute-шейдеров против потолков tests/shader_budget.txt
+  # (docs/perf_arch.md): конвейеры собирает компилятор AMD (RADV) на «пустом» устройстве, видеокарта не нужна.
+  # Своя машина: освещение на один вид собирается десятки секунд, и другим задачам эти ядра нужнее
+  shaders:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Пакеты
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends glslang-tools spirv-tools mesa-vulkan-drivers
+      - name: Регистры и код шейдеров
+        run: |
+          dpkg-query -W -f='Mesa ${Version}\n' mesa-vulkan-drivers
+          make -s -j"$(nproc)" shaders
+          tools/shader_stats/check.sh build/linux-release/shaders tests/shader_budget.txt shader_stats.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shader-stats
+          path: shader_stats.txt
           retention-days: 7
 
   # Повтор Windows — на настоящем Windows (Wine не проверяет настоящий CRT), GPU не нужен
