@@ -128,7 +128,7 @@ jobs:
   window:
     name: window (${{ matrix.kind }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -151,8 +151,9 @@ jobs:
           . tools/ci_par.sh
           . tools/versions.sh
           export ASAN_SYMBOLIZER_PATH=~/.cache/anathemyre/llvm-$LLVM_VER/bin/llvm-symbolizer  # иначе подавления не видят имён функций
-          # ASan + слои проверки: ошибки Vulkan видны с первых кадров, малое окно — lavapipe считает пиксели
-          par asan 600 xvfb-run -n 91 -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation \
+          # ASan + слои проверки: ошибки Vulkan видны с первых кадров, малое окно — lavapipe считает пиксели.
+          # 900 с: на холодном кеше шейдеров первый кадр (JIT lavapipe) на машине CI идёт дольше 8 мин (docs/build.md)
+          par asan 900 xvfb-run -n 91 -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation \
             --window 640 360
           par_wait 40
       - name: Снимок сцены
