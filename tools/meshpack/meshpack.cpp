@@ -12,7 +12,8 @@
 // Сетка с весами костей (куски SKIN, MRPH — люди, tools/humanconv): потоки вершин SKIN и MRPH идут вместе с VERT
 // (склейка по всем, тот же порядок), граница не закрепляется (это не стык деталей), --lods задаёт треугольники
 // LOD 1… (LOD 0 — вся сетка), а вершины упорядочены по LOD: вершины LOD k — префикс, длины пишутся в LODV.
-// Скиннинг тогда считает только префикс выбранного LOD (docs/mesh.md)
+// Скиннинг тогда считает только префикс выбранного LOD (docs/mesh.md). Кусок LODI во входе (тело людей) — готовые
+// LOD 1… (упрощение с лицом дороже, tools/humanconv/decimate.py): берутся вместо упрощения, кусок не переписывается
 //
 // Офлайн-инструмент: в игру не входит, правила шага мира на него не распространяются. Байты результата зависят
 // только от входа и версии meshoptimizer (third_party/meshoptimizer), CI сверяет их с data/meshes в git.
@@ -177,6 +178,30 @@ int main(int argc, char **argv) {
     for (uint32_t i : idx)
         if (i >= verts.size()) return die("индекс за вершинами", in_path), 1;
 
+    // Готовые LOD 1… (кусок LODI, тело людей: упрощение с лицом дороже, tools/humanconv/decimate.py): число LOD,
+    // на каждый — число индексов u32, ошибка f32 (м), индексы в номерах VERT. Тогда упрощения здесь нет
+    std::vector<std::vector<uint32_t>> pre;
+    std::vector<float> pre_err;
+    if (const Chunk *cl = find("LODI")) {
+        const std::vector<uint8_t> &b = cl->body;
+        size_t at = 0;
+        auto rd = [&](void *dst, size_t n) { return at + n <= b.size() ? (memcpy(dst, &b[at], n), at += n, true) : false; };
+        uint32_t cnt = 0;
+        if (!rd(&cnt, 4)) return die("кусок LODI обрезан", in_path), 1;
+        for (uint32_t k = 0; k < cnt; ++k) {
+            uint32_t n = 0;
+            float e = 0.0f;
+            if (!rd(&n, 4) || !rd(&e, 4) || n % 3 || n == 0) return die("кусок LODI обрезан", in_path), 1;
+            std::vector<uint32_t> l(n);
+            if (!rd(l.data(), (size_t)n * 4)) return die("кусок LODI обрезан", in_path), 1;
+            for (uint32_t i : l)
+                if (i >= verts.size()) return die("индекс LODI за вершинами", in_path), 1;
+            pre.push_back(std::move(l));
+            pre_err.push_back(e);
+        }
+        if (at != b.size()) return die("кусок LODI длиннее записанного", in_path), 1;
+    }
+
     // Потоки вершин: веса костей (по куску на скелет) и сдвиги морфов у людей, развёртка с касательной (VUV0)
     std::vector<Stream> streams;
     bool skinned = false;
@@ -215,6 +240,7 @@ int main(int argc, char **argv) {
         s.data.swap(d);
     }
     meshopt_remapIndexBuffer(idx.data(), idx.data(), idx.size(), remap.data());
+    for (std::vector<uint32_t> &l : pre) meshopt_remapIndexBuffer(l.data(), l.data(), l.size(), remap.data());
     meshopt_optimizeVertexCache(idx.data(), idx.data(), idx.size(), nv);
     {
         std::vector<uint32_t> r(nv);
@@ -228,6 +254,12 @@ int main(int argc, char **argv) {
             s.data.swap(d);
         }
         meshopt_remapIndexBuffer(idx.data(), idx.data(), idx.size(), r.data());
+        // Вершины готовых LOD — из вершин LOD 0 (упрощение их не создаёт)
+        for (std::vector<uint32_t> &l : pre) {
+            for (uint32_t &i : l)
+                if ((i = r[i]) == ~0u) return die("вершина LODI вне LOD 0", in_path), 1;
+            meshopt_optimizeVertexCache(l.data(), l.data(), l.size(), nv);
+        }
     }
 
     // Цепочка LOD: каждый следующий из предыдущего. У деталей граница закреплена (стыки соседних деталей не
@@ -255,7 +287,12 @@ int main(int argc, char **argv) {
     static const float attr_w[5] = {1.0f, 1.0f, 0.5f, 0.5f, 0.5f};
     std::vector<std::vector<uint32_t>> lods{idx};
     std::vector<float> lod_err{0.0f};
-    while (skinned ? lods.size() <= lod_tris.size() : lods.size() < MAX_LODS) {
+    if (!pre.empty() && !skinned) return die("кусок LODI — только у сетки с весами костей", in_path), 1;
+    for (size_t k = 0; k < pre.size(); ++k) {
+        lods.push_back(std::move(pre[k]));
+        lod_err.push_back(pre_err[k]);
+    }
+    while (pre.empty() && (skinned ? lods.size() <= lod_tris.size() : lods.size() < MAX_LODS)) {
         const std::vector<uint32_t> &src = lods.back();
         size_t target = skinned ? lod_tris[lods.size() - 1] * 3 : (size_t)((float)src.size() * LOD_STEP) / 3 * 3;
         if (target < 36) break;
@@ -383,7 +420,7 @@ int main(int argc, char **argv) {
         for (uint32_t n : lod_verts) put(b, n);
         put_chunk(out, "LODV", b);
     }
-    static const char *const known[] = {"HEAD", "MATS", "VERT", "INDX", "CLUS", "LODS", "SKIN", "MRPH", "LODV", "VUV0"};
+    static const char *const known[] = {"HEAD", "MATS", "VERT", "INDX", "CLUS", "LODS", "SKIN", "MRPH", "LODV", "VUV0", "LODI"};
     for (const Chunk &c : chunks) {
         bool skip = false;
         for (const char *k : known) skip |= !memcmp(c.tag, k, 4);
