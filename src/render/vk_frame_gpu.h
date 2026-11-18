@@ -141,6 +141,8 @@ struct FrameGpu {
     // Тень солнца на пиксель (sun_vis.comp → light_cells.comp, docs/shadow.md «Свой проход»): f32, 64 подряд на плитку
     VkDeviceAddress sun_vis;
     u32 sun_pad0, sun_pad1;
+    // Поверхность кадра (surf_cells.comp → light_cells.comp, surf_buf.glsl): два uvec4 на пиксель, 64 подряд на плитку
+    VkDeviceAddress surf;
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -187,7 +189,7 @@ constexpr u32 STAT_COUNT = 53;
 // Виды плиток кадра мира (TILE_* в common.glsl): небо, земля из кеша (и небо), сетки (и небо), смесь земли и
 // сеток, земля на пиксель (и небо)
 constexpr u32 TILE_KINDS = 5;
-constexpr u32 TILE_KIND_GROUND = 1, TILE_KIND_MIX = 3, TILE_KIND_GROUND_PX = 4;
+constexpr u32 TILE_KIND_GROUND = 1, TILE_KIND_MESH = 2, TILE_KIND_MIX = 3, TILE_KIND_GROUND_PX = 4;
 constexpr u32 TILE_HEADER = TILE_KINDS * 16;  // косвенные dispatch видов перед списками
 // Буфер чтения кадра: число видимых кластеров, с READBACK_STATS — счётчики, с READBACK_EYE — глаз (sky_out [4]…[8])
 constexpr VkDeviceSize READBACK_STATS = 16, READBACK_EYE = READBACK_STATS + STAT_COUNT * 4;

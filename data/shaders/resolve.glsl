@@ -18,6 +18,7 @@ const uint HIT_SKY = 0u, HIT_MESH = 1u, HIT_GROUND = 2u;
 struct Hit {
     vec3 rel;      // точка относительно камеры
     uint kind;     // HIT_*
+    float t;       // глубина по лучу пикселя: rel = pixel_ray(px) · t побайтно (поверхность кадра, surf_buf.glsl)
     vec3 n;        // нормаль вершин в точке (мир)
     float blend;   // сетка: доля второго материала; земля: глубина воды
     vec3 ng;       // нормаль треугольника (земля — вверх)
@@ -79,6 +80,7 @@ Hit resolve(ivec2 px, uint id) {
     Hit h;
     h.kind = HIT_SKY;
     h.rel = pixel_ray(px);
+    h.t = 1.0;
     h.n = h.ng = vec3(0.0, 1.0, 0.0);
     h.blend = h.ao = 0.0;
     h.m0 = h.m1 = h.seed = h.level = 0u;
@@ -102,6 +104,7 @@ Hit resolve(ivec2 px, uint id) {
         vec4 w = ray_tri(dir, a.rel, b.rel, c.rel);
         h.kind = HIT_GROUND;
         h.rel = dir * w.w;
+        h.t = w.w;
         h.n = a.normal * w.x + b.normal * w.y + c.normal * w.z;
         h.blend = a.wdepth * w.x + b.wdepth * w.y + c.wdepth * w.z;
         h.ng = normalize(cross(b.rel - a.rel, c.rel - a.rel));
@@ -126,6 +129,7 @@ Hit resolve(ivec2 px, uint id) {
     vec4 w = ray_tri(dir, pa, pb, pcc);
     h.kind = HIT_MESH;
     h.rel = dir * w.w;
+    h.t = w.w;
     h.n = quat_rotate(q, oct_decode(va.normal) * w.x + oct_decode(vb.normal) * w.y + oct_decode(vcx.normal) * w.z);
     h.ng = h.n;
     vec3 bl = vec3(float(va.misc & 0xFFu), float(vb.misc & 0xFFu), float(vcx.misc & 0xFFu)) / 255.0;
