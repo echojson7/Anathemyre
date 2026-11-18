@@ -2,8 +2,9 @@
   1 now     — как сейчас в v2: коробки встык со щелями, цилиндры по 10 граней, узор формулой без сканов
   2 kit     — модульный набор: замкнутые детали с нахлёстом, карнизы и плинтусы на стыках, тайловые сканы
   3 cast    — цельная отливка: всё бетонное одним телом, воксельный ремеш, рельеф смещением по скану
-  4 hybrid  — оболочка, марш и галерея отливкой, колонна и балки деталями набора с нахлёстом
-Запуск: python rooms.py <scans_dir> <out_dir> now|kit|cast|hybrid [wide|joint|close]; QUICK=1 черновик, DUST=1 пыль
+  4 hybrid  — оболочка, марш и галерея отливкой; колонна, балки, пилястры, карниз, плинтус — детали набора
+Запуск: python rooms.py <scans_dir> <out_dir> now|kit|cast|hybrid [wide|joint|close]; QUICK=1 черновик, DUST=1 пыль.
+В игру — rooms_game.py (те же функции).
 """
 import math
 import os
@@ -417,6 +418,7 @@ def props(M, good):
             bp.handle_left_type = bp.handle_right_type = 'AUTO'
         el.bevel_depth = 0.092
         el.bevel_resolution = 8
+        el.use_fill_caps = True  # замкнутая труба (поле расстояний и тени требуют замкнутых тел)
         eo = link(bpy.data.objects.new("elbow", el))
         eo.data.materials.append(M["rust"])
         obs.append(eo)
@@ -668,7 +670,7 @@ def build_cast(M, disp=True, kinds=("shell", "struct", "stair", "plat")):
     apply_mods(base)
     rm = base.modifiers.new("rm", 'REMESH')
     rm.mode = 'VOXEL'
-    rm.voxel_size = 0.03 if QUICK else 0.018
+    rm.voxel_size = float(os.environ.get("VOXEL", 0.03 if QUICK else 0.018))
     apply_mods(base)
     sm = base.modifiers.new("sm", 'CORRECTIVE_SMOOTH')
     sm.iterations = 4
@@ -679,12 +681,44 @@ def build_cast(M, disp=True, kinds=("shell", "struct", "stair", "plat")):
     base.data.materials.clear()   # пустые слоты от вспомогательных коробок
     base.data.materials.append(M["wall"])
     base.data.materials.append(M["floor"])
+    dec = float(os.environ.get("DECIMATE", "0"))
+    if dec > 0:
+        # для игры: прорежение плоских мест после рельефа (детальная модель для кадра — без него)
+        dm = base.modifiers.new("dec", 'DECIMATE')
+        dm.ratio = dec
+        apply_mods(base)
     me = base.data
     for poly in me.polygons:
         poly.material_index = 1 if poly.normal.z > 0.7 else 0
     activate(base)
     bpy.ops.object.shade_smooth()
     return [base]
+
+
+def trims(M):
+    """Архитектурные детали набора поверх оболочки: пилястры по ритму 2 м (не в проёме двери, щель их режет),
+    плинтус и карниз по периметру. В гибриде они — архитектура, а не крышка шва."""
+    obs = []
+    for name, along_x, L0, L, fixed in (("wall_back", True, -T, W + 2 * T, D), ("wall_right", False, 0.0, D, W)):
+        n = max(1, round(L / 2.0))
+        for i in range(1, n):
+            s = L0 + L * i / n
+            if not along_x and DOOR[0] - 0.2 < s < DOOR[1] + 0.2:
+                continue
+            if along_x:
+                obs.append(box("pilaster", s - 0.14, s + 0.14, fixed - 0.12, fixed + 0.02, -0.02, H + 0.02, M["wall"]))
+            else:
+                obs.append(box("pilaster", fixed - 0.12, fixed + 0.02, s - 0.14, s + 0.14, -0.02, H + 0.02, M["wall"]))
+    for (a, b, c, d) in ((0, W, D - 0.06, D + 0.02), (W - 0.06, W + 0.02, 0, D), (0, W, -0.02, 0.06), (-0.02, 0.06, 0, D)):
+        obs.append(box("plinth", a, b, c, d, -0.02, 0.18, M["wall"]))
+        obs.append(box("cornice", a, b, c, d, H - 0.25, H + 0.02, M["wall"]))
+    cs = cutters()
+    for o in obs:
+        for c in cs:
+            boolean(o, c)
+        bevel(o, 0.015, 3)
+        smooth(o)
+    return obs
 
 
 def build_hybrid(M):
@@ -702,6 +736,8 @@ def build_hybrid(M):
             tri_displace(o, names()["wall"], 2.0, 0.008)
             smooth(o)
             obs.append(o)
+    if os.environ.get("TRIMS", "1") == "1":
+        obs += trims(M)
     return obs
 
 
@@ -765,4 +801,5 @@ def main():
     bpy.ops.render.render(write_still=True)
 
 
-main()
+if __name__ == "__main__":
+    main()
