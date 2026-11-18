@@ -123,8 +123,13 @@ DATA_SRC := data/materials.txt data/scene.txt data/sky.txt data/terrain.txt data
             $(sort $(wildcard data/actions/*.txt)) data/duel.txt data/group.txt
 DATA_OUT := $(patsubst data/%,$(OUT)/data/%,$(DATA_SRC))
 
-.PHONY: all clean check sim-check sim-ref compdb toolchain third_party meshes parts anims retarget scans
+.PHONY: all clean check sim-check sim-ref compdb toolchain third_party meshes parts anims retarget scans shaders shader-stats
 all: $(BIN) $(SHADER_SPV) $(DATA_OUT)
+
+# Только шейдеры (без компиляторов игры) и их регистры и код против потолков (docs/perf_arch.md)
+shaders: $(SHADER_SPV)
+shader-stats: $(SHADER_SPV)
+	tools/shader_stats/check.sh $(OUT)/shaders tests/shader_budget.txt $(OUT)/shader_stats.txt
 
 $(OUT)/data/%: data/%
 	@mkdir -p $(dir $@)

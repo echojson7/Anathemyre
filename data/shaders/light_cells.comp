@@ -15,6 +15,10 @@
 // одного текселя нет в кеше (не хватило места), она уходит в «землю на пиксель». Та и смесь считают
 // недостающие тексели сами (той же функцией, что запекание), а крутые склоны — на пиксель
 layout(constant_id = 0) const uint TILE_KIND = 3u;  // TILE_* из common.glsl; по умолчанию — смесь
+// Отладочный конвейер (docs/perf_arch.md): правило ячеек (P) с ведущими пикселями и общей памятью плитки, виды F3
+// поверх кадра. Игра идёт конвейером без них (0): каждый пиксель — своя поверхность, общая память — только рамка
+// огней и счётчики. Код видов и ведущих держал регистры и общую память всего шейдера, хотя в игре не работал
+layout(constant_id = 1) const uint LIGHT_DEBUG = 1u;
 #define RESOLVE_GROUND (TILE_KIND == TILE_MIX || TILE_KIND == TILE_GROUND_PX)
 #define GC_KIND (TILE_KIND == TILE_GROUND || TILE_KIND == TILE_MIX || TILE_KIND == TILE_GROUND_PX)
 #define RESOLVE_MESH (TILE_KIND == TILE_MESH || TILE_KIND == TILE_MIX)
@@ -180,6 +184,7 @@ vec3 shade_hit(Hit h, int phys) {
     g_ground = h.kind == HIT_MESH ? 0.0 : 1.0;
     g_moving = h.kind == HIT_MESH && h.dyn ? 1.0 : 0.0;
     vec3 c = light_surface(s);
+    if (LIGHT_DEBUG == 0u) return c;
     // F3: страницы теней поверх кадра; «только тень» — серая карта 50 % под светилом с его видимостью
     if (pc.frame.sm_debug == 1u) c = sm_debug_tint(c, s.pos);
     if (pc.frame.sm_debug == 2u) c = pc.frame.sun_color.rgb * (0.5 / A_PI * sun_visibility(s, normalize(pc.frame.sun_dir.xyz)));
@@ -224,40 +229,16 @@ void work_flush() {
         if (s_work[k] != 0u) atomicAdd(pc.frame.stats.v[at[k]], s_work[k]);
 }
 
-void main() {
+// Начало плитки, общее для обоих путей: общая память с нуля, попадание пикселя (из кеша земли или разбор
+// visibility buffer), вектор движения. bail — земля мимо кеша на плитке вида «земля» (страховка: разбор плиток
+// отдаёт такие плитки земле на пиксель)
+Hit tile_hit(uint t, ivec2 px, bool inside, inout uint id, out vec4 mv, out bool bail) {
     FrameData f = pc.frame;
-    g_origin = f.cam_chunk;
-    uint t = gl_LocalInvocationIndex;
-    uint tile = f.tiles.list[TILE_KIND * f.tile_cap + gl_WorkGroupID.x];
-    ivec2 origin = ivec2(tile & 0xFFFFu, tile >> 16) * 8;
-    ivec2 px = origin + ivec2(gl_LocalInvocationID.xy);
-    bool inside = px.x < int(f.viewport.x) && px.y < int(f.viewport.y);
-    if (TILE_KIND == TILE_SKY) {
-        // Только небо: то же, что shade_hit() пустого пикселя
-        if (inside) {
-            float es = local_sky_e(), gs = local_gain(es);
-            vec3 c = pre_exposed(sky_radiance(normalize(pixel_ray(px))), es);
-            if (air_shown()) c = air_apply(px, c, 2.0 * AIR_FAR, gs);
-            imageStore(u_hdr, px, vec4(night_vision(c, gs), elocal_alpha(es)));
-        }
-        if (t == 0u) view_store(origin, view_value(local_sky_c(), local_sky_e()));
-        if (inside && f.aa_mode == AA_TAA) {
-            Hit hs;
-            hs.kind = HIT_SKY;
-            hs.rel = pixel_ray(px);
-            imageStore(u_motion, px, aa_motion(hs, 0u));
-        }
-        if (t == 0u) {
-            ivec2 n = min(ivec2(8), ivec2(f.viewport) - origin);
-            atomicAdd(f.stats.v[STAT_PX_SKY], uint(n.x * n.y));
-        }
-        return;
-    }
     if (t < 11u) s_work[t] = 0u;
     if (t == 0u) s_bail = s_lamp_any = 0u;
     if (t < 32u) s_lamp[t] = 0u;
     if (t < 6u) s_box[t] = t < 3u ? 0xFFFFFFFFu : 0u;
-    uint id = inside ? imageLoad(u_vis, px).r : 0xFFFFFFFFu;
+    id = inside ? imageLoad(u_vis, px).r : 0xFFFFFFFFu;
     bool ground = inside && id != 0u && (id & VIS_GROUND) != 0u;
     GcCell c;
     c.kt = GC_NONE;
@@ -281,9 +262,103 @@ void main() {
         h = resolve(px, inside ? id : 0u);
     }
     // Вектор движения своего пикселя — до того, как поверхность разделят с ведущим (docs/aa.md)
-    vec4 mv = f.aa_mode == AA_TAA && inside ? aa_motion(h, id) : vec4(0.0);
-    // Земля мимо кеша — не вид «земля» (разбор плиток отдаёт такие плитки земле на пиксель; страховка)
-    bool bail_px = TILE_KIND == TILE_GROUND && ground && c.kt == GC_NONE;
+    mv = f.aa_mode == AA_TAA && inside ? aa_motion(h, id) : vec4(0.0);
+    bail = TILE_KIND == TILE_GROUND && ground && c.kt == GC_NONE;
+    return h;
+}
+
+// Плитка земли, у которой не всё в кеше, — в список «земли на пиксель»
+void tile_bail(uint t, uint tile) {
+    if (t == 0u) {
+        uint slot = atomicAdd(pc.frame.tiles.cmd[TILE_GROUND_PX].x, 1u);
+        pc.frame.tiles.list[TILE_GROUND_PX * pc.frame.tile_cap + slot] = tile;
+    }
+}
+
+// Счётчики выборок пикселя (ставит shade_hit через свет)
+void work_taps() {
+    if (g_steps != 0u) atomicAdd(s_work[5], g_steps);
+    if (g_sm_taps != 0u) atomicAdd(s_work[7], g_sm_taps);
+    if (g_sm_miss != 0u) atomicAdd(s_work[8], g_sm_miss);
+    if (g_sdf_taps != 0u) atomicAdd(s_work[9], g_sdf_taps);
+    if (g_lsm_taps != 0u) atomicAdd(s_work[10], g_lsm_taps);
+}
+
+// Свет мест плитки для глаза — среднее по её пикселям (порядок сложения постоянный) — и счётчики в кадр
+void tile_finish(uint t, ivec2 origin, bool pixel_view) {
+    if (t != 0u) return;
+    FrameData f = pc.frame;
+    work_flush();
+    vec4 v = vec4(0.0);
+    float n = 0.0;
+    for (uint j = 0u; j < 64u; ++j) {
+        ivec2 q = origin + ivec2(j & 7u, j >> 3u);
+        if (q.x >= int(f.viewport.x) || q.y >= int(f.viewport.y)) continue;
+        v += pixel_view ? s_view[j] : s_view[s_rank[s_lead[j]]];
+        n += 1.0;
+    }
+    view_store(origin, v / max(n, 1.0));
+}
+
+// Игра (docs/perf_arch.md): каждый пиксель — своя поверхность (на пиксель так и было: у «ведущих» с 15.11 нечего
+// делить, surf_* == px_*). Тот же порядок функций и те же значения, что у прежнего пути с ведущими: кадр тот же
+void main_pixel(uint t, uint tile, ivec2 origin, ivec2 px, bool inside) {
+    FrameData f = pc.frame;
+    uint id;
+    vec4 mv;
+    bool bail_px;
+    Hit h = tile_hit(t, px, inside, id, mv, bail_px);
+    barrier();
+    if (bail_px) s_bail = 1u;
+    bool gk = h.kind == HIT_GROUND || h.kind == HIT_GCACHE;
+    int phys = -1;
+    if (inside) {
+        atomicAdd(s_work[h.kind == HIT_SKY ? 0u : gk ? 1u : 2u], 1u);
+        if (h.kind != HIT_SKY) atomicAdd(s_work[gk ? 3u : 4u], 1u);
+        // Земля из кеша ищет свою страницу; у плитки земли нет страницы — плитка уходит в землю на пиксель
+        if (GC_KIND && h.kind == HIT_GCACHE) {
+            phys = gc_find(int(h.level), ivec2(int(h.m0), int(h.m1)));
+            if (phys < 0) {
+                if (TILE_KIND == TILE_GROUND) s_bail = 1u;
+                else atomicAdd(s_work[6], 1u);
+            }
+        } else if (h.kind == HIT_GROUND) {
+            atomicAdd(s_work[6], 1u);
+        }
+        if (h.kind != HIT_SKY) {
+            for (int i = 0; i < 3; ++i) {
+                atomicMin(s_box[i], ord_enc(h.rel[i]));
+                atomicMax(s_box[3 + i], ord_enc(h.rel[i]));
+            }
+        }
+    }
+    barrier();
+    if (TILE_KIND == TILE_GROUND && s_bail != 0u) {
+        tile_bail(t, tile);
+        return;
+    }
+    if (f.light_count != 0u && f.froxel_on != 0u && s_box[0] != 0xFFFFFFFFu) lamp_tile(t);
+    barrier();
+    if (inside) {
+        vec3 col = pre_exposed(shade_hit(h, phys), g_e_local);
+        float gain = local_gain(g_e_local);
+        s_view[t] = view_value(g_c_local, g_e_local);
+        work_taps();
+        if (air_shown()) col = air_apply(px, col, h.kind == HIT_SKY ? 2.0 * AIR_FAR : length(h.rel), gain);
+        imageStore(u_hdr, px, vec4(night_vision(col, gain), elocal_alpha(g_e_local)));
+    }
+    if (inside && f.aa_mode == AA_TAA) imageStore(u_motion, px, mv);
+    barrier();
+    tile_finish(t, origin, true);
+}
+
+// Отладка: правило ячеек (P) — ведущий пиксель ячейки считает поверхность за всех её пикселей плитки
+void main_cells(uint t, uint tile, ivec2 origin, ivec2 px, bool inside) {
+    FrameData f = pc.frame;
+    uint id;
+    vec4 mv;
+    bool bail_px;
+    Hit h = tile_hit(t, px, inside, id, mv, bail_px);
     s_hit[t] = h;
     s_id[t] = id;
     s_cell[t] = cell_key(h);
@@ -331,10 +406,7 @@ void main() {
     }
     barrier();
     if (TILE_KIND == TILE_GROUND && s_bail != 0u) {
-        if (t == 0u) {
-            uint slot = atomicAdd(f.tiles.cmd[TILE_GROUND_PX].x, 1u);
-            f.tiles.list[TILE_GROUND_PX * f.tile_cap + slot] = tile;
-        }
+        tile_bail(t, tile);
         return;
     }
     if (f.light_count != 0u && f.froxel_on != 0u && s_box[0] != 0xFFFFFFFFu) lamp_tile(t);
@@ -345,11 +417,7 @@ void main() {
         s_gain[t] = local_gain(g_e_local);
         s_elocal[t] = elocal_alpha(g_e_local);
         s_view[t] = view_value(g_c_local, g_e_local);
-        if (g_steps != 0u) atomicAdd(s_work[5], g_steps);
-        if (g_sm_taps != 0u) atomicAdd(s_work[7], g_sm_taps);
-        if (g_sm_miss != 0u) atomicAdd(s_work[8], g_sm_miss);
-        if (g_sdf_taps != 0u) atomicAdd(s_work[9], g_sdf_taps);
-        if (g_lsm_taps != 0u) atomicAdd(s_work[10], g_lsm_taps);
+        work_taps();
     }
     barrier();
     if (inside) {
@@ -359,16 +427,38 @@ void main() {
         imageStore(u_hdr, px, vec4(night_vision(out_c, s_gain[r]), s_elocal[r]));
     }
     if (inside && f.aa_mode == AA_TAA) imageStore(u_motion, px, mv);
-    if (t == 0u) {
-        work_flush();
-        vec4 v = vec4(0.0);
-        float n = 0.0;
-        for (uint j = 0u; j < 64u; ++j) {
-            ivec2 q = origin + ivec2(j & 7u, j >> 3u);
-            if (q.x >= int(f.viewport.x) || q.y >= int(f.viewport.y)) continue;
-            v += s_view[s_rank[s_lead[j]]];
-            n += 1.0;
+    tile_finish(t, origin, false);
+}
+
+void main() {
+    FrameData f = pc.frame;
+    g_origin = f.cam_chunk;
+    uint t = gl_LocalInvocationIndex;
+    uint tile = f.tiles.list[TILE_KIND * f.tile_cap + gl_WorkGroupID.x];
+    ivec2 origin = ivec2(tile & 0xFFFFu, tile >> 16) * 8;
+    ivec2 px = origin + ivec2(gl_LocalInvocationID.xy);
+    bool inside = px.x < int(f.viewport.x) && px.y < int(f.viewport.y);
+    if (TILE_KIND == TILE_SKY) {
+        // Только небо: то же, что shade_hit() пустого пикселя
+        if (inside) {
+            float es = local_sky_e(), gs = local_gain(es);
+            vec3 c = pre_exposed(sky_radiance(normalize(pixel_ray(px))), es);
+            if (air_shown()) c = air_apply(px, c, 2.0 * AIR_FAR, gs);
+            imageStore(u_hdr, px, vec4(night_vision(c, gs), elocal_alpha(es)));
         }
-        view_store(origin, v / max(n, 1.0));
+        if (t == 0u) view_store(origin, view_value(local_sky_c(), local_sky_e()));
+        if (inside && f.aa_mode == AA_TAA) {
+            Hit hs;
+            hs.kind = HIT_SKY;
+            hs.rel = pixel_ray(px);
+            imageStore(u_motion, px, aa_motion(hs, 0u));
+        }
+        if (t == 0u) {
+            ivec2 n = min(ivec2(8), ivec2(f.viewport) - origin);
+            atomicAdd(f.stats.v[STAT_PX_SKY], uint(n.x * n.y));
+        }
+        return;
     }
+    if (LIGHT_DEBUG == 0u) main_pixel(t, tile, origin, px, inside);
+    else main_cells(t, tile, origin, px, inside);
 }

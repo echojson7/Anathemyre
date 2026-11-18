@@ -107,6 +107,10 @@ struct WorldGpu {
     VkPipeline pipe_vis_veil = VK_NULL_HANDLE;   // кластеры под мороком: сито пикселей (vis_veil.frag)
     VkPipeline pipe_cull_count = VK_NULL_HANDLE, pipe_cull_scan = VK_NULL_HANDLE, pipe_cull_write = VK_NULL_HANDLE;
     VkPipeline pipe_light[TILE_KINDS] = {}, pipe_tiles = VK_NULL_HANDLE, pipe_ground_bake = VK_NULL_HANDLE;
+    // Освещение для отладки (LIGHT_DEBUG 1: правило ячеек P и виды F3 поверх кадра, docs/perf_arch.md) — собирается,
+    // когда такой режим впервые включат
+    VkPipeline pipe_light_dbg[TILE_KINDS] = {};
+    bool light_dbg_failed = false;
     u32 vis_clusters = 0;  // видимых кластеров в последнем прочитанном кадре
     u32 work[STAT_COUNT] = {};  // счётчики последнего прочитанного кадра мира (STAT_*)
     f32 eye[20] = {};           // глаз того же кадра: sky_out [4]…[8] (render_light)

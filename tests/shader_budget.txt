@@ -1,0 +1,61 @@
+# Потолки регистров, памяти потока и кода compute-шейдеров кадра (docs/perf_arch.md, tools/shader_stats/check.sh).
+# Компилятор — RADV (Mesa) для Radeon 780M (RADV_FORCE_FAMILY=phoenix), видеокарта не нужна. Строка: шейдер, константы
+# специализации (constant_id 0, 1, … через запятую или «-»), регистры VGPR, scratch (байт на волну), код (КБ).
+# Регистры и scratch — как сейчас, код — с запасом 10 %. Поднимать — только со строкой в docs/decisions.md;
+# опускать — в том же PR, что облегчил шейдер. 18.11: освещение (light_cells) — главный долг, см. docs/perf_arch.md
+#
+# освещение, игра: TILE_KIND (0 небо, 1 земля, 2 сетки, 3 смесь, 4 земля на пиксель), LIGHT_DEBUG 0
+light_cells.comp         0,0      64      0    46
+light_cells.comp         1,0     168      0   145
+light_cells.comp         2,0     168      0   412
+light_cells.comp         3,0     256   5632  1358
+light_cells.comp         4,0     256   5632  1078
+# освещение, отладка (правило ячеек P, виды F3): LIGHT_DEBUG 1; небо в отладке то же, что в игре
+light_cells.comp         1,1     168      0   224
+light_cells.comp         2,1     256      0   465
+light_cells.comp         3,1     256   6912  1424
+light_cells.comp         4,1     256   6912  1174
+# остальные проходы кадра
+aa.comp                  -        48      0    12
+air_blur.comp            -        32      0     5
+air_cells.comp           -        64      0    41
+air_march.comp           -        56      0    22
+air_sum.comp             -        32      0     1
+cloud_map.comp           -        72      0    31
+cloud_noise.comp         -        40      0    22
+cloud_shadow.comp        -        40      0    12
+cull_count.comp          -        32      0     2
+cull_scan.comp           -        16      0     2
+cull_write.comp          -        32      0     3
+eye.comp                 -        64      0    12
+eye_view.comp            -        16      0    10
+froxel.comp              -        32      0     2
+gcache_args.comp         -        16      0     1
+gcache_bake.comp         -       256   6400   873
+gcache_light.comp        -       128      0    34
+gcache_scan.comp         -         8      0     1
+gi_blend.comp            -        24      0     4
+gi_trace.comp            -        72      0    45
+glare.comp               -        40      0     8
+ground_bake.comp         -        80      0  1403
+horizon.comp             -        32      0     3
+lamp_cull.comp           -        56      0     4
+lcache_args.comp         -        32      0     2
+lcache_filter.comp       -        72      0    10
+lcache_list.comp         -        16      0     2
+lcache_trace.comp        -        80      0    74
+light_tiles.comp         -        56      0    76
+sdf_final.comp           -        16      0     1
+sdf_splat.comp           -        48      0     4
+shadow_alloc.comp        -        16      0     2
+shadow_args.comp         -        16      0     1
+shadow_cull.comp         -        72      0    10
+shadow_dyn.comp          -        24      0     4
+shadow_inval.comp        -        24      0     1
+shadow_scan.comp         -         8      0     1
+skin.comp                -        40      0     3
+skin_bounds.comp         -        32      0     4
+sky_ms.comp              -        48      0     3
+sky_sum.comp             -        40      0    12
+sky_trans.comp           -        32      0     1
+sky_view.comp            -        48      0     3

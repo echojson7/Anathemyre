@@ -10,6 +10,7 @@
 // 6) стиль (style.frag) — из неё в картинку swapchain, поверх — отладочные отрезки и точки, потом интерфейс
 #include "vk_graph.h"
 #include "../core/log.h"
+#include "../platform/platform.h"
 
 static RenderInstance g_mirror[RENDER_MAX_INSTANCES];  // что сейчас лежит в WorldGpu::inst
 constexpr u32 MAX_COPIES = 64;
@@ -98,6 +99,44 @@ bool vk_world_layout() {
     return vk_check(vkAllocateDescriptorSets(g_vk.device, &ai, &w.set), "vkAllocateDescriptorSets");
 }
 
+// Заявка конвейера освещения: вид плиток kind (TILE_KIND), отладка debug (LIGHT_DEBUG) — константы 0 и 1
+static bool make_light(VkPipeline *out, u32 kind, u32 debug) {
+    const u32 data[2] = {kind, debug};
+    const VkSpecializationMapEntry me[2] = {{0, 0, sizeof(u32)}, {1, sizeof(u32), sizeof(u32)}};
+    VkSpecializationInfo si{2, me, sizeof data, data};
+    return vk_make_compute(out, "light_cells.comp", &si);
+}
+
+// Отладочное освещение (правило ячеек, виды F3 поверх кадра) нужно этому кадру
+static bool light_debug_wanted(const RenderFrame &f) {
+    const RenderStyle &s = f.style;
+    return s.pixel || s.froxel_heat || s.shadow_pages != 0 || s.sdf_view == RENDER_SDF_SKY ||
+           s.sdf_view == RENDER_SDF_FIELD || s.gi_view == RENDER_GI_ONLY || s.gi_view == RENDER_GI_CELLS;
+}
+
+// Отладочные конвейеры освещения — при первом включении такого режима: игре они не нужны, а сборка дорогая
+// (light_cells.comp на AMD — десятки секунд). Кадр, в котором их собирают, — с паузой; при отказе — игровые
+static bool light_debug_ready() {
+    WorldGpu &w = g_vk.world;
+    if (w.pipe_light_dbg[0]) return true;
+    if (w.light_dbg_failed) return false;
+    u64 t0 = platform_time_ns();
+    bool ok = true;
+    for (u32 k = 0; k < TILE_KINDS; ++k) ok = make_light(&w.pipe_light_dbg[k], k, 1) && ok;
+    ok = vk_pipelines_build(nullptr, nullptr, nullptr, nullptr) && ok;
+    if (!ok) {
+        for (VkPipeline &p : w.pipe_light_dbg) {
+            if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
+            p = VK_NULL_HANDLE;
+        }
+        w.light_dbg_failed = true;
+        log_error("отладочное освещение не собрано: правило ячеек и виды F3 недоступны");
+        return false;
+    }
+    log_info("отладочное освещение (ячейки, виды F3) собрано за %.0f мс", (f64)(platform_time_ns() - t0) / 1e6);
+    return true;
+}
+
 bool vk_world_init() {
     WorldGpu &w = g_vk.world;
     const VkBufferUsageFlags ssbo = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
@@ -146,12 +185,8 @@ bool vk_world_init() {
     ok = vk_make_compute(&w.pipe_cull_write, "cull_write.comp") && ok;
     ok = vk_make_compute(&w.pipe_ground_bake, "ground_bake.comp") && ok;
     ok = vk_make_compute(&w.pipe_tiles, "light_tiles.comp") && ok;
-    // Освещение: конвейер на вид плиток, вид — константа специализации TILE_KIND
-    for (u32 k = 0; k < TILE_KINDS; ++k) {
-        VkSpecializationMapEntry me{0, 0, sizeof(u32)};
-        VkSpecializationInfo si{1, &me, sizeof(u32), &k};
-        ok = vk_make_compute(&w.pipe_light[k], "light_cells.comp", &si) && ok;
-    }
+    // Освещение: конвейер на вид плиток, вид — константа специализации TILE_KIND; игра — без отладки (LIGHT_DEBUG 0)
+    for (u32 k = 0; k < TILE_KINDS; ++k) ok = make_light(&w.pipe_light[k], k, 0) && ok;
     return ok && vk_gcache_init() && vk_shadow_init() && vk_sdf_init() && vk_lsm_init() && vk_gi_init() &&
            vk_lcache_init() && vk_scans_init() && vk_textures_init() && vk_aa_init() && vk_air_init();
 }
@@ -170,6 +205,11 @@ void vk_world_shutdown() {
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
     for (VkPipeline p : w.pipe_light)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
+    for (VkPipeline &p : w.pipe_light_dbg) {
+        if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
+        p = VK_NULL_HANDLE;
+    }
+    w.light_dbg_failed = false;
     destroy_image(w.id);
     destroy_image(w.hdr);
     vk_destroy_buffer(w.inst);
@@ -350,6 +390,7 @@ struct WorldFrame {
     FrameSlot *fs;
     u32 img, npoints, nlines;
     bool ground;
+    bool light_debug;  // освещение отладочными конвейерами (light_debug_wanted)
 };
 static WorldFrame g_wf;
 
@@ -461,7 +502,7 @@ static void record_tiles(VkCommandBuffer cmd, void *) {
 static void record_light(VkCommandBuffer cmd, void *user) {
     const WorldGpu &w = g_vk.world;
     u32 kind = (u32)(uintptr_t)user;
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, w.pipe_light[kind]);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_wf.light_debug ? w.pipe_light_dbg[kind] : w.pipe_light[kind]);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.layout, 0, 1, &w.set, 0, nullptr);
     PushConsts pc{g_wf.frame, 0, 0};
     vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
@@ -498,7 +539,8 @@ static void record_style(VkCommandBuffer cmd, void *) {
 bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, u32 nlines) {
     const WorldGpu &w = g_vk.world;
     if (!w.id.image) return false;
-    g_wf = WorldFrame{fs.frame.address, &fs, img, npoints, nlines, g_vk.terrain.on && f.ground};
+    g_wf = WorldFrame{fs.frame.address, &fs, img, npoints, nlines, g_vk.terrain.on && f.ground, false};
+    g_wf.light_debug = light_debug_wanted(f) && light_debug_ready();
     // 1. Люди (вершины и сферы кластеров), изменившиеся экземпляры и вершины земли кадра
     vk_skin_passes(&fs.frame.address);
     if (g_ncopies) {

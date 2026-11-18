@@ -16,6 +16,7 @@ Windows, ~2 ГБ архив LLVM для Linux, распаковывается т
 | `make check` | слои (`tools/layers.sh`) и запреты (`tools/forbid.sh`) |
 | `make sim-check` / `make sim-ref` | сверить / обновить эталонные хеши `--sim` в `tests/sim_hashes.txt` |
 | `make compdb` | `compile_commands.json` по исходным файлам для clangd |
+| `make shaders` / `make shader-stats` | только шейдеры / их регистры, scratch и код против `tests/shader_budget.txt` (нужен `mesa-vulkan-drivers`) — `docs/perf_arch.md` |
 | `make scans` | сканы CC0 в `build/<цель>/data/scans.pak` (сеть, numpy, PIL; не в CI) — `docs/scans.md` |
 
 ## Если игра не запускается
@@ -84,6 +85,9 @@ Windows, ~2 ГБ архив LLVM для Linux, распаковывается т
   компиляторы и SDL3.
 - **debug** (параллельно linux): отладочная сборка (clang `-O0`, ASan + UBSan, `-Werror`) и релиз; эталонные хеши
   `--sim` отладкой и повтор записи релиза отладочной сборкой — разом (обе ~2.5 мин однопоточно).
+- **shaders** (параллельно всем): регистры, scratch и код каждого compute-шейдера кадра против потолков
+  `tests/shader_budget.txt` — компилятор AMD (RADV) на «пустом» устройстве, без видеокарты (`docs/perf_arch.md`).
+  Своя машина: освещение собирается десятки секунд на вид. Артефакт `shader-stats` — таблица по шейдерам.
 - **window (asan / shot / same)** — три машины под Xvfb + lavapipe со слоями проверки Vulkan: отладка с ASan
   30 кадров в окне 640×360 (`--window W H`); релиз 10 кадров 1600×900 и снимок в артефакт `frame`; два
   запуска сверки кадров разом (артефакт `same`: кадр и счётчики работы). У каждого окна свой номер экрана `xvfb-run -n`:
