@@ -1,5 +1,5 @@
-// Общее для машин (mech.cpp — поза и кадр, mech_ground.cpp — опора и путь, mech_move.cpp — жизнь Вежи,
-// tat_move.cpp — жизнь Тати): описания видов, размеры ног и мелкие функции
+// Общее для машин (mech.cpp — поза и кадр, mech_common.cpp — опора и путь, mech_move.cpp — жизнь Вежи,
+// tat_move.cpp — жизнь Тати, gryd_move.cpp — жизнь Гриди): описания видов, размеры ног и мелкие функции
 #pragma once
 #include <math.h>
 #include "../anim/pose.h"
@@ -22,6 +22,8 @@ struct MechLegDesc {
     f32 fold_arc;     // лапа на пути складывания поднимается ещё на столько, м (лёжа лапы на земле — переступают)
     f32 meta_lie, meta_stand;      // MECH_LEG_VERT: плюсна к горизонту лёжа и стоя, рад (−π/2 — отвесна; между —
                                    // по высоте тела, как вынос лап; MECH_META_BIND — держать угол бинда)
+    u8 plane;         // 1 — нога в своей плоскости (двуногие): поворот бедра — по курсу ступни, вынос со знаком (ступня
+                      // и позади оси качания); 0 — бедро поворачивается к лапе (четвероногие)
 };
 static constexpr f32 MECH_META_BIND = 10.0f;   // плюсна держит свой угол бинда (у Тати — вниз и чуть внутрь)
 
@@ -34,6 +36,8 @@ struct MechDesc {
     f32 see_m;        // дальше людей не замечает
     f32 reach_h0, reach_span;      // вынос лап переходит от «лежит» к «стоит» на высотах h0 … h0 + span
     MechLegDesc leg[MECH_LEGS];
+    u8 legs;          // ног: 4 или 2
+    const char *leg_names[MECH_LEGS];   // суффиксы костей ног (hip_<имя> …)
 };
 extern const MechDesc MECH_DESC[MECH_KINDS];
 
@@ -102,6 +106,7 @@ inline f32 mech_support(const Extract &c, const WPos &p, f32 from_y, Vec3 *n) {
 // и поворот бедра от бинда
 struct MechReach {
     f32 yaw, x, y;
+    f32 roll;         // нога в плоскости: наклон плоскости вбок к ступне (поворот бедра вокруг своей оси), рад
 };
 inline MechReach mech_leg_reach(const MechLegRig &L, Vec3 p) {
     Vec3 v = p - L.corner;
@@ -110,6 +115,20 @@ inline MechReach mech_leg_reach(const MechLegRig &L, Vec3 p) {
     r.yaw = mech_wrap(atan2f(-v.z, v.x) - phi0);
     r.x = f_sqrt(v.x * v.x + v.z * v.z) - L.u;
     r.y = v.y;
+    r.roll = 0.0f;
+    return r;
+}
+// Нога в своей плоскости (MechLegDesc::plane): бедро повёрнуто по курсу ступни yaw (в осях рамы, от бинда) и
+// наклонено вбок к ступне (roll), вынос — вдоль плоскости со знаком (ступня позади оси качания — минус)
+inline MechReach mech_leg_reach_plane(const MechLegRig &L, Vec3 p, f32 yaw) {
+    Vec3 v = p - L.corner;
+    Vec3 d = mech_to_world(yaw, L.dir);   // поворот вокруг вертикали в осях рамы
+    f32 side = v.z * d.x - v.x * d.z;     // вбок от плоскости: d × y
+    MechReach r;
+    r.yaw = yaw;
+    r.x = v.x * d.x + v.z * d.z - L.u;
+    r.y = -f_sqrt(v.y * v.y + side * side);
+    r.roll = atan2f(side, f_max(-v.y, 0.05f));
     return r;
 }
 // Где лапа сейчас: на опоре или на дуге шага (подошва)
@@ -173,8 +192,9 @@ inline void mech_enter(Mech &m, u8 state) {
 }
 
 // Шаг жизни машины на dt секунд (dt ≤ 1/100): поведение, тело, лапы, пружины. Вежа — mech_move.cpp, Тать —
-// tat_move.cpp
+// tat_move.cpp, Гридь — gryd_move.cpp
 void mech_step(const MechView &mv, Mech &m, const Extract &c, const MechTarget &tg, f32 dt);
 void tat_step(const MechView &mv, Mech &m, const Extract &c, const MechTarget &tg, f32 dt);
+void gryd_step(const MechView &mv, Mech &m, const Extract &c, const MechTarget &tg, f32 dt);
 // Первый кадр в режимах «стоит» и «обходит»: сразу на ногах
 void mech_stand_now(const MechView &mv, Mech &m, const Extract &c);

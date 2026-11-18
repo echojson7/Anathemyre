@@ -6,18 +6,27 @@ static constexpr f32 DEG = PI_F / 180.0f;
 // Вежа — четыре паучьи ноги из трёх звеньев (колено вверх, плюсна почти отвесна; лёжа рама на брюхе, лапы на
 // земле, ноги повёрнуты к носу и корме, колени торчат вверх); Тать — четыре одинаковые ноги с двумя суставами (колено
 // выше крыши, плюсна держит угол бинда — tools/parts/tat_leg.py), тело висит под ними, лёжа лапы остаются на земле.
-// Порядок ног — fr, fl, rl, rr (по кругу). Числа Вежи — как в tools/parts/vezha_leg.py и vezha_pose.py
+// Порядок ног — fr, fl, rl, rr (по кругу), у двуногой Гриди — r, l. Числа Вежи — как в tools/parts/vezha_leg.py и
+// vezha_pose.py, Гриди — как в tools/parts/gryd_leg.py
 const MechDesc MECH_DESC[MECH_KINDS] = {
     {"vezha", 0.21f, 0.82f, 1.0f, 0.58f, 0.4f, 3.0f, 16.0f, 0.3f, 0.45f,
-     {{MECH_LEG_VERT, 1.0f, 0.14f, -40.0f * DEG, 105.0f * DEG, 0.92f, 0.92f, {-20.0f * DEG, 1.1f, -0.07f}, 1.3f, 0.1f, -75.0f * DEG, -80.0f * DEG},
-      {MECH_LEG_VERT, 1.0f, 0.14f, -40.0f * DEG, 105.0f * DEG, 0.92f, 0.92f, {20.0f * DEG, 1.1f, -0.07f}, 1.3f, 0.1f, -75.0f * DEG, -80.0f * DEG},
-      {MECH_LEG_VERT, 1.0f, 0.14f, -40.0f * DEG, 105.0f * DEG, 0.92f, 0.92f, {-20.0f * DEG, 1.1f, -0.07f}, 1.3f, 0.1f, -75.0f * DEG, -80.0f * DEG},
-      {MECH_LEG_VERT, 1.0f, 0.14f, -40.0f * DEG, 105.0f * DEG, 0.92f, 0.92f, {20.0f * DEG, 1.1f, -0.07f}, 1.3f, 0.1f, -75.0f * DEG, -80.0f * DEG}}},
+     {{MECH_LEG_VERT, 1.0f, 0.14f, -40.0f * DEG, 105.0f * DEG, 0.92f, 0.92f, {-20.0f * DEG, 1.1f, -0.07f}, 1.3f, 0.1f, -75.0f * DEG, -80.0f * DEG, 0},
+      {MECH_LEG_VERT, 1.0f, 0.14f, -40.0f * DEG, 105.0f * DEG, 0.92f, 0.92f, {20.0f * DEG, 1.1f, -0.07f}, 1.3f, 0.1f, -75.0f * DEG, -80.0f * DEG, 0},
+      {MECH_LEG_VERT, 1.0f, 0.14f, -40.0f * DEG, 105.0f * DEG, 0.92f, 0.92f, {-20.0f * DEG, 1.1f, -0.07f}, 1.3f, 0.1f, -75.0f * DEG, -80.0f * DEG, 0},
+      {MECH_LEG_VERT, 1.0f, 0.14f, -40.0f * DEG, 105.0f * DEG, 0.92f, 0.92f, {20.0f * DEG, 1.1f, -0.07f}, 1.3f, 0.1f, -75.0f * DEG, -80.0f * DEG, 0}},
+     4, {"fr", "fl", "rl", "rr"}},
     {"tat", 0.37f, 0.62f, 0.74f, 0.50f, 0.5f, 2.4f, 24.0f, 0.37f, 0.25f,
-     {{MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND},
-      {MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND},
-      {MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND},
-      {MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND}}},
+     {{MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND, 0},
+      {MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND, 0},
+      {MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND, 0},
+      {MECH_LEG_VERT, 1.0f, 0.07f, -40.0f * DEG, 100.0f * DEG, 0.32f, 0.38f, {0.0f, 0.30f, -0.30f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND, 0}},
+     4, {"fr", "fl", "rl", "rr"}},
+    // Гридь — две ноги с обратным коленом в своих плоскостях (колено вперёд, голеностоп позади, плюсна держит
+    // угол бинда — tools/parts/gryd_leg.py): ступня под тазом и чуть впереди, в выпаде — и далеко позади
+    {"gryd", 0.84f, 1.16f, 1.22f, 0.90f, 1.1f, 2.0f, 30.0f, 0.8f, 0.3f,
+     {{MECH_LEG_VERT, 1.0f, 0.085f, -118.0f * DEG, 20.0f * DEG, 0.07f, 0.07f, {0.0f, 0.07f, -0.9f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND, 1},
+      {MECH_LEG_VERT, 1.0f, 0.085f, -118.0f * DEG, 20.0f * DEG, 0.07f, 0.07f, {0.0f, 0.07f, -0.9f}, 1.0f, 0.0f, MECH_META_BIND, MECH_META_BIND, 1}},
+     2, {"r", "l"}},
 };
 
 const char *mech_kind_name(u8 kind) { return kind < MECH_KINDS ? MECH_DESC[kind].name : "?"; }
@@ -39,9 +48,11 @@ void mech_leg_hlimit(const MechView &mv, const Mech &m, u32 k, f32 &hmin, f32 &h
     const MechLegRig &L = mech_rig(mv, m).leg[k];
     const MechLegDesc &D = mech_desc(m).leg[k];
     Vec2 o = mech_leg_off(L, D, mech_leg_meta(L, mech_desc(m), k, m.h));
-    MechReach r = mech_leg_reach(L, mech_world_chassis(m, m.leg[k].at, D.foot_h));
+    Vec3 p = mech_world_chassis(m, m.leg[k].at, D.foot_h);
+    MechReach r = D.plane ? mech_leg_reach_plane(L, p, mech_wrap(m.leg[k].yaw - m.yaw)) : mech_leg_reach(L, p);
     f32 lo = mech_leg_min(L, D), hi = mech_leg_max(L, D);
     f32 tx = r.x + o.x;
+    if (D.plane) tx = f_abs(tx);   // в плоскости ступня бывает и позади оси качания
     f32 drop = m.h + r.y + o.y;   // на столько цель решения выше, чем была бы при высоте 0
     if (tx < lo) hmin = f_max(hmin, f_sqrt(lo * lo - tx * tx) + drop);
     if (tx < hi) hmax = f_min(hmax, f_sqrt(hi * hi - tx * tx) + drop);
@@ -108,10 +119,11 @@ bool mech_path_clear(const Extract &c, const WPos &a, const WPos &b) {
 void mech_stand_now(const MechView &mv, Mech &m, const Extract &c) {
     const MechDesc &d = mech_desc(m);
     m.h = m.h_to = d.h_stand;
-    for (u32 k = 0; k < MECH_LEGS; ++k) {
+    for (u32 k = 0; k < d.legs; ++k) {
         MechLeg &l = m.leg[k];
         l.fold = 0.0f;
         l.t = -1.0f;
+        l.yaw = l.yaw_to = m.yaw;
         l.at = mech_leg_ground(mv, m, c, k, Vec3{0.0f, mech_reach(mv, m, k, m.h), 0.0f});
         mech_support(c, l.at, l.at.y + 0.2f, &l.n);
     }

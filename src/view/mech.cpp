@@ -1,12 +1,12 @@
-// Машины в кадре (docs/vezha.md, docs/tat.md): привязка к скелету, поза по состоянию машины и экземпляр со
-// скиннингом. Поведение и шаги — mech_move.cpp (Вежа) и tat_move.cpp (Тать), опора и путь — mech_common.cpp
+// Машины в кадре (docs/vezha.md, docs/tat.md, docs/gryd.md): привязка к скелету, поза по состоянию машины и
+// экземпляр со скиннингом. Поведение и шаги — mech_move.cpp (Вежа), tat_move.cpp (Тать), gryd_move.cpp (Гридь),
+// опора и путь — mech_common.cpp
 #include <stdio.h>
 #include "../core/hash.h"
 #include "../core/log.h"
 #include "mech_in.h"
 #include "view.h"
 
-static const char *const MECH_LEG_NAMES[MECH_LEGS] = {"fr", "fl", "rl", "rr"};
 static const char *const MECH_LEG_BONES[11] = {"hip", "thigh", "shin", "tarsus", "foot", "pa", "pb", "ka", "kb", "ma", "mb"};
 enum { ML_HIP, ML_THIGH, ML_SHIN, ML_TARSUS, ML_FOOT, ML_PA, ML_PB, ML_KA, ML_KB, ML_MA, ML_MB, ML_COUNT };
 
@@ -22,10 +22,11 @@ bool mech_view_demo(MechView &mv, const char *name) {
         mv.demo = (u8)(MECH_DEMO_PACK + i);
         return true;
     }
-    if (strcmp(name, "veil") && strcmp(name, "prone")) return false;
+    if (strcmp(name, "veil") && strcmp(name, "prone") && strcmp(name, "aim")) return false;
     mv.demo = MECH_DEMO_STAND;
     mv.veil_demo = !strcmp(name, "veil");
-    mv.prone_demo = !mv.veil_demo;
+    mv.prone_demo = !strcmp(name, "prone");
+    mv.aim_demo = !strcmp(name, "aim");
     return true;
 }
 
@@ -65,15 +66,61 @@ static bool mech_bind_skel(MechRig &r, u8 kind, const Skel &s) {
     r.eye = find("eye", true);
     r.ant[0] = find("ant_l", true);
     r.ant[1] = find("ant_r", true);
+    r.flash = skel_find(s, hash_str("flash"));
+    const MechDesc &D = MECH_DESC[kind];
     for (u32 k = 0; k < MECH_LEGS; ++k)
         for (u32 j = 0; j < ML_COUNT; ++j) {
+            r.leg[k].bone[j] = -1;
+            if (k >= D.legs) continue;
             char name[32];
-            snprintf(name, sizeof name, "%s_%s", MECH_LEG_BONES[j], MECH_LEG_NAMES[k]);
+            snprintf(name, sizeof name, "%s_%s", MECH_LEG_BONES[j], D.leg_names[k]);
             r.leg[k].bone[j] = find(name, j < ML_PA);   // цилиндры — не у всех машин (у Тати нет)
+        }
+    // Руки с оружием (Гридь): плечо, предплечье, кисть, цилиндр локтя
+    static const char *const ARM_SIDE[2] = {"r", "l"};
+    for (u32 a = 0; a < 2; ++a) {
+        MechArmRig &A = r.arm[a];
+        auto arm_bone = [&](const char *what) {
+            char name[32];
+            snprintf(name, sizeof name, "%s_%s", what, ARM_SIDE[a]);
+            return skel_find(s, hash_str(name));
+        };
+        A.ua = arm_bone("ua");
+        A.fa = arm_bone("fa");
+        A.hand = arm_bone("hand");
+        A.ea = arm_bone("ea");
+        A.eb = arm_bone("eb");
+        if (A.ua < 0 || A.fa < 0 || A.hand < 0) {
+            A.ua = A.fa = A.hand = A.ea = A.eb = -1;
+            continue;
+        }
+        Vec3 sh = mech_head(s, A.ua), el = mech_head(s, A.fa), wr = mech_head(s, A.hand);
+        A.la = length(el - sh);
+        A.lb = length(wr - el);
+        // Полюс локтя: точка на продолжении локтя от прямой плечо — запястье (решение двумя длинами в бинде
+        // даёт тот же локоть)
+        Vec3 x = normalize(wr - sh);
+        Vec3 off = (el - sh) - x * dot(el - sh, x);
+        A.pole = el + normalize(off) * 0.3f;
+    }
+    // Цилиндры: гильза и шток смотрят друг на друга (ноги — подъём бедра, колено, плюсна; руки — локоть)
+    r.ncyl = 0;
+    for (u32 k = 0; k < D.legs; ++k)
+        for (u32 c = ML_PA; c <= ML_MA; c += 2)
+            if (r.leg[k].bone[c] >= 0 && r.leg[k].bone[c + 1] >= 0 && r.ncyl < 12) {
+                r.cyl[r.ncyl][0] = r.leg[k].bone[c];
+                r.cyl[r.ncyl][1] = r.leg[k].bone[c + 1];
+                r.ncyl++;
+            }
+    for (u32 a = 0; a < 2; ++a)
+        if (r.arm[a].ea >= 0 && r.arm[a].eb >= 0 && r.ncyl < 12) {
+            r.cyl[r.ncyl][0] = r.arm[a].ea;
+            r.cyl[r.ncyl][1] = r.arm[a].eb;
+            r.ncyl++;
         }
     if (!ok) return false;
     Vec3 c0 = mech_head(s, r.chassis);
-    for (u32 k = 0; k < MECH_LEGS; ++k) {
+    for (u32 k = 0; k < D.legs; ++k) {
         MechLegRig &L = r.leg[k];
         const i32 *B = L.bone;
         Vec3 y = mech_head(s, B[ML_HIP]), p = mech_head(s, B[ML_THIGH]), kn = mech_head(s, B[ML_SHIN]);
@@ -132,9 +179,41 @@ void mech_view_place(MechView &mv, u32 prop, u8 kind, const WPos &at, Turn yaw) 
     m.wait = 4.0f;
     m.stow = m.stow_to = 1.0f;
     for (u32 k = 0; k < MECH_LEGS; ++k) {
-        m.leg[k].fold = 1.0f;
+        m.leg[k].fold = MECH_DESC[kind].leg[k].plane ? 0.0f : 1.0f;   // двуногая лежит на ногах, не складывает их
         m.leg[k].t = -1.0f;
         m.leg[k].n = Vec3{0, 1, 0};
+        m.leg[k].yaw = m.leg[k].yaw_to = m.yaw;
+    }
+}
+
+// Решение руки (Гридь): запястье — где его держит винтовка, локоть — двумя длинами к полюсу; кисть повёрнута как
+// винтовка. Повороты — местные (rot), по позе wr/wp первого прохода (корпус и винтовка уже на месте)
+static void mech_arms(const MechRig &R, const Skel &s, Quat *rot, const Quat *wr, const Vec3 *wp) {
+    for (u32 a = 0; a < 2; ++a) {
+        const MechArmRig &A = R.arm[a];
+        if (A.ua < 0) continue;
+        Vec3 S0 = mech_head(s, A.ua), E0 = mech_head(s, A.fa), W0 = mech_head(s, A.hand), G0 = mech_head(s, R.gun);
+        Quat rh = wr[R.hull], rg = wr[R.gun];
+        Vec3 S = wp[A.ua];
+        Vec3 W = wp[R.gun] + quat_rotate(rg, W0 - G0);
+        Vec3 P = S + quat_rotate(rh, A.pole - S0);
+        Vec3 d = W - S;
+        f32 L = f_clamp(length(d), f_abs(A.la - A.lb) + 1e-4f, A.la + A.lb - 1e-4f);
+        Vec3 x = normalize(d);
+        Vec3 p = P - S;
+        Vec3 y = normalize(p - x * dot(p, x));
+        f32 along = (A.la * A.la + L * L - A.lb * A.lb) / (2.0f * L);
+        Vec3 E = S + x * along + y * f_sqrt(f_max(A.la * A.la - along * along, 0.0f));
+        // Повороты звеньев: направление звена из бинда в позу, потом поворот вокруг звена, чтобы ось локтя совпала
+        Vec3 n0 = normalize(cross(E0 - S0, W0 - E0)), n1 = normalize(cross(E - S, W - E));
+        auto link = [&](Vec3 b0, Vec3 b1) {
+            Quat q = quat_between(normalize(b0), normalize(b1));
+            return quat_mul(quat_between(quat_rotate(q, n0), n1), q);
+        };
+        Quat ru = link(E0 - S0, E - S), rf = link(W0 - E0, W - E);
+        rot[A.ua] = quat_mul(quat_conj(wr[s.bones.data[A.ua].parent]), ru);
+        rot[A.fa] = quat_mul(quat_conj(ru), rf);
+        rot[A.hand] = quat_mul(quat_conj(rf), rg);
     }
 }
 
@@ -151,13 +230,15 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
     rot[R.chassis] = tilt;
     rot[R.hull] = quat_axis_angle(Y, m.hull);
     rot[R.gun] = quat_axis_angle(X, -m.gun);
+    if (m.kind == MECH_GRYD) rot[R.gun] = quat_mul(quat_axis_angle(Y, m.gun_yaw), rot[R.gun]);   // винтовка вбок — у плеча
+    if (R.flash >= 0) rot[R.flash] = quat_axis_angle(Vec3{0, 0, 1}, m.flash_roll);
     rot[R.eye] = quat_axis_angle(Y, m.eye);
     for (u32 a = 0; a < 2; ++a)
         rot[R.ant[a]] = quat_mul(quat_axis_angle(X, m.ant[a][0]), quat_axis_angle(Vec3{0, 0, 1}, m.ant[a][1]));
     Vec3 trans = mech_trans(m);
-    f32 foot_w[MECH_LEGS];
+    f32 foot_w[MECH_LEGS] = {};
     Vec3 foot_n[MECH_LEGS];
-    for (u32 k = 0; k < MECH_LEGS; ++k) {
+    for (u32 k = 0; k < D.legs; ++k) {
         const MechLeg &l = m.leg[k];
         const MechLegRig &L = R.leg[k];
         const MechLegDesc &LD = D.leg[k];
@@ -186,7 +267,14 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
             foot_n[k] = l.n;
             Vec2 d = wpos_delta_xz(m.at, p);
             Vec3 b = mech_to_body(m.yaw, Vec3{d.x, p.y + LD.foot_h - m.at.y, d.y}) - trans;
-            r = mech_leg_reach(L, quat_rotate(quat_conj(tilt), b));
+            Vec3 q = quat_rotate(quat_conj(tilt), b);
+            if (LD.plane) {
+                // Курс ступни: стоит — свой, в шаге — к курсу касания
+                f32 fy = l.t >= 0.0f ? l.yaw + mech_wrap(l.yaw_to - l.yaw) * mech_smooth(l.t) : l.yaw;
+                r = mech_leg_reach_plane(L, q, f_clamp(mech_wrap(fy - m.yaw), -0.8f, 0.8f));
+            } else {
+                r = mech_leg_reach(L, q);
+            }
         }
         f32 a, sh, ta;
         mech_leg_solve(L, LD, mech_leg_meta(L, D, k, m.h), r.x, r.y, &a, &sh, &ta);
@@ -194,14 +282,16 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
         Vec3 z = cross(L.dir, Y);
         f32 da = a - L.a1, ds = sh - L.a2, dt = ta - L.a3;
         rot[B[ML_HIP]] = quat_axis_angle(Y, r.yaw);
+        if (LD.plane) rot[B[ML_HIP]] = quat_mul(rot[B[ML_HIP]], quat_axis_angle(L.dir, -r.roll));
         rot[B[ML_THIGH]] = quat_axis_angle(z, da);
         rot[B[ML_SHIN]] = quat_axis_angle(z, ds - da);
         rot[B[ML_TARSUS]] = quat_axis_angle(z, dt - ds);
         rot[B[ML_FOOT]] = quat_axis_angle(z, foot_pitch - dt);
     }
     pose_world(s, rot, R.chassis, &trans, wr, wp);
+    mech_arms(R, s, rot, wr, wp);
     // Стоящая лапа ложится подошвой по опоре (нормаль — в осях сетки)
-    for (u32 k = 0; k < MECH_LEGS; ++k) {
+    for (u32 k = 0; k < D.legs; ++k) {
         if (foot_w[k] <= 0.0f) continue;
         u32 f = (u32)R.leg[k].bone[ML_FOOT];
         Vec3 up = quat_rotate(wr[f], Y), n = normalize(mech_to_body(m.yaw, foot_n[k]));
@@ -210,18 +300,29 @@ static void mech_pose(const MechView &mv, const Mech &m, const Skel &s, PoseMatr
         Vec3 ax = normalize(cross(up, n));
         pose_turn_world(rot, wr, f, quat_axis_angle(ax, f_min(ang, 0.6f) * foot_w[k]));
     }
-    // Цилиндры: гильза и шток смотрят друг на друга (подъём бедра, колено, плюсна)
-    for (u32 k = 0; k < MECH_LEGS; ++k)
-        for (u32 c = ML_PA; c <= ML_MA; c += 2) {
-            i32 i = R.leg[k].bone[c], j = R.leg[k].bone[c + 1];
-            if (i < 0 || j < 0) continue;
-            Vec3 d0 = normalize(mech_head(s, j) - mech_head(s, i));
-            Vec3 d = normalize(wp[j] - wp[i]);
-            rot[i] = quat_between(d0, quat_rotate(quat_conj(wr[i]), d));
-            rot[j] = quat_between(-d0, quat_rotate(quat_conj(wr[j]), -d));
-        }
+    // Цилиндры: гильза и шток смотрят друг на друга (подъём бедра, колено, плюсна, локоть). Руки — по позе после
+    // решения рук
+    if (R.arm[0].ua >= 0 || R.arm[1].ua >= 0) pose_world(s, rot, R.chassis, &trans, wr, wp);
+    for (u32 ci = 0; ci < R.ncyl; ++ci) {
+        i32 i = R.cyl[ci][0], j = R.cyl[ci][1];
+        Vec3 d0 = normalize(mech_head(s, j) - mech_head(s, i));
+        Vec3 d = normalize(wp[j] - wp[i]);
+        rot[i] = quat_between(d0, quat_rotate(quat_conj(wr[i]), d));
+        rot[j] = quat_between(-d0, quat_rotate(quat_conj(wr[j]), -d));
+    }
     pose_world(s, rot, R.chassis, &trans, wr, wp);
-    if (palette) pose_palette_world(s, wr, wp, palette);
+    if (!palette) return;
+    pose_palette_world(s, wr, wp, palette);
+    // Вспышка: кость сжата к своей голове (у дульного тормоза), в миг выстрела — во весь размер
+    if (R.flash >= 0) {
+        f32 k = m.flash > 0.0f ? 0.6f + 0.4f * m.flash : 0.001f;
+        f32 *o = palette[R.flash].m;
+        const f32 p[3] = {wp[R.flash].x, wp[R.flash].y, wp[R.flash].z};
+        for (u32 row = 0; row < 3; ++row) {
+            for (u32 col = 0; col < 3; ++col) o[row * 4 + col] *= k;
+            o[row * 4 + 3] = p[row] + k * (o[row * 4 + 3] - p[row]);
+        }
+    }
 }
 
 // Кадр жизни машины: первый раз — поставить на опору, найти ближнего человека, шаги по 1/120 с
@@ -229,6 +330,14 @@ static void mech_live(const MechView &mv, Mech &m, const Extract &c, f32 dt) {
     if (m.clock == 0.0f) {
         m.at.y = mech_support(c, m.at, m.at.y + 0.5f, nullptr);
         if (mv.demo == MECH_DEMO_STAND || mv.demo == MECH_DEMO_WALK) mech_stand_now(mv, m, c);
+        else if (m.kind == MECH_GRYD) {
+            // Двуногая покоится присев на своих ногах: ступни сразу на опоре
+            mech_stand_now(mv, m, c);
+            m.h = m.h_to = mech_desc(m).belly;
+            m.state = MECH_PACKED;
+            m.wait = 3.0f;
+            m.stow = m.stow_to = 1.0f;
+        }
         m.clock = 1e-3f;
     }
     // Ближний человек: на него смотрит голова и ствол
@@ -250,6 +359,7 @@ static void mech_live(const MechView &mv, Mech &m, const Extract &c, f32 dt) {
     u32 steps = (u32)(dt * 120.0f) + (dt > 0.0f ? 1 : 0);
     for (u32 k = 0; k < steps; ++k) {
         if (m.kind == MECH_TAT) tat_step(mv, m, c, tg, dt / (f32)steps);
+        else if (m.kind == MECH_GRYD) gryd_step(mv, m, c, tg, dt / (f32)steps);
         else mech_step(mv, m, c, tg, dt / (f32)steps);
     }
 }
@@ -359,12 +469,15 @@ bool mech_view_trace(MechView &mv, const Skel *skels, const Extract &c, f32 dt, 
     put(R.hull);
     put(R.gun);
     put(R.eye);
-    for (u32 k = 0; k < MECH_LEGS; ++k) {
+    for (u32 k = 0; k < mech_desc(m).legs; ++k) {
         for (u32 j = 0; j < 5; ++j) put(R.leg[k].bone[j]);
         if (n > 0 && (usize)n < cap) n += snprintf(line + n, cap - (usize)n, " %d", m.leg[k].fold > 0.0f ? 2 : (m.leg[k].t >= 0.0f ? 0 : 1));
     }
     // Тать: морок, походное положение, отдача, походка — в конце строки (разбор Вежи их не читает)
     if (m.kind == MECH_TAT && n > 0 && (usize)n < cap)
         n += snprintf(line + n, cap - (usize)n, " %.3f %.3f %.3f %u", m.veil, m.stow, m.kick, (u32)m.gait);
+    // Гридь: две ноги; в конце — походное положение винтовки, отдача, выстрелов
+    if (m.kind == MECH_GRYD && n > 0 && (usize)n < cap)
+        n += snprintf(line + n, cap - (usize)n, " %.3f %.3f %u", m.stow, m.kick, m.shots);
     return n > 0 && (usize)n < cap;
 }
