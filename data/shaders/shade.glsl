@@ -8,8 +8,10 @@
 // rel — точка относительно камеры, mat1/blend — второй материал вершины и доля смеси (порог плавного шума: пятна
 // с рваным краем, а не квадраты). dyn — сетка движется (человек, машина, меч): узор и пятна считаются в точке
 // obj её собственных осей до позы (нормаль obj_n), иначе они плыли бы по детали, пока она едет через мир.
-// Свет, декали и нормаль поверхности — в мире
-Surface mesh_surface(vec3 rel, vec3 n, uint mat0, uint mat1, float blend, float ao, uint seed, bool dyn, vec3 obj, vec3 obj_n) {
+// Свет, декали и нормаль поверхности — в мире. has_uv, uv, duv, tan — развёртка точки (resolve.glsl, Hit;
+// docs/textures.md): касательная — в тех же осях, что нормаль узора (мир или оси движущейся детали)
+Surface mesh_surface(vec3 rel, vec3 n, uint mat0, uint mat1, float blend, float ao, uint seed, bool dyn, vec3 obj, vec3 obj_n,
+                     bool has_uv, vec2 uv, vec4 duv, vec4 tan) {
     FrameData f = pc.frame;
     float depth = dot(rel, f.forward.xyz);
     float cell = cell_size(depth);
@@ -45,7 +47,12 @@ Surface mesh_surface(vec3 rel, vec3 n, uint mat0, uint mat1, float blend, float 
         float b = value_noise(ps, s0, seed ^ 0x5EEDu) * w0 + value_noise(ps, s1, seed ^ 0x5EEEu) * w1;
         if (b < blend) mat = mat1;
     }
-    Surface s = surface(mat, ps, ns, cell, max(depth, 0.0) * f.pixel_angle, seed);
+    SurfUv t;
+    t.on = has_uv;
+    t.uv = uv;
+    t.duv = duv;
+    t.tan = tan;
+    Surface s = surface_uv(mat, ps, ns, cell, max(depth, 0.0) * f.pixel_angle, seed, t);
 #ifdef GC_ORIGIN_VAR
     ORIGIN_CHUNK = saved;
 #endif

@@ -3,7 +3,11 @@
 // LOD упрощением с закреплённой границей (стыки соседних деталей не расходятся), кластеры по соседству
 // ≤ 124 треугольников со сферой. Коллайдер и грубая форма переписываются как есть.
 //
-//     meshpack [[--prune] --lods n1,n2,…] <вход.mesh> <выход.mesh>
+//     meshpack [[--prune] --lods n1,n2,…] <вход.mesh | вход.gltf | вход.glb> <выход.mesh>
+//
+// Вход glTF 2.0 (gltf_in.cpp, cgltf): чужое → наш .mesh по шву 5 (docs/invariants.md). Развёртка и касательные
+// идут потоком VUV0 (8 байт на вершину, docs/mesh.md): склейка учитывает его, упрощение LOD — с весом UV и
+// нормали (meshopt_simplifyWithAttributes), иначе LOD рвал бы развёртку и карты плыли бы по детали
 //
 // Сетка с весами костей (куски SKIN, MRPH — люди, tools/humanconv): потоки вершин SKIN и MRPH идут вместе с VERT
 // (склейка по всем, тот же порядок), граница не закрепляется (это не стык деталей), --lods задаёт треугольники
@@ -20,6 +24,7 @@
 #include <vector>
 
 #include "meshoptimizer/meshoptimizer.h"
+#include "meshpack.h"
 
 namespace {
 
@@ -29,20 +34,6 @@ constexpr unsigned MAX_LODS = 6;
 constexpr float LOD_STEP = 0.5f;        // каждый LOD — вдвое меньше треугольников
 constexpr float LOD_MAX_ERROR = 0.25f;  // дальше 25 см ошибки LOD не нужен: деталь уже в несколько пикселей
 constexpr float LOD_MIN_GAIN = 0.85f;   // упростилось меньше чем на 15% — цепочка кончилась
-
-// Вершина файла, 20 байт (docs/mesh.md, кусок VERT)
-struct Vert {
-    float p[3];
-    uint16_t n[2];
-    uint8_t m0, m1, blend, ao;
-};
-static_assert(sizeof(Vert) == 20, "вершина .mesh — 20 байт");
-
-struct Chunk {
-    char tag[4];
-    uint32_t version;
-    std::vector<uint8_t> body;
-};
 
 bool die(const char *what, const char *path) {
     fprintf(stderr, "meshpack: %s: %s\n", path, what);
@@ -57,11 +48,6 @@ bool read_file(const char *path, std::vector<uint8_t> &out) {
     while ((n = fread(buf, 1, sizeof buf, f)) > 0) out.insert(out.end(), buf, buf + n);
     fclose(f);
     return true;
-}
-
-template <class T> void put(std::vector<uint8_t> &b, const T &v) {
-    const uint8_t *p = (const uint8_t *)&v;
-    b.insert(b.end(), p, p + sizeof v);
 }
 
 void put_chunk(std::vector<uint8_t> &out, const char *tag, const std::vector<uint8_t> &body) {
@@ -151,11 +137,18 @@ int main(int argc, char **argv) {
     }
     const char *in_path = argv[arg], *out_path = argv[arg + 1];
     std::vector<uint8_t> data;
-    if (!read_file(in_path, data)) return die("не читается", in_path), 1;
-    if (data.size() < 8 || memcmp(data.data(), "ANAMESH1", 8) != 0) return die("не .mesh", in_path), 1;
-
     std::vector<Chunk> chunks;
-    for (size_t pos = 8; pos < data.size();) {
+    size_t plen = strlen(in_path);
+    bool gltf = (plen > 5 && !strcmp(in_path + plen - 5, ".gltf")) || (plen > 4 && !strcmp(in_path + plen - 4, ".glb"));
+    if (gltf) {
+        std::string why;
+        if (!gltf_read(in_path, chunks, why)) return die(why.c_str(), in_path), 1;
+        data.assign((const uint8_t *)"ANAMESH1", (const uint8_t *)"ANAMESH1" + 8);
+    } else {
+        if (!read_file(in_path, data)) return die("не читается", in_path), 1;
+        if (data.size() < 8 || memcmp(data.data(), "ANAMESH1", 8) != 0) return die("не .mesh", in_path), 1;
+    }
+    for (size_t pos = 8; !gltf && pos < data.size();) {
         if (data.size() - pos < 16) return die("обрезан кусок", in_path), 1;
         Chunk c;
         memcpy(c.tag, &data[pos], 4);
@@ -184,21 +177,28 @@ int main(int argc, char **argv) {
     for (uint32_t i : idx)
         if (i >= verts.size()) return die("индекс за вершинами", in_path), 1;
 
-    // Потоки вершин людей: веса костей (по куску на скелет) и сдвиги морфов
+    // Потоки вершин: веса костей (по куску на скелет) и сдвиги морфов у людей, развёртка с касательной (VUV0)
     std::vector<Stream> streams;
+    bool skinned = false;
+    int uv_stream = -1;
     for (const Chunk &c : chunks) {
         Stream s;
         if (!memcmp(c.tag, "SKIN", 4)) {
             if (!skin_stream(c, verts.size(), s)) return die("кусок SKIN не сходится с VERT", in_path), 1;
+            skinned = true;
         } else if (!memcmp(c.tag, "MRPH", 4)) {
             if (!morph_stream(c, verts.size(), s)) return die("кусок MRPH не сходится с VERT", in_path), 1;
+            skinned = true;
+        } else if (!memcmp(c.tag, "VUV0", 4)) {
+            if (c.body.size() != verts.size() * 8) return die("кусок VUV0 не сходится с VERT", in_path), 1;
+            s = Stream{&c, 0, 8, {}};
+            uv_stream = (int)streams.size();
         } else {
             continue;
         }
         s.data.assign(c.body.begin() + (long)s.head, c.body.end());
         streams.push_back(std::move(s));
     }
-    const bool skinned = !streams.empty();
     if (skinned != !lod_tris.empty()) return die("--lods — только для сетки с весами костей (SKIN) и для неё обязателен", in_path), 1;
 
     // Склейка одинаковых вершин (все 20 байт и все потоки), порядок треугольников под кеш, вершины — по первому
@@ -233,6 +233,26 @@ int main(int argc, char **argv) {
     // Цепочка LOD: каждый следующий из предыдущего. У деталей граница закреплена (стыки соседних деталей не
     // расходятся), LOD — вдвое меньше; у сетки с весами граница свободна, число треугольников — из --lods
     const float scale = meshopt_simplifyScale(&v[0].p[0], nv, sizeof(Vert));
+    // Развёртка и нормаль — признаки упрощения: uv (вес 1 — развёртка ассета порядка метра), нормаль (вес 0.5)
+    std::vector<float> attrs;
+    if (uv_stream >= 0) {
+        attrs.resize(nv * 5);
+        const std::vector<uint8_t> &d = streams[(size_t)uv_stream].data;
+        for (size_t i = 0; i < nv; ++i) {
+            uint16_t hu, hv;
+            memcpy(&hu, &d[i * 8], 2);
+            memcpy(&hv, &d[i * 8 + 2], 2);
+            float n[3];
+            oct_decode_y(v[i].n, n);
+            float *a = &attrs[i * 5];
+            a[0] = half_to_float(hu);
+            a[1] = half_to_float(hv);
+            a[2] = n[0];
+            a[3] = n[1];
+            a[4] = n[2];
+        }
+    }
+    static const float attr_w[5] = {1.0f, 1.0f, 0.5f, 0.5f, 0.5f};
     std::vector<std::vector<uint32_t>> lods{idx};
     std::vector<float> lod_err{0.0f};
     while (skinned ? lods.size() <= lod_tris.size() : lods.size() < MAX_LODS) {
@@ -243,9 +263,13 @@ int main(int argc, char **argv) {
         if (prune && target >= src.size()) break;
         std::vector<uint32_t> dst(src.size());
         float err = 0.0f;
-        size_t n = meshopt_simplify(dst.data(), src.data(), src.size(), &v[0].p[0], nv, sizeof(Vert), target,
-                                    LOD_MAX_ERROR / scale,
-                                    skinned ? (prune ? (unsigned)meshopt_SimplifyPrune : 0u) : (unsigned)meshopt_SimplifyLockBorder, &err);
+        const unsigned opt = skinned ? (prune ? (unsigned)meshopt_SimplifyPrune : 0u) : (unsigned)meshopt_SimplifyLockBorder;
+        size_t n = attrs.empty()
+                       ? meshopt_simplify(dst.data(), src.data(), src.size(), &v[0].p[0], nv, sizeof(Vert), target,
+                                          LOD_MAX_ERROR / scale, opt, &err)
+                       : meshopt_simplifyWithAttributes(dst.data(), src.data(), src.size(), &v[0].p[0], nv, sizeof(Vert),
+                                                        attrs.data(), 5 * sizeof(float), attr_w, 5, nullptr, target,
+                                                        LOD_MAX_ERROR / scale, opt, &err);
         if (n == 0 || (float)n > (float)src.size() * LOD_MIN_GAIN) {
             // Одежда и машины (--prune): цепочка кончается там, где упрощение встало (швы ступеней и материалов)
             if (skinned && !prune) return die("LOD из --lods не вышел: упрощение остановилось", in_path), 1;
@@ -344,7 +368,7 @@ int main(int argc, char **argv) {
         put(b, l.error);
     }
     put_chunk(out, "LODS", b);
-    // Потоки вершин людей — в новом порядке вершин, со своими шапками; длины префиксов LOD — в LODV
+    // Потоки вершин (люди, развёртка) — в новом порядке вершин, со своими шапками; длины префиксов LOD — в LODV
     for (const Stream &s : streams) {
         b.assign(s.chunk->body.begin(), s.chunk->body.begin() + (long)s.head);
         b.insert(b.end(), s.data.begin(), s.data.end());
@@ -359,7 +383,7 @@ int main(int argc, char **argv) {
         for (uint32_t n : lod_verts) put(b, n);
         put_chunk(out, "LODV", b);
     }
-    static const char *const known[] = {"HEAD", "MATS", "VERT", "INDX", "CLUS", "LODS", "SKIN", "MRPH", "LODV"};
+    static const char *const known[] = {"HEAD", "MATS", "VERT", "INDX", "CLUS", "LODS", "SKIN", "MRPH", "LODV", "VUV0"};
     for (const Chunk &c : chunks) {
         bool skip = false;
         for (const char *k : known) skip |= !memcmp(c.tag, k, 4);
@@ -375,6 +399,6 @@ int main(int argc, char **argv) {
     fclose(f);
     printf("meshpack: %s — вершин %zu, треугольников %zu, LOD %zu (", out_path, nv, idx.size() / 3, lods.size());
     for (size_t l = 0; l < lods.size(); ++l) printf("%s%zu/%.3f м", l ? ", " : "", lods[l].size() / 3, (double)lod_err[l]);
-    printf("), кластеров %zu\n", clusters.size());
+    printf("), кластеров %zu%s\n", clusters.size(), uv_stream >= 0 ? ", с развёрткой" : "");
     return 0;
 }

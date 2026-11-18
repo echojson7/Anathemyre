@@ -8,6 +8,10 @@
 | vk-bootstrap | v1.4.367 | 294dc2cf9928d7ffce7ded39125d964b4f0362a0 | MIT | `src/*` |
 | meshoptimizer | v1.3 | 9e1f07b159d3cb777f1c67ed31fc11fd117986f4 | MIT | `meshoptimizer.h` и 7 файлов `src/` (кластеры, упрощение, кеш и выборка вершин, индексы); только `tools/meshpack`, в игру не входит |
 
+| bc7enc_rdo | master (18.11.2026) | — | MIT или Unlicense | `bc7enc.cpp/.h`, `rgbcx.cpp/.h`, `rgbcx_table4*.h`, `LICENSE` (кодеры BC7 и BC4/BC5); только `tools/texpack`, в игру не входит |
+| cgltf | v1.15 | — | MIT | `cgltf.h`; только `tools/meshpack` (вход glTF 2.0) |
+| stb_image | v2.32 | — | public domain или MIT | `stb_image.h` (только PNG); только `tools/texpack` |
+
 `vma_impl.cpp` — наш файл: реализация VMA с функциями от volk.
 SDL3 (zlib) здесь не лежит: версия и sha256 в `tools/versions.sh`, собирает `tools/third_party.sh` (`docs/build.md`).
 Обновление: заменить файлы целиком, поправить строку здесь и запись в `docs/decisions.md`.

@@ -167,6 +167,16 @@ bool mesh_parse(const u8 *data, usize size, Arena &arena, MeshData &out, const c
             out.wear_hip = get_f32(b);
             out.wear_back = get_f32(b);
             if (b.bad) { *err = "кусок WEAR испорчен"; return false; }
+        } else if (chunk_is(c, "VUV0") && c.version == 1) {
+            if (!verts) { *err = "VUV0 раньше VERT"; return false; }
+            if ((u64)nverts * 8 != b.size) { *err = "размер VUV0 не сходится с HEAD"; return false; }
+            out.uvs = {arena_push<MeshUv>(arena, nverts), nverts};
+            for (u32 i = 0; i < nverts; ++i) {
+                u32 u = get_u16(b), v = get_u16(b);
+                out.uvs.data[i].uv = u | (v << 16);
+                out.uvs.data[i].tan = get_u32(b);
+            }
+            if (b.bad) { *err = "кусок VUV0 испорчен"; return false; }
         } else if (chunk_is(c, "LODV") && c.version == 1) {
             u32 n = get_u32(b);
             if ((u64)n * 4 != b.size - b.pos) { *err = "кусок LODV испорчен"; return false; }
