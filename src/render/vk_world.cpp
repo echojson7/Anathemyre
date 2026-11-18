@@ -59,13 +59,14 @@ bool vk_world_layout() {
     si.magFilter = si.minFilter = VK_FILTER_NEAREST;
     if (!vk_check(vkCreateSampler(g_vk.device, &si, nullptr, &g_vk.lsm.raw), "vkCreateSampler")) return false;
     // 18, 19 — воздух для записи (сумма света в пыли и клетки солнца), 20, 21 — они же для выборки (трилинейно, по
-    // краю — сэмплер зондов; docs/air.md, vk_air.cpp)
-    constexpr u32 NB = 22;
+    // краю — сэмплер зондов; docs/air.md, vk_air.cpp); 22, 23 — шум облаков для записи и выборки (трилинейно, с
+    // заворотом — сэмплер сканов; docs/clouds.md, vk_clouds.cpp)
+    constexpr u32 NB = 24;
     VkDescriptorSetLayoutBinding b[NB] = {};
     VkSampler hist_samplers[2] = {g_vk.gi.sampler, g_vk.gi.sampler};
     for (u32 i = 0; i < NB; ++i) {
         bool sampled = i == 2 || i == 4 || i == 5 || i == 9 || i == 10 || i == 12 || i == 14 || i == 15 || i == 20 ||
-                       i == 21;
+                       i == 21 || i == 23;
         b[i].binding = i;
         b[i].descriptorType = sampled ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = i == 12 || i == 13 ? 2 : 1;
@@ -80,12 +81,13 @@ bool vk_world_layout() {
     b[16] = {16, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, RENDER_MAX_TEXTURES + 1, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
     b[17] = {17, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, &g_vk.textures.sampler};
     b[20].pImmutableSamplers = b[21].pImmutableSamplers = &g_vk.gi.sampler;
+    b[23].pImmutableSamplers = &g_vk.scans.sampler;
     auto li = vk_info<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
     li.bindingCount = NB;
     li.pBindings = b;
     if (!vk_check(vkCreateDescriptorSetLayout(g_vk.device, &li, nullptr, &w.set_layout), "vkCreateDescriptorSetLayout"))
         return false;
-    VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 11}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 11},
+    VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 12}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 12},
                                   {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, RENDER_MAX_TEXTURES + 1}, {VK_DESCRIPTOR_TYPE_SAMPLER, 1}};
     auto pi = vk_info<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
     pi.maxSets = 1;

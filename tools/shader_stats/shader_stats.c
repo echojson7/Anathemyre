@@ -79,7 +79,7 @@ int main(int argc, char **argv) {
     if (vkCreateDevice(pd, &di, NULL, &dev) != VK_SUCCESS) { fprintf(stderr, "vkCreateDevice\n"); return 1; }
     volkLoadDevice(dev);
 
-    // Общая раскладка игры: 22 привязки набора кадра мира + push-константы (адрес кадра, два слова)
+    // Общая раскладка игры: 24 привязки набора кадра мира + push-константы (адрес кадра, два слова)
     VkSamplerCreateInfo si = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     VkSampler smp, cmp;
     vkCreateSampler(dev, &si, NULL, &smp);
@@ -87,10 +87,10 @@ int main(int argc, char **argv) {
     si.compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
     vkCreateSampler(dev, &si, NULL, &cmp);
     VkSampler smp2[2] = {smp, smp};
-    VkDescriptorSetLayoutBinding b[22];
+    VkDescriptorSetLayoutBinding b[24];
     memset(b, 0, sizeof b);
-    for (uint32_t i = 0; i < 22; ++i) {
-        int sampled = i == 2 || i == 4 || i == 5 || i == 9 || i == 10 || i == 12 || i == 14 || i == 15 || i == 20 || i == 21;
+    for (uint32_t i = 0; i < 24; ++i) {
+        int sampled = i == 2 || i == 4 || i == 5 || i == 9 || i == 10 || i == 12 || i == 14 || i == 15 || i == 20 || i == 21 || i == 23;
         b[i].binding = i;
         b[i].descriptorType = sampled ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = i == 12 || i == 13 ? 2 : 1;
@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
     b[17].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     b[17].pImmutableSamplers = &smp;
     VkDescriptorSetLayoutCreateInfo sli = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    sli.bindingCount = 22;
+    sli.bindingCount = 24;
     sli.pBindings = b;
     VkDescriptorSetLayout sl;
     vkCreateDescriptorSetLayout(dev, &sli, NULL, &sl);

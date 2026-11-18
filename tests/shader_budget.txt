@@ -24,12 +24,12 @@ sun_vis.comp             -        56      0    44
 # остальные проходы кадра
 aa.comp                  -        48      0    12
 air_blur.comp            -        32      0     5
-air_cells.comp           -        64      0    41
+air_cells.comp           -        64      0    40
 air_march.comp           -        56      0    22
 air_sum.comp             -        32      0     1
-cloud_map.comp           -        72      0    31
-cloud_noise.comp         -        40      0    22
-cloud_shadow.comp        -        40      0    12
+cloud_map.comp           -        64      0    27
+cloud_noise.comp         -        40      0    21
+cloud_shadow.comp        -        32      0    11
 cull_count.comp          -        32      0     2
 cull_scan.comp           -        16      0     2
 cull_write.comp          -        32      0     3
@@ -41,7 +41,7 @@ gcache_bake.comp         -       256   1792   349
 gcache_light.comp        -       128      0    34
 gcache_scan.comp         -         8      0     1
 gi_blend.comp            -        24      0     4
-gi_trace.comp            -        72      0    45
+gi_trace.comp            -        72      0    44
 glare.comp               -        40      0     8
 ground_bake.comp         -        80      0  1403
 horizon.comp             -        32      0     3

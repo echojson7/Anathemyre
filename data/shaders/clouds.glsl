@@ -46,21 +46,11 @@ float cl_fbm(vec2 p, int n) {
     return s / (1.0 - a * 2.0);
 }
 
-// Куб шума, трилинейно, по кругу; p — в долях куба. r — клубы (Перлин–Ворли), g, b, a — ячеистый шум трёх
-// масштабов, от крупного к мелкому
-vec4 cloud_noise(vec3 p) {
-    CloudWords b = pc.frame.cl_noise;
-    vec3 q = p * float(CLOUD_N) - 0.5;
-    vec3 fl = floor(q);
-    vec3 t = q - fl;
-    ivec3 i0 = ivec3(fl) & (CLOUD_N - 1), i1 = (i0 + 1) & (CLOUD_N - 1);
-    int z0 = i0.z * CLOUD_N * CLOUD_N, z1 = i1.z * CLOUD_N * CLOUD_N, y0 = i0.y * CLOUD_N, y1 = i1.y * CLOUD_N;
-    vec4 c00 = mix(unpackUnorm4x8(b.v[z0 + y0 + i0.x]), unpackUnorm4x8(b.v[z0 + y0 + i1.x]), t.x);
-    vec4 c10 = mix(unpackUnorm4x8(b.v[z0 + y1 + i0.x]), unpackUnorm4x8(b.v[z0 + y1 + i1.x]), t.x);
-    vec4 c01 = mix(unpackUnorm4x8(b.v[z1 + y0 + i0.x]), unpackUnorm4x8(b.v[z1 + y0 + i1.x]), t.x);
-    vec4 c11 = mix(unpackUnorm4x8(b.v[z1 + y1 + i0.x]), unpackUnorm4x8(b.v[z1 + y1 + i1.x]), t.x);
-    return mix(mix(c00, c10, t.y), mix(c01, c11, t.y), t.z);
-}
+// Куб шума — картинка RGBA8 (cloud_noise.comp), выборка трилинейная по кругу (сэмплер с заворотом): одна выборка
+// текстурным блоком вместо восьми чтений буфера и смеси в шейдере (с 18.11, docs/clouds.md). p — в долях куба.
+// r — клубы (Перлин–Ворли), g, b, a — ячеистый шум трёх масштабов, от крупного к мелкому
+layout(set = 0, binding = 23) uniform sampler3D u_cloud_noise;
+vec4 cloud_noise(vec3 p) { return textureLod(u_cloud_noise, p, 0.0); }
 
 // Погода в точке (оси облаков, м): x — покров 0..1 (какую долю шума формы оставить облаком), y — рост облака
 // в долях слоя. Поля в десятки километров: где-то облака гуще и выше, где-то просветы

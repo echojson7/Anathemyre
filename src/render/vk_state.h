@@ -163,7 +163,8 @@ struct CloudSnap {
     f32 light[4] = {};  // светило облаков
 };
 struct CloudGpu {
-    GpuBuffer map, noise, shadow, info;
+    GpuBuffer map, shadow, info;
+    GpuImage noise;  // шум CLOUD_N³ RGBA8, места 22 (запись) и 23 (выборка) набора кадра мира
     VkPipeline pipe_noise = VK_NULL_HANDLE, pipe_map = VK_NULL_HANDLE, pipe_shadow = VK_NULL_HANDLE;
     u8 rg_map = 0, rg_noise = 0, rg_shadow = 0, rg_info = 0;
     bool noise_ready = false, ready = false;  // ready — слоты a и b собраны
@@ -365,6 +366,7 @@ struct GiGpu {
     u8 turn[GI_PROBES] = {};   // поворот следующего счёта (0..GI_K−1)
     u8 age[GI_PROBES] = {};    // счётов с нового, до GI_K: молодой показывает среднее каждый счёт
     u32 cursor = 0;            // следующее место очереди обновления
+    f32 due = 0;               // зондов очереди, которые время кадров уже задолжало (GI_Q_PROBES · 60 в секунду)
     f32 snap_sun[3] = {};      // светило последнего снимка
     u32 jobs_n = 0, rays_n = 0, chunks = 0;  // работ кадра, лучей на зонд, частей (лучи и смешение)
     bool snapped = false;      // этот кадр — снимок (ячейки света считаются так же: docs/lcache.md)
