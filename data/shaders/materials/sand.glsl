@@ -153,4 +153,7 @@ Surface sand_surf(SurfIn i, vec2 wind) {
     return s;
 }
 
-Surface surf_sand(SurfIn i) { return sand_surf(i, vec2(24.0, 7.0) / 25.0); }
+// И песок дюн (sand_dune.glsl, «как: sand»): ветер дюн — с запада-северо-запада
+Surface surf_sand(SurfIn i) {
+    return sand_surf(i, i.m.kind == KIND_SAND_DUNE ? vec2(24.0, -7.0) / 25.0 : vec2(24.0, 7.0) / 25.0);
+}
