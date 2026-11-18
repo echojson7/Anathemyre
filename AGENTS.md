@@ -13,7 +13,7 @@
 движения `docs/anim.md`, свет (этап 6) `docs/light.md`, тени солнца страницами `docs/shadow.md`, поле расстояний мира `docs/sdf.md`,
 зонды непрямого света `docs/gi.md`, ячейки отражённого света на поверхностях `docs/lcache.md`, огни и их тени `docs/lamps.md`,
 фабрика деталей (здания и предметы) `docs/parts.md`, оружие `docs/weapons.md`, подземная станция (Исподь) `docs/ispod.md`, сканы CC0 (проба) `docs/scans.md`,
-сглаживание краёв `docs/aa.md`, блеск ярких мест `docs/glare.md`, запуск до первого кадра `docs/startup.md`, шагающая турель «Вежа» `docs/vezha.md`, скрытный снайпер «Тать» `docs/tat.md`, оружие на теле и в руках `docs/arms.md`,
+линт ассетов в CI `docs/assetlint.md`, сглаживание краёв `docs/aa.md`, блеск ярких мест `docs/glare.md`, запуск до первого кадра `docs/startup.md`, шагающая турель «Вежа» `docs/vezha.md`, скрытный снайпер «Тать» `docs/tat.md`, оружие на теле и в руках `docs/arms.md`,
 как делаются модели и здания (конвейер ассетов) `docs/assets_pipeline_review.md`, пробные комнаты четырьмя способами сборки `docs/assets_rooms.md`.
 
 ## Что это за ветка
