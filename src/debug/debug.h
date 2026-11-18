@@ -23,6 +23,7 @@ struct DebugState {
     u32 gi_view = 0;          // непрямой свет (docs/gi.md): кадр, только он, без зондов (RENDER_GI_*, не сохраняется)
     bool local_off = false;   // без местной экспозиции (docs/light.md; сравнение, не сохраняется)
     bool lsm_off = false;     // тени огней полем расстояний, не картами (docs/lamp_shadows.md; сравнение, не сохраняется)
+    bool air_off = false;     // без воздуха: лучей солнца и огней в пыли (docs/air.md; сравнение, не сохраняется)
     u32 tonemap = 2;          // тонмаппинг: 0 — AgX, 1 — ACES, 2 — плёночная кривая UE5 (RENDER_TONEMAP_*; docs/light.md)
     // Стенд людей (stand.cpp): человек у Остова, кость согнута (B), скелет, морф (0 — нет, k — морф k − 1)
     bool people_lines = false; // люди мира: капсулы шага, путь выбранного, след касаний стоп (при отрезках L)
@@ -80,7 +81,7 @@ constexpr f32 STAND_SPEEDS[] = {1.0f, 0.5f, 0.25f, 0.1f};
 enum DebugTab : u32 { DEBUG_TAB_MAIN, DEBUG_TAB_LIGHT, DEBUG_TAB_PEOPLE, DEBUG_TAB_WORLD, DEBUG_TABS };
 
 // Строк проходов GPU и переполнений в панели
-constexpr u32 DEBUG_MAX_PASSES = 24, DEBUG_MAX_OVERFLOWS = 8, DEBUG_MAX_FRAME_PARTS = PROF_MAX_PARTS;
+constexpr u32 DEBUG_MAX_PASSES = 32, DEBUG_MAX_OVERFLOWS = 8, DEBUG_MAX_FRAME_PARTS = PROF_MAX_PARTS;
 // Что панель показывает: числа кадра (раз в секунду) и состояние, которое знает run_window
 struct DebugInfo {
     f64 fps, frame_ms, frame_max_ms, cpu_ms, gpu_ms, step_ms;
@@ -116,6 +117,7 @@ struct DebugInfo {
     u32 work_gi[3];           // зонды: посчитано, лучей, выборок поля лучами
     u32 work_lc[6];           // ячейки света: живых, новых, посчитано, лучей, без места, отложено
     u32 work_lsm[3];          // тени огней картами: граней нарисовано, вызовов в них, выборок карт светом
+    u32 work_air[3];          // воздух: клеток с пылью, шагов лучей солнца, выборок страниц теней ими
     const char *gc_off;       // почему кеш земли выключен (nullptr — включён)
     // Глаз прочитанного кадра (render_light, docs/light.md): освещённость земли, лк, и EV100; light = false — нет
     bool light;

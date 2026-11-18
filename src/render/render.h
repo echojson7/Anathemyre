@@ -41,6 +41,14 @@ struct RenderDecal {
 };
 static_assert(sizeof(RenderDecal) == 48, "RenderDecal — 48 байт");
 
+// Коробка пыли зала (воздух, docs/air.md) относительно камеры. 48 байт, как AirBox в data/shaders/common.glsl
+struct RenderAirBox {
+    f32 x, y, z, dust;       // середина коробки, метры от камеры; пыль, 1/м
+    f32 ux, uz, soft, pad0;  // ось x коробки в мире (ux, 0, uz), ось z — (−uz, 0, ux); мягкий край внутрь, м
+    f32 hx, hy, hz, pad1;    // половины сторон
+};
+static_assert(sizeof(RenderAirBox) == 48, "RenderAirBox — 48 байт");
+
 // Огонь (огни 6е, docs/lamps.md): колба (шар) или трубка (отрезок) относительно камеры. 64 байта, как Light в
 // data/shaders/common.glsl. Каркас раскладывает огни по клеткам (froxels), светит ими light.glsl
 constexpr u32 LIGHT_SHADOW = 1;  // flags: тень по полю расстояний мира
@@ -124,6 +132,16 @@ struct RenderStyle {
     bool eye_snap = true;  // глаз привыкает сразу (первый кадр, --timelapse: кадр — свой час)
     bool glow = true;      // светящиеся детали (стекло ламп, табло) светятся; выкл — вместе с лампами (F3, --nolamps)
     bool lamp_maps = true; // тени огней картами (docs/lamp_shadows.md); выкл — полем расстояний (F3, --nolsm)
+    bool air = true;       // воздух: лучи солнца и огней в пыли (docs/air.md); выкл — без него (F3, --noair)
+};
+
+// Воздух (docs/air.md, data/sky.txt air_*): пыль у земли — слой по высоте от нуля карты, и коробки пыли залов
+struct RenderAir {
+    f32 dust = 0.0f;        // рассеяние и поглощение у нуля карты, 1/м
+    f32 dust_h = 30.0f;     // высота слоя, м
+    f32 tint[3] = {1.0f, 1.0f, 1.0f};  // доля рассеяния по каналам
+    f32 g = 0.8f, iso = 0.3f;          // лепесток вперёд; доля рассеяния во все стороны
+    Span<const RenderAirBox> boxes;
 };
 
 // Главный свет (light.glsl): солнце, ночью луна
@@ -186,6 +204,7 @@ struct RenderFrame {
     Span<const RenderLineVertex> lines;  // пары вершин
     Span<const RenderDecal> decals;      // все, что задевают видимое; по клеткам их раскладывает рендер (froxels)
     Span<const RenderPointLight> lights; // огни кадра; по клеткам их раскладывает рендер (froxels)
+    RenderAir air;                       // пыль у земли и в залах (docs/air.md)
     Span<const RenderSkinned> skinned;   // люди кадра: экземпляр, палитра, морфы (скиннинг, ниже)
     Span<const RenderBone> bones;        // палитры костей людей кадра подряд
 };
@@ -202,13 +221,14 @@ struct RenderConfig {
 };
 
 constexpr u32 RENDER_MAX_POINTS = 4096;
-constexpr u32 RENDER_MAX_PASSES = 24;  // строк времени проходов GPU (F3)
+constexpr u32 RENDER_MAX_PASSES = 32;  // строк времени проходов GPU (F3)
 constexpr u32 RENDER_MAX_LINE_VERTICES = 32768;
 constexpr u32 RENDER_MAX_INSTANCES = 65536;
 constexpr u32 RENDER_MAX_MESHES = 4096;
 constexpr u32 RENDER_MAX_MATERIALS = 1024;
 constexpr u32 RENDER_MAX_DECALS = 512;
 constexpr u32 RENDER_MAX_LIGHTS = 1024;
+constexpr u32 RENDER_MAX_AIR_BOXES = 32;
 constexpr u32 RENDER_MAX_SKINS = 64;       // источников скиннинга (сетка × скелет)
 constexpr u32 RENDER_MAX_SKINNED = 768;    // сеток на костях в кадре: люди (48 × тело и до 10 вещей), машины
 constexpr u32 RENDER_MAX_BONES = 16384;    // матриц костей в кадре
@@ -361,6 +381,8 @@ struct RenderWork {
     // Тени огней картами (docs/lamp_shadows.md): граней нарисовано, вызовов кластеров в них, кластеров без места,
     // выборок карт светом
     u32 lsm_faces, lsm_draws, lsm_over, lsm_taps;
+    // Воздух (docs/air.md): клеток с пылью, шагов лучей солнца, выборок страниц теней ими
+    u32 air_cells, air_steps, air_taps;
     u32 sm_blend;  // перетекание шага светила: % нового набора, 100 — один набор (в --work не пишется)
     const char *gc_off;  // почему кеш земли выключен (nullptr — включён); в --work не пишется
 };

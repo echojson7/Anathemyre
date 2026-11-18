@@ -1,0 +1,40 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Сумма воздуха вдоль луча (docs/air.md): поток — столбец клеток плитки, от камеры вдаль. До прохода клетка хранит
+// свет на метр пути и плотность (air_cells.comp), после — свет, рассеянный к камере пылью от камеры до центра
+// клетки, и долю света, что доходит от центра клетки до камеры. На отрезке однородной пыли свет копится как
+// L·Δ·(1 − e^(−x))/x, x = σΔ (Hillaire 2015): без потерь и лишнего при любой толщине слоя. Клетки солнца получают
+// ту же долю в .g — её берут лучи солнца (air_march.comp)
+#include "air.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 16, rgba16f) uniform image3D u_air_sum_w;
+layout(set = 0, binding = 17, rgba16f) uniform image3D u_air_sun_w;
+
+// Отрезок длины len в пыли m (свет на метр, плотность): свет s и доля tr — дальше по лучу
+void air_seg(vec4 m, float len, inout vec3 s, inout float tr) {
+    float x = m.a * len;
+    float k = x > 1e-4 ? (1.0 - exp(-x)) / x : 1.0 - 0.5 * x;
+    s += tr * m.rgb * (len * k);
+    tr *= exp(-x);
+}
+
+void main() {
+    FrameData f = pc.frame;
+    uvec2 c = gl_GlobalInvocationID.xy;
+    if (c.x >= f.air_nx || c.y >= f.air_ny) return;
+    vec3 s = vec3(0.0);
+    float tr = 1.0, tp = 0.0;
+    vec4 prev = vec4(0.0);
+    for (uint k = 0u; k < AIR_NZ; ++k) {
+        ivec3 q = ivec3(ivec2(c), int(k));
+        vec4 cur = imageLoad(u_air_sum_w, q);
+        float tb = air_t(float(k) / float(AIR_NZ)), tc = air_t((float(k) + 0.5) / float(AIR_NZ));
+        // От центра прошлой клетки до границы — её пыль, от границы до своего центра — своя
+        air_seg(prev, tb - tp, s, tr);
+        air_seg(cur, tc - tb, s, tr);
+        imageStore(u_air_sum_w, q, vec4(s, tr));
+        imageStore(u_air_sun_w, q, vec4(imageLoad(u_air_sun_w, q).r, tr, 0.0, 0.0));
+        prev = cur;
+        tp = tc;
+    }
+}

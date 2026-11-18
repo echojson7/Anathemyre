@@ -104,10 +104,35 @@ static bool prefab_lamp(World &w, const TextLine &l, const WPos &o, u32 quarter,
     return true;
 }
 
+// Пыль зала (воздух 5б, docs/air.md), числа — в осях заготовки:
+//   air <x> <y> <z> <sx> <sy> <sz> <пыль 1/км> [yaw градусы]
+// Коробка — внутри стен: пыль за стеной видна снаружи. Края мягкие (air.glsl): у стен пыль редеет
+static bool prefab_air(World &w, const TextLine &l, const WPos &o, u32 quarter, char *err, usize err_cap) {
+    if (l.count < 8) { text_err(err, err_cap, l.line, "air <x> <y> <z> <sx> <sy> <sz> <пыль 1/км> [yaw градусы]"); return false; }
+    f32 v[7];
+    for (u32 i = 0; i < 7; ++i)
+        if (!parse_f32(l.w[1 + i], v[i])) { text_err(err, err_cap, l.line, "у air — числа"); return false; }
+    SceneKeys k;
+    if (!scene_keys(l, 8, k, "yaw", err, err_cap)) return false;
+    f32 h[3] = {v[3] * 0.5f, v[4] * 0.5f, v[5] * 0.5f};
+    if (h[0] <= 0 || h[1] <= 0 || h[2] <= 0 || v[6] <= 0 || v[6] > 1000) {
+        text_err(err, err_cap, l.line, "air: размеры > 0, пыль 0..1000 1/км");
+        return false;
+    }
+    f32 dx = v[0], dz = v[2];
+    quarter_rotate(quarter, dx, dz);
+    if (!airs_add(w, offset_pos(o, dx, v[1], dz), quarter * 0x40000000u + turn_from_deg(k.yaw), h, v[6])) {
+        text_err(err, err_cap, l.line, "таблица пыли полна");
+        return false;
+    }
+    return true;
+}
+
 // Заготовка (data/prefabs/<имя>.txt, docs/text.md) в точке o (с высотой земли), повёрнутая на quarter четвертей:
 //   part <сетка> <x> <y> <z> [yaw градусы] [material имя] [seed n]
 //   decal <вид> <материал> <x> <y> <z> <sx> <sy> <sz> [yaw градусы] [seed n]
 //   light … (prefab_lamp)
+//   air … (prefab_air)
 static bool prefab_load(World &w, const u8 *text, usize size, const WPos &o, u32 quarter, u32 seed0, char *err,
                         usize err_cap) {
     const u32 turn0 = quarter * 0x40000000u;
@@ -119,8 +144,12 @@ static bool prefab_load(World &w, const u8 *text, usize size, const WPos &o, u32
             if (!prefab_lamp(w, l, o, quarter, err, err_cap)) return false;
             continue;
         }
+        if (str_eq(l.w[0], "air")) {
+            if (!prefab_air(w, l, o, quarter, err, err_cap)) return false;
+            continue;
+        }
         bool part = str_eq(l.w[0], "part"), decal = str_eq(l.w[0], "decal");
-        if (!part && !decal) { text_err(err, err_cap, l.line, "заготовка: ожидается part, decal или light"); return false; }
+        if (!part && !decal) { text_err(err, err_cap, l.line, "заготовка: ожидается part, decal, light или air"); return false; }
         u32 need = part ? 5 : 9;
         if (l.count < need) {
             text_err(err, err_cap, l.line, part ? "part <сетка> <x> <y> <z>" : "decal <вид> <материал> <x> <y> <z> <sx> <sy> <sz>");

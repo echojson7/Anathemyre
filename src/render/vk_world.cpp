@@ -49,11 +49,14 @@ bool vk_world_layout() {
     si.compareEnable = VK_FALSE;
     si.magFilter = si.minFilter = VK_FILTER_NEAREST;
     if (!vk_check(vkCreateSampler(g_vk.device, &si, nullptr, &g_vk.lsm.raw), "vkCreateSampler")) return false;
-    constexpr u32 NB = 16;
+    // 16, 17 — воздух для записи (сумма света в пыли и клетки солнца), 18, 19 — они же для выборки (трилинейно, по
+    // краю — сэмплер зондов; docs/air.md, vk_air.cpp)
+    constexpr u32 NB = 20;
     VkDescriptorSetLayoutBinding b[NB] = {};
     VkSampler hist_samplers[2] = {g_vk.gi.sampler, g_vk.gi.sampler};
     for (u32 i = 0; i < NB; ++i) {
-        bool sampled = i == 2 || i == 4 || i == 5 || i == 9 || i == 10 || i == 12 || i == 14 || i == 15;
+        bool sampled = i == 2 || i == 4 || i == 5 || i == 9 || i == 10 || i == 12 || i == 14 || i == 15 || i == 18 ||
+                       i == 19;
         b[i].binding = i;
         b[i].descriptorType = sampled ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = i == 12 || i == 13 ? 2 : 1;
@@ -65,12 +68,13 @@ bool vk_world_layout() {
     b[12].pImmutableSamplers = hist_samplers;
     b[14].pImmutableSamplers = &g_vk.lsm.cmp;
     b[15].pImmutableSamplers = &g_vk.lsm.raw;
+    b[18].pImmutableSamplers = b[19].pImmutableSamplers = &g_vk.gi.sampler;
     auto li = vk_info<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
     li.bindingCount = NB;
     li.pBindings = b;
     if (!vk_check(vkCreateDescriptorSetLayout(g_vk.device, &li, nullptr, &w.set_layout), "vkCreateDescriptorSetLayout"))
         return false;
-    VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 9}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9}};
+    VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 11}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 11}};
     auto pi = vk_info<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
     pi.maxSets = 1;
     pi.poolSizeCount = 2;
@@ -138,7 +142,7 @@ bool vk_world_init() {
         ok = vk_make_compute(&w.pipe_light[k], "light_cells.comp", &si) && ok;
     }
     return ok && vk_gcache_init() && vk_shadow_init() && vk_sdf_init() && vk_lsm_init() &&
-           vk_gi_init() && vk_lcache_init() && vk_scans_init() && vk_aa_init();
+           vk_gi_init() && vk_lcache_init() && vk_scans_init() && vk_aa_init() && vk_air_init();
 }
 
 static void destroy_image(GpuImage &im) {
@@ -172,6 +176,7 @@ void vk_world_shutdown() {
     vk_gi_shutdown();
     vk_lcache_shutdown();
     vk_aa_shutdown();
+    vk_air_shutdown();
     vk_scans_shutdown();
     if (w.pool) vkDestroyDescriptorPool(g_vk.device, w.pool, nullptr);
     if (w.set_layout) vkDestroyDescriptorSetLayout(g_vk.device, w.set_layout, nullptr);
@@ -249,7 +254,7 @@ static bool ensure_images() {
         wr[i].pImageInfo = &ii[i];
     }
     vkUpdateDescriptorSets(g_vk.device, 2, wr, 0, nullptr);
-    return vk_aa_images(w.set);
+    return vk_aa_images(w.set) && vk_air_images(w.set);
 }
 
 void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
@@ -315,6 +320,7 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     vk_gi_fill(g, f, fs);
     vk_lcache_fill(g, f);
     vk_gcache_light_fill(g, f);
+    vk_air_fill(g, f, images);
 }
 
 static void dispatch(VkCommandBuffer cmd, VkPipeline p, VkDeviceAddress frame, u32 gx, u32 gy) {
@@ -428,6 +434,7 @@ static void record_tiles_clear(VkCommandBuffer cmd, void *) {
         head[k * 4 + 3] = 0;
     }
     vkCmdUpdateBuffer(cmd, g_vk.world.tiles.buffer, 0, sizeof head, head);
+    vk_air_clear(cmd);
 }
 
 static void record_tiles(VkCommandBuffer cmd, void *) {
@@ -528,6 +535,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     vk_lcache_begin(g_wf.frame);
     rg_pass("плитки: обнулить", "плитки", record_tiles_clear, nullptr);
     rg_use(w.rg_tiles, RG_COPY_WRITE);
+    vk_air_clear_uses();
     rg_pass("плитки: разбор", "плитки", record_tiles, nullptr);
     rg_use(w.rg_id, RG_IMG_CS_READ);
     rg_use(w.rg_tiles, RG_CS_WRITE);
@@ -539,12 +547,17 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     vk_gcache_tiles_uses();
     vk_shadow_tiles_uses();
     vk_lcache_tiles_uses();
+    vk_air_tiles_uses();
+    // Воздух (docs/air.md): клетки по дальнему краю плиток; их заявки страниц теней — до выдачи страниц
+    vk_air_cells_passes(&fs.frame.address);
     vk_gcache_bake_passes();
     vk_shadow_passes();
     // Ячейки света (docs/lcache.md): заявки поставил разбор плиток; работы и лучи — до освещения
     vk_lcache_passes();
     // Отражённый свет земли в тексели кеша (docs/gcache.md): зонды и ячейки этого кадра уже посчитаны
     vk_gcache_light_pass();
+    // Лучи солнца в пыли — по страницам теней этого кадра
+    vk_air_march_passes(&fs.frame.address);
     static const char *const light_names[TILE_KINDS] = {"освещение: небо", "освещение: земля", "освещение: сетки",
                                                         "освещение: смесь", "освещение: земля на пиксель"};
     for (u32 k = 0; k < TILE_KINDS; ++k) {
@@ -569,6 +582,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         vk_lsm_reads();
         vk_gi_reads();
         vk_lcache_reads();
+        vk_air_reads();
         vk_skin_prev_read();
         vk_aa_light_uses(k == 0);
     }

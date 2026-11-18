@@ -1,0 +1,110 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Клетки воздуха (docs/air.md): поток — клетка (плитка AIR_TILE пикселей × слой по расстоянию). В центре клетки —
+// плотность пыли (у земли и коробок заготовок) и свет в ней: рассеянный (зонды, где их нет — небо), огни с тенью
+// из их карт (без карты — конусом по полю) — в u_air_sum: свет на метр пути × экспозиция и плотность; сумму вдоль
+// луча потом считает air_sum.comp. Солнце — гладкая видимость по земле и облакам в u_air_sun (плотность ×
+// видимость); тень построек считают лучи солнца (air_march.comp) по страницам теней, а клетка заявляет страницы
+// под лучами своей плитки. Клетки дальше дальнего края своей плитки и соседних не прочтёт ни один пиксель: нули
+#include "air.glsl"
+#include "shadow_req.glsl"
+#include "gi.glsl"
+#include "lamps.glsl"
+#include "clouds.glsl"
+#include "horizon.glsl"
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+layout(set = 0, binding = 16, rgba16f) uniform writeonly image3D u_air_sum_w;
+layout(set = 0, binding = 17, rgba16f) uniform writeonly image3D u_air_sun_w;
+
+// Дальний край плитки воздуха (м по лучу, до AIR_FAR), за краем кадра — край
+float air_tmax_at(int x, int y) {
+    FrameData f = pc.frame;
+    x = clamp(x, 0, int(f.air_nx) - 1);
+    y = clamp(y, 0, int(f.air_ny) - 1);
+    return uintBitsToFloat(f.air_tmax.v[uint(y) * f.air_nx + uint(x)]);
+}
+
+// Страницы теней уровня lv под шаром m (м) вокруг точки rel: запас — выборка 2×2 и полтекселя
+void air_request_level(vec3 rel, float m, int set, int lv, bool bg) {
+    if (lv >= SM_LEVELS) return;
+    int k = set * SM_LEVELS + lv;
+    float t = sm_texel(k);
+    sm_touch_square(k, sm_window(rel, k), m / t + 1.5, bg);
+}
+// Уровни обоих краёв шара: глубина в нём меняется на доли слоя — не больше двух уровней
+void air_request_set(vec3 rel, float m, int set, bool bg) {
+    FrameData f = pc.frame;
+    if (length(rel) - m > f.sm_far) return;
+    float depth = dot(rel, f.forward.xyz);
+    vec2 ru = sm_ru(rel, set);
+    float far = max(abs(ru.x), abs(ru.y));
+    int k0 = sm_level_air(depth - m, max(far - m, 0.0));
+    int k1 = min(sm_level_air(depth + m, far + m), k0 + 1);
+    air_request_level(rel, m, set, k0, bg);
+    if (k1 > k0) air_request_level(rel, m, set, k1, bg);
+}
+// Как sm_request: показанные наборы — сразу, набор в фоне — своим списком
+void air_request(vec3 rel, float m) {
+    FrameData f = pc.frame;
+    if (f.sm_on == 0u) return;
+    if ((f.sm_read & 1u) != 0u || f.sm_bg == 1u) air_request_set(rel, m, 0, f.sm_bg == 1u);
+    if ((f.sm_read & 2u) != 0u || f.sm_bg == 2u) air_request_set(rel, m, 1, f.sm_bg == 2u);
+}
+
+void main() {
+    FrameData f = pc.frame;
+    uvec3 c = gl_GlobalInvocationID;
+    if (c.x >= f.air_nx || c.y >= f.air_ny) return;
+    int x = int(c.x), y = int(c.y);
+    // Выборка пикселя у края плитки берёт и соседний столбец (трилинейно): клетки нужны до края соседей
+    float own = air_tmax_at(x, y);
+    float reach = max(max(max(air_tmax_at(x - 1, y - 1), air_tmax_at(x, y - 1)), max(air_tmax_at(x + 1, y - 1),
+                                                                                       air_tmax_at(x - 1, y))),
+                      max(max(air_tmax_at(x + 1, y), air_tmax_at(x - 1, y + 1)),
+                          max(air_tmax_at(x, y + 1), air_tmax_at(x + 1, y + 1))));
+    reach = max(reach, own);
+    float zk = float(c.z);
+    float t0 = air_t(zk / float(AIR_NZ)), t1 = air_t((zk + 1.0) / float(AIR_NZ));
+    float tc = air_t((zk + 0.5) / float(AIR_NZ));
+    vec4 sum = vec4(0.0), sun = vec4(0.0);
+    vec3 dir = air_ray(vec2(c.xy) * float(AIR_TILE) + 0.5 * float(AIR_TILE));
+    vec3 p = dir * tc;
+    float sig = t0 <= reach ? air_density(p) : 0.0;
+    if (sig > 0.0) {
+        // Рассеянный: среднее зондов вверх и вниз (E/π — яркость полусферы), выборка точки воздуха — без сдвига по
+        // нормали. Внутри окон зондов клетка без зондов рядом — в стене или в толще земли: света нет (запасное небо
+        // там светило бы сквозь стену). За окнами и без зондов — небо с отсветом земли, под грунтом у проёмов — ничего
+        GiSample g = gi_sample_air(p);
+        vec3 amb = 0.5 * (g.irr + g.refl.rgb) * smoothstep(0.0, 0.25, g.cov);
+        float open = f.gi_on != 0u ? 1.0 - gi_cover(GI_LEVELS - 1, p) : 1.0;
+        if (open > 0.0) {
+            vec3 sky = 0.5 * (atmo_ambient(vec3(0.0, 1.0, 0.0)) + atmo_ambient(vec3(0.0, -1.0, 0.0)));
+            amb = mix(amb, sky * (1.0 - gi_buried(p + f.sdf_cam.xyz)), open);
+        }
+        // Огни клетки froxels: освещённость площадки к огню с тенью × фаза к взгляду
+        vec3 lamps = vec3(0.0);
+        uint fi = froxel_at(p);
+        uint cnt = froxel_light_count(fi);
+        float skip = lamp_e_skip();
+        for (uint k = 0u; k < cnt; ++k) {
+            Light l = f.lights.v[froxel_light(fi, k)];
+            vec3 dl = lamp_closest(l, p) - p;
+            float d = length(dl);
+            if (d >= l.radius || d < 1e-3) continue;
+            vec3 to = dl / d;
+            lamps += lamp_e(l, p, to, 6u, skip) * air_phase(dot(to, dir));
+        }
+        float ex = f.sky_out.v[SKY_OUT_EYE].x;
+        sum = vec4(min(f.air_tint * sig * (amb + lamps) * ex, vec3(60000.0)), sig);
+        // Солнце: видимость по земле и облакам (как sun_visibility без страниц)
+        vec3 l = normalize(f.sun_dir.xyz);
+        float v = h_sun_shadow(p, l);
+        v = v > 0.0 ? v * cloud_shadow(p) : 0.0;
+        sun = vec4(sig * v, 0.0, 0.0, 0.0);
+        // Страницы теней под лучами солнца плитки: шар клетки — полудиагональ плитки поперёк, половина слоя вдоль
+        if (v > 0.0 && t0 <= own) air_request(p, t1 * f.pixel_angle * (0.7072 * float(AIR_TILE)) + (t1 - tc));
+        atomicAdd(f.stats.v[STAT_AIR_CELLS], 1u);
+    }
+    imageStore(u_air_sum_w, ivec3(c), sum);
+    imageStore(u_air_sun_w, ivec3(c), sun);
+}

@@ -451,6 +451,20 @@ struct AaGpu {
     i32 cx = 0, cz = 0;
     f32 x = 0, y = 0, z = 0, right[3] = {}, up[3] = {}, forward[3] = {}, proj[2] = {};
 };
+// Воздух (vk_air.cpp, docs/air.md): клетки плиток AIR_TILE пикселей × AIR_NZ слоёв до AIR_FAR по расстоянию,
+// слой z — на t = AIR_A·((1 + AIR_FAR/AIR_A)^(z/AIR_NZ) − 1); лучи солнца — на пиксель половины кадра
+constexpr u32 AIR_TILE = 16, AIR_NZ = 64;
+constexpr f32 AIR_FAR = 160.0f, AIR_A = 1.0f;  // м: как в air.glsl
+struct AirGpu {
+    GpuImage sum, sun;               // 3D RGBA16F nx × ny × AIR_NZ: свет в пыли и его сумма; солнце в клетке
+    GpuBuffer depth, ray, tmp, tmax; // расстояния и лучи половины кадра, размытие, дальний край плиток
+    GpuBuffer boxes[FRAMES_IN_FLIGHT];
+    VkPipeline pipe_cells = VK_NULL_HANDLE, pipe_sum = VK_NULL_HANDLE, pipe_march = VK_NULL_HANDLE,
+               pipe_blur = VK_NULL_HANDLE;
+    u8 rg_sum = 0, rg_sun = 0, rg_depth = 0, rg_ray = 0, rg_tmp = 0, rg_tmax = 0;
+    u32 nx = 0, ny = 0, w2 = 0, h2 = 0;
+    bool on = false;  // воздух в этом кадре
+};
 struct PendingFree {
     u32 mesh;
     u64 frame;  // освободить, когда кадров нарисовано не меньше
@@ -529,13 +543,13 @@ struct VkState {
     ScansGpu scans;
     // Froxels (vk_froxel.cpp): клетки 64×64 пикселя × FROXEL_Z слоёв глубины
     GpuBuffer froxels;     // списки на клетку, FROXEL_STRIDE u32
-    GpuBuffer media;       // среда на клетку (туман и пыль, vec4) — место для света пользователя, пока нули
     u32 froxel_cap = 0;    // на сколько клеток выделены буферы
     VkPipeline pipe_froxel = VK_NULL_HANDLE;
-    u8 rg_froxels = 0, rg_media = 0;
+    u8 rg_froxels = 0;
     DiagGpu diag;
     SkinGpu skin;
     AaGpu aa;
+    AirGpu air;
     // Время проходов на GPU за прошлый кадр слота (render_gpu_passes)
     u32 pass_count = 0;
     const char *pass_names[GPU_MAX_MARKS] = {};
@@ -691,6 +705,12 @@ bool vk_aa_init();
 void vk_aa_shutdown();
 bool vk_aa_images(VkDescriptorSet set);
 void vk_aa_fill(FrameGpu &g, const RenderFrame &f);
+// Воздух (vk_air.cpp, docs/air.md): конвейеры; картинки под размер кадра и места 16–19 набора кадра мира; данные
+// кадра (images — картинки кадра мира есть)
+bool vk_air_init();
+void vk_air_shutdown();
+bool vk_air_images(VkDescriptorSet set);
+void vk_air_fill(FrameGpu &g, const RenderFrame &f, bool images);
 // Интерфейс поверх кадра (vk_ui.cpp): свой конвейер без глубины; проход — в vk_graph.h
 bool vk_ui_init();
 void vk_ui_shutdown();

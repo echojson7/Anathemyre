@@ -34,7 +34,7 @@ struct FrameGpu {
     u32 instance_count, vis_max;
     u32 g_first[12];  // начало индексов кольца земли L в этом кадре
     // Froxels (vk_froxel.cpp): огни кадра и списки огней и декалей по клеткам
-    VkDeviceAddress lights, froxels, media;
+    VkDeviceAddress lights, froxels;
     u32 light_count, froxel_x, froxel_y, froxel_z;
     f32 froxel_near, froxel_far;
     u32 froxel_on, froxel_heat;
@@ -119,6 +119,14 @@ struct FrameGpu {
     // список отрисовки (экземпляр, кластер)
     VkDeviceAddress lsm_jobs, lsm_draws, lsm_counts, lsm_list;
     u32 lsm_on, lsm_jobs_n, lsm_pad0, lsm_pad1;
+    // Воздух (vk_air.cpp, docs/air.md): коробки пыли залов, расстояния половины кадра, свет солнца в воздухе и его
+    // размытие (rgb половинками), дальний край плиток воздуха (биты f32)
+    VkDeviceAddress air_boxes, air_depth, air_ray, air_tmp, air_tmax;
+    u32 air_on, air_boxes_n, air_steps, air_w2;  // air_w2, air_h2 — размер половины кадра
+    u32 air_h2, air_nx, air_ny, air_pad0;        // клеток по x и y (слоёв — AIR_NZ)
+    f32 air_far, air_lnk, air_dust, air_dust_h;  // дальность, м; ln(1 + far / AIR_A); пыль у нуля карты, 1/м; высота слоя
+    f32 air_tint[3], air_g;                      // доля рассеяния по каналам; лепесток вперёд
+    f32 air_iso, air_pad1, air_pad2, air_pad3;   // доля рассеяния во все стороны
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
@@ -153,7 +161,9 @@ constexpr u32 GC_LIGHT_ON = 1, GC_LIGHT_ALL = 2;  // gc_lmode (common.glsl): с�
 // Тени огней картами (docs/lamp_shadows.md): граней нарисовано, вызовов кластеров в них (до обрезки), граней, где
 // вызовы не влезли, выборок карт светом
 constexpr u32 STAT_LSM_FACES = 40, STAT_LSM_DRAWS = 41, STAT_LSM_OVER = 42, STAT_LSM_TAPS = 43;
-constexpr u32 STAT_COUNT = 44;
+// Воздух (docs/air.md): клеток с пылью, шагов лучей солнца, выборок страниц теней ими
+constexpr u32 STAT_AIR_CELLS = 44, STAT_AIR_STEPS = 45, STAT_AIR_TAPS = 46;
+constexpr u32 STAT_COUNT = 47;
 // Виды плиток кадра мира (TILE_* в common.glsl): небо, земля из кеша (и небо), сетки (и небо), смесь земли и
 // сеток, земля на пиксель (и небо)
 constexpr u32 TILE_KINDS = 5;

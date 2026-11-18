@@ -44,6 +44,14 @@ struct LsmJob { vec3 c; float self_r; vec3 axis; uint layer; vec3 face; uint pad
 layout(buffer_reference, scalar) readonly buffer LsmJobs { LsmJob v[]; };
 layout(buffer_reference, scalar) buffer LsmCounts { uint v[]; };  // вызовов на грань кадра (атомарно)
 layout(buffer_reference, scalar) buffer HMap { uint v[]; };  // карта горизонта (horizon.glsl), пишет horizon.comp
+// Воздух (docs/air.md, air.glsl): коробка пыли зала от камеры — середина, пыль 1/м; ось x коробки в плоскости xz,
+// мягкий край, м; половины сторон (RenderAirBox). Расстояния половины кадра, свет солнца в воздухе (rgb половинками),
+// дальний край плитки воздуха (биты f32, атомарный максимум)
+struct AirBox { vec3 c; float dust; vec2 u; float soft; float pad0; vec3 h; float pad1; };
+layout(buffer_reference, scalar) readonly buffer AirBoxes { AirBox v[]; };
+layout(buffer_reference, scalar) buffer AirFloats { float v[]; };
+layout(buffer_reference, scalar) buffer AirTexels { uvec2 v[]; };
+layout(buffer_reference, scalar) buffer AirWords { uint v[]; };
 const uint STAT_VIS_WANT = 0u;       // видимых кластеров до обрезки по vis_max
 const uint STAT_FROXEL_LIGHTS = 1u;  // клеток, где огни не влезли (свет перебирает все огни кадра)
 const uint STAT_FROXEL_DECALS = 2u;  // клеток, где декали не влезли
@@ -91,6 +99,8 @@ const uint STAT_GC_LIT = 39u;  // текселей кеша земли, чей �
 // Тени огней картами (docs/lamp_shadows.md): граней нарисовано, вызовов кластеров в них (до обрезки), граней, где
 // вызовы не влезли, выборок карт светом
 const uint STAT_LSM_FACES = 40u, STAT_LSM_DRAWS = 41u, STAT_LSM_OVER = 42u, STAT_LSM_TAPS = 43u;
+// Воздух (docs/air.md): клеток с пылью, шагов лучей солнца, выборок страниц теней ими
+const uint STAT_AIR_CELLS = 44u, STAT_AIR_STEPS = 45u, STAT_AIR_TAPS = 46u;
 const uint GC_LIGHT_ON = 1u, GC_LIGHT_ALL = 2u;  // gc_lmode: свет в кеше читается; пересчитать все страницы кадра
 // org — точка лучей, м от якоря; ao — половинками ближнее затенение по полю у точки ячейки (x) и оно же,
 // сглаженное как свет (y): его лучи ячейки уже видят, пиксель делит своё на него (light.glsl, lc_ao)
@@ -266,7 +276,6 @@ layout(buffer_reference, scalar) buffer FrameData {
     // Froxels (docs/frame.md «Froxels», froxel.glsl): огни кадра, списки огней и декалей по клеткам, среда клеток
     Lights lights;
     Froxels froxels;
-    Vec4s media;              // туман и пыль на клетку — место для света пользователя, пока нули
     uint light_count, froxel_x, froxel_y, froxel_z;
     float froxel_near, froxel_far;
     uint froxel_on, froxel_heat;
@@ -393,6 +402,18 @@ layout(buffer_reference, scalar) buffer FrameData {
     LsmCounts lsm_counts;
     VisClusters lsm_list;
     uint lsm_on, lsm_jobs_n, lsm_pad0, lsm_pad1;
+    // Воздух (docs/air.md, air.glsl, vk_air.cpp): коробки пыли залов, расстояния половины кадра, свет солнца в
+    // воздухе и его размытие, дальний край плиток воздуха
+    AirBoxes air_boxes;
+    AirFloats air_depth;
+    AirTexels air_ray, air_tmp;
+    AirWords air_tmax;
+    uint air_on, air_boxes_n, air_steps, air_w2;
+    uint air_h2, air_nx, air_ny, air_pad0;
+    float air_far, air_lnk, air_dust, air_dust_h;
+    vec3 air_tint;
+    float air_g;
+    float air_iso, air_pad1, air_pad2, air_pad3;
 };
 
 layout(push_constant, scalar) uniform Push {

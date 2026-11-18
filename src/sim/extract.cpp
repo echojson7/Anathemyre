@@ -40,6 +40,7 @@ void sim_extract(const World &w, Extract &e) {
     e.terrain = &w.terrain;
     e.decals = &w.decals;
     e.lamps = &w.lamps;
+    e.airs = &w.airs;
     e.coll = &w.coll;
     e.gait = &w.gait;
     e.actions = &w.actions;

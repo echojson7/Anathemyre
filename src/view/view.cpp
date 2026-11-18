@@ -70,6 +70,43 @@ static void build_decals(const Decals &d, const ViewAssets &assets, const WPos &
     out.decals = {dst, n};
 }
 
+// Воздух (docs/air.md): пыль у земли — из data/sky.txt (у пустыни — по маске под камерой, как дымка), коробки
+// пыли залов — относительно камеры, не дальше AIR_BOX_FAR (дальше лучей воздуха нет: AIR_FAR в vk_air.cpp)
+constexpr f32 AIR_BOX_FAR = 170.0f;
+static void build_air(const Airs *a, const SkyDesc &sky, f32 desert, const WPos &eye, Arena &frame, RenderFrame &out) {
+    RenderAir &r = out.air;
+    f32 w = f_clamp(desert, 0.0f, 1.0f);
+    r.dust = (sky.air_dust + (sky.desert_air_dust - sky.air_dust) * w) * 1e-3f;
+    r.dust_h = sky.air_dust_height;
+    for (u32 k = 0; k < 3; ++k) r.tint[k] = sky.air_tint[k];
+    r.g = sky.air_g;
+    r.iso = sky.air_iso;
+    if (!a || !a->count) return;
+    RenderAirBox *dst = arena_push<RenderAirBox>(frame, a->count);
+    u32 n = 0;
+    for (u32 i = 0; i < a->count && n < RENDER_MAX_AIR_BOXES; ++i) {
+        Vec3 rel = delta(eye, a->cx[i], a->cz[i], a->x[i], a->y[i], a->z[i]);
+        f32 rad = length({a->hx[i], a->hy[i], a->hz[i]});
+        if (length(rel) - rad > AIR_BOX_FAR) continue;
+        RenderAirBox &b = dst[n++];
+        b.x = rel.x;
+        b.y = rel.y;
+        b.z = rel.z;
+        b.dust = a->dust[i] * 1e-3f;
+        f32 s, c;
+        sincos_turn(a->yaw[i], &s, &c);  // ось x коробки после поворота — (cos, 0, −sin), как у декалей
+        b.ux = c;
+        b.uz = -s;
+        // Мягкий край — до полуметра, но не больше трети меньшей половины стороны
+        b.soft = f_min(0.5f, f_min(a->hx[i], f_min(a->hy[i], a->hz[i])) * 0.33f);
+        b.pad0 = b.pad1 = 0.0f;
+        b.hx = a->hx[i];
+        b.hy = a->hy[i];
+        b.hz = a->hz[i];
+    }
+    r.boxes = {dst, n};
+}
+
 void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in, Arena &frame, RenderFrame &out) {
     out = RenderFrame{};
 
@@ -106,6 +143,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     for (u32 k = 0; k < 3; ++k) out.style.local_tone[k] = assets.sky.local_tone[k];
     out.style.local_tone[3] = in.local_off ? 0.0f : 1.0f;
     out.style.lamp_maps = !in.lsm_off;
+    out.style.air = !in.air_off;
     out.style.eye_meter[0] = assets.sky.meter_view;
     out.style.eye_meter[2] = assets.sky.white_balance;
     out.style.eye_meter[3] = assets.sky.adapt_color;
@@ -124,6 +162,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     }
     f64 ticks = sky_clock_ticks(in.prev->clock, in.cur->clock, in.alpha);
     sky_build(assets.sky, desert, in.cur->clock, ticks, eye.y, in.cloud_time, out.sky, out.light);
+    build_air(in.cur->airs, assets.sky, desert, eye, frame, out);
     out.sky.time = in.time;
     out.ground = in.cur->terrain != nullptr;
     for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) out.ground_layers[k] = assets.ground_layers[k];

@@ -1,0 +1,106 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Лучи солнца в пыли (docs/air.md): поток — пиксель половины кадра. Луч от камеры до точки пикселя (не дальше
+// AIR_FAR) — air_steps шагов, ровных по слоям клеток (у камеры чаще). Сдвиг шагов — постоянный узор Байера 4×4 по
+// пикселю, не от кадра: стоит камера — стоит картинка (docs/light.md, правило 2), узор снимает размытие
+// (air_blur.comp). На шаге — пыль × гладкая видимость солнца и доля света до камеры (клетки солнца, трилинейно) ×
+// тень построек по страницам теней: уровень — AIR_SM_FOOT пикселей на тексель, 2×2 со сравнением. Страницы под
+// лучами заявили клетки (air_cells.comp). Сумма × фаза × свет солнца × экспозиция
+#include "air.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 19) uniform sampler3D u_air_sun;
+
+// Страница не выше hmin: ни одна заслонка в ней не закрывает точку (или страницы нет — свет, как у sm_occ)
+bool air_page_clear(int k, ivec2 page, float hmin) {
+    int phys = sm_find(k, page);
+    if (phys < 0) return true;
+    uint top = pc.frame.sm_pages.v[phys].top;
+    return top == 0u || sm_dec(top) <= hmin;
+}
+// Как sm_clear для квадрата выборки 2×2 (не больше 2×2 страниц), без цикла
+bool air_clear(int k, vec2 w, float hmin) {
+    ivec2 lo, hi;
+    if (!sm_rect(w, 1.5, lo, hi)) return true;
+    ivec2 b = pc.frame.sm_base[k];
+    if (!air_page_clear(k, b + lo, hmin)) return false;
+    if (hi.x > lo.x && !air_page_clear(k, b + ivec2(hi.x, lo.y), hmin)) return false;
+    if (hi.y > lo.y && !air_page_clear(k, b + ivec2(lo.x, hi.y), hmin)) return false;
+    return hi.x == lo.x || hi.y == lo.y || air_page_clear(k, b + hi, hmin);
+}
+// Тексель (целый, окна места k) в найденной странице phys с началом окна p0 (тексели) или через поиск страницы
+float air_occ(int k, int phys, ivec2 p0, ivec2 t) {
+    if (phys < 0 || any(notEqual(t >> 7, p0))) return sm_occ(k, t);
+    g_sm_taps++;
+    uint e = pc.frame.sm_texels.v[uint(phys) * uint(SM_PAGE * SM_PAGE) + uint((t.y & 127) * SM_PAGE + (t.x & 127))];
+    return e != 0u ? sm_dec(e) : SM_NONE;
+}
+// 2×2 со сравнением по плоской высоте hr: страница ищется раз, если все четыре текселя в ней (почти всегда)
+float air_pcf(int k, vec2 w, float hr) {
+    vec2 q = w - 0.5;
+    ivec2 b = ivec2(floor(q));
+    vec2 fr = q - vec2(b);
+    ivec2 p0 = b >> 7;
+    int phys = all(equal((b + 1) >> 7, p0)) ? sm_find(k, pc.frame.sm_base[k] + p0) : -1;
+    if (phys < 0 && all(equal((b + 1) >> 7, p0))) {
+        g_sm_taps++;
+        g_sm_miss++;
+        return 1.0;  // страницы нет — свет
+    }
+    float a = mix(air_occ(k, phys, p0, b) > hr ? 0.0 : 1.0, air_occ(k, phys, p0, b + ivec2(1, 0)) > hr ? 0.0 : 1.0, fr.x);
+    float c = mix(air_occ(k, phys, p0, b + ivec2(0, 1)) > hr ? 0.0 : 1.0, air_occ(k, phys, p0, b + 1) > hr ? 0.0 : 1.0, fr.x);
+    return mix(a, c, fr.y);
+}
+// Тень построек точкой воздуха p (от камеры) в наборе set: без поиска полутени и сдвига к светилу
+float air_sm_set(int set, vec3 p, float depth) {
+    vec2 ru = sm_ru(p, set);
+    int lv = sm_level_air(depth, max(abs(ru.x), abs(ru.y)));
+    if (lv >= SM_LEVELS) return 1.0;
+    int k = set * SM_LEVELS + lv;
+    float hr = sm_height(p, set);
+    vec2 w = sm_window(p, k);
+    if (air_clear(k, w, hr)) return 1.0;
+    return air_pcf(k, w, hr);
+}
+// Как sm_visibility: пока свет перетекает на новый шаг светила — оба набора с весом sm_mix у нового
+float air_sm_vis(vec3 p) {
+    FrameData f = pc.frame;
+    if (f.sm_on == 0u) return 1.0;
+    float depth = dot(p, f.forward.xyz);
+    int cur = int(f.sm_cur), old = 1 - cur;
+    bool rc = ((f.sm_read >> uint(cur)) & 1u) != 0u, ro = ((f.sm_read >> uint(old)) & 1u) != 0u;
+    if (rc && ro) return mix(air_sm_set(old, p, depth), air_sm_set(cur, p, depth), f.sm_mix);
+    return rc || ro ? air_sm_set(rc ? cur : old, p, depth) : 1.0;
+}
+
+const float AIR_BAYER[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+
+void main() {
+    FrameData f = pc.frame;
+    uvec2 hp = gl_GlobalInvocationID.xy;
+    if (hp.x >= f.air_w2 || hp.y >= f.air_h2) return;
+    uint i = hp.y * f.air_w2 + hp.x;
+    float d = min(f.air_depth.v[i], AIR_FAR);
+    vec2 q = vec2(hp) * 2.0 + 1.0;  // середина своих 2×2 пикселей кадра
+    vec3 dir = air_ray(q);
+    vec2 uv = q / (float(AIR_TILE) * vec2(f.air_nx, f.air_ny));
+    uint n = f.air_steps;
+    float dz = air_z(d) / float(n);
+    float b = (AIR_BAYER[(hp.y & 3u) * 4u + (hp.x & 3u)] + 0.5) / 16.0;
+    float acc = 0.0;
+    uint steps = 0u;
+    for (uint s = 0u; s < n; ++s) {
+        float z = (float(s) + b) * dz;
+        vec2 c = textureLod(u_air_sun, vec3(uv, z), 0.0).rg;
+        float wt = c.r * c.g;
+        if (wt <= 1e-9) continue;
+        float t = air_t(z);
+        acc += wt * (t + AIR_A) * f.air_lnk * dz * air_sm_vis(dir * t);
+        steps++;
+    }
+    vec3 l = normalize(f.sun_dir.xyz);
+    vec3 c = acc * air_phase(dot(l, dir)) * f.sun_color.rgb * f.air_tint * f.sky_out.v[SKY_OUT_EYE].x;
+    f.air_ray.v[i] = air_pack(min(c, vec3(60000.0)));
+    if (steps != 0u) atomicAdd(f.stats.v[STAT_AIR_STEPS], steps);
+    if (g_sm_taps != 0u) atomicAdd(f.stats.v[STAT_AIR_TAPS], g_sm_taps);
+    if (g_sm_miss != 0u) atomicAdd(f.stats.v[STAT_SM_MISS], g_sm_miss);  // страницы под лучом не заявлены: ошибка
+}

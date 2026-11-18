@@ -15,7 +15,7 @@ gc_over 0
 gc_direct 4410
 gc_lit 61824
 skin_verts 70948
-sm_used 96
+sm_used 119
 sm_new 4
 sm_over 0
 sm_miss 0
@@ -38,3 +38,6 @@ lsm_faces 96
 lsm_draws 21589
 lsm_over 0
 lsm_taps 54874
+air_cells 74445
+air_steps 2160000
+air_taps 1845456

@@ -5,7 +5,7 @@
 #pragma once
 #include "vk_state.h"
 
-constexpr u32 RG_MAX_RES = 64, RG_MAX_PASSES = 96, RG_MAX_USES = 48;
+constexpr u32 RG_MAX_RES = 96, RG_MAX_PASSES = 128, RG_MAX_USES = 48;
 
 // Как проход трогает ресурс. Запись включает чтение тем же проходом (атомики, чтение-запись)
 enum RgUse : u8 {
@@ -67,7 +67,7 @@ void vk_clouds_passes(VkDeviceAddress frame);
 void vk_clouds_reads(RgUse u);
 // Чтение всех таблиц неба и облаков проходом (u — стадия: RG_CS_READ или RG_FS_READ)
 void vk_sky_reads(RgUse u);
-// Froxels (vk_froxel.cpp): среда и списки огней и декалей по клеткам; чтение их проходом
+// Froxels (vk_froxel.cpp): списки огней и декалей по клеткам; чтение их проходом
 void vk_froxel_passes(const FrameSlot &fs);
 void vk_froxel_reads(RgUse u);
 // Карта горизонта (vk_horizon.cpp): сборка в первом кадре новой земли; чтение карты светом (u — стадия)
@@ -107,6 +107,17 @@ void vk_lcache_begin(VkDeviceAddress frame);
 void vk_lcache_tiles_uses();
 void vk_lcache_passes();
 void vk_lcache_reads();
+// Воздух (vk_air.cpp, docs/air.md): включён ли в кадре; дальний край плиток с нуля в проходе обнуления плиток;
+// что пишет разбор плиток (расстояния половины кадра, край плиток); клетки и сумма — после разбора плиток, до
+// выдачи страниц теней (заявки лучей солнца); лучи солнца и размытие — после отрисовки страниц, до освещения;
+// что читает освещение
+bool vk_air_on();
+void vk_air_clear(VkCommandBuffer cmd);
+void vk_air_clear_uses();
+void vk_air_tiles_uses();
+void vk_air_cells_passes(const VkDeviceAddress *frame);
+void vk_air_march_passes(const VkDeviceAddress *frame);
+void vk_air_reads();
 // Скиннинг людей (vk_skin.cpp): вершины копий и сферы их кластеров — до отсечения; кто читает общие вершины
 // (u — стадия) и таблицу кластеров (отсечение)
 void vk_skin_passes(const VkDeviceAddress *frame);

@@ -312,6 +312,9 @@ bool render_work(RenderWork &out) {
     out.lsm_draws = w.work[STAT_LSM_DRAWS];
     out.lsm_over = w.work[STAT_LSM_OVER];
     out.lsm_taps = w.work[STAT_LSM_TAPS];
+    out.air_cells = w.work[STAT_AIR_CELLS];
+    out.air_steps = w.work[STAT_AIR_STEPS];
+    out.air_taps = w.work[STAT_AIR_TAPS];
     out.sm_blend = vk_shadow_blend();
     out.gc_off = g_vk.gcache.off;
     return true;

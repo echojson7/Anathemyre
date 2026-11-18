@@ -37,6 +37,8 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"night_fill", &d.night_fill, 1}, {"glare", &d.glare, 1},
         {"local_tone", d.local_tone, 3},
         {"meter_view", &d.meter_view, 1}, {"white_balance", &d.white_balance, 1}, {"adapt_color", &d.adapt_color, 1},
+        {"air_dust", &d.air_dust, 1},     {"air_dust_height", &d.air_dust_height, 1}, {"air_tint", d.air_tint, 3},
+        {"air_g", &d.air_g, 1},           {"air_iso", &d.air_iso, 1}, {"desert_air_dust", &d.desert_air_dust, 1},
     };
     TextReader r = text_reader(text, size);
     TextLine l;
@@ -85,6 +87,14 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
     }
     if (d.meter_view < 0.0f || d.meter_view > 1.0f || d.white_balance < 0.0f || d.white_balance > 1.0f || d.adapt_color <= 0.0f) {
         snprintf(err, err_cap, "meter_view и white_balance в [0, 1], adapt_color > 0");
+        return false;
+    }
+    bool tint_ok = true;
+    for (f32 t : d.air_tint) tint_ok = tint_ok && t >= 0.0f && t <= 1.0f;
+    if (d.air_dust < 0.0f || d.air_dust > 50.0f || d.desert_air_dust < 0.0f || d.desert_air_dust > 50.0f ||
+        d.air_dust_height < 1.0f || d.air_dust_height > 2000.0f || !tint_ok || d.air_g < 0.0f || d.air_g > 0.95f ||
+        d.air_iso < 0.0f || d.air_iso > 1.0f) {
+        snprintf(err, err_cap, "air_dust и desert_air_dust 0–50, air_dust_height 1–2000, air_tint 0–1, air_g 0–0.95, air_iso 0–1");
         return false;
     }
     return true;

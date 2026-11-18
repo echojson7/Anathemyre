@@ -158,6 +158,10 @@ static void metrics_body(UiForm &f, const DebugInfo &in, DebugState &d) {
             pair_row(f, "огни: граней · вызовов в них", in.work_lsm[0], in.work_lsm[1]);
             snprintf(t, sizeof t, "%u", in.work_lsm[2]);
             ui_value(f, "огни: выборок карт", t);
+            // Воздух (docs/air.md): клетки с пылью; шаги лучей солнца и их выборки страниц теней
+            dbg_count(in.work_air[0], t, sizeof t);
+            ui_value(f, "воздух: клеток", t);
+            pair_row(f, "воздух: шагов · выборок", in.work_air[1], in.work_air[2]);
             dbg_count(in.work_skin, t, sizeof t);
             ui_value(f, "скинено вершин", t);
         }

@@ -8,7 +8,8 @@
 // считается раз, на первом из них, и раздаётся остальным. Ведущие пиксели сжимаются в начало группы, поэтому
 // считают их подряд идущие потоки. Пустые пиксели — небо (sky.glsl). Пишет линейный цвет в HDR-картинку,
 // уже умноженный на экспозицию (docs/light.md: яркости в кд/м², диск солнца ~10⁹ — f16 их не держит), тонмаппинг —
-// стиль, отдельным проходом. Заодно считает свою работу (STAT_PX_*, STAT_SURF_*, STAT_SHADOW_TAPS).
+// стиль, отдельным проходом. Поверх — воздух: пыль перед точкой пикселя (docs/air.md, air_apply.glsl). Заодно
+// считает свою работу (STAT_PX_*, STAT_SURF_*, STAT_SHADOW_TAPS).
 // Земля (docs/gcache.md): поверхность — из кеша земли по текселю, который разбор плиток записал в gc_cells;
 // у земли поверхность — тексель, свет — раз на тексель. Плитка земли без разбора треугольников: если хоть
 // одного текселя нет в кеше (не хватило места), она уходит в «землю на пиксель». Та и смесь считают
@@ -34,6 +35,7 @@ ivec2 g_origin;  // начало отсчёта узоров: чанк каме�
 #include "sky.glsl"
 #include "froxel.glsl"
 #include "motion.glsl"
+#include "air_apply.glsl"
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0, r32ui) uniform readonly uimage2D u_vis;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D u_hdr;
@@ -79,6 +81,7 @@ shared uint s_lead[64];    // поток ведущего пикселя той 
 shared uint s_rank[64];    // у ведущего — его место среди ведущих
 shared uint s_list[64];    // ведущие по порядку
 shared vec3 s_color[64];
+shared float s_gain[64];    // местная экспозиция ведущего (воздух поверх, air_apply)
 shared float s_elocal[64];  // свет места ведущего × экспозиция (альфа HDR)
 shared vec4 s_view[64];     // свет места ведущего для глаза (view_light)
 shared uint s_work[11];    // пиксели неба, земли, сеток; поверхности земли, сеток; выборки тени; земля на пиксель;
@@ -214,8 +217,11 @@ void main() {
     bool inside = px.x < int(f.viewport.x) && px.y < int(f.viewport.y);
     if (TILE_KIND == TILE_SKY) {
         // Только небо: то же, что shade_hit() пустого пикселя
-        if (inside) imageStore(u_hdr, px, vec4(pre_exposed(sky_radiance(normalize(pixel_ray(px))), local_sky_e()),
-                                         elocal_alpha(local_sky_e())));
+        if (inside) {
+            vec3 c = pre_exposed(sky_radiance(normalize(pixel_ray(px))), local_sky_e());
+            if (air_shown()) c = air_apply(px, c, 2.0 * AIR_FAR, local_gain(local_sky_e()));
+            imageStore(u_hdr, px, vec4(c, elocal_alpha(local_sky_e())));
+        }
         if (t == 0u) view_store(origin, view_value(local_sky_c(), local_sky_e()));
         if (inside && f.aa_mode == AA_TAA) {
             Hit hs;
@@ -318,6 +324,7 @@ void main() {
     if (t < nlead) {
         vec3 col = shade_hit(hl, phys);
         s_color[t] = pre_exposed(col, g_e_local);
+        s_gain[t] = local_gain(g_e_local);
         s_elocal[t] = elocal_alpha(g_e_local);
         s_view[t] = view_value(g_c_local, g_e_local);
         if (g_steps != 0u) atomicAdd(s_work[5], g_steps);
@@ -327,7 +334,12 @@ void main() {
         if (g_lsm_taps != 0u) atomicAdd(s_work[10], g_lsm_taps);
     }
     barrier();
-    if (inside) imageStore(u_hdr, px, vec4(s_color[s_rank[s_lead[t]]], s_elocal[s_rank[s_lead[t]]]));
+    if (inside) {
+        uint r = s_rank[s_lead[t]];
+        vec3 out_c = s_color[r];
+        if (air_shown()) out_c = air_apply(px, out_c, h.kind == HIT_SKY ? 2.0 * AIR_FAR : length(h.rel), s_gain[r]);
+        imageStore(u_hdr, px, vec4(out_c, s_elocal[r]));
+    }
     if (inside && f.aa_mode == AA_TAA) imageStore(u_motion, px, mv);
     if (t == 0u) {
         work_flush();

@@ -504,6 +504,9 @@ int run_window(const Args &a, AppMemory &m) {
                 di.work_lsm[0] = work.lsm_faces;
                 di.work_lsm[1] = work.lsm_draws;
                 di.work_lsm[2] = work.lsm_taps;
+                di.work_air[0] = work.air_cells;
+                di.work_air[1] = work.air_steps;
+                di.work_air[2] = work.air_taps;
                 di.gc_off = work.gc_off;
                 di.light = eye_have;
                 di.lux_key = eye_info.lux_key;
@@ -704,6 +707,7 @@ int run_window(const Args &a, AppMemory &m) {
         vi.tonemap = ds.tonemap;
         vi.local_off = a.local_off || ds.local_off;
         vi.lsm_off = a.lsm_off || ds.lsm_off;
+        vi.air_off = a.air_off || ds.air_off;
         vi.scans = ds.scans;
         vi.gclight_off = ds.gclight_off;
         vi.lamps_off = a.lamps_off || ds.lamps_off;
@@ -893,14 +897,16 @@ int run_window(const Args &a, AppMemory &m) {
                          "gc_over %u\ngc_direct %u\nskin_verts %u\nsm_used %u\nsm_new %u\nsm_over %u\nsm_miss %u\n"
                          "sm_draws %u\nsm_taps %u\nsm_wait %u\nsdf_taps %u\nsdf_bricks %u\ngi_probes %u\ngi_rays %u\n"
                          "gi_taps %u\nlc_live %u\nlc_new %u\nlc_jobs %u\nlc_rays %u\nlc_over %u\nlc_taps %u\n"
-                         "lc_wait %u\ngc_lit %u\nlsm_faces %u\nlsm_draws %u\nlsm_over %u\nlsm_taps %u\n",
+                         "lc_wait %u\ngc_lit %u\nlsm_faces %u\nlsm_draws %u\nlsm_over %u\nlsm_taps %u\n"
+                         "air_cells %u\nair_steps %u\nair_taps %u\n",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
                          work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts, work.sm_used, work.sm_new,
                          work.sm_over, work.sm_miss, work.sm_draws, work.sm_taps, work.sm_wait,
                          work.sdf_taps, work.sdf_bricks, work.gi_probes, work.gi_rays, work.gi_taps,
                          work.lc_live, work.lc_new, work.lc_jobs, work.lc_rays, work.lc_over, work.lc_taps, work.lc_wait,
-                         work.gc_lit, work.lsm_faces, work.lsm_draws, work.lsm_over, work.lsm_taps);
+                         work.gc_lit, work.lsm_faces, work.lsm_draws, work.lsm_over, work.lsm_taps,
+                         work.air_cells, work.air_steps, work.air_taps);
         if (!work_have) log_error("--work: кадр мира не прочитан (мало кадров)");
         if (!work_have || n <= 0 || !platform_write_file(a.work, t, (usize)n)) rc_exit = 1;
     }

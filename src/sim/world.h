@@ -86,6 +86,20 @@ struct Lamps {
     u32 count;
 };
 
+constexpr u32 AIRS_CAPACITY = 32;
+
+// Пыль залов (воздух 5б, docs/air.md): коробка с поворотом вокруг вертикали, внутри которой воздух гуще пылью — свет
+// солнца в проёмах и огней виден лучами. Как и лампы, ставит описание сцены (строки air заготовок), шаг мира её не
+// читает и не меняет, в хеш шага не входит; кадр читает таблицу напрямую
+struct Airs {
+    i32 *cx, *cz;
+    f32 *x, *y, *z;     // середина: смещение в чанке и высота от нуля карты
+    f32 *hx, *hy, *hz;  // половины сторон в осях коробки
+    u32 *yaw;           // поворот вокруг вертикали (Turn)
+    f32 *dust;          // пыль: рассеяние и поглощение, 1/км
+    u32 count;
+};
+
 // Часы мира (docs/sky.md): целые тики. Тик — шаг при обычном ходе суток; солнце и луна выводятся в кадре
 constexpr u32 CLOCK_DAY_TICKS_DEFAULT = 48 * 60 * SIM_HZ;  // сутки — 48 минут реального времени
 struct Clock {
@@ -108,6 +122,7 @@ struct World {
     Decals decals;
     People people;
     Lamps lamps;  // не в хеше шага (см. Lamps)
+    Airs airs;    // тоже
     // Неизменное после создания мира (как земля): коллайдеры построек, сетка ходимости, длины шага клипов.
     // В хеш шага не входят, их хеши — в хеше описаний записи повтора
     Colliders coll;
@@ -128,6 +143,8 @@ bool decals_add(World &w, u64 kind, u64 material, const WPos &at, u32 yaw, const
 // Лампа: at — середина (с высотой), axis — полуось трубки, face — куда светит, все в осях мира. false — таблица полна
 bool lamps_add(World &w, const WPos &at, const f32 axis[3], const f32 face[3], f32 back, f32 lm, f32 kelvin, f32 size,
                const f32 rgb[3]);
+// Пыль зала: at — середина коробки (с высотой), h — половины сторон, dust — 1/км. false — таблица полна
+bool airs_add(World &w, const WPos &at, u32 yaw, const f32 h[3], f32 dust);
 // После сцены: коллайдеры построек (коробки COLL деталей — читает app) и сетка ходимости по ним.
 // false — коробок или чанков с ними больше предела
 bool world_build_static(World &w, const CollBoxIn *boxes, u32 n, const GaitTable &gait, Arena &arena, Arena &scratch);
