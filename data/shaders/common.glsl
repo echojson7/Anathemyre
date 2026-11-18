@@ -325,9 +325,10 @@ layout(buffer_reference, scalar) buffer FrameData {
     ClustersW clusters_w;
     uint skin_count, skin_pad;
     // Свет (docs/light.md): время кадра для привыкания глаза, сразу ли привыкать (первый кадр, --timelapse),
-    // тонмаппинг (TONEMAP_*), качество света (LIGHT_Q_*)
+    // тонмаппинг (TONEMAP_*), ступени (LIGHT_Q_*, «Ступени»): тени; отражённый свет; воздух и облака
     float dt;
-    uint eye_snap, tonemap, light_q;
+    uint eye_snap, tonemap, shadow_q;
+    uint gi_q, air_q, q_pad0, q_pad1;
     // Местная экспозиция (docs/light.md): колено, стопы; наклон в свет; наклон в тень; w — включена (F3, --nolocal)
     vec4 local_tone;
     // Замер и цвет глаза (docs/light.md, «Экспозиция», «Баланс белого»): x — доля замера по свету мест в кадре

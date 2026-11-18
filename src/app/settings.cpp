@@ -27,6 +27,8 @@ void settings_load(Settings &s, const char *path) {
     }
     TextReader r = text_reader(d, n);
     TextLine l;
+    // Части качества света; файл до 18.11 знает только набор light_quality — тогда все три по нему
+    i32 all = -1, part[3] = {-1, -1, -1};
     while (text_next(r, l)) {
         if (l.count != 2) continue;
         Str k = l.w[0], v = l.w[1];
@@ -48,7 +50,10 @@ void settings_load(Settings &s, const char *path) {
         else if (str_eq(k, "cam_zoom_cursor") && num) s.cam_zoom_cursor = b;
         else if (str_eq(k, "cam_edge_pan") && num) s.cam_edge_pan = b;
         else if (str_eq(k, "cam_pan_speed") && num) s.cam_pan_speed = clampf(f, 0.25f, 3.0f);
-        else if (str_eq(k, "light_quality") && parse_u32(v, u)) s.light_quality = u < 4 ? u : 2;
+        else if (str_eq(k, "light_quality") && parse_u32(v, u)) all = u < 4 ? (i32)u : 2;
+        else if (str_eq(k, "shadow_quality") && parse_u32(v, u)) part[0] = u < 4 ? (i32)u : 2;
+        else if (str_eq(k, "gi_quality") && parse_u32(v, u)) part[1] = u < 4 ? (i32)u : 2;
+        else if (str_eq(k, "air_quality") && parse_u32(v, u)) part[2] = u < 4 ? (i32)u : 2;
         else if (str_eq(k, "debug") && num) s.debug = b;
         else if (str_eq(k, "debug_panel") && num) s.debug_panel = b;
         else if (str_eq(k, "debug_metrics") && num) s.debug_metrics = b;
@@ -60,6 +65,9 @@ void settings_load(Settings &s, const char *path) {
         else if (str_eq(k, "vignette") && num) s.vignette = b;
         else if (str_eq(k, "grain") && num) s.grain = b;
     }
+    u32 *q[3] = {&s.shadow_quality, &s.gi_quality, &s.air_quality};
+    for (u32 k = 0; k < 3; ++k)
+        if (part[k] >= 0 || all >= 0) *q[k] = (u32)(part[k] >= 0 ? part[k] : all);
     log_info("настройки: %s", path);
 }
 
@@ -71,12 +79,13 @@ bool settings_save(const Settings &s, const char *path) {
                      "ui_scale %.2f\ntext_scale %.2f\nfps %u\n"
                      "mouse_sens %.2f\ninvert_y %d\ninvert_x %d\ncam_smooth %.2f\nfov %.0f\n"
                      "cam_tilt_zoom %d\ncam_zoom_cursor %d\ncam_edge_pan %d\ncam_pan_speed %.2f\n"
-                     "light_quality %u\naa %u\n"
+                     "shadow_quality %u\ngi_quality %u\nair_quality %u\naa %u\n"
                      "glare %d\nlens_flare %d\naberration %d\nvignette %d\ngrain %d\n"
                      "debug %d\ndebug_panel %d\ndebug_metrics %d\nlines %d\n",
                      s.fullscreen, s.vsync, (double)s.ui_scale, (double)s.text_scale, s.fps, (double)s.mouse_sens,
                      s.invert_y, s.invert_x, (double)s.cam_smooth, (double)s.fov_deg, s.cam_tilt_zoom, s.cam_zoom_cursor,
-                     s.cam_edge_pan, (double)s.cam_pan_speed, s.light_quality, s.aa, s.glare, s.lens_flare,
+                     s.cam_edge_pan, (double)s.cam_pan_speed, s.shadow_quality, s.gi_quality, s.air_quality,
+                     s.aa, s.glare, s.lens_flare,
                      s.aberration, s.vignette, s.grain, s.debug, s.debug_panel, s.debug_metrics, s.lines);
     bool ok = n > 0 && platform_write_file(path, t, (usize)n);
     if (!ok) log_error("не записать настройки %s", path);

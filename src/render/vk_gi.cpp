@@ -195,7 +195,7 @@ void vk_gi_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     s.reset = false;
     s.snapped = snap;
 
-    u32 q = g.light_q < RENDER_LIGHT_QUALITIES ? g.light_q : RENDER_LIGHT_HIGH;
+    u32 q = g.gi_q < RENDER_LIGHT_QUALITIES ? g.gi_q : RENDER_LIGHT_HIGH;
     s.rays_n = GI_Q_RAYS[q];
     u32 *jobs = (u32 *)fs.gi_jobs.mapped;
     u32 n = 0;

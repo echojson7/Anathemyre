@@ -125,7 +125,10 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.eye_snap = f.style.eye_snap ? 1u : 0u;
     g.glow_gain = f.style.glow ? 1.0f : 0.0f;
     g.tonemap = f.style.tonemap < RENDER_TONEMAPS ? f.style.tonemap : RENDER_TONEMAP_UE;
-    g.light_q = f.style.light_quality < RENDER_LIGHT_QUALITIES ? f.style.light_quality : RENDER_LIGHT_HIGH;
+    auto q = [](u32 v) { return v < RENDER_LIGHT_QUALITIES ? v : (u32)RENDER_LIGHT_HIGH; };
+    g.shadow_q = q(f.style.shadow_quality);
+    g.gi_q = q(f.style.gi_quality);
+    g.air_q = q(f.style.air_quality);
     for (u32 k = 0; k < 4; ++k) g.local_tone[k] = f.style.local_tone[k];
     for (u32 k = 0; k < 4; ++k) g.eye_meter[k] = f.style.eye_meter[k];  // [1] — vk_world_fill (картинка кадра)
     g.viewport[0] = w;

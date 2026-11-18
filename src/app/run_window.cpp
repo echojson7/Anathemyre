@@ -732,7 +732,10 @@ int run_window(const Args &a, AppMemory &m) {
         vi.shadow_pages = a.shadow_pages ? a.shadow_pages : ds.shadow_pages;
         vi.sdf_view = a.sdf_view ? a.sdf_view : ds.sdf_view;
         vi.gi_view = a.gi_view ? a.gi_view : ds.gi_view;
-        vi.light_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.light_quality;
+        // --light — все части разом, как набор в меню
+        vi.shadow_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.shadow_quality;
+        vi.gi_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.gi_quality;
+        vi.air_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.air_quality;
         vi.aa = a.aa >= 0 ? (u32)a.aa : set.aa;
         vi.glare = set.glare;
         vi.lens = a.lens_off ? 0u

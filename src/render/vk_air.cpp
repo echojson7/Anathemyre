@@ -115,10 +115,11 @@ bool vk_air_images(VkDescriptorSet set) {
     return true;
 }
 
-// Воздух кадра: выкл — по F3 и ключу, на «Низко», без пыли и коробок, без картинок. Шагов луча солнца — по ступени
+// Воздух кадра: выкл — по F3 и ключу, на «Низко» части «Воздух и облака», без пыли и коробок, без картинок. Шагов
+// луча солнца — по ступени
 void vk_air_fill(FrameGpu &g, const RenderFrame &f, bool images) {
     AirGpu &a = g_vk.air;
-    u32 q = f.style.light_quality;
+    u32 q = f.style.air_quality;
     u32 nb = f.air.boxes.count < RENDER_MAX_AIR_BOXES ? (u32)f.air.boxes.count : RENDER_MAX_AIR_BOXES;
     a.on = images && f.style.air && a.sum.image && q != RENDER_LIGHT_LOW && (f.air.dust > 0.0f || nb > 0);
     g.air_on = a.on ? 1u : 0u;

@@ -122,7 +122,10 @@ struct RenderStyle {
     f32 cell_pixels = 1.0f;  // ячейка — не меньше стольких пикселей кадра
     // Свет (docs/light.md)
     u32 tonemap = RENDER_TONEMAP_UE;
-    u32 light_quality = RENDER_LIGHT_HIGH;
+    // Ступени качества (docs/light.md, «Ступени»): тени; отражённый свет; воздух и облака
+    u32 shadow_quality = RENDER_LIGHT_HIGH;
+    u32 gi_quality = RENDER_LIGHT_HIGH;
+    u32 air_quality = RENDER_LIGHT_HIGH;
     // Местная экспозиция (data/sky.txt, local_tone): колено, стопы; наклон в свет; в тень; 1 — включена
     f32 local_tone[4] = {1.0f, 0.05f, 1.0f, 1.0f};
     // Замер и цвет глаза (data/sky.txt: meter_view, white_balance, adapt_color): доля замера по кадру; [1] ставит

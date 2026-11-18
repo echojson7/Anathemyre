@@ -91,7 +91,7 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
     if (s_lamp_any == 0u) return vec3(0.0);  // ни один огонь не достаёт до плитки (light_cells.comp)
 #endif
     FrameData f = pc.frame;
-    uint steps = lamp_steps(f.light_q);
+    uint steps = lamp_steps(f.shadow_q);
     float skip = lamp_e_skip();
     vec3 r = reflect(-v, n);
     vec3 c = vec3(0.0);
@@ -319,7 +319,7 @@ vec3 light_surface(Surface s) {
     float blur = smoothstep(0.1, 0.75, rough);
     vec3 env = atmo_ambient(rd);
     // Таблица неба — только у гладкого и со ступени «Средне» (на «Низко» отражение — из гармоник неба)
-    if (blur < 1.0 && f.light_q >= LIGHT_Q_MEDIUM) env = mix(atmo_sky(vec3(rd.x, max(rd.y, 0.0), rd.z)), env, blur);
+    if (blur < 1.0 && f.gi_q >= LIGHT_Q_MEDIUM) env = mix(atmo_sky(vec3(rd.x, max(rd.y, 0.0), rd.z)), env, blur);
     c += light_lamps(s, n, v, nv, a, a2, kd, f0, comp);
     float lit;
     c += light_indirect(s, n, nv, a, rd, blur, irr, env, kd, fss_ess, fms * ems, lit);

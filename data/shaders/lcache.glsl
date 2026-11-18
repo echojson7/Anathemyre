@@ -47,7 +47,7 @@ float lc_conf(uint state) { return float(min((state >> 2) & 7u, LC_K)) / float(L
 // Ближнее затенение по полю (light.glsl, lcache_trace.comp): конусы до tmax; у ячеек — на полторы стороны ячейки у
 // точки (lc_near_t, не меньше 25 см: старт конусов — полвокселя поля), дальше ячейка затенена своими лучами
 float lc_near_ao(vec3 pos, vec3 n, float tmax) {
-    uint q = pc.frame.light_q;
+    uint q = pc.frame.gi_q;
     uint steps = q == LIGHT_Q_LOW ? 4u : q == LIGHT_Q_MEDIUM ? 5u : q == LIGHT_Q_HIGH ? 6u : 7u;
     return sdf_cones(pos, n, q, tmax, steps).x;
 }

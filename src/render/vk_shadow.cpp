@@ -271,9 +271,9 @@ static u32 sm_dyn_casters(const FrameGpu &g, const RenderFrame &f, FrameSlot &fs
     return n;
 }
 
-// Тексель уровня 0 по ступени «Качество света» (docs/light.md): на «Низко» карта вчетверо, на «Средне» вдвое грубее
+// Тексель уровня 0 по ступени теней (docs/light.md, «Ступени»): на «Низко» карта вчетверо, на «Средне» вдвое грубее
 static f32 sm_texel0(const RenderFrame &f) {
-    u32 q = f.style.light_quality;
+    u32 q = f.style.shadow_quality;
     return f.style.cell_min * (q == RENDER_LIGHT_LOW ? 4.0f : q == RENDER_LIGHT_MEDIUM ? 2.0f : 1.0f);
 }
 

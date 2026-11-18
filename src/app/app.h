@@ -46,7 +46,7 @@ struct Args {
     bool lens_off = false;          // --nolens: без эффектов объектива — бликов, аберрации, виньетки, зерна (docs/lens.md)
     bool hdr = false;               // --hdr: со снимком ещё HDR кадра мира в <снимок>.hdr16 (отладка света)
     i32 tonemap = -1;               // --tonemap ue|agx|aces: тонмаппинг (снимки для сравнения); −1 — как в F3
-    i32 light_quality = -1;         // --light low|medium|high|ultra: качество света; −1 — из настроек
+    i32 light_quality = -1;         // --light low|medium|high|ultra: все части качества разом; −1 — из настроек
     bool nohud = false;             // --nohud: без интерфейса (видео и снимки мира)
     const char *stand = nullptr;    // --stand off|elbow|knee|mixamo|morphN через запятую: стенд людей (снимки)
     const char *open = nullptr;     // --open menu|keys|debug|world: открыть меню или вкладку панели (снимки интерфейса)

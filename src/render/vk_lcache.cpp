@@ -94,7 +94,7 @@ void vk_lcache_fill(FrameGpu &g, const RenderFrame &f) {
         s.frame = 0;
     }
     ++s.frame;
-    u32 q = g.light_q < RENDER_LIGHT_QUALITIES ? g.light_q : RENDER_LIGHT_HIGH;
+    u32 q = g.gi_q < RENDER_LIGHT_QUALITIES ? g.gi_q : RENDER_LIGHT_HIGH;
     g.lc_keys = g.lc_keys4 = s.keys.address;
     g.lc_meta = s.meta.address;
     g.lc_show = s.show.address;

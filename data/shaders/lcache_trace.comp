@@ -123,7 +123,7 @@ void main() {
     }
     barrier();
     vec4 o = s_o;
-    g_lamp_steps = max(lamp_steps(f.light_q) / 2u, 6u);
+    g_lamp_steps = max(lamp_steps(f.gi_q) / 2u, 6u);
     uint n = f.lc_rays_n;
     int a = lc_key_axis(m.key);
     vec3 N = lc_axis_n(a);

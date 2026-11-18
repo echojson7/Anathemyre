@@ -52,10 +52,23 @@ static void tab_screen(UiForm &f, Settings &s, bool &ch) {
     ch |= ui_toggle(f, "Весь экран", s.fullscreen);
     ui_tip(f, "Кадр ждёт обновления экрана: без разрывов, к/с не выше частоты экрана");
     ch |= ui_toggle(f, "Вертикальная синхронизация", s.vsync);
-    // Ступени света (docs/light.md, «Ступени»): каждая — тот же облик, ниже — дешевле. Шаги этапа 6 добавляют свои
+    // Ступени света (docs/light.md, «Ступени»): каждая — тот же облик, ниже — дешевле. «Качество света» — набор:
+    // ставит три части разом и показывает их общую ступень; части разные — «своё», ни один сегмент не выбран
     ui_section(f, "КАЧЕСТВО");
-    ui_tip(f, "Тени солнца, отражённый свет, небо и огни; ниже — быстрее, облик тот же");
-    ch |= ui_segment(f, "Качество света", s.light_quality, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES));
+    u32 q = s.shadow_quality;
+    bool same = s.gi_quality == q && s.air_quality == q;
+    if (!same) q = ANA_COUNTOF(QUALITY_NAMES);
+    ui_tip(f, same ? "Все три части разом; ниже — быстрее, облик тот же" : "Части выбраны по-разному; здесь — все разом");
+    if (ui_segment(f, same ? "Качество света" : "Качество света: своё", q, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES))) {
+        s.shadow_quality = s.gi_quality = s.air_quality = q;
+        ch = true;
+    }
+    ui_tip(f, "Мягкость теней солнца и ламп, тени людей у ламп");
+    ch |= ui_segment(f, "Тени", s.shadow_quality, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES));
+    ui_tip(f, "Свет от стен и земли, затенение в углах");
+    ch |= ui_segment(f, "Отражённый свет", s.gi_quality, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES));
+    ui_tip(f, "Лучи в пыли и облака; на «Низко» — без лучей");
+    ch |= ui_segment(f, "Воздух и облака", s.air_quality, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES));
     // Сглаживание краёв (docs/aa.md): TAA — края и мерцание мелочи, FXAA — только края, дешевле
     ui_tip(f, "TAA — края и мерцание мелочи; FXAA — только края, дешевле");
     ch |= ui_segment(f, "Сглаживание", s.aa, AA_NAMES, ANA_COUNTOF(AA_NAMES));

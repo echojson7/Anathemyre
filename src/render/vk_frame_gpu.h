@@ -59,9 +59,10 @@ struct FrameGpu {
     VkDeviceAddress skin_jobs, bones;
     VkDeviceAddress vertices_w, clusters_w;  // те же общие вершины и кластеры — для записи (skin*.comp)
     u32 skin_count, skin_pad;
-    // Свет (docs/light.md): время кадра, сразу ли привыкать глазу, тонмаппинг, качество света
+    // Свет (docs/light.md): время кадра, сразу ли привыкать глазу, тонмаппинг, ступень теней
     f32 dt;
-    u32 eye_snap, tonemap, light_q;
+    u32 eye_snap, tonemap, shadow_q;
+    u32 gi_q, air_q, q_pad0, q_pad1;  // ступени (docs/light.md): отражённый свет; воздух и облака
     f32 local_tone[4];  // местная экспозиция: колено, наклон в свет, наклон в тень, включена
     f32 eye_meter[4];   // замер глаза: доля по кадру, альфа HDR годна, баланс белого, время привыкания к цвету, с
     // Тени солнца страницами (vk_shadow.cpp, docs/shadow.md): окна страниц уровней, пул страниц и их тексели,

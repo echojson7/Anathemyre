@@ -161,7 +161,7 @@ void vk_gcache_light_fill(FrameGpu &g, const RenderFrame &f) {
         g.gc_lmode = 0;
         return;
     }
-    u32 sig = g.light_q | g.gi_view << 4 | g.sdf_view << 8 | g.gi_on << 12 | g.sdf_on << 13 | g.lc_on << 14;
+    u32 sig = g.gi_q | g.gi_view << 4 | g.sdf_view << 8 | g.gi_on << 12 | g.sdf_on << 13 | g.lc_on << 14;
     if (sig != c.lit_sig || !c.lit || c.reset || g_vk.gi.snapped || g.lc_snap || g_vk.shadow.sun_fast) c.lit_all = true;
     c.lit_sig = sig;
     c.lit = true;

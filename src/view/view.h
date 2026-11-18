@@ -108,7 +108,9 @@ struct ViewInput {
     u32 lens = RENDER_LENS_FLARE | RENDER_LENS_CA | RENDER_LENS_VIGNETTE | RENDER_LENS_GRAIN;
     bool scans = false;  // поверхности из сканов CC0 (docs/scans.md), F3 и --scans
     bool gclight_off = false;  // отражённый свет земли на пиксель, не из кеша (docs/gcache.md, F3, --nogclight)
-    u32 light_quality = RENDER_LIGHT_HIGH;
+    u32 shadow_quality = RENDER_LIGHT_HIGH;  // ступени (docs/light.md): тени, отражённый свет, воздух и облака
+    u32 gi_quality = RENDER_LIGHT_HIGH;
+    u32 air_quality = RENDER_LIGHT_HIGH;
     u32 aa = RENDER_AA_TAA;
     u32 shadow_pages = 0;  // F3 (docs/shadow.md): 1 — страницы теней поверх кадра, 2 — только тень
     u32 sdf_view = RENDER_SDF_FRAME;  // F3 (docs/sdf.md): поле расстояний мира — кадр, только небо, поле, выкл

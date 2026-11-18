@@ -19,6 +19,8 @@ constexpr VkDeviceSize LSM_DRAWS = (VkDeviceSize)LSM_JOB_ALL * LSM_DRAW_CAP * 20
 
 static VkDeviceAddress g_lsm_frame = 0;
 static u32 g_lsm_copy[LSM_DYN_SLOTS][2], g_lsm_copy_n = 0;  // кубы слоя подвижных кадра: место-источник, куб
+// Огней с тенью людей по ступени теней (docs/light.md, «Ступени»): Низко, Средне, Высоко, Ультра
+static constexpr u32 LSM_DYN_Q[RENDER_LIGHT_QUALITIES] = {2, 4, LSM_DYN_SLOTS, LSM_DYN_SLOTS};
 static u32 g_lsm_layer[LSM_JOB_ALL];  // слой картинки грани кадра (место · 6 + грань): цель отрисовки
 
 bool vk_lsm_init() {
@@ -269,14 +271,15 @@ void vk_lsm_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
         ++drawn;
     }
     // Слой подвижных: огни с готовой картой, в чьей дальности есть его заслонка, — сильнее освещающие ближнюю из
-    // них первыми (lsm_dyn_score; равные — по порядку), не больше LSM_DYN_SLOTS — получают куб за местами: каждый
-    // кадр — копия куба места, поверх неё 6 граней только с заслонками слоя
+    // них первыми (lsm_dyn_score; равные — по порядку), не больше LSM_DYN_Q[ступень теней] — получают куб за
+    // местами: каждый кадр — копия куба места, поверх неё 6 граней только с заслонками слоя
     s.static_n = s.jobs_n;
     u32 dyn_of[LSM_SLOTS] = {}, nd = 0;
+    const u32 nd_max = LSM_DYN_Q[f.style.shadow_quality < RENDER_LIGHT_QUALITIES ? f.style.shadow_quality : RENDER_LIGHT_HIGH];
     f32 score[LSM_SLOTS];
     for (u32 c = 0; c < nc; ++c)
         score[c] = slot_of[c] != ~0u && s.slots[slot_of[c]].ready ? lsm_dyn_score(ls[g_lsm_cand[c].light]) : 0.0f;
-    while (nd < LSM_DYN_SLOTS) {
+    while (nd < nd_max) {
         u32 best = ~0u;
         for (u32 c = 0; c < nc; ++c)
             if (score[c] > 0.0f && (best == ~0u || score[c] > score[best])) best = c;

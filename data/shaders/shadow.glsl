@@ -103,7 +103,7 @@ vec2 sm_par(int set) { return vec2(pc.frame.sm_r[set].w, pc.frame.sm_s[set].w); 
 
 float sm_search(float t) {
     FrameData f = pc.frame;
-    if (f.light_q < LIGHT_Q_MEDIUM) return 0.0;
+    if (f.shadow_q < LIGHT_Q_MEDIUM) return 0.0;
     float r = min(SM_PCSS_FAR * f.sm_disc / t, SM_PCSS_MAX);
     return r >= 1.0 ? r : 0.0;
 }
@@ -181,8 +181,8 @@ float sm_vis_set(int set, vec3 pos, vec3 n, float depth) {
     if (sm_clear(k, w, reach, hr - reach * (abs(g.x) + abs(g.y)))) return 1.0;
     if (rs == 0.0) return sm_pcf(k, w, hr, g);
     // PCSS: средняя высота заслонок над точкой в круге поиска → полутень → фильтр её радиуса
-    int ns_taps = f.light_q >= LIGHT_Q_ULTRA ? 12 : f.light_q >= LIGHT_Q_HIGH ? 8 : 6;
-    int nf_taps = f.light_q >= LIGHT_Q_ULTRA ? 20 : f.light_q >= LIGHT_Q_HIGH ? 12 : 8;
+    int ns_taps = f.shadow_q >= LIGHT_Q_ULTRA ? 12 : f.shadow_q >= LIGHT_Q_HIGH ? 8 : 6;
+    int nf_taps = f.shadow_q >= LIGHT_Q_ULTRA ? 20 : f.shadow_q >= LIGHT_Q_HIGH ? 12 : 8;
     float sum = 0.0;
     int cnt = 0;
     for (int i = 0; i < ns_taps; ++i) {

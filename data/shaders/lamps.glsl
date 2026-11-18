@@ -126,13 +126,13 @@ float lsm_recv(vec3 w, float vn, vec3 n, float d) {
     return min(vn / wn * length(w), 2.0 * d);
 }
 
-// Ступень выборки по яркости огня в точке (em — самый сильный канал, лк) и качеству света: 0 — одна выборка 2×2,
+// Ступень выборки по яркости огня в точке (em — самый сильный канал, лк) и ступени теней: 0 — одна выборка 2×2,
 // 1 — PCSS 4 + 6, 2 — PCSS 8 + 12. Слабый огонь (белая стена под ним на экране до кривой тусклее 0.004) — 0
 uint lamp_map_q(float em) {
     float ex = lamp_ex();
     float disp = ex > 0.0 ? em * ex / 3.14159265 : 1.0;
     uint q = disp < 0.004 ? 0u : disp < 0.02 ? 1u : 2u;
-    uint qmax = pc.frame.light_q == LIGHT_Q_LOW ? 0u : pc.frame.light_q == LIGHT_Q_MEDIUM ? 1u : 2u;
+    uint qmax = pc.frame.shadow_q == LIGHT_Q_LOW ? 0u : pc.frame.shadow_q == LIGHT_Q_MEDIUM ? 1u : 2u;
     return min(q, qmax);
 }
 
