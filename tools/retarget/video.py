@@ -70,7 +70,7 @@ def main():
                '--window', w, h, *cam, '--hour', '15.5', '--stand',
                f"{extra}seq={'+'.join(clips)},speed={a.speed},t=-{lead * 100 // 30}", '--video', os.path.join(d, 'f')]
         print(' '.join(cmd), flush=True)
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
         if r.returncode:
             print(r.stdout[-3000:])
             sys.exit(1)

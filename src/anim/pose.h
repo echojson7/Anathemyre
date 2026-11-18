@@ -39,3 +39,7 @@ inline void pose_turn_world(Quat *rot, const Quat *wr, u32 i, Quat q) {
 // (nullptr — бинд-поза у всех); дети идут за родителем. trans — голова кости trans_bone в осях сетки (кость
 // переноса клипа, таз), nullptr — от родителя, как в бинде. out — s.bones.count матриц
 void pose_palette(const Skel &s, const Quat *rot, PoseMatrix *out, i32 trans_bone = -1, const Vec3 *trans = nullptr);
+// Местные повороты, в которых кости стоят, как стоит сетка (обратные бинд-матрицы .skel). У людей сетка привязана
+// в стойке беты, а бинд-поза скелета — A-поза MakeHuman (docs/body.md, «Поза привязки»): с этими поворотами
+// палитра — единичная, тело стоит ровно как вылеплено
+void pose_mesh_rest(const Skel &s, Quat *rot);

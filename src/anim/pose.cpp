@@ -116,3 +116,44 @@ void pose_palette_world(const Skel &s, const Quat *wr, const Vec3 *wp, PoseMatri
         }
     }
 }
+
+static Quat m33_quat(const M33 &a) {
+    // Поворот 3×3 (по строкам) → кватернион, w ≥ 0
+    const f32 *m = a.m;
+    f32 t = m[0] + m[4] + m[8];
+    Quat q;
+    if (t > 0.0f) {
+        f32 r = f_sqrt(t + 1.0f) * 2.0f;
+        q = {(m[7] - m[5]) / r, (m[2] - m[6]) / r, (m[3] - m[1]) / r, 0.25f * r};
+    } else if (m[0] > m[4] && m[0] > m[8]) {
+        f32 r = f_sqrt(1.0f + m[0] - m[4] - m[8]) * 2.0f;
+        q = {0.25f * r, (m[1] + m[3]) / r, (m[2] + m[6]) / r, (m[7] - m[5]) / r};
+    } else if (m[4] > m[8]) {
+        f32 r = f_sqrt(1.0f + m[4] - m[0] - m[8]) * 2.0f;
+        q = {(m[1] + m[3]) / r, 0.25f * r, (m[5] + m[7]) / r, (m[2] - m[6]) / r};
+    } else {
+        f32 r = f_sqrt(1.0f + m[8] - m[0] - m[4]) * 2.0f;
+        q = {(m[2] + m[6]) / r, (m[5] + m[7]) / r, 0.25f * r, (m[3] - m[1]) / r};
+    }
+    f32 n = f_sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    if (q.w < 0.0f) n = -n;
+    return {q.x / n, q.y / n, q.z / n, q.w / n};
+}
+
+void pose_mesh_rest(const Skel &s, Quat *rot) {
+    // Поворот кости в осях сетки, в котором стоит сетка: поворот обратной бинд-матрицы, транспонированный.
+    // Местный rot = bind⁻¹ · bind_родителя · (поза родителя)⁻¹ · цель, поза родителя — уже его цель
+    constexpr u32 MAX = SKEL_MAX_BONES;
+    M33 w[MAX];
+    for (usize i = 0; i < s.bones.count && i < MAX; ++i) {
+        const SkelBone &b = s.bones.data[i];
+        const f32 *v = b.inv;
+        w[i] = M33{{v[0], v[4], v[8], v[1], v[5], v[9], v[2], v[6], v[10]}};
+        M33 l = transpose(quat_m33(b.rot[0], b.rot[1], b.rot[2], b.rot[3]));
+        if (b.parent >= 0) {
+            const SkelBone &pb = s.bones.data[b.parent];
+            l = mul(l, mul(quat_m33(pb.rot[0], pb.rot[1], pb.rot[2], pb.rot[3]), transpose(w[b.parent])));
+        }
+        rot[i] = m33_quat(mul(l, w[i]));
+    }
+}

@@ -23,7 +23,7 @@ import numpy as np
 N = 512             # сторона карт, текселей
 FACE_V = 0.75       # лицо щита — u 0..1, v 0..0.75 (картинка 512 × 384); кромки — полоса v 0.75..1
 PANEL = (1.6, 1.2, 0.12)   # щит: ширина, высота, толщина, м
-PIPE_R, PIPE_H, PIPE_SEG = 0.2, 1.2, 32
+PIPE_R, PIPE_H, PIPE_SEG = 0.2, 1.2, 48  # хорда 0.43 мм ≤ 0.5 мм линта (docs/assetlint.md)
 PANEL_X, PIPE_X = -0.3, 0.95  # середины по x: вся проба около нуля
 MATERIAL = "tex_probe_paint"
 
@@ -160,6 +160,7 @@ def geometry():
     g.quad([(x0, hgt, z1), (x1, hgt, z1), (x1, hgt, z0), (x0, hgt, z0)], (0, 1, 0), [(0, s1), (1, s1), (1, s0), (0, s0)])
     g.quad([(x1, 0, z1), (x1, 0, z0), (x1, hgt, z0), (x1, hgt, z1)], (1, 0, 0), [(0, s1), (0.1, s1), (0.1, s0), (0, s0)])
     g.quad([(x0, 0, z0), (x0, 0, z1), (x0, hgt, z1), (x0, hgt, z0)], (-1, 0, 0), [(0.9, s1), (1, s1), (1, s0), (0.9, s0)])
+    g.quad([(x0, 0, z0), (x1, 0, z0), (x1, 0, z1), (x0, 0, z1)], (0, -1, 0), [(0, s0), (1, s0), (1, s1), (0, s1)])
     # Труба: развёртка по кругу (u 0..1 — вся ширина, шов — две вершины на одном месте), v — по высоте
     base = len(g.p)
     for k in range(PIPE_SEG + 1):
@@ -172,6 +173,20 @@ def geometry():
     for k in range(PIPE_SEG):
         a, b = base + 2 * k, base + 2 * k + 2
         g.idx += [a, b, b + 1, a, b + 1, a + 1]
+    # Торцы трубы — веером из середины, развёртка — круг в полосе кромок: тело замкнуто (линт ассетов)
+    for yy, ny in ((PIPE_H, 1.0), (0.0, -1.0)):
+        c = len(g.p)
+        g.p.append((PIPE_X, yy, 0.0))
+        g.n.append((0.0, ny, 0.0))
+        g.uv.append((0.5, (FACE_V + 1.0) / 2))
+        for k in range(PIPE_SEG + 1):
+            a = 2 * math.pi * k / PIPE_SEG
+            g.p.append((PIPE_X + PIPE_R * math.sin(a), yy, PIPE_R * math.cos(a)))
+            g.n.append((0.0, ny, 0.0))
+            g.uv.append((0.5 + 0.1 * math.sin(a), (FACE_V + 1.0) / 2 + 0.1 * math.cos(a)))
+        for k in range(PIPE_SEG):
+            i, j = c + 1 + k, c + 2 + k
+            g.idx += [c, i, j] if ny > 0 else [c, j, i]
     return g
 
 
