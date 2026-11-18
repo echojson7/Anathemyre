@@ -55,6 +55,7 @@ struct AirBox { vec3 c; float dust; vec2 u; float soft; float pad0; vec3 h; floa
 layout(buffer_reference, scalar) readonly buffer AirBoxes { AirBox v[]; };
 layout(buffer_reference, scalar) buffer AirFloats { float v[]; };
 layout(buffer_reference, scalar) buffer SunVis { float v[]; };
+layout(buffer_reference, scalar) buffer SurfRecs { uvec4 v[]; };
 layout(buffer_reference, scalar) buffer AirTexels { uvec2 v[]; };
 layout(buffer_reference, scalar) buffer AirWords { uint v[]; };
 const uint STAT_VIS_WANT = 0u;       // видимых кластеров до обрезки по vis_max
@@ -452,6 +453,9 @@ layout(buffer_reference, scalar) buffer FrameData {
     // 0 — тень; по плиткам 8×8 кадра, 64 подряд
     SunVis sun_vis;
     uint sun_pad0, sun_pad1;
+    // Поверхность кадра (surf_cells.comp пишет, light_cells.comp читает; surf_buf.glsl, docs/perf_arch.md шаг 4):
+    // по плиткам 8×8, два uvec4 на пиксель
+    SurfRecs surf;
 };
 
 layout(push_constant, scalar) uniform Push {

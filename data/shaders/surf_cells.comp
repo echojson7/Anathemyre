@@ -1,0 +1,54 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Проход материала (docs/perf_arch.md, шаг 4; surf_buf.glsl): плитка 8×8 из списка вида плиток (push-константа a:
+// сетки, смесь, земля на пиксель) — разбор visibility buffer и материал (surface_uv, декали, слои земли), поверхность
+// — в запись кадра. Освещение тех же плиток (light_cells.comp, игра) её читает: материал и свет — разные конвейеры,
+// и регистры каждого — по своей части. Конвейер — по виду пикселя (SURF_KIND): сетки или земля мимо кеша; смесь
+// проходят оба, каждый свои пиксели — материал земли и сеток в одном конвейере держал 256 регистров. Пишет и вектор
+// движения своих пикселей (разбор — здесь); небо — конвейер сеток, а у плиток земли на пиксель — земли. Земля из
+// кеша со страницей и небо записи не получают: их освещение считает само. Общей памяти нет — поток на пиксель
+layout(constant_id = 0) const uint SURF_KIND = 0u;  // 0 — сетки, 1 — земля
+#define RESOLVE_GROUND (SURF_KIND == 1u)
+#define GC_KIND (SURF_KIND == 1u)
+#define RESOLVE_MESH (SURF_KIND == 0u)
+uint g_steps = 0u;  // shade.glsl тянет свет (horizon.glsl); здесь он не зовётся
+#define T_SHADOW_STEPS g_steps
+ivec2 g_origin;  // начало отсчёта узоров: чанк камеры, у текселя кеша — его чанк (gcache.glsl)
+#define ORIGIN_CHUNK g_origin
+#define GC_ORIGIN_VAR
+#include "resolve.glsl"
+#include "gcache.glsl"
+#include "shade.glsl"
+#include "motion.glsl"
+#include "light_hit.glsl"
+#include "surf_buf.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, r32ui) uniform readonly uimage2D u_vis;
+layout(set = 0, binding = 11, rgba16f) uniform writeonly image2D u_motion;  // векторы движения TAA (motion.glsl)
+
+void main() {
+    FrameData f = pc.frame;
+    g_origin = f.cam_chunk;
+    uint list = pc.a;
+    uint tile = f.tiles.list[list * f.tile_cap + gl_WorkGroupID.x];
+    ivec2 px = ivec2(tile & 0xFFFFu, tile >> 16) * 8 + ivec2(gl_LocalInvocationID.xy);
+    if (px.x >= int(f.viewport.x) || px.y >= int(f.viewport.y)) return;
+    uint id = imageLoad(u_vis, px).r;
+    // Свои пиксели: сетки или земля; небо — одному из двух на плитку
+    bool ground = id != 0u && (id & VIS_GROUND) != 0u;
+    bool mine = id == 0u ? (SURF_KIND == 1u) == (list == TILE_GROUND_PX) : ground == (SURF_KIND == 1u);
+    if (!mine) return;
+    GcCell c;
+    Hit h = pixel_hit(px, true, id, c);
+    if (f.aa_mode == AA_TAA) imageStore(u_motion, px, aa_motion(h, id));
+    if (h.kind == HIT_SKY) return;
+    int phys = -1;
+    if (h.kind == HIT_GCACHE) {
+        // Тексель со страницей освещение смешивает само (gc_surface_px); без страницы — материал здесь
+        phys = gc_find(int(h.level), ivec2(int(h.m0), int(h.m1)));
+        if (phys >= 0) return;
+    }
+    Surface s = hit_surface(h, phys);
+    uint fl = h.kind == HIT_MESH ? (h.dyn ? SURF_MOVING : 0u) : SURF_GROUND;
+    surf_store(px, s, h.t, fl);
+}

@@ -194,6 +194,13 @@ bool vk_world_init() {
     for (u32 k = 0; k < TILE_KINDS; ++k) ok = make_light(&w.pipe_light[k], k, 0) && ok;
     ok = vk_make_compute(&w.pipe_sun, "sun_vis.comp") && ok;
     w.rg_sun = rg_buffer("мир: тень солнца");
+    // Проход материала (docs/perf_arch.md, шаг 4): конвейер на вид пикселя (SURF_KIND: 0 — сетки, 1 — земля)
+    for (u32 k = 0; k < 2; ++k) {
+        const VkSpecializationMapEntry me{0, 0, sizeof(u32)};
+        VkSpecializationInfo si{1, &me, sizeof k, &k};
+        ok = vk_make_compute(&w.pipe_surf[k], "surf_cells.comp", &si) && ok;
+    }
+    w.rg_surf = rg_buffer("мир: поверхность кадра");
     return ok && vk_gcache_init() && vk_shadow_init() && vk_sdf_init() && vk_lsm_init() && vk_gi_init() &&
            vk_lcache_init() && vk_scans_init() && vk_textures_init() && vk_aa_init() && vk_air_init();
 }
@@ -213,6 +220,10 @@ void vk_world_shutdown() {
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
     for (VkPipeline p : w.pipe_light)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
+    for (VkPipeline &p : w.pipe_surf) {
+        if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
+        p = VK_NULL_HANDLE;
+    }
     for (VkPipeline &p : w.pipe_light_dbg) {
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
         p = VK_NULL_HANDLE;
@@ -228,6 +239,7 @@ void vk_world_shutdown() {
     vk_destroy_buffer(w.tiles);
     vk_destroy_buffer(w.view_light);
     vk_destroy_buffer(w.sun_vis);
+    vk_destroy_buffer(w.surf);
     for (FrameSlot &fs : g_vk.frames) vk_destroy_buffer(fs.inst_upload);
     vk_gcache_shutdown();
     vk_shadow_shutdown();
@@ -309,6 +321,13 @@ static bool ensure_images() {
         return false;
     vk_buffer_name(w.sun_vis, "мир: тень солнца");
     rg_reset(w.rg_sun);
+    // Поверхность кадра — по плиткам, два uvec4 на пиксель (surf_buf.glsl): пишут только плитки сеток, смеси и
+    // земли на пиксель, но место — на весь кадр (вид у плитки свой каждый кадр)
+    vk_destroy_buffer(w.surf);
+    if (!vk_create_buffer(w.surf, (VkDeviceSize)w.tile_cap * 64 * 32, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true))
+        return false;
+    vk_buffer_name(w.surf, "мир: поверхность кадра");
+    rg_reset(w.rg_surf);
     rg_bind_image(w.rg_id, w.id.image);
     rg_bind_image(w.rg_hdr, w.hdr.image);
     VkDescriptorImageInfo ii[2] = {{VK_NULL_HANDLE, w.id.view, VK_IMAGE_LAYOUT_GENERAL},
@@ -384,6 +403,7 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.tile_cap = w.tile_cap;
     g.view_light = w.view_light.address;
     g.sun_vis = w.sun_vis.address;
+    g.surf = w.surf.address;
     vk_gcache_fill(g, f, images);
     vk_shadow_fill(g, f, fs, images);
     vk_sdf_fill(g, f, fs, images);
@@ -531,6 +551,26 @@ static void record_light(VkCommandBuffer cmd, void *user) {
     vkCmdDispatchIndirect(cmd, w.tiles.buffer, (VkDeviceSize)kind * 16);
 }
 
+// Материал → поверхность кадра (surf_cells.comp): проход — список плиток вида и конвейер вида пикселя; группа на
+// плитку, как у освещения
+struct SurfPass {
+    const char *name;
+    u32 list, kind;  // вид плиток (TILE_KIND_*), вид пикселя (SURF_KIND: 0 — сетки, 1 — земля)
+};
+static const SurfPass k_surf_passes[] = {{"материал: сетки", TILE_KIND_MESH, 0},
+                                         {"материал: смесь, сетки", TILE_KIND_MIX, 0},
+                                         {"материал: смесь, земля", TILE_KIND_MIX, 1},
+                                         {"материал: земля на пиксель", TILE_KIND_GROUND_PX, 1}};
+static void record_surf(VkCommandBuffer cmd, void *user) {
+    const WorldGpu &w = g_vk.world;
+    const SurfPass &sp = *(const SurfPass *)user;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, w.pipe_surf[sp.kind]);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.layout, 0, 1, &w.set, 0, nullptr);
+    PushConsts pc{g_wf.frame, sp.list, 0};
+    vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
+    vkCmdDispatchIndirect(cmd, w.tiles.buffer, (VkDeviceSize)sp.list * 16);
+}
+
 // Тень солнца на пиксель (sun_vis.comp): группа на плитку 8×8 всего кадра, небо уходит сразу
 static void record_sun(VkCommandBuffer cmd, void *) {
     const WorldGpu &w = g_vk.world;
@@ -662,6 +702,24 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     static const char *const light_names[TILE_KINDS] = {"освещение: небо", "освещение: земля", "освещение: сетки",
                                                         "освещение: смесь", "освещение: земля на пиксель"};
     for (u32 k = 0; k < TILE_KINDS; ++k) {
+        // Материал отдельно от света (docs/perf_arch.md, шаг 4): у сеток, смеси и земли на пиксель поверхность пишет
+        // свой проход, освещение её читает. Земля на пиксель — после освещения земли: та дописывает её список
+        if (!g_wf.light_debug && k == TILE_KIND_MESH)
+            for (const SurfPass &sp : k_surf_passes) {
+                rg_pass(sp.name, sp.name, record_surf, (void *)&sp);
+                rg_use(w.rg_tiles, RG_INDIRECT);
+                rg_use(w.rg_tiles, RG_CS_READ);
+                rg_use(w.rg_id, RG_IMG_CS_READ);
+                rg_use(w.rg_surf, RG_CS_WRITE);
+                rg_use(w.rg_vis, RG_CS_READ);
+                rg_use(w.rg_inst, RG_CS_READ);
+                rg_use(w.rg_gverts, RG_CS_READ);
+                vk_skin_vertices_read(RG_CS_READ);
+                vk_froxel_reads(RG_CS_READ);  // декали
+                vk_gcache_reads();
+                vk_skin_prev_read();
+                vk_aa_light_uses(false);
+            }
         rg_pass(light_names[k], light_names[k], record_light, (void *)(uintptr_t)k);
         rg_use(w.rg_tiles, RG_INDIRECT);
         // Земля отдаёт плитки, текселей которых нет в кеше, виду «земля на пиксель» (дописывает его список)
@@ -675,6 +733,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
         vk_skin_vertices_read(RG_CS_READ);
         if (!g_wf.light_debug) rg_use(w.rg_sun, RG_CS_READ);
+        if (!g_wf.light_debug && k >= TILE_KIND_MESH) rg_use(w.rg_surf, RG_CS_READ);
         vk_sky_reads(RG_CS_READ);
         vk_froxel_reads(RG_CS_READ);
         vk_gcache_reads();

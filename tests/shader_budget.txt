@@ -5,12 +5,15 @@
 # опускать — в том же PR, что облегчил шейдер. 18.11: освещение (light_cells) — главный долг, см. docs/perf_arch.md
 #
 # освещение, игра: TILE_KIND (0 небо, 1 земля, 2 сетки, 3 смесь, 4 земля на пиксель), LIGHT_DEBUG 0; земля —
-# непрямой только из кеша (шаг 3)
+# непрямой только из кеша (шаг 3); сетки, смесь, земля на пиксель — поверхность из прохода материала (шаг 4)
 light_cells.comp         0,0      64      0    46
 light_cells.comp         1,0      96      0    76
-light_cells.comp         2,0     168      0   309
-light_cells.comp         3,0     256      0   556
-light_cells.comp         4,0     168      0   527
+light_cells.comp         2,0     168      0    97
+light_cells.comp         3,0     168      0   107
+light_cells.comp         4,0     168      0   107
+# проход материала (шаг 4): SURF_KIND 0 — сетки, 1 — земля мимо кеша (слои земли, ground_eval)
+surf_cells.comp          0       128      0   222
+surf_cells.comp          1       168      0   440
 # освещение, отладка (правило ячеек P, виды F3): LIGHT_DEBUG 1; небо в отладке то же, что в игре
 light_cells.comp         1,1     168      0   224
 light_cells.comp         2,1     256      0   412
