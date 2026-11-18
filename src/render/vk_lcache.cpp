@@ -184,6 +184,7 @@ void vk_lcache_passes() {
     rg_use(s.rg_acc, RG_CS_WRITE);
     rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
     vk_sdf_reads();
+    vk_lsm_reads();
     vk_gi_reads();
     vk_sky_reads(RG_CS_READ);
     vk_horizon_reads(RG_CS_READ);

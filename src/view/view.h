@@ -97,6 +97,7 @@ struct ViewInput {
     bool eye_snap = true;
     u32 tonemap = RENDER_TONEMAP_UE;
     bool local_off = false;  // без местной экспозиции (F3, --nolocal): сравнение было/стало
+    bool lsm_off = false;    // тени огней полем расстояний, не картами (F3, --nolsm): сравнение было/стало
     bool scans = false;  // поверхности из сканов CC0 (docs/scans.md), F3 и --scans
     bool gclight_off = false;  // отражённый свет земли на пиксель, не из кеша (docs/gcache.md, F3, --nogclight)
     u32 light_quality = RENDER_LIGHT_HIGH;

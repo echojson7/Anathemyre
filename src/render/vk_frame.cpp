@@ -140,6 +140,7 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     vk_skin_fill(g, f, fs);  // до vk_world_fill: LOD людей идёт в их экземпляры
     vk_world_fill(g, f, fs);
     vk_froxel_fill(g, f, fs);
+    vk_lsm_fill(g, f, fs);  // после огней кадра в буфере слота: их места карт — в их flags
 }
 
 // Снимок: копия картинки кадра в буфер (после интерфейса, до показа)

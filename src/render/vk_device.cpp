@@ -135,6 +135,10 @@ static bool create_device() {
     f10.fragmentStoresAndAtomics = VK_TRUE;
     // Поле расстояний мира (docs/sdf.md): сборка пишет R16F в картинку
     f10.shaderStorageImageExtendedFormats = VK_TRUE;
+    // Тени огней картами (docs/lamp_shadows.md): массив кубов глубины
+    f10.imageCubeArray = VK_TRUE;
+    // Косвенные вызовы кластеров (кадр, тени солнца, грани огней) несут свой номер в firstInstance
+    f10.drawIndirectFirstInstance = VK_TRUE;
 
     vkb::PhysicalDeviceSelector sel(vi);
     auto pick = sel.set_surface(g_vk.surface)

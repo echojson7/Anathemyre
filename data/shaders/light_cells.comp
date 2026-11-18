@@ -81,8 +81,8 @@ shared uint s_list[64];    // ведущие по порядку
 shared vec3 s_color[64];
 shared float s_elocal[64];  // свет места ведущего × экспозиция (альфа HDR)
 shared vec4 s_view[64];     // свет места ведущего для глаза (view_light)
-shared uint s_work[10];    // пиксели неба, земли, сеток; поверхности земли, сеток; выборки тени; земля на пиксель;
-                           // выборки карты теней и без страницы; выборки поля расстояний
+shared uint s_work[11];    // пиксели неба, земли, сеток; поверхности земли, сеток; выборки тени; земля на пиксель;
+                           // выборки карты теней и без страницы; выборки поля расстояний; выборки карт огней
 shared uint s_bail;        // плитка земли уходит в «землю на пиксель»: текселя нет в кеше
 shared uint s_box[6];      // рамка точек ведущих пикселей плитки, м от камеры: min xyz, max xyz (порядок слов — порядок чисел)
 
@@ -197,9 +197,10 @@ void lamp_tile(uint t) {
 
 // Работа группы — в счётчики кадра: одна атомарная операция на счётчик и плитку
 void work_flush() {
-    const uint at[10] = uint[10](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
-                                 STAT_SHADOW_TAPS, STAT_GC_PX_DIRECT, STAT_SM_TAPS, STAT_SM_MISS, STAT_SDF_TAPS);
-    for (uint k = 0u; k < 10u; ++k)
+    const uint at[11] = uint[11](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
+                                 STAT_SHADOW_TAPS, STAT_GC_PX_DIRECT, STAT_SM_TAPS, STAT_SM_MISS, STAT_SDF_TAPS,
+                                 STAT_LSM_TAPS);
+    for (uint k = 0u; k < 11u; ++k)
         if (s_work[k] != 0u) atomicAdd(pc.frame.stats.v[at[k]], s_work[k]);
 }
 
@@ -228,7 +229,7 @@ void main() {
         }
         return;
     }
-    if (t < 10u) s_work[t] = 0u;
+    if (t < 11u) s_work[t] = 0u;
     if (t == 0u) s_bail = s_lamp_any = 0u;
     if (t < 32u) s_lamp[t] = 0u;
     if (t < 6u) s_box[t] = t < 3u ? 0xFFFFFFFFu : 0u;
@@ -323,6 +324,7 @@ void main() {
         if (g_sm_taps != 0u) atomicAdd(s_work[7], g_sm_taps);
         if (g_sm_miss != 0u) atomicAdd(s_work[8], g_sm_miss);
         if (g_sdf_taps != 0u) atomicAdd(s_work[9], g_sdf_taps);
+        if (g_lsm_taps != 0u) atomicAdd(s_work[10], g_lsm_taps);
     }
     barrier();
     if (inside) imageStore(u_hdr, px, vec4(s_color[s_rank[s_lead[t]]], s_elocal[s_rank[s_lead[t]]]));

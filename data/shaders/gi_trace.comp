@@ -64,7 +64,7 @@ void main() {
         }
         if (back != 0u) atomicAdd(s_back, back);
     }
-    atomicAdd(s_taps, g_sdf_taps);
+    atomicAdd(s_taps, g_sdf_taps + g_lsm_taps);  // выборки поля и карт огней
     barrier();
     if (t == 0u) {
         // Больше четверти лучей — в обратную сторону граней: зонд внутри заслонки (DDGI)

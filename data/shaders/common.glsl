@@ -38,6 +38,11 @@ layout(buffer_reference, scalar) buffer CloudWords { uint v[]; };
 layout(buffer_reference, scalar) buffer GlareTexels { uvec2 v[]; };  // блеск (glare.glsl): rgb половинками  // облака (clouds.glsl): карта купола, шум, карта тени
 // Счётчики GPU кадра (docs/graph.md «Переполнения»): сколько не влезло; номера — как STAT_* в vk_state.h
 layout(buffer_reference, scalar) buffer Stats { uint v[]; };
+// Грань карты огня кадра (LsmJobGpu, vk_lamp_shadow.cpp): огонь от камеры, м; радиус его светильника от отрезка, м;
+// полуось трубки; место · 6 + грань; куда светит (нули — во все стороны)
+struct LsmJob { vec3 c; float self_r; vec3 axis; uint layer; vec3 face; uint pad; };
+layout(buffer_reference, scalar) readonly buffer LsmJobs { LsmJob v[]; };
+layout(buffer_reference, scalar) buffer LsmCounts { uint v[]; };  // вызовов на грань кадра (атомарно)
 layout(buffer_reference, scalar) buffer HMap { uint v[]; };  // карта горизонта (horizon.glsl), пишет horizon.comp
 const uint STAT_VIS_WANT = 0u;       // видимых кластеров до обрезки по vis_max
 const uint STAT_FROXEL_LIGHTS = 1u;  // клеток, где огни не влезли (свет перебирает все огни кадра)
@@ -83,6 +88,9 @@ layout(buffer_reference, scalar) buffer GiJobs { uint v[]; };
 const uint STAT_LC_LIVE = 32u, STAT_LC_NEW = 33u, STAT_LC_JOBS = 34u, STAT_LC_RAYS = 35u, STAT_LC_OVER = 36u,
            STAT_LC_TAPS = 37u, STAT_LC_WAIT = 38u;
 const uint STAT_GC_LIT = 39u;  // текселей кеша земли, чей отражённый свет посчитан в кадре (docs/gcache.md)
+// Тени огней картами (docs/lamp_shadows.md): граней нарисовано, вызовов кластеров в них (до обрезки), граней, где
+// вызовы не влезли, выборок карт светом
+const uint STAT_LSM_FACES = 40u, STAT_LSM_DRAWS = 41u, STAT_LSM_OVER = 42u, STAT_LSM_TAPS = 43u;
 const uint GC_LIGHT_ON = 1u, GC_LIGHT_ALL = 2u;  // gc_lmode: свет в кеше читается; пересчитать все страницы кадра
 // org — точка лучей, м от якоря; ao — половинками ближнее затенение по полю у точки ячейки (x) и оно же,
 // сглаженное как свет (y): его лучи ячейки уже видят, пиксель делит своё на него (light.glsl, lc_ao)
@@ -378,6 +386,13 @@ layout(buffer_reference, scalar) buffer FrameData {
     GlareTexels gr_buf;
     uint gr_on, gr_n, gr_pad0, gr_pad1;  // gr_n — уровней
     ivec4 gr_lv[8];           // уровень: ширина, высота, начало «вниз», начало «вверх» (в текселях)
+    // Тени огней картами (docs/lamp_shadows.md, vk_lamp_shadow.cpp): грани кадра, их вызовы (LSM_DRAW_CAP на
+    // грань), счётчики вызовов граней, список отрисовки (экземпляр, кластер)
+    LsmJobs lsm_jobs;
+    DrawCmds lsm_draws;
+    LsmCounts lsm_counts;
+    VisClusters lsm_list;
+    uint lsm_on, lsm_jobs_n, lsm_pad0, lsm_pad1;
 };
 
 layout(push_constant, scalar) uniform Push {

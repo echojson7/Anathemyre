@@ -37,11 +37,23 @@ bool vk_world_layout() {
     if (!vk_check(vkCreateSampler(g_vk.device, &si, nullptr, &g_vk.scans.sampler), "vkCreateSampler")) return false;
     // 11 — векторы движения, 12 — две истории сглаживания для выборки (линейно, по краю — тот же сэмплер, что у
     // зондов), 13 — они же для записи и для стиля (docs/aa.md, vk_aa.cpp)
-    constexpr u32 NB = 14;
+    // 14, 15 — кубы карт огней (docs/lamp_shadows.md, vk_lamp_shadow.cpp): со сравнением (2×2 билинейно: свет, если
+    // опора ≥ глубины в карте — глубина обратная) и как есть (поиск заслонок PCSS)
+    si.magFilter = si.minFilter = VK_FILTER_LINEAR;
+    si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    si.maxLod = 0.0f;
+    si.compareEnable = VK_TRUE;
+    si.compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
+    if (!vk_check(vkCreateSampler(g_vk.device, &si, nullptr, &g_vk.lsm.cmp), "vkCreateSampler")) return false;
+    si.compareEnable = VK_FALSE;
+    si.magFilter = si.minFilter = VK_FILTER_NEAREST;
+    if (!vk_check(vkCreateSampler(g_vk.device, &si, nullptr, &g_vk.lsm.raw), "vkCreateSampler")) return false;
+    constexpr u32 NB = 16;
     VkDescriptorSetLayoutBinding b[NB] = {};
     VkSampler hist_samplers[2] = {g_vk.gi.sampler, g_vk.gi.sampler};
     for (u32 i = 0; i < NB; ++i) {
-        bool sampled = i == 2 || i == 4 || i == 5 || i == 9 || i == 10 || i == 12;
+        bool sampled = i == 2 || i == 4 || i == 5 || i == 9 || i == 10 || i == 12 || i == 14 || i == 15;
         b[i].binding = i;
         b[i].descriptorType = sampled ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = i == 12 || i == 13 ? 2 : 1;
@@ -51,12 +63,14 @@ bool vk_world_layout() {
     b[4].pImmutableSamplers = b[5].pImmutableSamplers = &g_vk.gi.sampler;
     b[9].pImmutableSamplers = b[10].pImmutableSamplers = &g_vk.scans.sampler;
     b[12].pImmutableSamplers = hist_samplers;
+    b[14].pImmutableSamplers = &g_vk.lsm.cmp;
+    b[15].pImmutableSamplers = &g_vk.lsm.raw;
     auto li = vk_info<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
     li.bindingCount = NB;
     li.pBindings = b;
     if (!vk_check(vkCreateDescriptorSetLayout(g_vk.device, &li, nullptr, &w.set_layout), "vkCreateDescriptorSetLayout"))
         return false;
-    VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 9}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7}};
+    VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 9}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9}};
     auto pi = vk_info<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
     pi.maxSets = 1;
     pi.poolSizeCount = 2;
@@ -123,7 +137,7 @@ bool vk_world_init() {
         VkSpecializationInfo si{1, &me, sizeof(u32), &k};
         ok = vk_make_compute(&w.pipe_light[k], "light_cells.comp", &si) && ok;
     }
-    return ok && vk_gcache_init() && vk_shadow_init() && vk_sdf_init() &&
+    return ok && vk_gcache_init() && vk_shadow_init() && vk_sdf_init() && vk_lsm_init() &&
            vk_gi_init() && vk_lcache_init() && vk_scans_init() && vk_aa_init();
 }
 
@@ -154,6 +168,7 @@ void vk_world_shutdown() {
     vk_gcache_shutdown();
     vk_shadow_shutdown();
     vk_sdf_shutdown();
+    vk_lsm_shutdown();
     vk_gi_shutdown();
     vk_lcache_shutdown();
     vk_aa_shutdown();
@@ -163,7 +178,9 @@ void vk_world_shutdown() {
     if (g_vk.sdf.sampler) vkDestroySampler(g_vk.device, g_vk.sdf.sampler, nullptr);
     if (g_vk.gi.sampler) vkDestroySampler(g_vk.device, g_vk.gi.sampler, nullptr);
     if (g_vk.scans.sampler) vkDestroySampler(g_vk.device, g_vk.scans.sampler, nullptr);
-    g_vk.sdf.sampler = g_vk.gi.sampler = g_vk.scans.sampler = VK_NULL_HANDLE;
+    if (g_vk.lsm.cmp) vkDestroySampler(g_vk.device, g_vk.lsm.cmp, nullptr);
+    if (g_vk.lsm.raw) vkDestroySampler(g_vk.device, g_vk.lsm.raw, nullptr);
+    g_vk.sdf.sampler = g_vk.gi.sampler = g_vk.scans.sampler = g_vk.lsm.cmp = g_vk.lsm.raw = VK_NULL_HANDLE;
     w = WorldGpu{};
 }
 
@@ -497,6 +514,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     vk_skin_vertices_read(RG_VS_READ);
     // Поле расстояний мира (docs/sdf.md): засыпка и сборка грязных кирпичей, экземпляры уже на GPU; по нему —
     // лучи зондов непрямого света (docs/gi.md) и глаз
+    vk_lsm_passes();
     vk_sdf_passes();
     vk_gi_passes();
     vk_sdf_eye_pass();
@@ -548,6 +566,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         vk_horizon_reads(RG_CS_READ);
         vk_shadow_reads();
         vk_sdf_reads();
+        vk_lsm_reads();
         vk_gi_reads();
         vk_lcache_reads();
         vk_skin_prev_read();

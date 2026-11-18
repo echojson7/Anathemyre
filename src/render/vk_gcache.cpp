@@ -284,6 +284,7 @@ void vk_gcache_light_pass() {
     vk_sky_reads(RG_CS_READ);
     vk_horizon_reads(RG_CS_READ);
     vk_sdf_reads();
+    vk_lsm_reads();
     vk_gi_reads();
     vk_lcache_reads();
 }

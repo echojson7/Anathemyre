@@ -94,6 +94,10 @@ void vk_shadow_reads();
 // загрузки экземпляров; что читает освещение
 void vk_sdf_passes();
 void vk_sdf_reads();
+// Тени огней картами (vk_lamp_shadow.cpp, docs/lamp_shadows.md): отбор и отрисовка новых граней — после загрузки
+// экземпляров, до всего, что читает огни; чтение карт (compute)
+void vk_lsm_passes();
+void vk_lsm_reads();
 // Глаз (eye.comp): после поля и зондов, до освещения
 void vk_sdf_eye_pass();
 // Зонды непрямого света (vk_gi.cpp, docs/gi.md): лучи и смешение работ кадра — после сборки поля; что читает свет

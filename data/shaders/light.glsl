@@ -143,9 +143,16 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
             float es = nls / (ds * ds + l.size * l.size) * w;
             spec = brdf_d(nh, a2) * brdf_v(nv, nls, a2) * brdf_f(vh, f0) * comp * (norm * es);
         }
-        float soft;
-        uint st = lamp_lod_steps(em, steps, soft);
-        float sh = lamp_shadow(s.pos, n, l, q, st, soft);
+        // Тень: картой огня, если у него есть место (docs/lamp_shadows.md), иначе конусом по полю
+        uint ms = lamp_map_slot(l);
+        float sh;
+        if (ms != 0u) {
+            sh = lamp_map_vis(l, ms, s.pos, n, lamp_map_q(em));
+        } else {
+            float soft;
+            uint st = lamp_lod_steps(em, steps, soft);
+            sh = lamp_shadow(s.pos, n, l, q, st, soft);
+        }
         c += (kd * (e / A_PI) + spec) * l.color * sh;
         // Свет места: ближний огонь — без тени (свет и тень одного места сдвигаются вместе), дальний — с тенью:
         // его заслоняют стены, и лампы соседнего зала за стеной в свет места не идут (иначе в зале станции глаз

@@ -217,9 +217,22 @@ static bool sdf_set_has(const RenderInstance *a, const RenderInstance &it) {
     }
     return false;
 }
+// Шары ушедших и пришедших заслонок кадра от якоря — картам огней (vk_sdf_moved); не влезли или поле с нуля — «всё»
+constexpr u32 SDF_MOVED_CAP = 4096;
+static f32 g_sdf_moved[SDF_MOVED_CAP][4];
+static u32 g_sdf_moved_n = 0;
+static bool g_sdf_moved_all = true;
+
 static void sdf_touch(SdfGpu &s, const RenderInstance &it) {
     SdfXf x;
     if (!sdf_xf(it, s.anchor, x)) return;
+    if (g_sdf_moved_n < SDF_MOVED_CAP) {
+        f32 *o = g_sdf_moved[g_sdf_moved_n++];
+        sdf_point(x, x.m->sphere, o);
+        o[3] = x.m->sphere[3] * x.s;
+    } else {
+        g_sdf_moved_all = true;
+    }
     for (u32 L = 0; L < SDF_LEVELS; ++L) {
         f32 c[3], r;
         i32 lo[3], hi[3];
@@ -324,6 +337,8 @@ void vk_sdf_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool images) 
         az = (f64)s.anchor[1] * 256.0;
     }
     f64 cam[3] = {camw[0] - ax, camw[1], camw[2] - az};
+    g_sdf_moved_n = 0;
+    g_sdf_moved_all = s.reset;
     sdf_windows(s, cam);
     sdf_changes(s, f);
     s.reset = false;
@@ -448,10 +463,17 @@ void vk_sdf_eye_pass() {
     if (!g_vk.sdf.on) return;
     rg_pass("глаз: экспозиция", "небо", sdf_record_eye, nullptr);
     rg_use(g_vk.sdf.rg_field, RG_IMG_CS_SAMPLE);
+    vk_lsm_reads();  // огни у глаза — с тенью картой
     rg_use(g_vk.world.rg_view, RG_CS_READ);  // свет мест плиток прошлого кадра (замер и цвет света)
     rg_use(g_vk.sky.rg_out, RG_CS_WRITE);
     vk_gi_reads();
     vk_clouds_reads(RG_CS_READ);  // тень облаков над камерой
+}
+
+u32 vk_sdf_moved(const f32 (**spheres)[4], bool *all) {
+    *spheres = g_sdf_moved;
+    *all = g_sdf_moved_all;
+    return g_sdf_moved_n;
 }
 
 void vk_sdf_reads() {

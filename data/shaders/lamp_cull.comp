@@ -1,0 +1,70 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Тени огней картами (docs/lamp_shadows.md): отбор заслонок для граней кадра. Поток — экземпляр (x) и грань (y):
+// статичная сетка, чья сфера в дальности огня и в пирамиде грани → LOD по текселю грани у ближнего края сферы
+// (не по камере: грань одна и та же, когда бы ни нарисовалась) → кластеры, задевающие пирамиду, — в вызовы грани.
+// Порядок вызовов от запуска к запуску разный, грань — нет: тест глубины берёт ближнюю заслонку
+#include "common.glsl"
+#include "lamp_map.glsl"
+layout(local_size_x = 64) in;
+
+const uint MAX_MESHES = 4096u;    // RENDER_MAX_MESHES
+const uint LSM_DRAW_CAP = 8192u;  // вызовов на грань (vk_state.h)
+const float LOD_TEXELS = 0.5;     // ошибка LOD не больше стольких текселей грани
+
+// Кластер целиком в светильнике огня (lsm_own): фрагментов не даст, вызов не нужен
+bool lsm_own_sphere(vec3 c, float r, LsmJob job) {
+    float aa = dot(job.axis, job.axis);
+    float t = aa > 0.0 ? clamp(dot(c, job.axis) / aa, -1.0, 1.0) : 0.0;
+    return length(c - job.axis * t) + r < job.self_r && dot(c, job.face) - r > -LSM_BACK;
+}
+
+void main() {
+    FrameData f = pc.frame;
+    uint i = gl_GlobalInvocationID.x, j = gl_GlobalInvocationID.y;
+    if (j >= f.lsm_jobs_n) return;
+    if (i == 0u) atomicAdd(f.stats.v[STAT_LSM_FACES], 1u);
+    if (i >= f.instance_count) return;
+    Instance it = f.vis_instances.v[i];
+    if (it.mesh == 0u || it.mesh >= MAX_MESHES) return;
+    MeshInfo m = f.meshes.v[it.mesh];
+    if (m.lod_count == 0u || (m.flags & MESH_DYNAMIC) != 0u) return;
+    LsmJob job = f.lsm_jobs.v[j];
+    uint face = job.layer % 6u;
+    vec4 q = inst_quat(it);
+    vec3 origin = rel_to_camera(ivec2(it.cx, it.cz), vec3(it.x, it.y, it.z)) - job.c;  // от огня
+    vec3 c = origin + quat_rotate(q, m.sphere.xyz * it.scale);
+    float r = m.sphere.w * it.scale;
+    float dc = length(c);
+    if (dc - r > LSM_RANGE || !lsm_face_sphere(face, c, r)) return;
+    float texel = 2.0 * max(dc - r, LSM_NEAR) / LSM_N;
+    uint lod = 0u;
+    while (lod + 1u < m.lod_count && uintBitsToFloat(m.lods[lod + 1u].z) * it.scale <= LOD_TEXELS * texel) lod++;
+    uvec4 L = m.lods[lod];
+    uint want = 0u, over = 0u;
+    for (uint k = 0u; k < L.y; ++k) {
+        uint ci = L.x + k;
+        Cluster cl = f.clusters.v[ci];
+        vec3 cc = origin + quat_rotate(q, cl.sphere.xyz * it.scale);
+        float cr = cl.sphere.w * it.scale;
+        if (length(cc) - cr > LSM_RANGE || !lsm_face_sphere(face, cc, cr)) continue;
+        if (lsm_own_sphere(cc, cr, job)) continue;
+        want++;
+        uint slot = atomicAdd(f.lsm_counts.v[j], 1u);
+        if (slot >= LSM_DRAW_CAP) {
+            over++;
+            continue;
+        }
+        uint at = j * LSM_DRAW_CAP + slot;
+        f.lsm_list.v[at] = uvec2(i, ci);
+        DrawCmd d;
+        d.index_count = cl.tri_count * 3u;
+        d.instance_count = 1u;
+        d.first_index = m.first_index + cl.first_index;
+        d.vertex_offset = int(m.first_vertex);
+        d.first_instance = at;
+        f.lsm_draws.v[at] = d;
+    }
+    if (want != 0u) atomicAdd(f.stats.v[STAT_LSM_DRAWS], want);
+    if (over != 0u) atomicAdd(f.stats.v[STAT_LSM_OVER], over);
+}

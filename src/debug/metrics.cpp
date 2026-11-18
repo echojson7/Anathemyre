@@ -154,6 +154,10 @@ static void metrics_body(UiForm &f, const DebugInfo &in, DebugState &d) {
             pair_row(f, "ячейки: живых · новых", in.work_lc[0], in.work_lc[1]);
             pair_row(f, "ячейки: посчитано · лучей", in.work_lc[2], in.work_lc[3]);
             pair_row(f, "ячейки: без места · ждут", in.work_lc[4], in.work_lc[5]);
+            // Тени огней картами (docs/lamp_shadows.md): грани рисуются, только когда огонь получил место
+            pair_row(f, "огни: граней · вызовов в них", in.work_lsm[0], in.work_lsm[1]);
+            snprintf(t, sizeof t, "%u", in.work_lsm[2]);
+            ui_value(f, "огни: выборок карт", t);
             dbg_count(in.work_skin, t, sizeof t);
             ui_value(f, "скинено вершин", t);
         }

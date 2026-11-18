@@ -280,6 +280,7 @@ void vk_gi_passes() {
     for (u32 k = 0; k < s.chunks; ++k) {
         rg_pass("зонды: лучи", "непрямой свет", gi_record_trace, &g_gi_chunks[k]);
         rg_use(g_vk.sdf.rg_field, RG_IMG_CS_SAMPLE);
+        vk_lsm_reads();
         rg_use(s.rg_irr, RG_IMG_CS_SAMPLE);
         rg_use(s.rg_dep, RG_IMG_CS_SAMPLE);
         rg_use(s.rg_probes, RG_CS_READ);

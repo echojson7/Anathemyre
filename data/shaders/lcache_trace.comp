@@ -160,7 +160,7 @@ void main() {
     s_r1[t] = vec4(ax.gb, ay.rg);
     s_r2[t] = vec4(ay.b, az);
     if (back != 0u) atomicAdd(s_back, back);
-    atomicAdd(s_taps, g_sdf_taps);
+    atomicAdd(s_taps, g_sdf_taps + g_lsm_taps);  // выборки поля и карт огней
     barrier();
     for (uint w = 32u; w > 0u; w >>= 1u) {
         if (t < w) {

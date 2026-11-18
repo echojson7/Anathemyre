@@ -261,6 +261,7 @@ void vk_stats_read(FrameSlot &fs) {
     vk_gcache_read(st);
     vk_shadow_read(st, fs.sm_frame);
     g_vk.world.work_valid = true;
+    if (st[STAT_LSM_OVER]) add_over(g_gpu_over, g_ngpu, "тени огней: кластеры без места в гранях", st[STAT_LSM_OVER], 0);
     if (st[STAT_FROXEL_LIGHTS]) add_over(g_gpu_over, g_ngpu, "froxels: клеток, где огни не влезли", st[STAT_FROXEL_LIGHTS], 0);
     if (st[STAT_FROXEL_DECALS]) add_over(g_gpu_over, g_ngpu, "froxels: клеток, где декали не влезли", st[STAT_FROXEL_DECALS], 0);
 }
@@ -307,6 +308,10 @@ bool render_work(RenderWork &out) {
     out.lc_taps = w.work[STAT_LC_TAPS];
     out.lc_wait = w.work[STAT_LC_WAIT];
     out.gc_lit = w.work[STAT_GC_LIT];
+    out.lsm_faces = w.work[STAT_LSM_FACES];
+    out.lsm_draws = w.work[STAT_LSM_DRAWS];
+    out.lsm_over = w.work[STAT_LSM_OVER];
+    out.lsm_taps = w.work[STAT_LSM_TAPS];
     out.sm_blend = vk_shadow_blend();
     out.gc_off = g_vk.gcache.off;
     return true;

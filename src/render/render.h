@@ -123,6 +123,7 @@ struct RenderStyle {
     f32 dt = 0.0f;         // секунды кадра: привыкание глаза
     bool eye_snap = true;  // глаз привыкает сразу (первый кадр, --timelapse: кадр — свой час)
     bool glow = true;      // светящиеся детали (стекло ламп, табло) светятся; выкл — вместе с лампами (F3, --nolamps)
+    bool lamp_maps = true; // тени огней картами (docs/lamp_shadows.md); выкл — полем расстояний (F3, --nolsm)
 };
 
 // Главный свет (light.glsl): солнце, ночью луна
@@ -357,6 +358,9 @@ struct RenderWork {
     // отложено до следующего кадра
     u32 lc_live, lc_new, lc_jobs, lc_rays, lc_over, lc_taps, lc_wait;
     u32 gc_lit;  // текселей кеша земли с пересчитанным отражённым светом (docs/gcache.md)
+    // Тени огней картами (docs/lamp_shadows.md): граней нарисовано, вызовов кластеров в них, кластеров без места,
+    // выборок карт светом
+    u32 lsm_faces, lsm_draws, lsm_over, lsm_taps;
     u32 sm_blend;  // перетекание шага светила: % нового набора, 100 — один набор (в --work не пишется)
     const char *gc_off;  // почему кеш земли выключен (nullptr — включён); в --work не пишется
 };
