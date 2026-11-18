@@ -1,0 +1,112 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Тень солнца на пиксель (docs/perf_arch.md, шаг 2; docs/shadow.md, «Свой проход»): горизонт × страницы с мягким
+// краем × тень облаков — одно число на пиксель в sun_vis, его читает освещение (light_cells.comp, игра). Свет
+// держал этот код в своих регистрах на каждой плитке; здесь он один, без материалов, огней и непрямого.
+// Группа — плитка 8×8 кадра, число в буфере — по плиткам (64 подряд). Небо не пишется: свет его не читает.
+// Точка и нормаль — как у света:
+//   земля из кеша — точка пикселя и нормаль смеси четырёх текселей (как gc_surface_px): число побайтно то же;
+//   земля без текселя (крутой склон, пул кончился) и сетки — нормаль геометрии (вершин), а не узора материала:
+//   материал считает только свет. Отступ по нормали и плоскость приёмника — свойства геометрии, а сторона,
+//   отвёрнутая геометрией от светила, — в тени от самой грани, куда бы ни повернул нормаль узор (до прохода
+//   такие точки у фасок могли светиться)
+#include "resolve.glsl"
+#include "gcache.glsl"
+uint g_steps = 0u;  // выборки карты горизонта (horizon.glsl)
+#define T_SHADOW_STEPS g_steps
+#include "horizon.glsl"
+#include "shadow.glsl"
+#include "clouds.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, r32ui) uniform readonly uimage2D u_vis;
+
+shared uint s_work[3];  // выборки карты горизонта, выборки страниц, без страницы
+
+// Нормаль пикселя земли из четырёх текселей b…b+1 (phys0 — страница b): те же доли, порядок и пропуски, что у
+// gc_surface_px — тексель без страницы выпадает
+vec3 gc_normal_px(int k, ivec2 b, vec2 fr, vec3 rel, int phys0) {
+    FrameData f = pc.frame;
+    float c = gc_cell(k);
+    float foot = max(dot(rel, f.forward.xyz), 0.0) * f.pixel_angle * f.cell_pixels;
+    float wv = clamp(log2(max(foot, 1e-9) / c) + 1.0, 0.0, 1.0);
+    vec3 nrm = vec3(0.0);
+    ivec2 page0 = b >> 3;
+    [[unroll]] for (int j = 0; j < 4; ++j) {
+        ivec2 o = ivec2(j & 1, j >> 1);
+        float w = (o.x == 1 ? fr.x : 1.0 - fr.x) * (o.y == 1 ? fr.y : 1.0 - fr.y);
+        ivec2 t = b + o;
+        int phys = (t >> 3) == page0 ? phys0 : gc_find(k, t);
+        if (phys < 0) continue;
+        uvec4 v = gc_read(phys, t);
+        Surface lo = gc_unpack(v.xy), hi = gc_unpack(v.zw);
+        nrm += mix(lo.normal, hi.normal, wv) * w;
+    }
+    return normalize(nrm + vec3(0.0, 1e-6, 0.0));
+}
+
+// Видимость светила точкой pos с нормалью n (как sun_visibility в light.glsl; свет зовёт её только при nl > 0)
+float sun_vis_at(vec3 pos, vec3 n, vec3 l) {
+    if (!(max(dot(n, l), 0.0) > 0.0)) return 0.0;
+    float v = h_sun_shadow(pos, l);
+    return v > 0.0 ? v * sm_visibility(pos, n) * cloud_shadow(pos) : 0.0;
+}
+
+void main() {
+    FrameData f = pc.frame;
+    uint t = gl_LocalInvocationIndex;
+    if (t < 3u) s_work[t] = 0u;
+    barrier();
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x < int(f.viewport.x) && px.y < int(f.viewport.y)) {
+        uint id = imageLoad(u_vis, px).r;
+        if (id != 0u) {
+            vec3 l = normalize(f.sun_dir.xyz);
+            vec3 pos, n;
+            GcCell c;
+            c.kt = GC_NONE;
+            if ((id & VIS_GROUND) != 0u && f.gc_on != 0u) c = f.gc_cells.v[px.y * int(f.viewport.x) + px.x];
+            if (c.kt != GC_NONE) {
+                // Земля из кеша (как tile_hit и gc_surface_px в light_cells.comp)
+                vec3 rel = pixel_ray(px) * c.depth;
+                int k = gc_cell_level(c);
+                vec2 fr;
+                ivec2 b = gc_bilinear(rel, k, fr);
+                int phys = gc_find(k, b);
+                pos = vec3(rel.x, rel.y - 0.002, rel.z);
+                if (phys >= 0) {
+                    n = gc_normal_px(k, b, fr, rel, phys);
+                } else {
+                    // Текселя нет в кеше: свет считает его сам (точка — центр текселя, как gc_surface)
+                    ivec2 lt = b - (f.cam_chunk - ivec2(f.t_chunk0)) * (f.gc_tpc0 >> k);
+                    vec2 cxz = (vec2(lt) + 0.5) * gc_cell(k) - f.cam_off.xz;
+                    pos = vec3(cxz.x, rel.y - 0.002, cxz.y);
+                    n = vec3(0.0, 1.0, 0.0);
+                }
+            } else {
+                Hit h = resolve(px, id);
+                n = normalize(h.n);
+                // Точка — как mesh_call_in и ground_pixel_in на пиксель: на 2 мм внутрь грани
+                vec3 p = f.cam_off + h.rel;
+                if (h.kind == HIT_GROUND) {
+                    p -= h.ng * 0.002;
+                    if (h.blend > 0.0) n = vec3(0.0, 1.0, 0.0);  // вода (ground_pixel_in)
+                } else {
+                    p -= n * 0.002;
+                }
+                pos = p - f.cam_off;
+            }
+            float v = sun_vis_at(pos, n, l);
+            uint tx = (uint(f.viewport.x) + 7u) / 8u;
+            f.sun_vis.v[(gl_WorkGroupID.y * tx + gl_WorkGroupID.x) * 64u + t] = v;
+            if (g_steps != 0u) atomicAdd(s_work[0], g_steps);
+            if (g_sm_taps != 0u) atomicAdd(s_work[1], g_sm_taps);
+            if (g_sm_miss != 0u) atomicAdd(s_work[2], g_sm_miss);
+        }
+    }
+    barrier();
+    if (t == 0u) {
+        if (s_work[0] != 0u) atomicAdd(f.stats.v[STAT_SHADOW_TAPS], s_work[0]);
+        if (s_work[1] != 0u) atomicAdd(f.stats.v[STAT_SM_TAPS], s_work[1]);
+        if (s_work[2] != 0u) atomicAdd(f.stats.v[STAT_SM_MISS], s_work[2]);
+    }
+}

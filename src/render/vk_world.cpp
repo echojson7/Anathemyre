@@ -192,6 +192,8 @@ bool vk_world_init() {
     ok = vk_make_compute(&w.pipe_tiles, "light_tiles.comp") && ok;
     // Освещение: конвейер на вид плиток, вид — константа специализации TILE_KIND; игра — без отладки (LIGHT_DEBUG 0)
     for (u32 k = 0; k < TILE_KINDS; ++k) ok = make_light(&w.pipe_light[k], k, 0) && ok;
+    ok = vk_make_compute(&w.pipe_sun, "sun_vis.comp") && ok;
+    w.rg_sun = rg_buffer("мир: тень солнца");
     return ok && vk_gcache_init() && vk_shadow_init() && vk_sdf_init() && vk_lsm_init() && vk_gi_init() &&
            vk_lcache_init() && vk_scans_init() && vk_textures_init() && vk_aa_init() && vk_air_init();
 }
@@ -205,7 +207,8 @@ static void destroy_image(GpuImage &im) {
 void vk_world_shutdown() {
     WorldGpu &w = g_vk.world;
     VkPipeline ps[] = {w.pipe_vis_mesh,  w.pipe_vis_ground, w.pipe_style, w.pipe_cull_count, w.pipe_cull_scan,
-                       w.pipe_cull_write, w.pipe_tiles, w.pipe_ground_bake, w.pipe_vis_veil, w.pipe_vis_alpha};
+                       w.pipe_cull_write, w.pipe_tiles, w.pipe_ground_bake, w.pipe_vis_veil, w.pipe_vis_alpha,
+                       w.pipe_sun};
     for (VkPipeline p : ps)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
     for (VkPipeline p : w.pipe_light)
@@ -224,6 +227,7 @@ void vk_world_shutdown() {
     vk_destroy_buffer(w.gverts);
     vk_destroy_buffer(w.tiles);
     vk_destroy_buffer(w.view_light);
+    vk_destroy_buffer(w.sun_vis);
     for (FrameSlot &fs : g_vk.frames) vk_destroy_buffer(fs.inst_upload);
     vk_gcache_shutdown();
     vk_shadow_shutdown();
@@ -299,6 +303,12 @@ static bool ensure_images() {
         return false;
     vk_buffer_name(w.view_light, "мир: свет мест плиток");
     rg_reset(w.rg_view);
+    // Тень солнца на пиксель — по плиткам: 64 числа плитки подряд (sun_vis.comp)
+    vk_destroy_buffer(w.sun_vis);
+    if (!vk_create_buffer(w.sun_vis, (VkDeviceSize)w.tile_cap * 64 * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true))
+        return false;
+    vk_buffer_name(w.sun_vis, "мир: тень солнца");
+    rg_reset(w.rg_sun);
     rg_bind_image(w.rg_id, w.id.image);
     rg_bind_image(w.rg_hdr, w.hdr.image);
     VkDescriptorImageInfo ii[2] = {{VK_NULL_HANDLE, w.id.view, VK_IMAGE_LAYOUT_GENERAL},
@@ -373,6 +383,7 @@ void vk_world_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.tiles = w.tiles.address;
     g.tile_cap = w.tile_cap;
     g.view_light = w.view_light.address;
+    g.sun_vis = w.sun_vis.address;
     vk_gcache_fill(g, f, images);
     vk_shadow_fill(g, f, fs, images);
     vk_sdf_fill(g, f, fs, images);
@@ -520,6 +531,13 @@ static void record_light(VkCommandBuffer cmd, void *user) {
     vkCmdDispatchIndirect(cmd, w.tiles.buffer, (VkDeviceSize)kind * 16);
 }
 
+// Тень солнца на пиксель (sun_vis.comp): группа на плитку 8×8 всего кадра, небо уходит сразу
+static void record_sun(VkCommandBuffer cmd, void *) {
+    const WorldGpu &w = g_vk.world;
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.layout, 0, 1, &w.set, 0, nullptr);
+    dispatch(cmd, w.pipe_sun, g_wf.frame, (g_vk.extent.width + 7) / 8, (g_vk.extent.height + 7) / 8);
+}
+
 // Стиль в картинку swapchain, поверх — отладочные отрезки и точки по глубине кадра мира
 static void record_style(VkCommandBuffer cmd, void *) {
     const WorldGpu &w = g_vk.world;
@@ -625,6 +643,22 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
     vk_gcache_light_pass();
     // Лучи солнца в пыли — по страницам теней этого кадра
     vk_air_march_passes(&fs.frame.address);
+    // Тень солнца своим проходом (docs/shadow.md, «Свой проход»): страницы этого кадра нарисованы, тексели кеша
+    // земли запечены. Отладочное освещение (правило ячеек, виды F3) считает её само — в точке ячейки
+    if (!g_wf.light_debug) {
+        rg_pass("тень солнца: на пиксель", "тень солнца: на пиксель", record_sun, nullptr);
+        rg_use(w.rg_id, RG_IMG_CS_READ);
+        rg_use(w.rg_sun, RG_CS_WRITE);
+        rg_use(w.rg_vis, RG_CS_READ);
+        rg_use(w.rg_inst, RG_CS_READ);
+        rg_use(w.rg_gverts, RG_CS_READ);
+        rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
+        vk_skin_vertices_read(RG_CS_READ);
+        vk_clouds_reads(RG_CS_READ);
+        vk_gcache_reads();
+        vk_horizon_reads(RG_CS_READ);
+        vk_shadow_reads();
+    }
     static const char *const light_names[TILE_KINDS] = {"освещение: небо", "освещение: земля", "освещение: сетки",
                                                         "освещение: смесь", "освещение: земля на пиксель"};
     for (u32 k = 0; k < TILE_KINDS; ++k) {
@@ -640,6 +674,7 @@ bool vk_world_passes(FrameSlot &fs, const RenderFrame &f, u32 img, u32 npoints, 
         rg_use(w.rg_gverts, RG_CS_READ);
         rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
         vk_skin_vertices_read(RG_CS_READ);
+        if (!g_wf.light_debug) rg_use(w.rg_sun, RG_CS_READ);
         vk_sky_reads(RG_CS_READ);
         vk_froxel_reads(RG_CS_READ);
         vk_gcache_reads();

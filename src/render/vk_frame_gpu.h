@@ -138,6 +138,9 @@ struct FrameGpu {
     VkDeviceAddress lens_sun;
     u32 lens_on, lens_frame, lens_pad0, lens_pad1;
     f32 lens_flare, lens_ca, lens_vignette, lens_grain;
+    // Тень солнца на пиксель (sun_vis.comp → light_cells.comp, docs/shadow.md «Свой проход»): f32, 64 подряд на плитку
+    VkDeviceAddress sun_vis;
+    u32 sun_pad0, sun_pad1;
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
