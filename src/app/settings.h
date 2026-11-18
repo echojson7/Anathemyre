@@ -26,6 +26,13 @@ struct Settings {
     // Графика (docs/light.md, «Ступени»): RENDER_LIGHT_* — низко, средне, высоко, ультра
     u32 light_quality = 2;
     u32 aa = 2;               // сглаживание (docs/aa.md): RENDER_AA_* — выкл, FXAA, TAA
+    // Эффекты камеры (docs/lens.md; силы — data/sky.txt): свечение ярких мест (блеск, docs/glare.md), блики солнца
+    // в линзах, цветная кайма к краям кадра, виньетка, зерно плёнки
+    bool glare = true;
+    bool lens_flare = true;
+    bool aberration = true;
+    bool vignette = true;
+    bool grain = true;
     // Отладка
     bool debug = true;        // отладочные клавиши и панель
     bool debug_panel = false; // окна отладки (F3): отладка слева, показатели справа

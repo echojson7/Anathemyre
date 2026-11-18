@@ -34,7 +34,8 @@ const UseInfo USES[RG_USES] = {
     {XFER, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, true},                  // RG_COPY_WRITE
     {CS, SR, VK_IMAGE_LAYOUT_GENERAL, false},                                                 // RG_IMG_CS_READ
     {CS, SW, VK_IMAGE_LAYOUT_GENERAL, true},                                                  // RG_IMG_CS_WRITE
-    {VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, SR, VK_IMAGE_LAYOUT_GENERAL, false},            // RG_IMG_FS_READ
+    {VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, SR | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
+     false},                                                                                  // RG_IMG_FS_READ
     {VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
      VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, true},                                         // RG_COLOR

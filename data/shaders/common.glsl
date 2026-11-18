@@ -414,6 +414,12 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec3 air_tint;
     float air_g;
     float air_iso, air_pad1, air_pad2, air_pad3;
+    // Объектив (docs/lens.md, lens.glsl, vk_glare.cpp): солнце в кадре (glare.comp → [0]: x — видимая доля диска, yz —
+    // середина диска в пикселях, w — отступ от края кадра, 0–1); что включено (биты LENS_*), номер кадра (зерно);
+    // множитель долей отражения бликов, аберрация (доля полудиагонали), виньетка (доля закона cos⁴), зерно (доля шкалы)
+    Vec4s lens_sun;
+    uint lens_on, lens_frame, lens_pad0, lens_pad1;
+    float lens_flare, lens_ca, lens_vignette, lens_grain;
 };
 
 layout(push_constant, scalar) uniform Push {

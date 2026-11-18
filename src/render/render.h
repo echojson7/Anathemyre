@@ -144,6 +144,17 @@ struct RenderAir {
     Span<const RenderAirBox> boxes;
 };
 
+// Объектив (docs/lens.md, data/sky.txt lens_*, settings.txt): то, что добавляет кадру камера, а не глаз. Биты —
+// как LENS_* в lens.glsl; 0 в силе — то же, что выключено
+enum RenderLensFx : u32 { RENDER_LENS_FLARE = 1, RENDER_LENS_CA = 2, RENDER_LENS_VIGNETTE = 4, RENDER_LENS_GRAIN = 8 };
+struct RenderLens {
+    u32 on = 0;              // биты RENDER_LENS_*
+    f32 flare = 1.0f;        // блики солнца в линзах: множитель долей отражения (1 — просветлённый объектив)
+    f32 ca = 0.0f;           // хроматическая аберрация: сдвиг крайних длин волн в углу кадра, доля полудиагонали
+    f32 vignette = 0.0f;     // виньетка: доля закона cos⁴ (1 — объектив без поправки)
+    f32 grain = 0.0f;        // зерно: разброс в средних тонах, доля шкалы экрана
+};
+
 // Главный свет (light.glsl): солнце, ночью луна
 struct RenderLight {
     f32 sun_dir[3];    // к источнику
@@ -205,6 +216,7 @@ struct RenderFrame {
     Span<const RenderDecal> decals;      // все, что задевают видимое; по клеткам их раскладывает рендер (froxels)
     Span<const RenderPointLight> lights; // огни кадра; по клеткам их раскладывает рендер (froxels)
     RenderAir air;                       // пыль у земли и в залах (docs/air.md)
+    RenderLens lens;                     // эффекты объектива (docs/lens.md)
     Span<const RenderSkinned> skinned;   // люди кадра: экземпляр, палитра, морфы (скиннинг, ниже)
     Span<const RenderBone> bones;        // палитры костей людей кадра подряд
 };

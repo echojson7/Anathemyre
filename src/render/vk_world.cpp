@@ -36,7 +36,8 @@ bool vk_world_layout() {
     si.maxLod = VK_LOD_CLAMP_NONE;
     if (!vk_check(vkCreateSampler(g_vk.device, &si, nullptr, &g_vk.scans.sampler), "vkCreateSampler")) return false;
     // 11 — векторы движения, 12 — две истории сглаживания для выборки (линейно, по краю — тот же сэмплер, что у
-    // зондов), 13 — они же для записи и для стиля (docs/aa.md, vk_aa.cpp)
+    // зондов; стиль берёт так аберрацию объектива, docs/lens.md), 13 — они же для записи и для стиля (docs/aa.md,
+    // vk_aa.cpp)
     // 14, 15 — кубы карт огней (docs/lamp_shadows.md, vk_lamp_shadow.cpp): со сравнением (2×2 билинейно: свет, если
     // опора ≥ глубины в карте — глубина обратная) и как есть (поиск заслонок PCSS)
     si.magFilter = si.minFilter = VK_FILTER_LINEAR;
@@ -60,7 +61,7 @@ bool vk_world_layout() {
         b[i].binding = i;
         b[i].descriptorType = sampled ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = i == 12 || i == 13 ? 2 : 1;
-        b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | (i < 2 || i == 13 ? VK_SHADER_STAGE_FRAGMENT_BIT : 0);
+        b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | (i < 2 || i == 12 || i == 13 ? VK_SHADER_STAGE_FRAGMENT_BIT : 0);
     }
     b[2].pImmutableSamplers = &g_vk.sdf.sampler;
     b[4].pImmutableSamplers = b[5].pImmutableSamplers = &g_vk.gi.sampler;

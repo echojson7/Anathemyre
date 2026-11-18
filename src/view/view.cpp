@@ -163,6 +163,13 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     f64 ticks = sky_clock_ticks(in.prev->clock, in.cur->clock, in.alpha);
     sky_build(assets.sky, desert, in.cur->clock, ticks, eye.y, in.cloud_time, out.sky, out.light);
     build_air(in.cur->airs, assets.sky, desert, eye, frame, out);
+    // Эффекты камеры (docs/lens.md): силы — data/sky.txt, что включено — меню; блеск выключается вместе с короной
+    if (!in.glare) out.sky.glare = 0.0f;
+    out.lens.on = in.lens;
+    out.lens.flare = assets.sky.lens_flare;
+    out.lens.ca = assets.sky.lens_ca;
+    out.lens.vignette = assets.sky.lens_vignette;
+    out.lens.grain = assets.sky.film_grain;
     out.sky.time = in.time;
     out.ground = in.cur->terrain != nullptr;
     for (u32 k = 0; k < RENDER_GROUND_LAYERS; ++k) out.ground_layers[k] = assets.ground_layers[k];

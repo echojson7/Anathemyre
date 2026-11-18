@@ -38,6 +38,7 @@ static void usage() {
     log_info("           [--nolocal]                                                  без местной экспозиции (было/стало, docs/light.md)");
     log_info("           [--nolsm]                                                    тени огней полем, не картами (было/стало, docs/lamp_shadows.md)");
     log_info("           [--noair]                                                    без воздуха: лучей солнца и огней в пыли (было/стало, docs/air.md)");
+    log_info("           [--nolens]                                                   без эффектов объектива: бликов, аберрации, виньетки, зерна (было/стало, docs/lens.md)");
     log_info("           [--hdr]                                                      со снимком — HDR кадра мира в <снимок>.hdr16 (tools/lightlab/hdr.py)");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z] [--pivot м]   снимок (градусы, метры; опора над землёй)");
@@ -178,6 +179,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--nolocal")) a.local_off = true;
         else if (!strcmp(s, "--nolsm")) a.lsm_off = true;
         else if (!strcmp(s, "--noair")) a.air_off = true;
+        else if (!strcmp(s, "--nolens")) a.lens_off = true;
         else if (!strcmp(s, "--hdr")) a.hdr = true;
         else if (!strcmp(s, "--tonemap")) {
             a.tonemap = next && !strcmp(next, "agx")    ? (i32)RENDER_TONEMAP_AGX

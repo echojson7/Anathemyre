@@ -42,6 +42,7 @@ struct Args {
     bool local_off = false;         // --nolocal: без местной экспозиции (сравнение, docs/light.md)
     bool lsm_off = false;           // --nolsm: тени огней полем расстояний, не картами (сравнение, docs/lamp_shadows.md)
     bool air_off = false;           // --noair: без воздуха — лучей солнца и огней в пыли (сравнение, docs/air.md)
+    bool lens_off = false;          // --nolens: без эффектов объектива — бликов, аберрации, виньетки, зерна (docs/lens.md)
     bool hdr = false;               // --hdr: со снимком ещё HDR кадра мира в <снимок>.hdr16 (отладка света)
     i32 tonemap = -1;               // --tonemap ue|agx|aces: тонмаппинг (снимки для сравнения); −1 — как в F3
     i32 light_quality = -1;         // --light low|medium|high|ultra: качество света; −1 — из настроек

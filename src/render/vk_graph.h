@@ -18,7 +18,7 @@ enum RgUse : u8 {
     RG_COPY_WRITE,     // буфер: приёмник копии или заливки (vkCmdFillBuffer для слоёв — тоже копия)
     RG_IMG_CS_READ,    // картинка GENERAL: imageLoad в compute
     RG_IMG_CS_WRITE,   // картинка GENERAL: imageStore в compute
-    RG_IMG_FS_READ,    // картинка GENERAL: imageLoad во фрагментном
+    RG_IMG_FS_READ,    // картинка GENERAL: imageLoad и выборка сэмплером во фрагментном
     RG_COLOR,          // картинка: цель цвета (с loadOp LOAD — и чтение)
     RG_DEPTH,          // картинка: глубина, тест и запись (storeOp DONT_CARE для слоёв — тоже запись)
     RG_IMG_COPY_READ,  // картинка: источник копии

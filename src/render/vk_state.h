@@ -168,13 +168,16 @@ struct CloudGpu {
 };
 
 // Блеск (vk_glare.cpp, docs/glare.md): пирамида кадра после сглаживания — уровни вниз и вверх в одном буфере
+// Там же солнце в кадре для бликов объектива и короны (docs/lens.md): видимая доля диска и место — одним вызовом
 struct GlareGpu {
-    GpuBuffer buf;
+    GpuBuffer buf, sun;
     VkPipeline pipe = VK_NULL_HANDLE;
-    u8 rg_buf = 0;
+    u8 rg_buf = 0, rg_sun = 0;
     u32 w = 0, h = 0, n = 0;  // кадр, под который собран буфер; уровней
     i32 lv[8][4] = {};
-    bool on = false;
+    u32 frame = 0;            // номер кадра для зерна объектива
+    bool on = false;          // пирамида блеска в этом кадре
+    bool sun_on = false;      // солнце в кадре меряется в этом кадре
 };
 
 // Карта горизонта земли (vk_horizon.cpp, docs/horizon.md): H_DIRS/2 слов u32 на узел сетки 8 м. Собирается

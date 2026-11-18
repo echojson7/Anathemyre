@@ -127,6 +127,11 @@ struct FrameGpu {
     f32 air_far, air_lnk, air_dust, air_dust_h;  // дальность, м; ln(1 + far / AIR_A); пыль у нуля карты, 1/м; высота слоя
     f32 air_tint[3], air_g;                      // доля рассеяния по каналам; лепесток вперёд
     f32 air_iso, air_pad1, air_pad2, air_pad3;   // доля рассеяния во все стороны
+    // Объектив (vk_glare.cpp, docs/lens.md): солнце в кадре (видимая доля диска, середина в пикселях, отступ от края);
+    // биты LENS_*, номер кадра; блики, аберрация, виньетка, зерно
+    VkDeviceAddress lens_sun;
+    u32 lens_on, lens_frame, lens_pad0, lens_pad1;
+    f32 lens_flare, lens_ca, lens_vignette, lens_grain;
 };
 
 // Счётчики GPU (Stats в common.glsl): номера — как STAT_* там

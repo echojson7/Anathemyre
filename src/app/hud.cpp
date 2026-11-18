@@ -62,6 +62,17 @@ static void tab_screen(UiForm &f, Settings &s, bool &ch) {
     ui_section(f, "КАМЕРА");
     ui_tip(f, "Поле зрения по вертикали");
     ch |= ui_slider(f, "Поле зрения", s.fov_deg, 40.0f, 100.0f, 1.0f, "%.0f°");
+    // Эффекты камеры (docs/lens.md, docs/glare.md): силы — в data/sky.txt, здесь — включить и выключить
+    ui_tip(f, "Солнце, лампы и блики сияют: свет рассеивается вокруг ярких мест");
+    ch |= ui_toggle(f, "Свечение", s.glare);
+    ui_tip(f, "Отражения солнца в линзах объектива — цепочка цветных пятен через кадр");
+    ch |= ui_toggle(f, "Блики объектива", s.lens_flare);
+    ui_tip(f, "Едва заметная цветная кайма у краёв кадра, как у настоящего объектива");
+    ch |= ui_toggle(f, "Хроматическая аберрация", s.aberration);
+    ui_tip(f, "Края кадра чуть темнее середины");
+    ch |= ui_toggle(f, "Виньетка", s.vignette);
+    ui_tip(f, "Мелкое зерно, как на плёнке; без него тени и небо глаже");
+    ch |= ui_toggle(f, "Зерно плёнки", s.grain);
 }
 
 static void keys_column(UiForm &f, const char *title, const char *const (*rows)[2], u32 n) {

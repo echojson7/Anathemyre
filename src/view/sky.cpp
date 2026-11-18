@@ -35,6 +35,8 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"cirrus", &d.cirrus, 1},         {"cirrus_height", &d.cirrus_height, 1},
         {"wind", &d.wind, 1},             {"wind_dir", &d.wind_dir, 1},
         {"night_fill", &d.night_fill, 1}, {"glare", &d.glare, 1},
+        {"lens_flare", &d.lens_flare, 1}, {"lens_ca", &d.lens_ca, 1}, {"lens_vignette", &d.lens_vignette, 1},
+        {"film_grain", &d.film_grain, 1},
         {"local_tone", d.local_tone, 3},
         {"meter_view", &d.meter_view, 1}, {"white_balance", &d.white_balance, 1}, {"adapt_color", &d.adapt_color, 1},
         {"air_dust", &d.air_dust, 1},     {"air_dust_height", &d.air_dust_height, 1}, {"air_tint", d.air_tint, 3},
@@ -72,6 +74,11 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
     }
     if (d.glare < 0.0f || d.glare > 0.3f) {
         snprintf(err, err_cap, "glare 0–0.3");
+        return false;
+    }
+    if (d.lens_flare < 0.0f || d.lens_flare > 20.0f || d.lens_ca < 0.0f || d.lens_ca > 0.01f || d.lens_vignette < 0.0f ||
+        d.lens_vignette > 1.0f || d.film_grain < 0.0f || d.film_grain > 0.1f) {
+        snprintf(err, err_cap, "lens_flare 0–20, lens_ca 0–0.01, lens_vignette 0–1, film_grain 0–0.1");
         return false;
     }
     if (d.clouds < 0.0f || d.clouds > 1.0f || d.cirrus < 0.0f || d.cirrus > 1.0f || d.cloud_base < 500.0f ||

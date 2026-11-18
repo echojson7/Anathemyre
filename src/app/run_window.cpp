@@ -717,6 +717,10 @@ int run_window(const Args &a, AppMemory &m) {
         vi.gi_view = a.gi_view ? a.gi_view : ds.gi_view;
         vi.light_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.light_quality;
         vi.aa = a.aa >= 0 ? (u32)a.aa : set.aa;
+        vi.glare = set.glare;
+        vi.lens = a.lens_off ? 0u
+                             : (set.lens_flare ? (u32)RENDER_LENS_FLARE : 0u) | (set.aberration ? (u32)RENDER_LENS_CA : 0u) |
+                                   (set.vignette ? (u32)RENDER_LENS_VIGNETTE : 0u) | (set.grain ? (u32)RENDER_LENS_GRAIN : 0u);
         if (!ds.lines) vi.dbg = nullptr;
         vi.people_debug = vi.dbg && ds.people_lines;
         vi.people_show = ds.people_show;
