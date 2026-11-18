@@ -7,14 +7,14 @@
 # освещение, игра: TILE_KIND (0 небо, 1 земля, 2 сетки, 3 смесь, 4 земля на пиксель), LIGHT_DEBUG 0
 light_cells.comp         0,0      64      0    46
 light_cells.comp         1,0     168      0   145
-light_cells.comp         2,0     168      0   412
-light_cells.comp         3,0     256   5632  1358
-light_cells.comp         4,0     256   5632  1078
+light_cells.comp         2,0     168      0   345
+light_cells.comp         3,0     256      0   591
+light_cells.comp         4,0     168      0   564
 # освещение, отладка (правило ячеек P, виды F3): LIGHT_DEBUG 1; небо в отладке то же, что в игре
 light_cells.comp         1,1     168      0   224
-light_cells.comp         2,1     256      0   465
-light_cells.comp         3,1     256   6912  1424
-light_cells.comp         4,1     256   6912  1174
+light_cells.comp         2,1     256      0   412
+light_cells.comp         3,1     256      0   656
+light_cells.comp         4,1     168      0   627
 # остальные проходы кадра
 aa.comp                  -        48      0    12
 air_blur.comp            -        32      0     5
@@ -31,7 +31,7 @@ eye.comp                 -        64      0    12
 eye_view.comp            -        16      0    10
 froxel.comp              -        32      0     2
 gcache_args.comp         -        16      0     1
-gcache_bake.comp         -       256   6400   873
+gcache_bake.comp         -       256   1792   349
 gcache_light.comp        -       128      0    34
 gcache_scan.comp         -         8      0     1
 gi_blend.comp            -        24      0     4

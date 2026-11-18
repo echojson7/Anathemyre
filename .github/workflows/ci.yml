@@ -132,7 +132,8 @@ jobs:
   window:
     name: window (${{ matrix.kind }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # 30 мин: шаг «Пакеты, кеши, сборка» на медленной машине — до 11 мин (18.11, shot и same), а предел ASan — 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
