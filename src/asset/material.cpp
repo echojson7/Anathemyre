@@ -84,6 +84,7 @@ bool material_table_parse(const u8 *kinds_text, usize kinds_size, const u8 *text
             ok = l.count == 1 + MATERIAL_MAPS;
             for (u32 c = 0; ok && c < MATERIAL_MAPS; ++c) cur->maps[c] = str_eq(l.w[1 + c], "-") ? Str{} : l.w[1 + c];
         }
+        else if (str_eq(k, "cutout")) ok = (cur->cutout = true, l.count == 1);   // прозрачный край по альфе карты цвета (docs/hair.md)
         else return fail(err, err_cap, l.line, "неизвестный параметр");
         if (!ok) return fail(err, err_cap, l.line, "не те числа у параметра");
     }

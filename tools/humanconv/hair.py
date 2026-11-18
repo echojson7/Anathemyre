@@ -280,10 +280,28 @@ def braid_style(b, hd):
     return g
 
 
+# ---------------------------------------------------------------- высокий хвост карточками (концепт пользователя)
+def pony(b, hd):
+    """Высокий длинный хвост, чёлка от бокового пробора, пряди у лица (концепт пользователя): причёска волосками
+    (groom.py) → карточки по пучкам (cards.py), под ними — шапка цвета волос (кожа не просвечивает)"""
+    import cards
+    import groom
+    M = ["hair_back", "human_skin", "hair_tie", "hair_card"]
+    m = mats(M)
+    g = C.Hair("hair_pony", M, hd)
+    gr = groom.pony(hd)
+    rng = Rng(g.name + "-карточки")
+    K, nK = gr.tie
+    combed(g, hd, m, K, "hair_back", lift=0.002, base=0.0008)
+    cards.build(g, gr, m["hair_card"], hd, rng)
+    band(g, hd, m, K, nK, 0.014, h=0.016)
+    return g
+
+
 def catalog(b, hd=None):
     hd = hd or head_of(b)
     return [shaved(b, hd), crop(b, hd), topknot(b, hd), tail_style(b, hd), braid_style(b, hd), bun(b, hd),
-            shag(b, hd)]
+            shag(b, hd), pony(b, hd)]
 
 
 def build_all(b, data_dir, meshpack):

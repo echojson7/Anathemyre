@@ -198,7 +198,7 @@ u32 render_skinned_create(u32 skin) {
     mg.sphere[3] *= SKIN_SPHERE_GROW;
     // Вершины меняются каждый кадр: не в кеше теней, тень — слоем подвижных (docs/shadow.md); развёртка — у
     // источника (по бинд-позе)
-    mg.pad = MESH_DYNAMIC | (mg.pad & MESH_UV);
+    mg.pad = MESH_DYNAMIC | (mg.pad & (MESH_UV | MESH_ALPHA));
     // Вершины бинд-позы — у источника: по ним шейдер привязывает узор материала к детали (resolve.glsl)
     mg.lods[0].pad = ((const MeshGpu *)g_vk.mesh_table.mapped)[s.mesh].first_vertex + 1;
     for (u32 i = 0; i < src.lod_count; ++i) mg.lods[i].first_cluster += d.first_cluster - src.first_cluster;

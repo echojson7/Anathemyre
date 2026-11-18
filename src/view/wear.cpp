@@ -1,4 +1,5 @@
 #include "wear.h"
+#include <string.h>
 #include "view.h"
 #include "../core/log.h"
 #include "../core/mathf.h"
@@ -8,8 +9,16 @@ const char *const WEAR_NAMES[WK_COUNT] = {
     "wear_trousers", "wear_hakama", "wear_shirt",     "wear_jacket",    "wear_coat",  "wear_vest",     "wear_sash",
     "wear_belt",     "wear_wraps_leg", "wear_wraps_arm", "wear_boots", "wear_hood",  "wear_pauldron", "wear_gloves",
     "hair_brows",    "hair_shaved",    "hair_crop",      "hair_topknot", "hair_tail", "hair_braid",   "hair_bun",
-    "hair_shag",     "beard_stubble",  "beard_short",    "beard_full",   "beard_goatee", "beard_long",
+    "hair_shag",     "hair_pony",      "beard_stubble",  "beard_short",    "beard_full",   "beard_goatee", "beard_long",
 };
+
+static u32 g_force_hair = WK_COUNT;
+
+bool wear_force_hair(const char *name) {
+    for (u32 k = WK_HAIR_SHAVED; k < WK_COUNT; ++k)
+        if (!strcmp(WEAR_NAMES[k], name)) return g_force_hair = k, true;
+    return false;
+}
 
 void wear_bind(WearBind &b, const ViewAssets &a, const ViewBody &human) {
     for (u32 k = 0; k < WK_COUNT; ++k) {
@@ -53,12 +62,13 @@ static void hair_pick(Dice &d, const Appear &a, bool want[WK_COUNT]) {
     const u32 bd = d.byte();
     const bool old = a.morph[AM_OLD] > 0.3f;
     if (a.female) {
-        static const u8 cut[] = {80, 135, 185, 225, 245, 255};  // коса, пучок, хвост, лохматые, стрижка, бритая
-        static const WearKind kind[] = {WK_HAIR_BRAID, WK_HAIR_BUN, WK_HAIR_TAIL, WK_HAIR_SHAG, WK_HAIR_CROP,
+        // коса, пучок, высокий хвост (карточки), лохматые, стрижка, бритая
+        static const u8 cut[] = {80, 135, 185, 225, 245, 255};
+        static const WearKind kind[] = {WK_HAIR_BRAID, WK_HAIR_BUN, WK_HAIR_PONY, WK_HAIR_SHAG, WK_HAIR_CROP,
                                         WK_HAIR_SHAVED};
         u32 i = 0;
         while (h >= cut[i]) ++i;
-        want[want[WK_HOOD] && (kind[i] == WK_HAIR_TAIL || kind[i] == WK_HAIR_BRAID) ? WK_HAIR_BUN : kind[i]] = true;
+        want[want[WK_HOOD] && (kind[i] == WK_HAIR_PONY || kind[i] == WK_HAIR_BRAID) ? WK_HAIR_BUN : kind[i]] = true;
         return;
     }
     // Мужчины: бритые, стрижка, узел на макушке, хвост, коса, лохматые; старики чаще бритые и стриженые
@@ -125,6 +135,13 @@ Outfit wear_make(u32 seed, const Appear &a, const WearBind &b, const ViewAssets 
     // Волосы — байтами после одежды (набор одежды у людей прежний). Цвет один на брови, причёску и бороду
     if (!clothes) want[WK_HOOD] = false;  // без капюшона хвост и коса не подбираются в пучок
     hair_pick(d, a, want);
+    if (g_force_hair < WK_COUNT) {
+        // --hair: у всех одна причёска или борода (кадры и проверка, только вид)
+        const bool beard = g_force_hair >= WK_BEARD_STUBBLE;
+        for (u32 k = beard ? (u32)WK_BEARD_STUBBLE : (u32)WK_HAIR_SHAVED; k < (beard ? (u32)WK_COUNT : (u32)WK_BEARD_STUBBLE); ++k)
+            want[k] = false;
+        want[g_force_hair] = true;
+    }
     const u32 hseed = hair_seed(d, a);
     for (u32 k = WK_BROWS; k < WK_COUNT && o.count < WEAR_MAX_ITEMS; ++k) {
         if (!want[k] || b.at[k] < 0) continue;

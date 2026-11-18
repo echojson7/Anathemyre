@@ -184,6 +184,7 @@ static bool sm_inst_sphere(const FrameGpu &g, const RenderInstance &it, f32 out[
     if (!it.mesh || it.mesh >= RENDER_MAX_MESHES) return false;
     const MeshGpu &m = ((const MeshGpu *)g_vk.mesh_table.mapped)[it.mesh];
     if (!m.lod_count || (!moving_ok && (m.pad & MESH_DYNAMIC))) return false;
+    if (m.pad & MESH_ALPHA) return false;  // карточки волос — без тени (нет альфы в проходе тени)
     auto sn = [](u32 v, u32 sh) { return f_clamp((f32)(i16)(u16)(v >> sh) / 32767.0f, -1.0f, 1.0f); };
     f32 q[4] = {sn(it.rot_xy, 0), sn(it.rot_xy, 16), sn(it.rot_zw, 0), sn(it.rot_zw, 16)};
     f32 ql = f_sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);

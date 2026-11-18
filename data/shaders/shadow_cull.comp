@@ -51,6 +51,8 @@ bool caster_get(uint gid, bool dyn, out Caster cs) {
     MeshInfos ms = f.meshes;
     cs.lod_count = ms.v[it.mesh].lod_count;
     if (cs.lod_count == 0u || (!dyn && (ms.v[it.mesh].flags & MESH_DYNAMIC) != 0u)) return false;
+    // Карточки волос — без тени: в проходе тени нет альфы, полосы легли бы сплошными пятнами (docs/hair.md)
+    if ((ms.v[it.mesh].flags & MESH_ALPHA) != 0u) return false;
     cs.first_index = ms.v[it.mesh].first_index;
     cs.first_vertex = ms.v[it.mesh].first_vertex;
     vec4 sph = ms.v[it.mesh].sphere;

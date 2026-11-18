@@ -57,6 +57,7 @@ static void usage() {
     log_info("           --frames N --video префикс --cam … --cam-to yaw pitch расст x z   пролёт камеры от --cam к --cam-to, 1/30 с на кадр");
     log_info("           [--spin град/с]                                              камера поворачивается сама (видео мерцания при повороте)");
     log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines] [--sides]  выбрать, камера за ним, приказы, отладка");
+    log_info("           [--hair hair_*|beard_*]     у всех людей одна причёска или борода (кадры волос)");
     log_info("           [--mech pack|stand|walk|show|veil|prone|aim] [--mech-follow] шагающие машины: лежат, стоят, обходят, показ всего по порядку, морок по кругу, лёжка, выпад с очередями; камера за машиной (docs/vezha.md, docs/tat.md, docs/gryd.md)");
     log_info("           [--mech-kind vezha|tat|gryd]                                 за какой машиной камера и след");
     log_info("           --frames N --mech-trace файл.txt                             след её движения без окна: N кадров по 1/30 с, строка чисел на кадр");
@@ -247,6 +248,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--cam-play")) a.cam_play = true;
         else if (!strcmp(s, "--select")) { u32 v = 0; ok = next && parse_u32(Str{next, (u32)strlen(next)}, v) && v < 1024; a.select = (i32)v; i++; }
         else if (!strcmp(s, "--follow")) a.follow = true;
+        else if (!strcmp(s, "--hair")) { a.hair = next; ok = next != nullptr; i++; }
         else if (!strcmp(s, "--mech")) {
             a.mech = next;
             ok = next && (!strcmp(next, "pack") || !strcmp(next, "stand") || !strcmp(next, "walk") || !strcmp(next, "show") ||

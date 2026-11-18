@@ -536,8 +536,10 @@ static void load_mesh(const char *name, void *user) {
     }
     // Материалы вершин по имени → номера таблицы; неизвестный — missing (виден сразу)
     u16 global[MESH_MAX_MATERIALS];
+    bool cutout = false;
     for (usize i = 0; i < md.material_names.count; ++i) {
         u32 k = material_find(*L.mats, str_hash(md.material_names.data[i]));
+        cutout |= L.mats->items[k].cutout;
         if (!k) log_warn("сетка %s: нет материала %.*s", name, (int)md.material_names.data[i].n, md.material_names.data[i].p);
         global[i] = (u16)k;
     }
@@ -555,6 +557,7 @@ static void load_mesh(const char *name, void *user) {
         cl[i] = {c.first_index, c.tri_count, {c.cx, c.cy, c.cz, c.radius}};
     }
     vm.id = render_mesh_create(md.vertices, md.indices, {lods, nlod}, {cl, md.clusters.count}, md.uvs);
+    if (vm.id && cutout) render_mesh_alpha(vm.id);   // до копий скиннинга (load_body): они берут флаг у источника
     if (vm.id && md.skin_count && !load_body(L, name, md, vm.id)) L.failed++;
     arena_restore(L.m->load, mark);
     if (!vm.id) { L.failed++; return; }

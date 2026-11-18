@@ -77,8 +77,8 @@ bool vk_world_layout() {
     b[12].pImmutableSamplers = hist_samplers;
     b[14].pImmutableSamplers = &g_vk.lsm.cmp;
     b[15].pImmutableSamplers = &g_vk.lsm.raw;
-    b[16] = {16, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, RENDER_MAX_TEXTURES + 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-    b[17] = {17, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, &g_vk.textures.sampler};
+    b[16] = {16, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, RENDER_MAX_TEXTURES + 1, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+    b[17] = {17, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, &g_vk.textures.sampler};
     b[20].pImmutableSamplers = b[21].pImmutableSamplers = &g_vk.gi.sampler;
     auto li = vk_info<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
     li.bindingCount = NB;
@@ -143,8 +143,8 @@ bool vk_world_init() {
     const VkBufferUsageFlags ind = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
     if (!vk_create_buffer(w.inst, RENDER_MAX_INSTANCES * sizeof(RenderInstance), ssbo | VK_BUFFER_USAGE_TRANSFER_DST_BIT, true) ||
         !vk_create_buffer(w.cull, CULL_BYTES, ssbo | ind | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true) ||
-        !vk_create_buffer(w.draws, (VIS_MAX_CLUSTERS + VIS_VEIL_MAX) * sizeof(VkDrawIndexedIndirectCommand), ssbo | ind, true) ||
-        !vk_create_buffer(w.vis, (VIS_MAX_CLUSTERS + VIS_VEIL_MAX) * 8ull, ssbo, true) ||
+        !vk_create_buffer(w.draws, (VIS_MAX_CLUSTERS + VIS_VEIL_MAX + VIS_ALPHA_MAX) * sizeof(VkDrawIndexedIndirectCommand), ssbo | ind, true) ||
+        !vk_create_buffer(w.vis, (VIS_MAX_CLUSTERS + VIS_VEIL_MAX + VIS_ALPHA_MAX) * 8ull, ssbo, true) ||
         !vk_create_buffer(w.gverts, (VkDeviceSize)CLIP_LEVELS * (2 * CLIP_N + 1) * (2 * CLIP_N + 1) * 32, ssbo, true))
         return false;
     for (FrameSlot &fs : g_vk.frames)
@@ -169,6 +169,10 @@ bool vk_world_init() {
     PipeDesc vv{"vis_veil.vert", "vis_veil.frag"};
     vv.cull = VK_CULL_MODE_BACK_BIT;
     vv.color = VK_FORMAT_R32_UINT;
+    // Карточки видны с обеих сторон: без отсечения задних граней
+    PipeDesc va{"vis_alpha.vert", "vis_alpha.frag"};
+    va.cull = VK_CULL_MODE_NONE;
+    va.color = VK_FORMAT_R32_UINT;
     PipeDesc vg{"vis_ground.vert", "vis_ground.frag"};
     vg.cull = VK_CULL_MODE_BACK_BIT;
     vg.color = VK_FORMAT_R32_UINT;
@@ -178,6 +182,7 @@ bool vk_world_init() {
     bool ok = true;
     ok = vk_make_pipeline(&w.pipe_vis_mesh, vm) && ok;
     ok = vk_make_pipeline(&w.pipe_vis_veil, vv) && ok;
+    ok = vk_make_pipeline(&w.pipe_vis_alpha, va) && ok;
     ok = vk_make_pipeline(&w.pipe_vis_ground, vg) && ok;
     ok = vk_make_pipeline(&w.pipe_style, st) && ok;
     ok = vk_make_compute(&w.pipe_cull_count, "cull_count.comp") && ok;
@@ -202,7 +207,8 @@ static void destroy_image(GpuImage &im) {
 void vk_world_shutdown() {
     WorldGpu &w = g_vk.world;
     VkPipeline ps[] = {w.pipe_vis_mesh,  w.pipe_vis_ground, w.pipe_style, w.pipe_cull_count, w.pipe_cull_scan,
-                       w.pipe_cull_write, w.pipe_tiles, w.pipe_ground_bake, w.pipe_vis_veil, w.pipe_sun};
+                       w.pipe_cull_write, w.pipe_tiles, w.pipe_ground_bake, w.pipe_vis_veil, w.pipe_vis_alpha,
+                       w.pipe_sun};
     for (VkPipeline p : ps)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
     for (VkPipeline p : w.pipe_light)
@@ -474,6 +480,12 @@ static void record_visibility(VkCommandBuffer cmd, void *) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, w.pipe_vis_veil);
         vkCmdDrawIndexedIndirectCount(cmd, w.draws.buffer, VIS_MAX_CLUSTERS * sizeof(VkDrawIndexedIndirectCommand),
                                       w.cull.buffer, sizeof(u32), VIS_VEIL_MAX, sizeof(VkDrawIndexedIndirectCommand));
+        // Карточки с прозрачным краем (волосы): за списком морока, число — третье слово; альфа — из таблицы текстур
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, w.pipe_vis_alpha);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_vk.layout, 0, 1, &w.set, 0, nullptr);
+        vkCmdDrawIndexedIndirectCount(cmd, w.draws.buffer,
+                                      (VIS_MAX_CLUSTERS + VIS_VEIL_MAX) * sizeof(VkDrawIndexedIndirectCommand),
+                                      w.cull.buffer, 2 * sizeof(u32), VIS_ALPHA_MAX, sizeof(VkDrawIndexedIndirectCommand));
     }
     if (g_wf.ground) {
         const TerrainGpu &tg = g_vk.terrain;
