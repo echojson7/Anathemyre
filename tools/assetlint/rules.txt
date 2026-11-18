@@ -18,6 +18,10 @@ budget ispod_shell 110000
 budget ispod_tech 100000
 budget ispod_hall 60000
 budget ispod_track 230000
+budget ispod_pilot_old 10000
+budget ispod_pilot_kit 30000
+budget ispod_pilot_fill 2000
+budget ispod_pilot_cast 20000
 budget ostov_* 60000
 budget weapon_* 14000
 budget human_m 40000
@@ -68,6 +72,7 @@ allow ispod_shell chamfer 1 — одна кромка 2 м с изломом 45�
 allow ispod_hall gap 66 — рейки и стойки стеллажей с зазором 1–2 мм к полкам (ispod_props.py), править вместе с пилотом марша (PR 4)
 allow ispod_tech gap 60 — фланцы и хомуты труб с зазором 0.4–3 мм (ispod_props.py), PR 4
 allow ispod_track gap 22 — подкладки рельсов с зазором 0.5–1 мм к шпалам (ispod_props.py), PR 4
+allow ispod_pilot_old chord 116 — «было» пилота нарочно собрано как Исподь сейчас (solid, Bevel 3 × 1.2 см): сравнение в docs/bake.md
 allow ispod_hall chord 316 — кабели по провису: оценка 0.6–0.7 мм на стыке дуг, глазом не видно
 
 # --- оружие: части одной вещи входят друг в друга без булевых операций (docs/weapons.md) ---

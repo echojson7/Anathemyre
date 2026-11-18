@@ -698,3 +698,13 @@ material tex_probe_paint baked
     rough 0.55
     metal 1
     extra 0.35 0.6 0.35 1
+
+# Пилот гибрида (docs/bake.md): литой марш Исподи с площадкой — карты, запечённые с детальной модели (опалубка,
+# стяжки, поры, сколы кромок); износ по кривизне светлит кромки и сколы, грязь — в углублениях
+material ispod_pilot_cast baked
+    maps ispod_pilot_cast_color ispod_pilot_cast_normal ispod_pilot_cast_curv ispod_pilot_cast_rough
+    scan wall 1
+    color 1 1 1
+    color2 0.50 0.48 0.44
+    rough 0.88
+    extra 0.3 0.6 0.5 0
