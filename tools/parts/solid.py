@@ -33,9 +33,10 @@ def _object(name, body):
     return bpy.data.objects.new(name, me)
 
 
-def solid(ops, bevel=0.012, bevel_angle=50.0):
+def solid(ops, bevel=0.012, bevel_angle=50.0, segments=1):
     """ops — [("add" | "cut", Body), …] по порядку; первое — "add". Подряд идущие одинаковые операции идут одной
-    коллекцией. bevel — фаска на всех рёбрах круче bevel_angle градусов (0 — без фаски).
+    коллекцией. bevel — фаска на всех рёбрах круче bevel_angle градусов (0 — без фаски), segments — сегментов
+    фаски (больше одного — скругление дугой).
     Возвращает Body из треугольников (материал None — его ставит вызывающий по месту и нормали грани)."""
     global _ready
     if not _ready:
@@ -61,7 +62,7 @@ def solid(ops, bevel=0.012, bevel_angle=50.0):
     if bevel > 0:
         bv = base.modifiers.new("bevel", 'BEVEL')
         bv.width = bevel
-        bv.segments = 1
+        bv.segments = segments
         bv.limit_method = 'ANGLE'
         bv.angle_limit = math.radians(bevel_angle)
     me = bpy.data.meshes.new_from_object(base.evaluated_get(bpy.context.evaluated_depsgraph_get()))

@@ -15,12 +15,13 @@ def main():
     if len(sys.argv) < 3:
         sys.exit("использование: build.py <папка> <meshpack> [имена сеток]")
     out_dir, meshpack, only = sys.argv[1], sys.argv[2], sys.argv[3:]
+    import gryd
     import ispod_meshes
     import rig
     import tat
     import vezha
-    # Машины на костях (docs/vezha.md, docs/tat.md): сетка с весами и скелет
-    for name, make, lods in (("vezha", vezha.make, vezha.LODS), ("tat", tat.make, tat.LODS)):
+    # Машины на костях (docs/vezha.md, docs/tat.md, docs/gryd.md): сетка с весами и скелет
+    for name, make, lods in (("vezha", vezha.make, vezha.LODS), ("tat", tat.make, tat.LODS), ("gryd", gryd.make, gryd.LODS)):
         if only and name not in only:
             continue
         t0 = time.time()

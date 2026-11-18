@@ -59,7 +59,7 @@ struct Args {
     bool cam_play = false;            // --cam-play: камера окна по записанному показу (видео камеры, с --video)
     i32 select = -1;                  // --select место: выбрать человека (и --follow — камера за ним)
     bool follow = false;
-    const char *mech = nullptr;       // --mech pack|stand|walk|show|veil|prone: шагающая машина в одном режиме (кадры и видео)
+    const char *mech = nullptr;       // --mech pack|stand|walk|show|veil|prone|aim: шагающая машина в одном режиме (кадры и видео)
     bool people_lines = false;        // --people-lines: капсулы шага, путь выбранного и след стоп (отладка, при отрезках)
     bool sides = false;               // --sides: стороны боя и цели (отладка, при отрезках; с --brawl — сами)
     const char *go = nullptr;         // --go "кадр место x z y аллюр; …": приказы «идти» по кадрам (видео, проверка)
@@ -68,7 +68,7 @@ struct Args {
     const char *terrain_map = nullptr;  // --terrain-map файл.bmp: карта земли сверху и выход
     const char *walk_map = nullptr;     // --walk-map файл.bmp: сетка ходимости у Остова и выход
     bool mech_follow = false;         // --mech-follow: опора камеры идёт за машиной (видео)
-    const char *mech_kind = nullptr;  // --mech-kind vezha|tat: за какой машиной камера и след (по умолчанию — первая)
+    const char *mech_kind = nullptr;  // --mech-kind vezha|tat|gryd: за какой машиной камера и след (по умолчанию — первая)
     const char *mech_trace = nullptr;   // --mech-trace файл.txt: след движения шагающей турели без окна (с --frames N) и выход
 };
 
