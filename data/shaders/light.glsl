@@ -143,8 +143,10 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
             float es = nls / (ds * ds + l.size * l.size) * w;
             spec = brdf_d(nh, a2) * brdf_v(nv, nls, a2) * brdf_f(vh, f0) * comp * (norm * es);
         }
-        // Тень: картой огня, если у него есть место (docs/lamp_shadows.md), иначе конусом по полю
-        uint ms = lamp_map_slot(l);
+        // Тень: картой огня, если у него есть место (docs/lamp_shadows.md), иначе конусом по полю. У огня с людьми,
+        // машинами или оружием рядом — куб слоя подвижных: копия места с ними поверх, одна выборка на обе
+        uint md = lamp_map_dyn(l);
+        uint ms = md != 0u ? md : lamp_map_slot(l);
         float sh;
         if (ms != 0u) {
             sh = lamp_map_vis(l, ms, s.pos, n, lamp_map_q(em));

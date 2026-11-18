@@ -143,6 +143,7 @@ void view_build(const Camera &cam, const ViewAssets &assets, const ViewInput &in
     for (u32 k = 0; k < 3; ++k) out.style.local_tone[k] = assets.sky.local_tone[k];
     out.style.local_tone[3] = in.local_off ? 0.0f : 1.0f;
     out.style.lamp_maps = !in.lsm_off;
+    out.style.shadow_dyn = !in.dyn_off;
     out.style.air = !in.air_off;
     out.style.eye_meter[0] = assets.sky.meter_view;
     out.style.eye_meter[2] = assets.sky.white_balance;

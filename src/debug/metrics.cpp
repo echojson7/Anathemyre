@@ -142,6 +142,8 @@ static void metrics_body(UiForm &f, const DebugInfo &in, DebugState &d) {
             // Шаг светила (6б-2): страниц нового набора, отложенных стройкой в фоне, и сколько света уже на нём
             snprintf(t, sizeof t, "%u · %u %%", in.work_sm[6], in.work_sm[7]);
             ui_value(f, "тени: стройка шага · перетекание", t);
+            // Слой подвижных (люди, машины, оружие): копии страниц под ними и вызовы их кластеров в копии
+            pair_row(f, "тени подвижных: копий · вызовов", in.work_sm[8], in.work_sm[9]);
             // Поле расстояний мира (docs/sdf.md): выборки светом; засыпка и сборка — только когда кирпичи грязные
             pair_row(f, "поле: выборок · кирпичей", in.work_sdf[0], in.work_sdf[2]);
             snprintf(t, sizeof t, "%u", in.work_sdf[1]);
@@ -158,6 +160,7 @@ static void metrics_body(UiForm &f, const DebugInfo &in, DebugState &d) {
             pair_row(f, "огни: граней · вызовов в них", in.work_lsm[0], in.work_lsm[1]);
             snprintf(t, sizeof t, "%u", in.work_lsm[2]);
             ui_value(f, "огни: выборок карт", t);
+            pair_row(f, "огни, подвижные: граней · вызовов", in.work_lsm[3], in.work_lsm[4]);
             // Воздух (docs/air.md): клетки с пылью; шаги лучей солнца и их выборки страниц теней
             dbg_count(in.work_air[0], t, sizeof t);
             ui_value(f, "воздух: клеток", t);

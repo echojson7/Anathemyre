@@ -1,0 +1,77 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Слой подвижных (docs/shadow.md, «Подвижные заслонки»). Страницы — кеш неподвижного мира: рисуются раз и живут,
+// а люди, машины и оружие меняются каждый кадр. Страница, которую кадр читает и над которой подвижная заслонка, на
+// этот кадр подменяется копией: место в окне указывает на копию (место в пуле сверх pages_n), в неё поверх
+// неподвижного рисуются подвижные (shadow_cull.comp, shadow.vert/.frag с pc.a = 1), свет и лучи в пыли читают её
+// как обычную страницу; следующий кадр возвращает месту прежнюю страницу. Режим — pc.a:
+//   0 — места: группа — заслонка × место уровня, поток — страница под её кругом (до 8 × 8 страниц);
+//   1 — копия текселей: группа — копия (косвенный dispatch по их числу);
+//   2 — возврат прежних страниц (начало следующего кадра): поток — копия
+#include "shadow.glsl"
+layout(local_size_x = 64) in;
+
+void dyn_place() {
+    FrameData f = pc.frame;
+    uint ci = gl_WorkGroupID.x;
+    int k = int(gl_WorkGroupID.y);
+    // Только показанные наборы: набор, что строится в фоне, свет не читает
+    if (ci >= f.sm_dyn_n || ((f.sm_read >> uint(sm_set_of(k))) & 1u) == 0u) return;
+    Instance it = f.vis_instances.v[f.sm_dyn_inst.v[ci]];
+    MeshInfo m = f.meshes.v[it.mesh];
+    vec3 c = rel_to_camera(ivec2(it.cx, it.cz), vec3(it.x, it.y, it.z)) + quat_rotate(inst_quat(it), m.sphere.xyz * it.scale);
+    // Запас позы — как у скиннинга (vk_skin.cpp): поза бывает шире бинд-позы
+    float r = m.sphere.w * it.scale * 1.05 + 0.1, t = sm_texel(k);
+    if (r < SM_MIN_TEXELS * t) return;
+    ivec2 lo, hi;
+    if (!sm_rect(sm_window(c, k), r / t + 1.0, lo, hi)) return;
+    ivec2 sz = hi - lo + 1;
+    int p = int(gl_LocalInvocationIndex);
+    if (sz.x > 8 || sz.y > 8 || p >= sz.x * sz.y) return;
+    ivec2 page = f.sm_base[k] + lo + ivec2(p % sz.x, p / sz.x);
+    uint slot = sm_slot(k, page);
+    uint e = f.sm_table.v[slot];
+    // Нет страницы, заявка без места или место уже взяла копия (другая заслонка над той же страницей)
+    if (e == 0u || (e & SM_REQ) != 0u || e - 1u >= f.sm_pages_n) return;
+    uint phys = e - 1u;
+    SmPage pg = f.sm_pages.v[phys];
+    // Страницу кадр не читает — копия не нужна (свет её не возьмёт)
+    if (pg.used != f.sm_frame || uvec2(pg.key0, pg.key1) != sm_page_key(k, page)) return;
+    if (atomicExchange(f.sm_dyn.v[SM_DYN_MARK + slot], f.sm_frame) == f.sm_frame) return;
+    uint d = atomicAdd(f.sm_dyn.n, 1u);
+    if (d >= SM_DYN_PAGES) {
+        atomicAdd(f.stats.v[STAT_SM_DYN_OVER], 1u);
+        return;
+    }
+    uint cp = f.sm_pages_n + d;
+    f.sm_dyn.v[2u * d] = slot;
+    f.sm_dyn.v[2u * d + 1u] = phys;
+    // Копия — та же страница (ключ, чтение, самая высокая заслонка), нарисованная в этом кадре: в неё пишут подвижные
+    f.sm_pages.v[cp] = SmPage(pg.key0, pg.key1, f.sm_frame, f.sm_frame, pg.top);
+    f.sm_table.v[slot] = cp + 1u;
+    uint local = slot - uint(k) * uint(SM_WIN * SM_WIN);
+    atomicOr(f.sm_dyn.bits[k * 32 + int(local >> 5)], 1u << (local & 31u));
+    f.sm_dyn.fresh[k] = 1u;
+    atomicAdd(f.stats.v[STAT_SM_DYN], 1u);
+}
+
+void dyn_copy() {
+    FrameData f = pc.frame;
+    uint d = gl_WorkGroupID.x;
+    if (d >= SM_DYN_PAGES) return;
+    uint src = f.sm_dyn.v[2u * d + 1u] * uint(SM_PAGE * SM_PAGE), dst = (f.sm_pages_n + d) * uint(SM_PAGE * SM_PAGE);
+    for (uint t = gl_LocalInvocationIndex; t < uint(SM_PAGE * SM_PAGE); t += 64u) f.sm_texels.v[dst + t] = f.sm_texels.v[src + t];
+}
+
+void dyn_restore() {
+    FrameData f = pc.frame;
+    uint d = gl_GlobalInvocationID.x;
+    if (d >= min(f.sm_dyn.n, SM_DYN_PAGES)) return;
+    f.sm_table.v[f.sm_dyn.v[2u * d]] = f.sm_dyn.v[2u * d + 1u] + 1u;
+}
+
+void main() {
+    if (pc.a == 0u) dyn_place();
+    else if (pc.a == 1u) dyn_copy();
+    else dyn_restore();
+}

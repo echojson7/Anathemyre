@@ -13,13 +13,13 @@ gc_used 5953
 gc_baked 216
 gc_over 0
 gc_direct 4410
-skin_verts 45842
+skin_verts 95403
 sm_used 119
 sm_new 4
 sm_over 0
 sm_miss 0
 sm_draws 286
-sm_taps 1335936
+sm_taps 1428336
 sm_wait 0
 sdf_taps 983900
 sdf_bricks 0
@@ -40,4 +40,9 @@ lsm_over 0
 lsm_taps 58135
 air_cells 74445
 air_steps 2160000
-air_taps 2244104
+air_taps 2249076
+sm_dyn 21
+sm_dyn_draws 1876
+sm_dyn_over 0
+lsm_dyn_faces 48
+lsm_dyn_draws 5142

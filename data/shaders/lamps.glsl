@@ -104,6 +104,9 @@ uint lamp_steps(uint q) { return q == LIGHT_Q_LOW ? 8u : q == LIGHT_Q_MEDIUM ? 1
 // --- Тень картой (docs/lamp_shadows.md) ---
 // Место карты огня + 1 (биты 8..15 flags, ставит vk_lamp_shadow.cpp); 0 — карты нет, тень по полю
 uint lamp_map_slot(Light l) { return pc.frame.lsm_on != 0u ? (l.flags >> 8) & 0xFFu : 0u; }
+// Куб слоя подвижных огня + 1 (биты 16..23): копия куба места кадра и поверх неё люди, машины и оружие у огня
+// (vk_lamp_shadow.cpp). Свет кадра читает его вместо места; зонды, воздух и глаз — место (lamp_e). 0 — его нет
+uint lamp_map_dyn(Light l) { return pc.frame.lsm_on != 0u ? (l.flags >> 16) & 0xFFu : 0u; }
 
 // Точка i из n диска Фогеля радиуса 1: узор один во всех кадрах и точках (правило 2 docs/light.md — без поворота
 // от кадра или пикселя, иначе край зернит); базис — от направления к точке, то есть тоже от мира

@@ -2,12 +2,16 @@
 #extension GL_GOOGLE_include_directive : require
 // Тени огней картами (docs/lamp_shadows.md): кластер заслонки в грань куба огня. Точка — от огня в осях грани
 // (как их берёт выборка куба); расстояние до огня пишет фрагмент. Светящееся (стекло ламп, табло) заслонкой не
-// считается: колба стоит вокруг своего огня, а стекло пропускает свет
+// считается: колба стоит вокруг своего огня, а стекло пропускает свет. Машина под мороком (грани слоя подвижных) —
+// доля её видимости (v_keep, как у тени солнца)
 #include "common.glsl"
 #include "lamp_map.glsl"
 #include "material_kinds.glsl"
 layout(location = 0) out vec3 v_rel;
 layout(location = 1) flat out uint v_skip;
+layout(location = 2) flat out float v_keep;
+
+const float LSM_DYN_KEEP = 0.07;  // тень машины под мороком — как SM_DYN_KEEP (shadow.glsl)
 
 void main() {
     FrameData f = pc.frame;
@@ -20,6 +24,9 @@ void main() {
     uint mat = it.material < 0xFFFFFF00u ? it.material : (vx.mats & 0xFFFFu);
     v_skip = mat < 1024u && f.materials.v[mat].kind == KIND_GLOW ? 1u : 0u;  // RENDER_MAX_MATERIALS
     v_rel = rel;
+    // Морок (RENDER_VEIL, docs/tat.md): младший байт материала — видимость 0..255
+    bool veil = it.material >= 0xFFFFFF00u && (it.material & 0xFFu) < 255u;
+    v_keep = veil ? mix(LSM_DYN_KEEP, 1.0, float(it.material & 0xFFu) / 255.0) : 1.0;
     vec3 q = lsm_face_coords(job.layer % 6u, rel);
     // Отсечение ближней плоскостью: z ≥ 0 ⇔ ma ≥ LSM_NEAR; дальней нет (глубину пишет фрагмент)
     gl_Position = vec4(q.x, q.y, q.z - LSM_NEAR, q.z);

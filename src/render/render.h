@@ -132,6 +132,7 @@ struct RenderStyle {
     bool eye_snap = true;  // глаз привыкает сразу (первый кадр, --timelapse: кадр — свой час)
     bool glow = true;      // светящиеся детали (стекло ламп, табло) светятся; выкл — вместе с лампами (F3, --nolamps)
     bool lamp_maps = true; // тени огней картами (docs/lamp_shadows.md); выкл — полем расстояний (F3, --nolsm)
+    bool shadow_dyn = true; // тени подвижных — людей, машин, оружия (docs/shadow.md); выкл — сравнение (F3, --nodyn)
     bool air = true;       // воздух: лучи солнца и огней в пыли (docs/air.md); выкл — без него (F3, --noair)
 };
 
@@ -279,7 +280,8 @@ struct RenderCluster {
 u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices, Span<const RenderLod> lods,
                        Span<const RenderCluster> clusters);
 void render_mesh_destroy(u32 mesh);
-// Сетка движется каждый кадр целиком (меч в руках): в страницы теней не идёт до 6б-3, как скин-копии людей
+// Сетка движется каждый кадр целиком (меч в руках, машина): в кеш страниц теней и кубов огней не идёт, как скин-копии
+// людей, — тень слоем подвижных каждый кадр (docs/shadow.md)
 void render_mesh_moving(u32 mesh);
 
 // Скиннинг (docs/people.md, «Скиннинг»). Источник — сетка с весами одного скелета (render_mesh_create вершин
@@ -395,6 +397,11 @@ struct RenderWork {
     u32 lsm_faces, lsm_draws, lsm_over, lsm_taps;
     // Воздух (docs/air.md): клеток с пылью, шагов лучей солнца, выборок страниц теней ими
     u32 air_cells, air_steps, air_taps;
+    // Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копий страниц под людьми, машинами и оружием; вызовов их
+    // кластеров в копии; копий без места
+    u32 sm_dyn, sm_dyn_draws, sm_dyn_over;
+    // Слой подвижных у огней (docs/lamp_shadows.md): граней его кубов (копия места, подвижные поверх) и вызовов в них
+    u32 lsm_dyn_faces, lsm_dyn_draws;
     u32 sm_blend;  // перетекание шага светила: % нового набора, 100 — один набор (в --work не пишется)
     const char *gc_off;  // почему кеш земли выключен (nullptr — включён); в --work не пишется
 };

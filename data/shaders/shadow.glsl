@@ -29,6 +29,11 @@ const float SM_FRONT = 1.0, SM_FRONT_SLOPE = 2.0, SM_FRONT_MAX = 16.0;
 // не дальше SM_PCSS_FAR к светилу (дальше полутень не шире) и не дальше SM_PCSS_MAX текселей по карте
 const float SM_PCSS_FAR = 24.0;
 const float SM_PCSS_MAX = 12.0;
+// Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копий страниц на кадр (SM_DYN_PAGES в vk_state.h). В
+// SmDyn.v — копии по два слова (место в окне, прежняя страница), с SM_DYN_MARK — кадр захвата места окна копией
+const uint SM_DYN_PAGES = 512u;
+const uint SM_DYN_MARK = 2u * SM_DYN_PAGES;
+const float SM_DYN_KEEP = 0.07;  // доля тени машины под мороком (как VEIL_KEEP у её пикселей, vis_veil.frag)
 
 int sm_set_of(int k) { return k >= SM_LEVELS ? 1 : 0; }
 int sm_level_of(int k) { return k >= SM_LEVELS ? k - SM_LEVELS : k; }

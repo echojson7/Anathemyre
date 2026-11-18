@@ -3,7 +3,10 @@
 // Тени огней картами (docs/lamp_shadows.md): отбор заслонок для граней кадра. Поток — экземпляр (x) и грань (y):
 // статичная сетка, чья сфера в дальности огня и в пирамиде грани → LOD по текселю грани у ближнего края сферы
 // (не по камере: грань одна и та же, когда бы ни нарисовалась) → кластеры, задевающие пирамиду, — в вызовы грани.
-// Порядок вызовов от запуска к запуску разный, грань — нет: тест глубины берёт ближнюю заслонку
+// Порядок вызовов от запуска к запуску разный, грань — нет: тест глубины берёт ближнюю заслонку.
+// Грани с pc.a, их pc.b. Грань слоя подвижных (job.dyn, «Подвижные заслонки» docs/shadow.md): поток x — заслонка
+// слоя (sm_dyn_inst: люди, машины, оружие кадра), подвижные сетки берутся, LOD — не тоньше скиненного (lod_min);
+// грань — копия грани места огня, они рисуются поверх (vk_lamp_shadow.cpp)
 #include "common.glsl"
 #include "lamp_map.glsl"
 layout(local_size_x = 64) in;
@@ -21,24 +24,27 @@ bool lsm_own_sphere(vec3 c, float r, LsmJob job) {
 
 void main() {
     FrameData f = pc.frame;
-    uint i = gl_GlobalInvocationID.x, j = gl_GlobalInvocationID.y;
-    if (j >= f.lsm_jobs_n) return;
-    if (i == 0u) atomicAdd(f.stats.v[STAT_LSM_FACES], 1u);
-    if (i >= f.instance_count) return;
+    uint x = gl_GlobalInvocationID.x;
+    if (gl_GlobalInvocationID.y >= pc.b) return;
+    uint j = pc.a + gl_GlobalInvocationID.y;
+    LsmJob job = f.lsm_jobs.v[j];
+    bool dyn = job.dyn != 0u;
+    if (x == 0u) atomicAdd(f.stats.v[dyn ? STAT_LSM_DYN_FACES : STAT_LSM_FACES], 1u);
+    if (x >= (dyn ? f.sm_dyn_all : f.instance_count)) return;
+    uint i = dyn ? f.sm_dyn_inst.v[x] : x;
     Instance it = f.vis_instances.v[i];
     if (it.mesh == 0u || it.mesh >= MAX_MESHES) return;
     MeshInfo m = f.meshes.v[it.mesh];
-    if (m.lod_count == 0u || (m.flags & MESH_DYNAMIC) != 0u) return;
-    LsmJob job = f.lsm_jobs.v[j];
+    if (m.lod_count == 0u || (!dyn && (m.flags & MESH_DYNAMIC) != 0u)) return;
     uint face = job.layer % 6u;
     vec4 q = inst_quat(it);
     vec3 origin = rel_to_camera(ivec2(it.cx, it.cz), vec3(it.x, it.y, it.z)) - job.c;  // от огня
     vec3 c = origin + quat_rotate(q, m.sphere.xyz * it.scale);
-    float r = m.sphere.w * it.scale;
+    float r = m.sphere.w * it.scale * (dyn ? 1.05 : 1.0) + (dyn ? 0.1 : 0.0);  // подвижным — запас позы
     float dc = length(c);
     if (dc - r > LSM_RANGE || !lsm_face_sphere(face, c, r)) return;
     float texel = 2.0 * max(dc - r, LSM_NEAR) / LSM_N;
-    uint lod = 0u;
+    uint lod = min(it.lod_min, m.lod_count - 1u);
     while (lod + 1u < m.lod_count && uintBitsToFloat(m.lods[lod + 1u].z) * it.scale <= LOD_TEXELS * texel) lod++;
     uvec4 L = m.lods[lod];
     uint want = 0u, over = 0u;
@@ -65,6 +71,6 @@ void main() {
         d.first_instance = at;
         f.lsm_draws.v[at] = d;
     }
-    if (want != 0u) atomicAdd(f.stats.v[STAT_LSM_DRAWS], want);
+    if (want != 0u) atomicAdd(f.stats.v[dyn ? STAT_LSM_DYN_DRAWS : STAT_LSM_DRAWS], want);
     if (over != 0u) atomicAdd(f.stats.v[STAT_LSM_OVER], over);
 }

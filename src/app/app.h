@@ -41,6 +41,7 @@ struct Args {
     u32 gi_view = 0;                // --gionly, --nogi: зонды непрямого света (docs/gi.md, RENDER_GI_*)
     bool local_off = false;         // --nolocal: без местной экспозиции (сравнение, docs/light.md)
     bool lsm_off = false;           // --nolsm: тени огней полем расстояний, не картами (сравнение, docs/lamp_shadows.md)
+    bool dyn_off = false;           // --nodyn: без теней подвижных — людей, машин, оружия (сравнение, docs/shadow.md)
     bool air_off = false;           // --noair: без воздуха — лучей солнца и огней в пыли (сравнение, docs/air.md)
     bool lens_off = false;          // --nolens: без эффектов объектива — бликов, аберрации, виньетки, зерна (docs/lens.md)
     bool hdr = false;               // --hdr: со снимком ещё HDR кадра мира в <снимок>.hdr16 (отладка света)

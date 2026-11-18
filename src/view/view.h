@@ -98,6 +98,7 @@ struct ViewInput {
     u32 tonemap = RENDER_TONEMAP_UE;
     bool local_off = false;  // без местной экспозиции (F3, --nolocal): сравнение было/стало
     bool lsm_off = false;    // тени огней полем расстояний, не картами (F3, --nolsm): сравнение было/стало
+    bool dyn_off = false;    // без теней подвижных: людей, машин, оружия (F3, --nodyn): сравнение было/стало
     bool air_off = false;    // без воздуха: лучей солнца и огней в пыли (F3, --noair): сравнение было/стало
     // Эффекты камеры (меню «Графика» → «Камера», docs/lens.md): блеск (docs/glare.md) и биты RENDER_LENS_*
     bool glare = true;

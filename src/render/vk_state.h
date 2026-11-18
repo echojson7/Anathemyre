@@ -73,6 +73,7 @@ struct FrameSlot {
     GpuBuffer skin_jobs;    // работы скиннинга кадра (SkinJobGpu)
     GpuBuffer bones;        // палитры костей людей кадра (RenderBone)
     GpuBuffer sm_inval;     // сферы сброса страниц теней (vk_shadow.cpp)
+    GpuBuffer sm_casters;   // экземпляры-заслонки слоя подвижных кадра (vk_shadow.cpp)
     GpuBuffer sdf_jobs, sdf_bricks, sdf_bits;  // засыпка, кирпичи и их биты поля расстояний (vk_sdf.cpp)
     GpuBuffer gi_jobs;      // работы зондов кадра (vk_gi.cpp)
     GpuBuffer lsm_jobs;     // грани карт огней кадра (LsmJobGpu, vk_lamp_shadow.cpp)
@@ -197,13 +198,22 @@ struct HorizonGpu {
 constexpr u32 SM_LEVELS = 12, SM_SETS = 2, SM_SLOTS = SM_LEVELS * SM_SETS, SM_PAGE = 128, SM_WIN = 32;
 constexpr u32 SM_INVAL_MAX = 4096;      // сфер сброса за кадр (изменившиеся экземпляры); больше — сброс всего
 constexpr u32 SM_DRAW_CAP = 1u << 18;   // вызовов кластеров в страницы за кадр
+// Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копий страниц на кадр (места сверх пула), экземпляров-
+// заслонок кадра, вызовов их кластеров. SmDyn (common.glsl): голова до списка копий, список, кадр захвата места
+constexpr u32 SM_DYN_PAGES = 512, SM_DYN_CASTERS = 512, SM_DYN_DRAW_CAP = 1u << 16;
+constexpr VkDeviceSize SM_DYN_HEAD = 16 + 32 * 4 + 32 * 32 * 4;
+constexpr VkDeviceSize SM_DYN_BYTES = SM_DYN_HEAD + (VkDeviceSize)SM_DYN_PAGES * 8 + (VkDeviceSize)SM_SLOTS * SM_WIN * SM_WIN * 4;
 struct ShadowSet {
     i32 key[2] = {0x7FFFFFFF, 0};  // шаг светила (октаэдр, 1/SM_STEP), по которому нарисован набор
     f64 anchor = 0;                // якорь высоты к светилу, м
 };
 struct ShadowGpu {
     GpuBuffer table, pages, texels, req, draws, list;
+    GpuBuffer dyn, dyn_draws, dyn_list;  // слой подвижных: копии кадра, вызовы и список их отрисовки
     u32 pages_n = 0, req_cap = 0, frame = 0;
+    u32 dyn_n = 0;           // экземпляров-заслонок слоя подвижных для солнца в кадре (0 — светило под горизонтом)
+    u32 dyn_all = 0;         // заслонок кадра в списке (для огней — и ночью)
+    f32 dyn_sph[SM_DYN_CASTERS][4] = {};  // их сферы от камеры (vk_lamp_shadow.cpp ищет их у огней)
     bool reset = true;       // окна и страницы обоих наборов с нуля в начале кадра
     bool on = false;
     u32 grow = 0;            // заявок без места в прочитанном кадре: пул растёт
@@ -222,8 +232,10 @@ struct ShadowGpu {
     bool sun_fast = false;   // светило идёт быстрее SM_FAST (ускоренное время): тени и зонды без перетекания
     u32 inval_n = 0;         // сфер сброса этого кадра
     VkPipeline pipe_inval = VK_NULL_HANDLE, pipe_scan = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE,
-               pipe_alloc = VK_NULL_HANDLE, pipe_cull = VK_NULL_HANDLE, pipe_draw = VK_NULL_HANDLE;
+               pipe_alloc = VK_NULL_HANDLE, pipe_cull = VK_NULL_HANDLE, pipe_draw = VK_NULL_HANDLE,
+               pipe_dyn = VK_NULL_HANDLE;
     u8 rg_table = 0, rg_pages = 0, rg_texels = 0, rg_req = 0, rg_draws = 0, rg_list = 0;
+    u8 rg_dyn = 0, rg_dyn_draws = 0, rg_dyn_list = 0;
 };
 
 // Поле расстояний мира (vk_sdf.cpp, docs/sdf.md): SDF_LEVELS колец SDF_N³ вокселей вокруг камеры, воксель уровня
@@ -261,20 +273,23 @@ struct SdfGpu {
 // Тени огней картами (vk_lamp_shadow.cpp, docs/lamp_shadows.md): куб глубины на огонь в LSM_SLOTS местах. Грань —
 // LSM_N² D16, значение — 1 − расстояние до огня / LSM_RANGE (обратная глубина, как у кадра: ближе — больше).
 // В карте — статичные заслонки (как в поле расстояний): рисуется, когда огонь получает место, живёт, пока огонь
-// в кадре и мир сеток тот же
-constexpr u32 LSM_SLOTS = 64, LSM_N = 256, LSM_LAYERS = LSM_SLOTS * 6;
+// в кадре и мир сеток тот же. За ними — LSM_DYN_SLOTS кубов слоя подвижных («Подвижные заслонки»): каждый кадр —
+// копия куба места огня и поверх неё люди, машины и оружие у него; свет огня читает этот куб
+constexpr u32 LSM_SLOTS = 64, LSM_DYN_SLOTS = 8, LSM_N = 256, LSM_LAYERS = (LSM_SLOTS + LSM_DYN_SLOTS) * 6;
 constexpr f32 LSM_RANGE = 48.0f;    // м: как в lamps.glsl и предел дальности ламп (lamps.cpp)
 constexpr f32 LSM_SELF = 0.15f;     // м сверх радиуса тела: светильник огня (как конец конуса у поля, lamps.glsl)
-constexpr u32 LSM_JOB_CAP = 96;     // граней за кадр (16 огней)
+constexpr u32 LSM_JOB_CAP = 96;     // граней неподвижного за кадр (16 огней)
+constexpr u32 LSM_JOB_ALL = LSM_JOB_CAP + LSM_DYN_SLOTS * 6;  // и граней слоя подвижных
 constexpr u32 LSM_DRAW_CAP = 8192;  // вызовов (кластеров) на грань
-constexpr VkDeviceSize LSM_COUNTS = 512;  // начало вызовов в буфере работ: до него — счётчики граней (u32)
+constexpr VkDeviceSize LSM_COUNTS = 1024;  // начало вызовов в буфере работ: до него — счётчики граней (u32)
+static_assert(LSM_JOB_ALL * 4 <= LSM_COUNTS, "счётчики граней не влезают перед вызовами");
 struct LsmJobGpu {  // LsmJob в common.glsl
     f32 c[3];       // огонь от камеры, м
     f32 self_r;     // ближе к отрезку огня — его светильник: заслонкой не считается (lamp_map.glsl, lsm_own), м
     f32 axis[3];    // полуось трубки, м
     u32 layer;      // место · 6 + грань
     f32 face[3];    // куда светит (нули — во все стороны): стена за огнём заслоняет и вблизи
-    u32 pad;
+    u32 dyn;        // 1 — грань слоя подвижных: заслонки — только подвижные кадра (sm_dyn_inst), поверх копии места
 };
 static_assert(sizeof(LsmJobGpu) == 48, "LsmJobGpu — 48 байт");
 struct LsmSlot {
@@ -293,7 +308,8 @@ struct LampShadowGpu {
     bool on = false;
     LsmSlot slots[LSM_SLOTS];
     u32 slots_n = 0;                     // мест в картинке (меньше LSM_SLOTS, если слоёв у карты меньше)
-    u32 jobs_n = 0, frame = 0;
+    u32 jobs_n = 0, frame = 0;           // граней кадра всего (неподвижного — первые static_n)
+    u32 static_n = 0;
     u32 seen_mesh = ~0u;
     u8 rg_cube = 0, rg_work = 0;
 };
@@ -376,7 +392,7 @@ struct MeshGpu {
     } lods[8];
 };
 static_assert(sizeof(MeshGpu) == 160, "MeshGpu — как MeshInfo в common.glsl");
-constexpr u32 MESH_DYNAMIC = 1;  // MeshGpu::pad: вершины пишет скиннинг каждый кадр (копии людей)
+constexpr u32 MESH_DYNAMIC = 1;  // MeshGpu::pad: копии людей (вершины пишет скиннинг) и render_mesh_moving
 struct ClusterGpu {
     u32 first_index, tri_count;  // от начала индексов сетки
     f32 sphere[4];
@@ -396,6 +412,7 @@ struct MeshSlot {
     RenderLod lods[RENDER_MESH_MAX_LODS];  // от начала индексов сетки
     bool used = false;
     bool dying = false;  // ждёт освобождения в очереди
+    bool moving = false; // render_mesh_moving: ходит каждый кадр — тень слоем подвижных, не страницами (docs/shadow.md)
 };
 
 // Скиннинг (vk_skin.cpp, docs/people.md «Скиннинг»): данные источников в одном буфере видеопамяти (только
@@ -426,6 +443,7 @@ struct SkinGpu {
     u32 skinned_verts = 0;                          // вершин скинено в этом кадре (CPU)
     u8 lod_min[RENDER_MAX_INSTANCES] = {};          // LOD экземпляра не тоньше (RenderInstance::lod_min)
     u32 touched[RENDER_MAX_SKINNED] = {};           // экземпляры с lod_min этого кадра (обнулить в следующем)
+    u32 job_inst[RENDER_MAX_SKINNED] = {};          // экземпляры работ кадра: заслонки слоя подвижных (vk_shadow.cpp)
     u32 touched_count = 0;
     u8 rg_vertices = 0, rg_clusters = 0;            // общие буферы вершин и кластеров в графе кадра
     // Векторы движения TAA (docs/aa.md): прошлые положения вершин (пишет skin.comp); прошлый экземпляр и кадр
@@ -514,6 +532,7 @@ struct VkState {
     GpuBuffer clusters;    // ClusterGpu всех сеток
     VmaVirtualBlock vtx_block = VK_NULL_HANDLE, idx_block = VK_NULL_HANDLE, cls_block = VK_NULL_HANDLE;
     MeshSlot meshes[RENDER_MAX_MESHES];
+    u32 meshes_moving = 0;  // сеток с MeshSlot::moving: 0 — экземпляры на подвижные не перебираются
     PendingFree pending[MAX_PENDING_FREES];
     u32 pending_count = 0;
 
@@ -703,6 +722,9 @@ void vk_froxel_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
 bool vk_skin_init();
 void vk_skin_shutdown();
 void vk_skin_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
+// Тень подвижной заслонки (сфера c, r от камеры) может попасть в кадр: сфера видна, её тень от светила кадра (sun)
+// до земли задевает пирамиду взгляда или она в дальности огня с тенью, чей свет в кадре (lamps; docs/shadow.md)
+bool vk_dyn_caster_seen(const FrameGpu &g, const RenderFrame &f, const f32 c[3], f32 r, bool sun, bool lamps);
 // Сглаживание (vk_aa.cpp, docs/aa.md): конвейер; картинки под размер кадра и их места в наборе кадра мира;
 // режим, дрожание и прошлый вид камеры в кадр (до vk_skin_fill — кадр сглаживания нужен прошлым экземплярам)
 bool vk_aa_init();

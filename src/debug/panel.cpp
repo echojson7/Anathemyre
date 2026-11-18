@@ -74,6 +74,7 @@ static void tab_light(UiForm &f, DebugState &d) {
     ui_toggle(f, "без кеша земли", d.gcache_off);
     ui_toggle(f, "свет земли без кеша", d.gclight_off);
     ui_toggle(f, "тени огней полем, не картами", d.lsm_off);
+    ui_toggle(f, "без теней людей и машин", d.dyn_off);
     ui_toggle(f, "без воздуха (лучей в пыли)", d.air_off);
     ui_toggle(f, "тестовые огни", d.test_lights);
     ui_toggle(f, "огни по клеткам", d.froxel_heat);

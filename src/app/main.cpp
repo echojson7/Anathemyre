@@ -37,6 +37,7 @@ static void usage() {
     log_info("           [--tonemap ue|agx|aces] [--light low|medium|high|ultra]      тонмаппинг, качество света (docs/light.md)");
     log_info("           [--nolocal]                                                  без местной экспозиции (было/стало, docs/light.md)");
     log_info("           [--nolsm]                                                    тени огней полем, не картами (было/стало, docs/lamp_shadows.md)");
+    log_info("           [--nodyn]                                                    без теней людей, машин и оружия (было/стало, docs/shadow.md)");
     log_info("           [--noair]                                                    без воздуха: лучей солнца и огней в пыли (было/стало, docs/air.md)");
     log_info("           [--nolens]                                                   без эффектов объектива: бликов, аберрации, виньетки, зерна (было/стало, docs/lens.md)");
     log_info("           [--hdr]                                                      со снимком — HDR кадра мира в <снимок>.hdr16 (tools/lightlab/hdr.py)");
@@ -178,6 +179,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--nocells")) a.gi_view = RENDER_GI_PROBES;
         else if (!strcmp(s, "--nolocal")) a.local_off = true;
         else if (!strcmp(s, "--nolsm")) a.lsm_off = true;
+        else if (!strcmp(s, "--nodyn")) a.dyn_off = true;
         else if (!strcmp(s, "--noair")) a.air_off = true;
         else if (!strcmp(s, "--nolens")) a.lens_off = true;
         else if (!strcmp(s, "--hdr")) a.hdr = true;

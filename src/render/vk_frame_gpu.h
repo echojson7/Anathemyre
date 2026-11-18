@@ -74,6 +74,10 @@ struct FrameGpu {
                                              // камеры к светилу от якоря набора
     i32 sm_base[24][2];             // окно места уровня (набор · SM_LEVELS + уровень): первая страница на решётке
     f32 sm_off[24][2];              // камера от начала окна по r, u, м
+    // Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копии страниц кадра, вызовы и список их отрисовки,
+    // экземпляры-заслонки кадра (люди, машины, оружие)
+    VkDeviceAddress sm_dyn, sm_dyn_draws, sm_dyn_list, sm_dyn_inst;
+    u32 sm_dyn_n, sm_dyn_cap, sm_dyn_draw_cap, sm_dyn_all;  // sm_dyn_n — для солнца (0 — светило под горизонтом), all — в списке
     // Поле расстояний мира (vk_sdf.cpp, docs/sdf.md): засыпка — кластеры экземпляров на уровнях, кирпичи кадра,
     // их биты по месту в кольце; общий буфер засыпки (минимум расстояния и знак на воксель)
     VkDeviceAddress sdf_jobs, sdf_bricks, sdf_bits, sdf_scratch;
@@ -168,7 +172,11 @@ constexpr u32 GC_LIGHT_ON = 1, GC_LIGHT_ALL = 2;  // gc_lmode (common.glsl): с�
 constexpr u32 STAT_LSM_FACES = 40, STAT_LSM_DRAWS = 41, STAT_LSM_OVER = 42, STAT_LSM_TAPS = 43;
 // Воздух (docs/air.md): клеток с пылью, шагов лучей солнца, выборок страниц теней ими
 constexpr u32 STAT_AIR_CELLS = 44, STAT_AIR_STEPS = 45, STAT_AIR_TAPS = 46;
-constexpr u32 STAT_COUNT = 47;
+// Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копий страниц, вызовов кластеров в них (до обрезки), копий
+// без места
+constexpr u32 STAT_SM_DYN = 47, STAT_SM_DYN_DRAWS = 48, STAT_SM_DYN_OVER = 49;
+constexpr u32 STAT_LSM_DYN_FACES = 50, STAT_LSM_DYN_DRAWS = 51;
+constexpr u32 STAT_COUNT = 52;
 // Виды плиток кадра мира (TILE_* в common.glsl): небо, земля из кеша (и небо), сетки (и небо), смесь земли и
 // сеток, земля на пиксель (и небо)
 constexpr u32 TILE_KINDS = 5;

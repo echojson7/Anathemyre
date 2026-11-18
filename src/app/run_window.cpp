@@ -489,6 +489,8 @@ int run_window(const Args &a, AppMemory &m) {
                 di.work_sm[5] = work.sm_taps;
                 di.work_sm[6] = work.sm_wait;
                 di.work_sm[7] = work.sm_blend;
+                di.work_sm[8] = work.sm_dyn;
+                di.work_sm[9] = work.sm_dyn_draws;
                 di.work_sdf[0] = work.sdf_taps;
                 di.work_sdf[1] = work.sdf_tris;
                 di.work_sdf[2] = work.sdf_bricks;
@@ -504,6 +506,8 @@ int run_window(const Args &a, AppMemory &m) {
                 di.work_lsm[0] = work.lsm_faces;
                 di.work_lsm[1] = work.lsm_draws;
                 di.work_lsm[2] = work.lsm_taps;
+                di.work_lsm[3] = work.lsm_dyn_faces;
+                di.work_lsm[4] = work.lsm_dyn_draws;
                 di.work_air[0] = work.air_cells;
                 di.work_air[1] = work.air_steps;
                 di.work_air[2] = work.air_taps;
@@ -707,6 +711,7 @@ int run_window(const Args &a, AppMemory &m) {
         vi.tonemap = ds.tonemap;
         vi.local_off = a.local_off || ds.local_off;
         vi.lsm_off = a.lsm_off || ds.lsm_off;
+        vi.dyn_off = a.dyn_off || ds.dyn_off;
         vi.air_off = a.air_off || ds.air_off;
         vi.scans = ds.scans;
         vi.gclight_off = ds.gclight_off;
@@ -902,7 +907,8 @@ int run_window(const Args &a, AppMemory &m) {
                          "sm_draws %u\nsm_taps %u\nsm_wait %u\nsdf_taps %u\nsdf_bricks %u\ngi_probes %u\ngi_rays %u\n"
                          "gi_taps %u\nlc_live %u\nlc_new %u\nlc_jobs %u\nlc_rays %u\nlc_over %u\nlc_taps %u\n"
                          "lc_wait %u\ngc_lit %u\nlsm_faces %u\nlsm_draws %u\nlsm_over %u\nlsm_taps %u\n"
-                         "air_cells %u\nair_steps %u\nair_taps %u\n",
+                         "air_cells %u\nair_steps %u\nair_taps %u\nsm_dyn %u\nsm_dyn_draws %u\nsm_dyn_over %u\n"
+                         "lsm_dyn_faces %u\nlsm_dyn_draws %u\n",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
                          work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts, work.sm_used, work.sm_new,
@@ -910,7 +916,8 @@ int run_window(const Args &a, AppMemory &m) {
                          work.sdf_taps, work.sdf_bricks, work.gi_probes, work.gi_rays, work.gi_taps,
                          work.lc_live, work.lc_new, work.lc_jobs, work.lc_rays, work.lc_over, work.lc_taps, work.lc_wait,
                          work.gc_lit, work.lsm_faces, work.lsm_draws, work.lsm_over, work.lsm_taps,
-                         work.air_cells, work.air_steps, work.air_taps);
+                         work.air_cells, work.air_steps, work.air_taps, work.sm_dyn, work.sm_dyn_draws, work.sm_dyn_over,
+                         work.lsm_dyn_faces, work.lsm_dyn_draws);
         if (!work_have) log_error("--work: кадр мира не прочитан (мало кадров)");
         if (!work_have || n <= 0 || !platform_write_file(a.work, t, (usize)n)) rc_exit = 1;
     }

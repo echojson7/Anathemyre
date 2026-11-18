@@ -40,7 +40,7 @@ layout(buffer_reference, scalar) buffer GlareTexels { uvec2 v[]; };  // блес
 layout(buffer_reference, scalar) buffer Stats { uint v[]; };
 // Грань карты огня кадра (LsmJobGpu, vk_lamp_shadow.cpp): огонь от камеры, м; радиус его светильника от отрезка, м;
 // полуось трубки; место · 6 + грань; куда светит (нули — во все стороны)
-struct LsmJob { vec3 c; float self_r; vec3 axis; uint layer; vec3 face; uint pad; };
+struct LsmJob { vec3 c; float self_r; vec3 axis; uint layer; vec3 face; uint dyn; };  // dyn: 1 — грань слоя подвижных
 layout(buffer_reference, scalar) readonly buffer LsmJobs { LsmJob v[]; };
 layout(buffer_reference, scalar) buffer LsmCounts { uint v[]; };  // вызовов на грань кадра (атомарно)
 layout(buffer_reference, scalar) buffer HMap { uint v[]; };  // карта горизонта (horizon.glsl), пишет horizon.comp
@@ -101,6 +101,9 @@ const uint STAT_GC_LIT = 39u;  // текселей кеша земли, чей �
 const uint STAT_LSM_FACES = 40u, STAT_LSM_DRAWS = 41u, STAT_LSM_OVER = 42u, STAT_LSM_TAPS = 43u;
 // Воздух (docs/air.md): клеток с пылью, шагов лучей солнца, выборок страниц теней ими
 const uint STAT_AIR_CELLS = 44u, STAT_AIR_STEPS = 45u, STAT_AIR_TAPS = 46u;
+// Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копий страниц, вызовов кластеров в них, копий без места
+const uint STAT_SM_DYN = 47u, STAT_SM_DYN_DRAWS = 48u, STAT_SM_DYN_OVER = 49u;
+const uint STAT_LSM_DYN_FACES = 50u, STAT_LSM_DYN_DRAWS = 51u;
 const uint GC_LIGHT_ON = 1u, GC_LIGHT_ALL = 2u;  // gc_lmode: свет в кеше читается; пересчитать все страницы кадра
 // org — точка лучей, м от якоря; ao — половинками ближнее затенение по полю у точки ячейки (x) и оно же,
 // сглаженное как свет (y): его лучи ячейки уже видят, пиксель делит своё на него (light.glsl, lc_ao)
@@ -165,12 +168,18 @@ layout(buffer_reference, scalar) buffer SmReq { uint req_n, old_n, recent_n, bg_
 struct SmDrawCmd { uint index_count, instance_count, first_index; int vertex_offset; uint first_instance; };
 layout(buffer_reference, scalar) buffer SmDraws { uint count, pad0, pad1, pad2; SmDrawCmd v[]; };
 layout(buffer_reference, scalar) buffer SmList { uvec2 v[]; };  // экземпляр; кластер | место уровня << 27
+// Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копии страниц под подвижными заслонками на этот кадр.
+// Голова — dispatch копирования (n, 1, 1); на место уровня — есть ли копии и их биты по месту в
+// окне (как fresh и bits у SmReq); дальше копии (место в окне, прежняя страница — её вернёт следующий кадр) и на
+// место в окне — кадр, в котором его взяла копия (shadow.glsl: SM_DYN_MARK)
+layout(buffer_reference, scalar) buffer SmDyn { uint n, one_y, one_z, pad; uint fresh[32]; uint bits[32 * 32];
+                                                 uint v[]; };
 
 // Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы сеток и кластеров (MeshGpu, ClusterGpu в
 // src/render/vk_state.h), видимые кластеры кадра и косвенные вызовы, которые пишет отсечение (cull_*.comp)
 struct MeshInfo { uint first_vertex, first_index, lod_count, flags; vec4 sphere; uvec4 lods[8]; };  // lods: первый кластер, число, ошибка (биты f32), 0;
 // lods[0].w копии со скиннингом — первая вершина бинд-позы источника + 1
-const uint MESH_DYNAMIC = 1u;  // MeshInfo.flags: вершины пишет скиннинг каждый кадр (в страницы теней не идёт)
+const uint MESH_DYNAMIC = 1u;  // MeshInfo.flags: вершины пишет скиннинг каждый кадр (тень — слоем подвижных, не в кеше)
 struct Cluster { uint first_index, tri_count; vec4 sphere; uint pad0, pad1; };  // first_index — от начала индексов сетки
 struct DrawCmd { uint index_count, instance_count, first_index; int vertex_offset; uint first_instance; };
 layout(buffer_reference, scalar) readonly buffer MeshInfos { MeshInfo v[]; };
@@ -336,6 +345,13 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec4 sm_r[2], sm_u[2], sm_s[2];
     ivec2 sm_base[24];        // окно места уровня (набор · SM_LEVELS + уровень): первая страница на решётке уровня
     vec2 sm_off[24];          // камера от начала окна по r, u, м
+    // Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копии страниц кадра, вызовы и список их отрисовки,
+    // экземпляры-заслонки кадра (люди, машины, оружие)
+    SmDyn sm_dyn;
+    SmDraws sm_dyn_draws;
+    SmList sm_dyn_list;
+    Words sm_dyn_inst;
+    uint sm_dyn_n, sm_dyn_cap, sm_dyn_draw_cap, sm_dyn_all;  // sm_dyn_n — для солнца (0 — светило под горизонтом), all — в списке
     // Поле расстояний мира (docs/sdf.md, sdf.glsl): засыпка кадра, кирпичи и их биты, общий буфер засыпки
     SdfJobs sdf_jobs;
     SdfBricks sdf_bricks;
