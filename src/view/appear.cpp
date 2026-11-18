@@ -48,20 +48,21 @@ Appear appear_make(u32 seed) {
     f32 ks = k0 + k1 + k2;
     if (ks < 1e-4f) k0 = k1 = k2 = 1.0f / 3.0f;
     else { k0 /= ks; k1 /= ks; k2 /= ks; }
-    m[AM_KIN_A] = k0 - k2;
-    m[AM_KIN_B] = k1 - k2;
+    // Вполсилы (2026-11-17): у краёв наборы MakeHuman карикатурны, лицо беты — середина
+    m[AM_KIN_A] = (k0 - k2) * 0.6f;
+    m[AM_KIN_B] = (k1 - k2) * 0.6f;
     // Тон кожи: темнее у первого рода, все загорелые
     a.skin = f_clamp(0.3f + 0.5f * k0 - 0.12f * k2 + d.bell() * 0.25f, 0.0f, 1.0f);
-    // Лицо
-    m[AM_NOSE] = d.bell() * 0.9f;
-    m[AM_NOSE_HUMP] = d.bell() * 0.8f;
-    m[AM_JAW] = f_clamp(d.bell() * 0.8f + (a.female ? -0.2f : 0.15f), -1.0f, 1.0f);
-    m[AM_CHIN] = d.bell() * 0.8f;
-    m[AM_LIPS] = f_clamp(d.bell() * 0.8f + (a.female ? 0.15f : 0.0f), -1.0f, 1.0f);
-    m[AM_EYES] = d.bell() * 0.9f;
-    m[AM_CHEEKS] = f_clamp(d.bell() * 0.8f - m[AM_THIN] * 0.2f + m[AM_FULL] * 0.3f, -1.0f, 1.0f);
-    m[AM_BROW] = f_clamp(d.bell() * 0.7f + (a.female ? -0.2f : 0.15f), -1.0f, 1.0f);
-    m[AM_EARS] = d.bell() * 0.8f;
+    // Лицо: черты мягче (2026-11-17, лица беты нейтральные) — разные, но без карикатуры
+    m[AM_NOSE] = d.bell() * 0.5f;
+    m[AM_NOSE_HUMP] = d.bell() * 0.4f;
+    m[AM_JAW] = f_clamp(d.bell() * 0.45f + (a.female ? -0.15f : 0.1f), -1.0f, 1.0f);
+    m[AM_CHIN] = d.bell() * 0.45f;
+    m[AM_LIPS] = f_clamp(d.bell() * 0.45f + (a.female ? 0.15f : 0.0f), -1.0f, 1.0f);
+    m[AM_EYES] = d.bell() * 0.45f;
+    m[AM_CHEEKS] = f_clamp(d.bell() * 0.45f - m[AM_THIN] * 0.2f + m[AM_FULL] * 0.3f, -1.0f, 1.0f);
+    m[AM_BROW] = f_clamp(d.bell() * 0.4f + (a.female ? -0.15f : 0.1f), -1.0f, 1.0f);
+    m[AM_EARS] = d.bell() * 0.5f;
     return a;
 }
 

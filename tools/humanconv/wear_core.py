@@ -59,7 +59,7 @@ class Body:
         self.E = np.unique(np.sort(e, 1), axis=0)
         self.deg = np.bincount(self.E.ravel(), minlength=nv).astype(np.float64)
         self.cache = {}
-        vo = H.morph(base, Z, H.BASE)
+        vo = H.morph(base, Z, H.RIG)  # скелет — от тела RIG, как у human_m (humanconv)
         y0 = vo[self.used, 1].min()
         fit = (y0, H.HEIGHT / (vo[self.used, 1].max() - y0))
         to_game = lambda x: self.place(x[None, :], fit)[0]
