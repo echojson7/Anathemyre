@@ -235,14 +235,14 @@ material human_band flat
     color 0.17 0.16 0.13
     rough 0.8
 
-# Глаза: белок и радужка
+# Глаза: белок и радужка. Матовые, как у беты (там глаз — материал кожи): с rough 0.3 углы белка горели бликом
 material human_eye flat
     color 0.46 0.43 0.39
-    rough 0.3
+    rough 0.6
 
 material human_iris flat
     color 0.07 0.05 0.04
-    rough 0.3
+    rough 0.6
 
 # Исподь (docs/ispod.md): чугун труб, крашеная и оцинкованная сталь, резина кабелей, просмолённое дерево шпал.
 # Вид metal: color — металл или краска, color2 — ржавчина, extra — доля ржавчины, размер пятен (м), разброс
@@ -677,3 +677,14 @@ material hair_brow hair
     color 0.08 0.05 0.03
     rough 0.45
     extra 0.2 0.003 3 0
+
+# Проба текстур (docs/textures.md, tools/texprobe.py): крашеная сталь щита и трубы картами ассета — цвет и
+# затенение, нормаль, кривизна, шероховатость; износ по кривизне открывает сталь, грязь копится в канавках
+material tex_probe_paint baked
+    maps tex_probe_color tex_probe_normal tex_probe_curv tex_probe_rough
+    scan paint 1
+    color 1 1 1
+    color2 0.52 0.52 0.50
+    rough 0.55
+    metal 1
+    extra 0.35 0.6 0.35 1

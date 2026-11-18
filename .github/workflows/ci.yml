@@ -50,7 +50,11 @@ jobs:
         run: |
           # люди: исходники MakeHuman качает tools/humanconv/fetch.sh в кеш (sha256), docs/people.md
           make -s meshes
-          git diff --exit-code data/meshes data/people data/weapons.txt
+          git diff --exit-code data/meshes data/people data/weapons.txt data/textures
+      - name: Линт ассетов
+        run: |
+          # все data/meshes/*.mesh: замкнутость, щели, хорда, фаски, бюджеты (docs/assetlint.md)
+          python3 tools/assetlint/assetlint.py
       - name: Дорожки клипов в git совпадают с запеканием
         run: |
           # ретаргет (bpy, сырые BVH/FBX) в CI не гоняем: запекание читает закоммиченные .anim (docs/anim.md)

@@ -54,7 +54,7 @@ def receiver(g):
         rbox(cuts, _z(g, -0.035, BORE - 0.002, 0.24 + 0.04 * k), (0.012, 0.03, 0.016), 0.004, None)
     for zz in (0.215, 0.475):
         rbox(cuts, _z(g, 0.0, BORE - 0.035, zz), (0.08, 0.004, 0.004), 0.0015, None)   # шов верх / низ
-    t = solid([("add", base), ("add", low), ("cut", cuts)], bevel=0.003, bevel_angle=35.0, segments=2)
+    t = solid([("add", base), ("add", low), ("cut", cuts)], bevel=0.003, bevel_angle=35.0, bevel_segs=2)
     out = Body()
     out.faces = [(p, GUNM, s) for p, _, s in t.faces]
     det = Body()
@@ -141,7 +141,7 @@ def handguard(g):
             rbox(cuts, _z(g, sx * 0.034, BORE - 0.006, 0.56 + 0.045 * k), (0.02, 0.024, 0.028), 0.008, None)
         rbox(cuts, _z(g, 0.0, BORE - 0.038, 0.56 + 0.045 * k), (0.03, 0.02, 0.026), 0.008, None)
     rcyl(cuts, _z(g, 0.0, BORE, 0.48), (0, 0, 1), 0.019, 0.4, None)
-    t = solid([("add", base), ("cut", cuts)], bevel=0.0025, bevel_angle=35.0, segments=2)
+    t = solid([("add", base), ("cut", cuts)], bevel=0.0025, bevel_angle=35.0, bevel_segs=2)
     hg = Body()
     hg.faces = [(p, GUNM, s) for p, _, s in t.faces]
     det = Body()
@@ -168,7 +168,7 @@ def handguard(g):
         for sx in (-1.0, 1.0):
             rbox(bc, _z(g, sx * 0.022, BORE, 1.08 + 0.022 * k), (0.02, 0.02, 0.011), 0.004, None)
     rcyl(bc, _z(g, 0.0, BORE, 1.04), (0, 0, 1), 0.009, 0.2, None)
-    t = solid([("add", bb), ("cut", bc)], bevel=0.0015, bevel_angle=35.0, segments=2)
+    t = solid([("add", bb), ("cut", bc)], bevel=0.0015, bevel_angle=35.0, bevel_segs=2)
     brake.faces = [(p, GUNP, s) for p, _, s in t.faces]
     return hg, det, bar, brake
 

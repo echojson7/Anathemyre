@@ -10,7 +10,7 @@ constexpr u32 GPU_MAX_MARKS = RENDER_MAX_PASSES + 1;
 constexpr u32 MAX_SWAPCHAIN_IMAGES = 8;
 // Общие буферы сеток (docs/frame.md): вершины и индексы всех сеток, место выдаёт виртуальный блок VMA
 constexpr VkDeviceSize GEOMETRY_VERTEX_BYTES = 128ull << 20;  // с копиями тел и одежды людей (docs/wear.md)
-constexpr VkDeviceSize GEOMETRY_INDEX_BYTES = 32ull << 20;
+constexpr VkDeviceSize GEOMETRY_INDEX_BYTES = 64ull << 20;  // все LOD всех сеток: круги по хорде (docs/assetlint.md) и пробные комнаты — 40 МБ на 18.11
 // Освобождённое место сетки отдаётся через столько кадров: GPU точно дорисовал всё, что её читало
 constexpr u32 FREE_DELAY_FRAMES = FRAMES_IN_FLIGHT + 1;
 constexpr u32 MAX_PENDING_FREES = 256;
@@ -32,6 +32,7 @@ struct GpuImage {
 // Данные кадра для шейдеров (FrameData в data/shaders/common.glsl), пишутся раз за кадр
 struct FrameGpu {
     VkDeviceAddress vertices, materials, lines, points;
+    VkDeviceAddress uvs;  // развёртка и касательные вершин (MeshUv), те же номера, что у vertices (docs/textures.md)
     VkDeviceAddress t_height, t_mask;
     VkDeviceAddress t_water, t_mask2, t_dune, t_fine;
     i32 cam_cx, cam_cz;
@@ -380,6 +381,15 @@ struct ScansGpu {
     u32 layers = 0;           // 0 — пакета нет
 };
 
+// Текстуры ассетов (vk_textures.cpp, docs/textures.md): таблица картинок BC в наборе кадра мира (привязка 16,
+// сэмплер — 17); пустые места — заглушка 1 × 1, чтобы таблица была полной
+struct TexturesGpu {
+    GpuImage images[RENDER_MAX_TEXTURES + 1];  // [0] — заглушка
+    u32 count = 0;                             // занято мест 1…count
+    VkSampler sampler = VK_NULL_HANDLE;
+    usize bytes = 0;                           // видеопамяти под блоки
+};
+
 struct SdfGpu {
     GpuImage field;           // R16F SDF_N × SDF_N × SDF_SLAB·SDF_LEVELS, расстояние в метрах
     GpuBuffer scratch;        // засыпка: u32 на воксель уровня (расстояние и знак), между кадрами — «пусто»
@@ -475,6 +485,7 @@ struct MeshGpu {
 };
 static_assert(sizeof(MeshGpu) == 160, "MeshGpu — как MeshInfo в common.glsl");
 constexpr u32 MESH_DYNAMIC = 1;  // MeshGpu::pad: вершины пишет скиннинг каждый кадр (копии людей)
+constexpr u32 MESH_UV = 2;       // MeshGpu::pad: у вершин есть развёртка (буфер uvs, docs/textures.md)
 struct ClusterGpu {
     u32 first_index, tri_count;  // от начала индексов сетки
     f32 sphere[4];
@@ -594,6 +605,7 @@ struct VkState {
 
     // Общая геометрия и таблицы
     GpuBuffer vertices, indices, materials;
+    GpuBuffer uvs;         // MeshUv на вершину, параллельно vertices (номер вершины тот же)
     GpuBuffer mesh_table;  // MeshGpu на номер сетки (видим процессору, пишется при создании сетки)
     GpuBuffer clusters;    // ClusterGpu всех сеток
     VmaVirtualBlock vtx_block = VK_NULL_HANDLE, idx_block = VK_NULL_HANDLE, cls_block = VK_NULL_HANDLE;
@@ -624,6 +636,7 @@ struct VkState {
     GiGpu gi;
     LcGpu lc;
     ScansGpu scans;
+    TexturesGpu textures;
     // Froxels (vk_froxel.cpp): клетки 64×64 пикселя × FROXEL_Z слоёв глубины
     GpuBuffer froxels;     // списки на клетку, FROXEL_STRIDE u32
     GpuBuffer media;       // среда на клетку (туман и пыль, vec4) — место для света пользователя, пока нули
@@ -744,6 +757,8 @@ u32 vk_shadow_blend();
 // Поле расстояний мира (vk_sdf.cpp, docs/sdf.md): конвейеры, картинка, сэмплер и запись в набор кадра мира
 bool vk_scans_init();
 void vk_scans_shutdown();
+bool vk_textures_init();
+void vk_textures_shutdown();
 bool vk_sdf_init();
 void vk_sdf_shutdown();
 void vk_sdf_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool images);

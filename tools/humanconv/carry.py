@@ -29,6 +29,10 @@ def main():
     pel, ch = sk.pos[sk.index["pelvis"]], sk.pos[sk.index["spine_03"]]
 
     J = m.joints["game_engine"]
+    # Руки сетки висят вдоль тела (стойка беты, docs/body.md): у бедра мерится тело, а не кисть и предплечье
+    names, rec = m.skins["game_engine"]
+    arm = ("upperarm", "lowerarm", "hand", "index", "middle", "ring", "pinky", "thumb")
+    torso = np.array([not names[k].startswith(arm) for k in rec["b"][:, 0]])
     ip, ic = sk.index["pelvis"], sk.index["spine_03"]
 
     def ext(w):
@@ -36,8 +40,8 @@ def main():
         # Поверхность — относительно головы своей кости: место ношения ходит за костью, а кость — за морфом
         dp = sum(v * J[n][ip, :3] for n, v in w.items())
         dc = sum(v * J[n][ic, :3] for n, v in w.items())
-        hip = (np.abs(p[:, 1] - (pel[1] + 0.03)) < 0.04) & (np.abs(p[:, 2] - (pel[2] + 0.05)) < 0.06) & (p[:, 0] < 0)
-        back = (np.abs(p[:, 1] - (ch[1] + 0.13)) < 0.06) & (np.abs(p[:, 0] - (ch[0] + 0.02)) < 0.06) & (p[:, 2] < ch[2])
+        hip = (np.abs(p[:, 1] - (pel[1] + 0.03)) < 0.04) & (np.abs(p[:, 2] - (pel[2] + 0.05)) < 0.06) & (p[:, 0] < 0) & torso
+        back = (np.abs(p[:, 1] - (ch[1] + 0.13)) < 0.06) & (np.abs(p[:, 0] - (ch[0] + 0.02)) < 0.06) & (p[:, 2] < ch[2]) & torso
         return np.array([(-p[hip, 0]).max() + (dp[0] if w else 0), (-p[back, 2]).max() + (dc[2] if w else 0)])
 
     b = ext({})

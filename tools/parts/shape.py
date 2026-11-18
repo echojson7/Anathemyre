@@ -165,9 +165,41 @@ def rbox(b, c, size, r, mat, rot=None, n=None, smooth=True):
         b.faces.append((tuple(add(p, c) for p in pts), m, s))
 
 
+def _smooth_secs(secs, tol=CHORD * 0.9):
+    """Сечения балки с плавными переходами: где наклон стенки (ширина, высота, сдвиг) меняется на сечении, пролёты
+    рядом делятся вставками по кубическому сплайну Эрмита. Иначе гладкая нормаль на изломе даёт прогиб хорды
+    Δнаклона · длина / 8 по всему пролёту (линт `chord`, docs/assetlint.md); k вставок уменьшают его в k² раз."""
+    if len(secs) < 3:
+        return list(secs)
+    xs = [s[0] for s in secs]
+    P = (1, 2, 4)
+    slope = [[(secs[i + 1][j] - secs[i][j]) / max(xs[i + 1] - xs[i], 1e-6) for j in P] for i in range(len(secs) - 1)]
+    turn = [0.0] + [max(abs(a - b) for a, b in zip(slope[i - 1], slope[i])) for i in range(1, len(secs) - 1)] + [0.0]
+    tan = [slope[0]] + [[(a + b) / 2 for a, b in zip(slope[i - 1], slope[i])] for i in range(1, len(secs) - 1)] + [slope[-1]]
+    out = [secs[0]]
+    for i in range(len(secs) - 1):
+        h = xs[i + 1] - xs[i]
+        k = max(1, min(8, math.ceil(math.sqrt(max(turn[i], turn[i + 1]) * h / (8 * tol)))))
+        for q in range(1, k):
+            t = q / k
+            h00, h10, h01, h11 = 2 * t ** 3 - 3 * t ** 2 + 1, t ** 3 - 2 * t ** 2 + t, -2 * t ** 3 + 3 * t ** 2, t ** 3 - t ** 2
+            v = list(secs[i])
+            v[0] = xs[i] + h * t
+            for n_, j in enumerate(P):
+                v[j] = h00 * secs[i][j] + h10 * h * tan[i][n_] + h01 * secs[i + 1][j] + h11 * h * tan[i + 1][n_]
+            v[3] = secs[i][3] + (secs[i + 1][3] - secs[i][3]) * t
+            out.append(tuple(v))
+        out.append(secs[i + 1])
+    return out
+
+
 def rloft(b, f, secs, mat, n=3, end=0.0, end_n=2, smooth=True):
     """Балка по сечениям в осях f (Frame): secs — [(x, полуширина по z, полувысота по y, радиус углов, сдвиг по y)],
-    x вдоль оси детали. end — скругление торцов (м, дугой из end_n сегментов), 0 — плоские торцы."""
+    x вдоль оси детали. end — скругление торцов (м, дугой из end_n сегментов), 0 — плоские торцы. n и end_n —
+    нижние границы: сверх них сегментов столько, чтобы хорда дуги не отходила больше допуска."""
+    n = max(n, arc_n(max(s[3] for s in secs), math.pi / 2, lo=2, hi=8))
+    secs = _smooth_secs(secs)
+    end_n = max(end_n, arc_n(end, math.pi / 2, lo=2, hi=6)) if end > 0 else end_n
     def ring(x, hw, hh, r, dy, inset=0.0):
         return [f.at(x, dy + v, u) for u, v in rrect(max(hw - inset, 1e-4), max(hh - inset, 1e-4), max(r - inset, 0.0), n)]
     rings = []
@@ -225,7 +257,8 @@ def hexbolt(b, p, axis, r, h, mat, washer=True):
     a = unit(axis)
     if washer:
         rcyl(b, sub(p, mul(a, 0.0005)), a, r * 1.45, h * 0.3, mat, e=h * 0.1, seg=seg_for(r * 1.45, lo=12))
-    b.lathe(add(p, mul(a, h * 0.25)), a, [(r, 0.0), (r, h * 0.62), (r * 0.82, h * 0.75)], mat, seg=6, smooth=False)
+    # головка от листа сквозь шайбу: касается и шайбы, и листа (линт щелей, docs/assetlint.md)
+    b.lathe(sub(p, mul(a, 0.0005)), a, [(r, 0.0), (r, h * 0.87), (r * 0.82, h)], mat, seg=6, smooth=False)
 
 
 def helix(b, a, bb, r, wire, turns, mat, seg_turn=24, tseg=8):

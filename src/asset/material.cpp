@@ -16,6 +16,7 @@ static bool numbers(const TextLine &l, f32 *dst, u32 n) {
 
 // material <имя> <вид>
 //     color r g b | rough k | color2 r g b | texel м | extra a b c d | metal k | scan <слой> <м> [r g b]
+//     maps <цвет> <нормаль> <кривизна> <шероховатость>
 bool material_table_parse(const u8 *kinds_text, usize kinds_size, const u8 *text, usize size, Arena &arena,
                           MaterialTable &out, char *err, usize err_cap) {
     out = MaterialTable{};
@@ -76,6 +77,12 @@ bool material_table_parse(const u8 *kinds_text, usize kinds_size, const u8 *text
             cur->scan = l.w[1];
             cur->scan_tint[0] = cur->scan_tint[1] = cur->scan_tint[2] = 1.0f;
             for (u32 c = 0; ok && l.count == 6 && c < 3; ++c) ok = parse_f32(l.w[3 + c], cur->scan_tint[c]);
+        }
+        else if (str_eq(k, "maps")) {
+            // Карты вида baked (docs/textures.md): цвет, нормаль, кривизна, шероховатость — имена data/textures/<имя>.tex,
+            // «-» — нет карты
+            ok = l.count == 1 + MATERIAL_MAPS;
+            for (u32 c = 0; ok && c < MATERIAL_MAPS; ++c) cur->maps[c] = str_eq(l.w[1 + c], "-") ? Str{} : l.w[1 + c];
         }
         else return fail(err, err_cap, l.line, "неизвестный параметр");
         if (!ok) return fail(err, err_cap, l.line, "не те числа у параметра");

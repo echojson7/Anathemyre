@@ -6,6 +6,7 @@
 #include "../anim/track.h"
 #include "../asset/mesh.h"
 #include "../asset/scans.h"
+#include "../asset/tex.h"
 #include "../core/hash.h"
 #include "../core/log.h"
 #include "../core/text.h"
@@ -553,7 +554,7 @@ static void load_mesh(const char *name, void *user) {
         const MeshCluster &c = md.clusters.data[i];
         cl[i] = {c.first_index, c.tri_count, {c.cx, c.cy, c.cz, c.radius}};
     }
-    vm.id = render_mesh_create(md.vertices, md.indices, {lods, nlod}, {cl, md.clusters.count});
+    vm.id = render_mesh_create(md.vertices, md.indices, {lods, nlod}, {cl, md.clusters.count}, md.uvs);
     if (vm.id && md.skin_count && !load_body(L, name, md, vm.id)) L.failed++;
     arena_restore(L.m->load, mark);
     if (!vm.id) { L.failed++; return; }
@@ -601,6 +602,41 @@ static void load_clip(const char *name, void *user) {
     L.view->clip_count++;
 }
 
+// Текстуры карт материалов (docs/textures.md): data/textures/<имя>.tex, каждая — один раз, номер в таблице кадра
+// мира. Нет файла или не загрузилась — 0: материал рисуется без этой карты, в журнале предупреждение
+struct TexLoad {
+    u64 name[RENDER_MAX_TEXTURES];
+    u32 slot[RENDER_MAX_TEXTURES];
+    u32 count;
+};
+static u32 texture_slot(TexLoad &tl, AppMemory &m, Str name, Str material) {
+    u64 h = str_hash(name);
+    for (u32 i = 0; i < tl.count; ++i)
+        if (tl.name[i] == h) return tl.slot[i];
+    char rel[256];
+    snprintf(rel, sizeof rel, "textures/%.*s.tex", (int)name.n, name.p);
+    usize mark = arena_mark(m.load);
+    u8 *data = nullptr;
+    usize size = 0;
+    TexData td;
+    const char *err = "";
+    u32 slot = 0;
+    if (!read_data(rel, m.load, &data, &size)) {
+        log_warn("материал %.*s: нет текстуры %s", (int)material.n, material.p, rel);
+    } else if (!tex_parse(data, size, td, &err)) {
+        log_warn("текстура %s: %s", rel, err);
+    } else {
+        slot = render_texture_create({td.format, td.width, td.height, td.mips, td.blocks, td.mip_offset, td.bytes});
+        if (!slot) log_warn("текстура %s: не загрузилась в видеопамять", rel);
+    }
+    arena_restore(m.load, mark);
+    if (tl.count < RENDER_MAX_TEXTURES) {
+        tl.name[tl.count] = h;
+        tl.slot[tl.count++] = slot;
+    }
+    return slot;
+}
+
 bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
     u8 *kinds = nullptr, *text = nullptr;
     usize kinds_size = 0, size = 0;
@@ -628,9 +664,12 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
         }
     }
     RenderMaterial *rm = arena_push<RenderMaterial>(m.load, mats.count);
+    TexLoad tl{};
     for (u32 i = 0; i < mats.count; ++i) {
         const MaterialDesc &d = mats.items[i];
         rm[i].kind = d.kind;
+        for (u32 c = 0; c < MATERIAL_MAPS; ++c)
+            if (d.maps[c].n) rm[i].tex |= texture_slot(tl, m, d.maps[c], d.name) << (8 * c);
         rm[i].metal = d.metal;
         memcpy(rm[i].p, d.p, sizeof rm[i].p);
         if (d.scan.n) {

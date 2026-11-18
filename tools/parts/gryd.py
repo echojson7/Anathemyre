@@ -119,7 +119,7 @@ def torso_core():
         outer = rpoly([(x * 1.2, z * 1.2) for x, z in poly], 0.03, 4)
         inner = rpoly([(x - math.copysign(0.004, x), z - math.copysign(0.004, z)) for x, z in poly], 0.026, 4)
         band(cuts, outer, inner, yy - 0.0025, yy + 0.0025, None)
-    t = solid([("add", base), ("cut", cuts)], bevel=0.003, bevel_angle=35.0, segments=2)
+    t = solid([("add", base), ("cut", cuts)], bevel=0.003, bevel_angle=35.0, bevel_segs=2)
     out = Body()
     out.faces = [(p, PAINT, s) for p, _, s in t.faces]
     return out
