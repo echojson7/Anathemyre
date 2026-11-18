@@ -1,6 +1,7 @@
-// Стиль кадра (docs/render.md, проход 8; docs/light.md, «Экспозиция», «Тонмаппинг»): HDR кадра уже умножен на
-// экспозицию (light_cells.comp — иначе диск солнца и блики не влезут в f16). Здесь ночная синева и тонмаппинг:
-// AgX или ACES (Hill), переключатель в F3. Средний серый у обоих один: ACES подтянут к AgX множителем
+// Стиль кадра (docs/render.md, проход 8; docs/light.md, «Экспозиция», «Баланс белого», «Тонмаппинг»): HDR кадра
+// уже умножен на экспозицию (light_cells.comp — иначе диск солнца и блики не влезут в f16) и прошёл сумеречное
+// зрение (там же, до сглаживания). Здесь баланс белого глаза и тонмаппинг: плёночная кривая UE5 (по умолчанию), AgX
+// или ACES (Hill), выбор в F3
 #ifndef POST_GLSL
 #define POST_GLSL
 #include "common.glsl"
@@ -32,22 +33,49 @@ vec3 tonemap_aces(vec3 c) {
     return clamp(from_aces * v, 0.0, 1.0);
 }
 
+// Плёночная кривая UE4/UE5 (FilmToneMap, TonemapCommon.ush) с настройками по умолчанию: наклон 0.88, носок 0.55,
+// плечо 0.26, чёрное 0, белое 0.04. Кривая — по каналам в ACEScg (AP1) в log10, серый 0.18 → 0.18; до и после —
+// лёгкое снятие насыщенности (0.96, 0.93), как у UE. Без «свечения» и «красного» модулей ACES RRT
+vec3 tonemap_ue(vec3 c) {
+    const mat3 srgb_ap1 = mat3(0.613097400, 0.070193700, 0.020615600, 0.339523100, 0.916353900, 0.109569800,
+                               0.047379500, 0.013452500, 0.869814600);
+    const mat3 ap1_srgb = mat3(1.705050965, -0.130256368, -0.024003373, -0.621792005, 1.140804701, -0.128969010,
+                               -0.083258898, -0.010548448, 1.152972396);
+    const vec3 ap1_y = vec3(0.2722287, 0.6740818, 0.0536895);
+    // Точки сшивки носка, прямой и плеча (log10) для этих настроек; плечо начинается раньше конца носка
+    const float slope = 0.88, toe_s = 0.45, sh_s = 0.78, white = 0.04;
+    const float toe_m = -0.390277232, str_m = 0.901640868, sh_m = -0.606186323;
+    vec3 w = max(srgb_ap1 * c, vec3(0.0));
+    w = mix(vec3(dot(w, ap1_y)), w, 0.96);
+    vec3 lc = log2(max(w, vec3(1e-10))) * 0.30102999566;
+    vec3 st = slope * (lc + str_m);
+    vec3 tc = (2.0 * toe_s) / (1.0 + exp((-2.0 * slope / toe_s) * (lc - toe_m)));
+    vec3 sc = (1.0 + white) - (2.0 * sh_s) / (1.0 + exp((2.0 * slope / sh_s) * (lc - sh_m)));
+    tc = mix(st, tc, lessThan(lc, vec3(toe_m)));
+    sc = mix(st, sc, greaterThan(lc, vec3(sh_m)));
+    vec3 t = 1.0 - clamp((lc - toe_m) / (sh_m - toe_m), 0.0, 1.0);
+    t = (3.0 - 2.0 * t) * t * t;
+    vec3 tone = mix(tc, sc, t);
+    tone = mix(vec3(dot(tone, ap1_y)), tone, 0.93);
+    return clamp(ap1_srgb * max(tone, vec3(0.0)), 0.0, 1.0);
+}
+
+// Баланс белого глаза (docs/light.md, «Баланс белого»): фон Крис в конусах CAT02 — множители конусов и доля
+// привыкания посчитаны в eye.comp (sky_out [6]) по цвету света у глаза; белое под лампой 2700–4000 К видно почти
+// белым, как его видит глаз, а не бурым
+vec3 white_balance(vec3 c) {
+    vec4 g = pc.frame.sky_out.v[SKY_OUT_WB];
+    if (!(g.w > 0.0)) return c;
+    const mat3 rgb_lms = mat3(0.390405360, 0.070841590, 0.023108180, 0.549941120, 0.963171760, 0.128020800,
+                              0.008926320, 0.001357750, 0.936245120);
+    const mat3 lms_rgb = mat3(2.858467668, -0.210182267, -0.041812003, -1.628787726, 1.158200856, -0.118169353,
+                              -0.024891036, 0.000324281, 1.068666368);
+    return max(lms_rgb * (g.xyz * (rgb_lms * c)), vec3(0.0));
+}
+
 vec3 post_color(vec3 c) {
-    FrameData f = pc.frame;
-    c = max(c, vec3(0.0));
-    // Ночью глаз видит палочками: цвет уходит в холодный серо-синий. По освещённости открытой земли, лк: полная
-    // синева — ниже ~0.3 лк (луна), без неё — выше ~30 лк: сумерки после заката ещё цветные (заря).
-    // Под лампами глаз видит колбочками: свет у глаза сверх открытой земли (лампы и отражённое от них) снимает
-    // синеву — от 2 лк начинает, с 20 лк её нет. Свет у глаза — из EV, к которому глаз уже привык (плавно, eye.comp)
-    float e = f.sky_out.v[SKY_OUT_EYE].y;
-    float night = f.a_post.w * (1.0 - smoothstep(-1.7, 4.9, log2(max(e, 1e-6))));
-    if (night > 0.0) {
-        float e_eye = f.a_post.y > 0.05 ? 2.5 * exp2(f.a_post.z + (f.sky_out.v[SKY_OUT_EYE].z - f.a_post.z) / f.a_post.y)
-                                        : f.sky_out.v[SKY_OUT_EYE2].z;
-        night *= 1.0 - smoothstep(1.0, 4.32, log2(max(e_eye - e, 1e-3)));
-    }
-    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-    c = mix(c, l * vec3(0.72, 0.88, 1.25), night);
-    return f.tonemap == TONEMAP_ACES ? tonemap_aces(c) : tonemap_agx(c);
+    uint tm = pc.frame.tonemap;
+    c = white_balance(max(c, vec3(0.0)));
+    return tm == TONEMAP_ACES ? tonemap_aces(c) : tm == TONEMAP_AGX ? tonemap_agx(c) : tonemap_ue(c);
 }
 #endif

@@ -7,6 +7,7 @@ struct Extract {
     const Terrain *terrain;  // земля не меняется после создания мира: кадр читает её напрямую
     const Decals *decals;    // декали карты — тоже
     const Lamps *lamps;      // лампы карты (огни 6е) — тоже
+    const Airs *airs;        // пыль залов (воздух 5б) — тоже
     const Colliders *coll;   // коллайдеры построек — тоже (опора стоп у вида, support_at)
     const GaitTable *gait;   // длины цикла шага — тоже (подгонка шага у вида)
     const ActionTable *actions;  // действия (клип, окна) — тоже

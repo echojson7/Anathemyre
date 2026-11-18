@@ -196,7 +196,8 @@ u32 render_skinned_create(u32 skin) {
     mg = ((const MeshGpu *)g_vk.mesh_table.mapped)[s.mesh];
     mg.first_vertex = d.first_vertex;
     mg.sphere[3] *= SKIN_SPHERE_GROW;
-    // Вершины меняются каждый кадр: в страницы теней не идёт (docs/shadow.md); развёртка — у источника (по бинд-позе)
+    // Вершины меняются каждый кадр: не в кеше теней, тень — слоем подвижных (docs/shadow.md); развёртка — у
+    // источника (по бинд-позе)
     mg.pad = MESH_DYNAMIC | (mg.pad & (MESH_UV | MESH_ALPHA));
     // Вершины бинд-позы — у источника: по ним шейдер привязывает узор материала к детали (resolve.glsl)
     mg.lods[0].pad = ((const MeshGpu *)g_vk.mesh_table.mapped)[s.mesh].first_vertex + 1;
@@ -214,6 +215,33 @@ static bool sphere_visible(const FrameGpu &g, const f32 c[3], f32 r) {
     if (f_abs(vx) * g.proj_x - vz > r * kx) return false;
     if (f_abs(vy) * g.proj_y - vz > r * ky) return false;
     return true;
+}
+
+// Тень заслонки может попасть в кадр (слой подвижных, docs/shadow.md, «Подвижные заслонки»): сфера c, r (от камеры)
+// видна сама; sun — тень от светила l: отрезок вдоль −l до земли под ней с запасом SHADOW_DROP, не длиннее
+// SHADOW_REACH (тремя сферами по его трети), задевает пирамиду взгляда; lamps — сфера в дальности огня с тенью,
+// чей свет задевает пирамиду (тень от него ляжет не дальше его света)
+constexpr f32 SHADOW_DROP = 10.0f, SHADOW_REACH = 200.0f;
+bool vk_dyn_caster_seen(const FrameGpu &g, const RenderFrame &f, const f32 c[3], f32 r, bool sun, bool lamps) {
+    if (sphere_visible(g, c, r)) return true;
+    const f32 *l = f.light.sun_dir;
+    if (sun && l[1] > 0.0f) {
+        f32 len = (2.0f * r + SHADOW_DROP) / (l[1] > 0.05f ? l[1] : 0.05f);
+        if (len > SHADOW_REACH) len = SHADOW_REACH;
+        for (u32 i = 0; i < 3; ++i) {
+            f32 t = len * (1.0f + 2.0f * (f32)i) / 6.0f, p[3] = {c[0] - l[0] * t, c[1] - l[1] * t, c[2] - l[2] * t};
+            if (sphere_visible(g, p, r + len / 6.0f)) return true;
+        }
+    }
+    if (lamps)
+        for (u32 i = 0; i < f.lights.count; ++i) {
+            const RenderPointLight &q = f.lights.data[i];
+            if (!(q.flags & LIGHT_SHADOW)) continue;
+            f32 reach = q.radius < LSM_RANGE ? q.radius : LSM_RANGE, e = reach + r;
+            f32 dx = c[0] - q.x, dy = c[1] - q.y, dz = c[2] - q.z, p[3] = {q.x, q.y, q.z};
+            if (dx * dx + dy * dy + dz * dz < e * e && sphere_visible(g, p, reach)) return true;
+        }
+    return false;
 }
 
 static void quat_rotate(const f32 q[4], const f32 v[3], f32 out[3]) {
@@ -239,6 +267,9 @@ void vk_skin_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     if (nb) memcpy(fs.bones.mapped, f.bones.data, nb * sizeof(RenderBone));
     SkinJobGpu *jobs = (SkinJobGpu *)fs.skin_jobs.mapped;
     u32 n = f.skinned.count < RENDER_MAX_SKINNED ? (u32)f.skinned.count : RENDER_MAX_SKINNED;
+    // Слой подвижных не выключен; тени солнца (прошлого кадра: vk_shadow_fill идёт следом) и карты огней включены
+    bool sun = f.style.shadow_dyn && g_vk.shadow.on;
+    bool lamps = f.style.shadow_dyn && f.style.lamp_maps && g_vk.lsm.cube.image;
     for (u32 j = 0; j < n; ++j) {
         const RenderSkinned &p = f.skinned.data[j];
         if (p.instance >= f.instances.count || p.instance >= RENDER_MAX_INSTANCES) continue;
@@ -256,7 +287,8 @@ void vk_skin_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
         while (lod + 1 < m.lod_count && m.lods[lod + 1].error * it.scale <= limit) lod++;
         k.lod_min[p.instance] = (u8)lod;
         k.touched[k.touched_count++] = p.instance;
-        // Невидимого не скинить: сфера с запасом шире, чем у отсечения (оно не возьмёт то, чего не видит процессор)
+        // Невидимого не скинить: сфера с запасом шире, чем у отсечения (оно не возьмёт то, чего не видит процессор).
+        // Человек за кадром, чья тень в кадре, — тоже: он заслонка слоя подвижных (docs/shadow.md)
         const MeshGpu &mg = ((const MeshGpu *)g_vk.mesh_table.mapped)[it.mesh];
         f32 q[4] = {unpack_snorm16(it.rot_xy), unpack_snorm16(it.rot_xy >> 16), unpack_snorm16(it.rot_zw),
                     unpack_snorm16(it.rot_zw >> 16)};
@@ -265,7 +297,8 @@ void vk_skin_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
         f32 sc[3] = {mg.sphere[0] * it.scale, mg.sphere[1] * it.scale, mg.sphere[2] * it.scale}, c[3];
         quat_rotate(q, sc, c);
         for (u32 a = 0; a < 3; ++a) c[a] += origin[a];
-        if (!sphere_visible(g, c, mg.sphere[3] * it.scale * 1.05f + 0.1f)) continue;
+        f32 rs = mg.sphere[3] * it.scale * 1.05f + 0.1f;
+        if (!vk_dyn_caster_seen(g, f, c, rs, sun, lamps)) continue;
         // Прошлый экземпляр (векторы движения TAA): годен, если человека скинили в прошлом кадре — тогда и его
         // прошлые вершины (skin.comp пишет их из копии) от прошлого кадра
         MeshPrevGpu &mp = ((MeshPrevGpu *)fs.mesh_prev.mapped)[it.mesh];
@@ -274,6 +307,7 @@ void vk_skin_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
         mp = MeshPrevGpu{pi.cx, pi.cz, pi.x, pi.y, pi.z, pi.rot_xy, pi.rot_zw, pi.scale, prev_ok ? g.aa_frame : 0u, {}};
         g_last_inst[it.mesh] = it;
         g_last_frame[it.mesh] = g.aa_frame;
+        k.job_inst[k.jobs] = p.instance;
         SkinJobGpu &w = jobs[k.jobs++];
         w = SkinJobGpu{};
         w.src_vertex = g_vk.meshes[s.mesh].first_vertex;

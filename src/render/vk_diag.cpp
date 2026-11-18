@@ -230,7 +230,7 @@ static void record_stats_copy(VkCommandBuffer cmd, void *user) {
     vkCmdCopyBuffer(cmd, g_vk.diag.stats.buffer, fs.readback.buffer, 1, &c);
     VkBufferCopy d{0, 0, 4};  // число вызовов отсечения — видимых кластеров
     vkCmdCopyBuffer(cmd, g_vk.world.cull.buffer, fs.readback.buffer, 1, &d);
-    VkBufferCopy e{SKY_OUT_EYE * 16, READBACK_EYE, 32};  // глаз: экспозиция и освещённость (F3)
+    VkBufferCopy e{SKY_OUT_EYE * 16, READBACK_EYE, 80};  // глаз: экспозиция, освещённость, баланс белого (F3)
     vkCmdCopyBuffer(cmd, g_vk.sky.out.buffer, fs.readback.buffer, 1, &e);
 }
 
@@ -261,6 +261,7 @@ void vk_stats_read(FrameSlot &fs) {
     vk_gcache_read(st);
     vk_shadow_read(st, fs.sm_frame);
     g_vk.world.work_valid = true;
+    if (st[STAT_LSM_OVER]) add_over(g_gpu_over, g_ngpu, "тени огней: кластеры без места в гранях", st[STAT_LSM_OVER], 0);
     if (st[STAT_FROXEL_LIGHTS]) add_over(g_gpu_over, g_ngpu, "froxels: клеток, где огни не влезли", st[STAT_FROXEL_LIGHTS], 0);
     if (st[STAT_FROXEL_DECALS]) add_over(g_gpu_over, g_ngpu, "froxels: клеток, где декали не влезли", st[STAT_FROXEL_DECALS], 0);
 }
@@ -307,6 +308,18 @@ bool render_work(RenderWork &out) {
     out.lc_taps = w.work[STAT_LC_TAPS];
     out.lc_wait = w.work[STAT_LC_WAIT];
     out.gc_lit = w.work[STAT_GC_LIT];
+    out.lsm_faces = w.work[STAT_LSM_FACES];
+    out.lsm_draws = w.work[STAT_LSM_DRAWS];
+    out.lsm_over = w.work[STAT_LSM_OVER];
+    out.lsm_taps = w.work[STAT_LSM_TAPS];
+    out.air_cells = w.work[STAT_AIR_CELLS];
+    out.air_steps = w.work[STAT_AIR_STEPS];
+    out.air_taps = w.work[STAT_AIR_TAPS];
+    out.sm_dyn = w.work[STAT_SM_DYN];
+    out.sm_dyn_draws = w.work[STAT_SM_DYN_DRAWS];
+    out.sm_dyn_over = w.work[STAT_SM_DYN_OVER];
+    out.lsm_dyn_faces = w.work[STAT_LSM_DYN_FACES];
+    out.lsm_dyn_draws = w.work[STAT_LSM_DYN_DRAWS];
     out.sm_blend = vk_shadow_blend();
     out.gc_off = g_vk.gcache.off;
     return true;
@@ -323,6 +336,11 @@ bool render_light(RenderLightInfo &out) {
     out.lux_key = w.eye[4];
     out.ev100_goal = w.eye[5];
     out.lux_eye = w.eye[6];
+    for (u32 k = 0; k < 3; ++k) out.wb_gain[k] = w.eye[8 + k];
+    out.wb_degree = w.eye[11];
+    for (u32 k = 0; k < 3; ++k) out.wb_white[k] = w.eye[12 + k];
+    out.lux_view = w.eye[15];
+    out.lux_cam = w.eye[19];
     return true;
 }
 

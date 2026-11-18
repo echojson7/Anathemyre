@@ -7,7 +7,7 @@
 // Размеры — как в data/shaders/atmosphere.glsl
 static constexpr u32 TRANS_W = 256, TRANS_H = 64, MS_N = 32;
 static constexpr u32 SKY_W = 192, SKY_H = 128, MOON_W = 96, MOON_H = 64;
-static constexpr u32 SKY_OUT = 8;
+static constexpr u32 SKY_OUT = 11;  // слоты sky_out (common.glsl)
 
 bool vk_sky_init() {
     SkyGpu &s = g_vk.sky;

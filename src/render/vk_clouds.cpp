@@ -84,7 +84,7 @@ void vk_clouds_fill(FrameGpu &g, const RenderFrame &f) {
         c.ready = false;
         return;
     }
-    u32 q = f.style.light_quality < RENDER_LIGHT_QUALITIES ? f.style.light_quality : RENDER_LIGHT_HIGH;
+    u32 q = f.style.air_quality < RENDER_LIGHT_QUALITIES ? f.style.air_quality : RENDER_LIGHT_HIGH;
     u32 size = CLOUD_SIZES[q];
     if (!c.map.buffer || size != c.size) {
         // Новая ступень света (или первые облака): карта другого размера. Редко — подождать кадры в полёте

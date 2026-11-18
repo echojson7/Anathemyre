@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Лист просмотра машины на костях (docs/vezha.md): кадр трассировкой Blender без игры, в позе.
 
-    python tools/parts/rig_preview.py <папка> [--rig vezha|tat] [--shot имя поза cx cy cz tx ty tz]… [--lens 35]
+    python tools/parts/rig_preview.py <папка> [--rig vezha|tat|gryd] [--shot имя поза cx cy cz tx ty tz]… [--lens 35]
                                       [--size 1200 800] [--samples 48] [--hull град] [--gun град] [--parts]
 
-Позы — vezha_pose.POSES (stand, pack, high, low) и tat_pose.POSES (stand, high, low, prone, pack). Каждый --shot —
+Позы — vezha_pose.POSES (stand, pack, high, low), tat_pose.POSES (stand, high, low, prone, pack) и
+gryd_pose.POSES (stand, aim, walk, rest, low). Каждый --shot —
 кадр <папка>/<имя>.jpg.
 
 Поверхности здесь не игровые: ровные цвета материалов, сколы краски — по доле износа вершины, затенение — из
@@ -32,8 +33,12 @@ COLORS = {  # цвет, шероховатость, металл
     "tat_iron": ((0.05, 0.048, 0.046), 0.55, 0.7), "tat_lens": ((1.0, 0.5, 0.12), 0.3, 0.0),
     "tat_mark": ((0.42, 0.38, 0.30), 0.7, 0.0), "tat_cable": ((0.32, 0.03, 0.02), 0.6, 0.0),
     "vezha_olive": ((0.17, 0.19, 0.10), 0.66, 0.0),
+    "gryd_paint": ((0.40, 0.39, 0.36), 0.6, 0.0), "gryd_worn": ((0.24, 0.22, 0.20), 0.45, 0.8),
+    "gryd_iron": ((0.07, 0.068, 0.066), 0.5, 0.7), "gryd_gun": ((0.028, 0.028, 0.03), 0.55, 0.3),
+    "gryd_lens": ((1.0, 0.62, 0.3), 0.3, 0.0), "gryd_mark": ((0.05, 0.045, 0.04), 0.7, 0.0),
+    "gryd_flash": ((1.0, 0.72, 0.36), 0.5, 0.0),
 }
-GLOW = ("vezha_eye", "tat_lens")
+GLOW = ("vezha_eye", "tat_lens", "gryd_lens", "gryd_flash")
 
 
 def take(args, flag, n, default):

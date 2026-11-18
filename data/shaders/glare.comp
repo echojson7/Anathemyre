@@ -3,10 +3,52 @@
 // Пирамида блеска (docs/glare.md). pc.a — что делать: 0 — уровень 0 «вниз» из кадра после сглаживания (история
 // pc.b), 1 — уровень pc.b «вниз» из уровня ниже, 2 — уровень pc.b «вверх»: свой «вниз» плюс размытый «вверх»
 // уровня крупнее. Вниз — фильтр 4×4 с весами (1 3 3 1)/8 по осям (без ступенек и мерцания при сдвиге), вверх —
-// четыре билинейные выборки крупного уровня (шатёр)
+// четыре билинейные выборки крупного уровня (шатёр). 3 — солнце в кадре (docs/lens.md): одна группа
 #include "glare.glsl"
 layout(set = 0, binding = 13, rgba16f) uniform readonly image2D u_aa[2];
 layout(local_size_x = 8, local_size_y = 8) in;
+
+shared float s_vis[64];
+
+float gr_max3(vec3 v) { return max(v.x, max(v.y, v.z)); }
+
+// Видимая доля диска солнца (корона, блики объектива): 64 точки подсолнухом по диску до 0.7 радиуса в кадре
+// после сглаживания. Точка видна, если ярче 55 % того, что даёт открытый диск (с пределом atmo_sun_cap и
+// потемнением к краю); облако на диске — доля, а не ноль. Точки за краем кадра — не видны: диск уходит за край
+// плавно. В lens_sun[0]: доля, середина диска в пикселях, отступ середины от края кадра (0 — у края, 1 — дальше
+// 8 % высоты кадра)
+void sun_measure() {
+    FrameData f = pc.frame;
+    uint i = gl_LocalInvocationIndex;
+    vec3 s = f.a_sun.xyz;
+    float vf = dot(s, f.forward.xyz);
+    bool up = vf > 0.05 && s.y > -0.02;
+    vec2 sp = vec2(-1e4);
+    float v = 0.0;
+    if (up) {
+        vec2 ndc = vec2(dot(s, f.right.xyz) * f.proj_x, -dot(s, f.up.xyz) * f.proj_y) / vf;
+        sp = (ndc + 1.0) / f.ndc_per_pixel;
+        float rs = f.a_sun_halo.w;
+        float rp = rs / (f.pixel_angle * vf);
+        float a = float(i) * 2.39996323, r = 0.7 * rp * sqrt((float(i) + 0.5) / 64.0);
+        ivec2 q = ivec2(floor(sp + r * vec2(cos(a), sin(a))));
+        ivec2 sz = ivec2(f.viewport);
+        if (all(greaterThanEqual(q, ivec2(0))) && all(lessThan(q, sz))) {
+            vec3 h = pc.b == 0u ? imageLoad(u_aa[0], q).rgb : imageLoad(u_aa[1], q).rgb;
+            vec3 e0 = f.a_sun.w / (A_PI * rs * rs) * exp(-f.a_sun_halo.rgb);
+            float ex = f.sky_out.v[SKY_OUT_EYE].x;
+            float open = min(atmo_sun_cap(), gr_max3(e0 * f.a_sun_t.rgb) * 1.2 * ex);
+            v = smoothstep(0.3, 0.55, gr_max3(h) / max(open, 1e-9));
+        }
+    }
+    s_vis[i] = v;
+    barrier();
+    if (i != 0u) return;
+    float sum = 0.0;
+    for (uint k = 0u; k < 64u; ++k) sum += s_vis[k];
+    float edge = min(min(sp.x, f.viewport.x - sp.x), min(sp.y, f.viewport.y - sp.y));
+    f.lens_sun.v[0] = vec4(sum / 64.0, sp, clamp(edge / (0.08 * f.viewport.y), 0.0, 1.0));
+}
 
 const float W4[4] = float[4](0.125, 0.375, 0.375, 0.125);
 
@@ -26,6 +68,10 @@ void main() {
     FrameData f = pc.frame;
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
     uint mode = pc.a;
+    if (mode == 3u) {
+        sun_measure();
+        return;
+    }
     int k = mode == 0u ? 0 : int(pc.b);
     ivec4 l = f.gr_lv[k];
     if (p.x >= l.x || p.y >= l.y) return;

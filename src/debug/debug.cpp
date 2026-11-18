@@ -296,6 +296,28 @@ bool debug_write_shot(const char *path, Arena &scratch) {
     return ok;
 }
 
+// HDR-снимок (--hdr): «HDR16» + ширина + высота (u32) + RGBA половинками строками сверху вниз; разбор —
+// tools/lightlab/hdr.py
+bool debug_write_hdr(const char *path, Arena &scratch) {
+    usize mark = arena_mark(scratch);
+    u16 *px = nullptr;
+    u32 w = 0, h = 0;
+    if (!render_capture_hdr_take(scratch, &px, &w, &h)) {
+        log_error("HDR-снимок не вышел");
+        return false;
+    }
+    u8 head[16] = {'H', 'D', 'R', '1', '6', 0, 0, 0};
+    put32(head + 8, w);
+    put32(head + 12, h);
+    const void *parts[2] = {head, px};
+    usize sizes[2] = {sizeof head, (usize)w * h * 8};
+    bool ok = platform_write_parts(path, parts, sizes, 2);
+    arena_restore(scratch, mark);
+    if (ok) log_info("HDR-снимок: %s (%ux%u)", path, w, h);
+    else log_error("не записать %s", path);
+    return ok;
+}
+
 // Карта земли сверху: пиксель — 2×2 узла сетки 8 м, отмывка рельефа с северо-запада, цвет — по маскам
 // (песок — охра, в пустыне — оранжевее, трава — зелёная, шероховатое — серее, вода — синяя), высота — светлее. Север сверху
 bool debug_write_terrain_map(const Terrain &t, const char *path, Arena &scratch) {

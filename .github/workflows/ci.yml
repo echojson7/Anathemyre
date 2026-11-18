@@ -132,7 +132,8 @@ jobs:
   window:
     name: window (${{ matrix.kind }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # 30 мин: шаг «Пакеты, кеши, сборка» на медленной машине — до 11 мин (18.11, shot и same), а предел ASan — 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -155,8 +156,9 @@ jobs:
           . tools/ci_par.sh
           . tools/versions.sh
           export ASAN_SYMBOLIZER_PATH=~/.cache/anathemyre/llvm-$LLVM_VER/bin/llvm-symbolizer  # иначе подавления не видят имён функций
-          # ASan + слои проверки: ошибки Vulkan видны с первых кадров, малое окно — lavapipe считает пиксели
-          par asan 600 xvfb-run -n 91 -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation \
+          # ASan + слои проверки: ошибки Vulkan видны с первых кадров, малое окно — lavapipe считает пиксели.
+          # 900 с: на холодном кеше шейдеров первый кадр (JIT lavapipe) на машине CI идёт дольше 8 мин (docs/build.md)
+          par asan 900 xvfb-run -n 91 -s "-screen 0 1600x900x24" build/linux-debug/anathemyre --frames 30 --validation \
             --window 640 360
           par_wait 40
       - name: Снимок сцены
@@ -211,6 +213,30 @@ jobs:
           path: |
             same_1_0003.bmp
             work_1.txt
+          retention-days: 7
+
+  # Регистры, память потока (scratch) и код compute-шейдеров против потолков tests/shader_budget.txt
+  # (docs/perf_arch.md): конвейеры собирает компилятор AMD (RADV) на «пустом» устройстве, видеокарта не нужна.
+  # Своя машина: освещение на один вид собирается десятки секунд, и другим задачам эти ядра нужнее
+  shaders:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Пакеты
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends glslang-tools spirv-tools mesa-vulkan-drivers
+      - name: Регистры и код шейдеров
+        run: |
+          dpkg-query -W -f='Mesa ${Version}\n' mesa-vulkan-drivers
+          make -s -j"$(nproc)" shaders
+          tools/shader_stats/check.sh build/linux-release/shaders tests/shader_budget.txt shader_stats.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shader-stats
+          path: shader_stats.txt
           retention-days: 7
 
   # Повтор Windows — на настоящем Windows (Wine не проверяет настоящий CRT), GPU не нужен

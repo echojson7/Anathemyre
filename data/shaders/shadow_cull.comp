@@ -4,6 +4,8 @@
 // (оба набора), где есть новые страницы, сфера сетки в плоскости карты задевает хоть одну новую → LOD по размеру текселя
 // уровня (не по камере: страница одна и та же, когда бы ни нарисовалась) → кластеры, задевающие новые страницы,
 // — в вызовы. Порядок вызовов от запуска к запуску разный, страница — нет: тексель берёт максимум высот.
+// pc.a = 1 — слой подвижных («Подвижные заслонки»): поток на заслонку кадра (люди, машины, оружие — их неподвижные
+// страницы не берут), страницы — копии этого кадра (sm_dyn, shadow_dyn.comp), LOD не тоньше скиненного
 // Биты новых страниц уровня читаются в локальный массив раз на уровень: и дешевле, и lavapipe под GPU-AV падает
 // на чтении буфера во вложенных циклах (docs/shadow.md, «Проверки»)
 #include "shadow.glsl"
@@ -30,25 +32,35 @@ bool sm_touches_fresh(vec2 w, float r) {
 
 void main() {
     FrameData f = pc.frame;
-    uint i = gl_GlobalInvocationID.x;
-    if (i >= f.instance_count) return;
+    bool dyn = pc.a != 0u;
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= (dyn ? f.sm_dyn_n : f.instance_count)) return;
+    uint i = dyn ? f.sm_dyn_inst.v[gid] : gid;
     Instance it = f.vis_instances.v[i];
     if (it.mesh == 0u || it.mesh >= MAX_MESHES) return;
     MeshInfo m = f.meshes.v[it.mesh];
-    if (m.lod_count == 0u || (m.flags & MESH_DYNAMIC) != 0u) return;
+    if (m.lod_count == 0u || (!dyn && (m.flags & MESH_DYNAMIC) != 0u)) return;
+    // Карточки волос — без тени: в проходе тени нет альфы, полосы легли бы сплошными пятнами (docs/hair.md)
+    if ((m.flags & MESH_ALPHA) != 0u) return;
     vec4 q = inst_quat(it);
     vec3 origin = rel_to_camera(ivec2(it.cx, it.cz), vec3(it.x, it.y, it.z));
     vec3 c = origin + quat_rotate(q, m.sphere.xyz * it.scale);
-    float r = m.sphere.w * it.scale;
+    // Подвижным — запас позы, как у мест слоя (shadow_dyn.comp) и скиннинга: поза бывает шире бинд-позы
+    float r = m.sphere.w * it.scale * (dyn ? 1.05 : 1.0) + (dyn ? 0.1 : 0.0);
+    SmDraws draws = dyn ? f.sm_dyn_draws : f.sm_draws;
+    SmList list = dyn ? f.sm_dyn_list : f.sm_list;
+    uint cap = dyn ? f.sm_dyn_draw_cap : f.sm_draw_cap;
+    // У человека скинены вершины LOD lod_min и грубее (vk_skin.cpp): тоньше брать нельзя; у прочих lod_min — 0
+    uint lod_min = min(it.lod_min, m.lod_count - 1u);
     uint want = 0u;
     for (int k = 0; k < SM_SLOTS; ++k) {
-        if (f.sm_req.fresh[k] == 0u) continue;
+        if ((dyn ? f.sm_dyn.fresh[k] : f.sm_req.fresh[k]) == 0u) continue;
         float t = sm_texel(k);
         if (r < SM_MIN_TEXELS * t) continue;
-        for (int w = 0; w < 32; ++w) g_bits[w] = f.sm_req.bits[k * 32 + w];
+        for (int w = 0; w < 32; ++w) g_bits[w] = dyn ? f.sm_dyn.bits[k * 32 + w] : f.sm_req.bits[k * 32 + w];
         g_base = f.sm_base[k];
         if (!sm_touches_fresh(sm_window(c, k), r / t + 1.0)) continue;
-        uint lod = 0u;
+        uint lod = lod_min;
         while (lod + 1u < m.lod_count && uintBitsToFloat(m.lods[lod + 1u].z) * it.scale <= LOD_TEXELS * t) lod++;
         uvec4 L = m.lods[lod];
         for (uint j = 0u; j < L.y; ++j) {
@@ -56,17 +68,17 @@ void main() {
             Cluster cl = f.clusters.v[ci];
             if (!sm_touches_fresh(sm_window(origin + quat_rotate(q, cl.sphere.xyz * it.scale), k), cl.sphere.w * it.scale / t + 1.0)) continue;
             want++;
-            uint slot = atomicAdd(f.sm_draws.count, 1u);
-            if (slot >= f.sm_draw_cap) continue;
-            f.sm_list.v[slot] = uvec2(i, ci | uint(k) << 27);
+            uint slot = atomicAdd(draws.count, 1u);
+            if (slot >= cap) continue;
+            list.v[slot] = uvec2(i, ci | uint(k) << 27);
             SmDrawCmd d;
             d.index_count = cl.tri_count * 3u;
             d.instance_count = 1u;
             d.first_index = m.first_index + cl.first_index;
             d.vertex_offset = int(m.first_vertex);
             d.first_instance = slot;
-            f.sm_draws.v[slot] = d;
+            draws.v[slot] = d;
         }
     }
-    if (want != 0u) atomicAdd(f.stats.v[STAT_SM_DRAWS], want);
+    if (want != 0u) atomicAdd(f.stats.v[dyn ? STAT_SM_DYN_DRAWS : STAT_SM_DRAWS], want);
 }

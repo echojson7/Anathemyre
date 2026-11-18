@@ -65,6 +65,8 @@ struct PipeJob {
     u8 spec_data[16];
     VkSpecializationInfo spec;
     u64 ns;  // время сборки
+    std::atomic<u64> t_start;  // когда взялась сборка (0 — не бралась): для журнала главного потока
+    std::atomic<bool> done;
 };
 constexpr u32 MAX_PIPE_JOBS = 64;
 constexpr u32 MAX_PIPE_THREADS = 8;
@@ -119,7 +121,7 @@ static VkPipeline build_graphics(const PipeDesc &d, VkShaderModule vs, VkShaderM
             ba.alphaBlendOp = VK_BLEND_OP_ADD;
         }
         auto cb = vk_info<VkPipelineColorBlendStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO);
-        cb.attachmentCount = d.no_attach ? 0 : 1;
+        cb.attachmentCount = d.no_attach || d.depth_only ? 0 : 1;
         cb.pAttachments = &ba;
         VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
         auto ds = vk_info<VkPipelineDynamicStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO);
@@ -127,9 +129,9 @@ static VkPipeline build_graphics(const PipeDesc &d, VkShaderModule vs, VkShaderM
         ds.pDynamicStates = dyn;
         auto ri = vk_info<VkPipelineRenderingCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO);
         VkFormat color = d.color != VK_FORMAT_UNDEFINED ? d.color : g_vk.format;
-        ri.colorAttachmentCount = d.no_attach ? 0 : 1;
+        ri.colorAttachmentCount = d.no_attach || d.depth_only ? 0 : 1;
         ri.pColorAttachmentFormats = &color;
-        ri.depthAttachmentFormat = d.no_attach ? VK_FORMAT_UNDEFINED : DEPTH_FORMAT;
+        ri.depthAttachmentFormat = d.no_attach ? VK_FORMAT_UNDEFINED : d.depth != VK_FORMAT_UNDEFINED ? d.depth : DEPTH_FORMAT;
         auto pi = vk_info<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
         pi.pNext = &ri;
         pi.stageCount = 2;
@@ -169,9 +171,15 @@ static PipeJob *job_new(VkPipeline *out, const char *name) {
         return nullptr;
     }
     PipeJob &j = g_pipe_jobs[g_pipe_njobs++];
-    j = PipeJob{};
     j.out = out;
     j.name = name;
+    j.graphics = false;
+    j.d = PipeDesc{};
+    j.vs = j.fs = j.cs = VK_NULL_HANDLE;
+    j.has_spec = false;
+    j.ns = 0;
+    j.t_start.store(0, std::memory_order_relaxed);
+    j.done.store(false, std::memory_order_relaxed);
     return &j;
 }
 
@@ -211,25 +219,63 @@ static void pipe_worker(void *) {
         if (i >= g_pipe_njobs) return;
         PipeJob &j = g_pipe_jobs[i];
         u64 t0 = platform_time_ns();
+        j.t_start.store(t0, std::memory_order_release);
         VkPipeline p = j.graphics ? build_graphics(j.d, j.vs, j.fs) : build_compute(j);
         j.ns = platform_time_ns() - t0;
         *j.out = p;
+        j.done.store(true, std::memory_order_release);
+    }
+}
+
+// Главный поток ждёт сборщиков и раз в PIPE_REPORT_S пишет в журнал, что собрано и что собирается сколько.
+// Без этого долгая компиляция драйвером (или его зависание) выглядит как чёрное окно без строк журнала
+constexpr u32 PIPE_REPORT_S = 5;
+
+static void pipe_watch(PlatformThread *const *ts, u32 started, u64 t_begin) {
+    u64 next_report = t_begin + (u64)PIPE_REPORT_S * 1000000000ull;
+    for (;;) {
+        bool all = true;
+        for (u32 k = 0; k < started; ++k) all = all && platform_thread_done(ts[k]);
+        if (all) return;
+        platform_sleep_ms(20);
+        u64 now = platform_time_ns();
+        if (now < next_report) continue;
+        next_report = now + (u64)PIPE_REPORT_S * 1000000000ull;
+        char busy[512];
+        usize len = 0;
+        busy[0] = 0;
+        u32 ready = 0;
+        for (u32 i = 0; i < g_pipe_njobs; ++i) {
+            const PipeJob &j = g_pipe_jobs[i];
+            if (j.done.load(std::memory_order_acquire)) { ++ready; continue; }
+            u64 t = j.t_start.load(std::memory_order_acquire);
+            if (!t || len + 64 >= sizeof busy) continue;
+            int w = snprintf(busy + len, sizeof busy - len, "%s%s %.0f с", len ? ", " : "", j.name,
+                             (f64)(now - t) / 1e9);
+            if (w > 0) len += (usize)w;
+        }
+        log_info("конвейеры: готово %u из %u за %.0f с; собираются: %s", ready, g_pipe_njobs,
+                 (f64)(now - t_begin) / 1e9, len ? busy : "—");
     }
 }
 
 bool vk_pipelines_build(u32 *count, u32 *threads, const char **slowest, f64 *slowest_ms) {
-    // Потоков — по ядрам, кроме главного (он тоже собирает), не больше MAX_PIPE_THREADS. Создание мира в своём
-    // потоке идёт параллельно (run_window.cpp), поэтому одно ядро оставлено ему
+    // Сборщиков — по ядрам без одного (его берёт создание мира в своём потоке, run_window.cpp), не больше
+    // MAX_PIPE_THREADS; --pipe-threads N задаёт число сам (1 — по одному). Главный поток не собирает, а следит
+    // и пишет журнал (pipe_watch). Не создался ни один поток — главный собирает всё сам, как раньше
     u32 cores = platform_cpu_cores();
-    u32 extra = cores > 2 ? cores - 2 : 0;
-    if (extra > MAX_PIPE_THREADS - 1) extra = MAX_PIPE_THREADS - 1;
-    if (extra + 1 > g_pipe_njobs) extra = g_pipe_njobs ? g_pipe_njobs - 1 : 0;
+    u32 want = g_vk.cfg.pipe_threads ? g_vk.cfg.pipe_threads : cores > 1 ? cores - 1 : 1;
+    if (want > MAX_PIPE_THREADS) want = MAX_PIPE_THREADS;
+    if (want > g_pipe_njobs) want = g_pipe_njobs ? g_pipe_njobs : 1;
     g_pipe_next.store(0, std::memory_order_relaxed);
     PlatformThread *ts[MAX_PIPE_THREADS] = {};
     u32 started = 0;
-    for (u32 k = 0; k < extra; ++k)
+    const u64 t_begin = platform_time_ns();
+    log_info("конвейеры: собираю %u в %u потоках", g_pipe_njobs, want);
+    for (u32 k = 0; k < want; ++k)
         if ((ts[started] = platform_thread_start("pipelines", pipe_worker, nullptr))) ++started;
-    pipe_worker(nullptr);
+    if (started) pipe_watch(ts, started, t_begin);
+    pipe_worker(nullptr);  // недособранное, если потоков не было
     for (u32 k = 0; k < started; ++k) platform_thread_join(ts[k]);
     bool ok = !g_pipe_overflow;
     u64 worst = 0;
@@ -245,8 +291,17 @@ bool vk_pipelines_build(u32 *count, u32 *threads, const char **slowest, f64 *slo
             worst_name = j.name;
         }
     }
+    // Долгие (больше секунды) — поимённо: у шейдера с видами (специализация) — с числом вида
+    for (u32 i = 0; i < g_pipe_njobs; ++i) {
+        const PipeJob &j = g_pipe_jobs[i];
+        if (j.ns < 1000000000ull) continue;
+        u32 sv = 0;
+        if (j.has_spec && j.spec.dataSize >= sizeof sv) memcpy(&sv, j.spec_data, sizeof sv);
+        if (j.has_spec) log_info("  конвейер %s (вид %u): %.1f с", j.name, sv, (f64)j.ns / 1e9);
+        else log_info("  конвейер %s: %.1f с", j.name, (f64)j.ns / 1e9);
+    }
     if (count) *count = g_pipe_njobs;
-    if (threads) *threads = started + 1;
+    if (threads) *threads = started ? started : 1;
     if (slowest) *slowest = worst_name;
     if (slowest_ms) *slowest_ms = (f64)worst / 1e6;
     g_pipe_njobs = 0;

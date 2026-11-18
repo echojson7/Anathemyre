@@ -145,6 +145,16 @@ static void world_job(void *user) {
 
 static f64 ms_since(u64 t0) { return (f64)(platform_time_ns() - t0) / 1e6; }
 
+// Глаз в журнал (docs/light.md, «Экспозиция»): «у глаза» — замер, к которому он привыкает (смесь света у камеры и
+// мест в кадре); tools/lightlab разбирает строку до «экспозиция»
+static void log_eye(const RenderLightInfo &e) {
+    log_info("глаз: светило %.4g лк, небо %.4g лк, у глаза %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g; у камеры "
+             "%.4g лк, в кадре %.4g лк; цвет света %.3f %.3f %.3f, привыкание к цвету %.2f",
+             (double)e.lux_key, (double)e.lux_sky, (double)e.lux_eye, (double)e.ev100, (double)e.ev100_goal,
+             (double)e.exposure, (double)e.lux_cam, (double)e.lux_view, (double)e.wb_white[0], (double)e.wb_white[1],
+             (double)e.wb_white[2], (double)e.wb_degree);
+}
+
 int run_window(const Args &a, AppMemory &m) {
     const u64 t_start = platform_time_ns();
     // Настройки игрока (docs/ui.md): запуски для CI и видео (--frames) их не пишут
@@ -182,6 +192,7 @@ int run_window(const Args &a, AppMemory &m) {
     rc.validation = a.validation && !a.gpu_validation;
     rc.gpu_validation = a.gpu_validation;
     rc.gpu_validation_skip = a.gpu_validation_skip;
+    rc.pipe_threads = a.pipe_threads;
     char shader_dir[1024];
     snprintf(shader_dir, sizeof shader_dir, "%sshaders/", platform_exe_dir());
     rc.shader_dir = shader_dir;
@@ -391,6 +402,10 @@ int run_window(const Args &a, AppMemory &m) {
     prof->rest = FP_REST;
     for (u32 i = 0; i < FP_COUNT; ++i) prof->names[i] = FP_NAMES[i];
     u64 frames = 0, frames_window = 0;
+    // Смена света скачком (docs/light.md, «Резкая смена света»): часы прыгнули — кадр как снимок: зонды, ячейки и тени
+    // заново, глаз сразу. cut_tick — тик, на котором скачок уже отработан (пара шагов живёт несколько кадров)
+    u64 cut_tick = ~0ull;
+    u32 cut_frames = 0;
     u64 last = platform_time_ns(), window_t0 = last;
     int rc_exit = 0;
     debug_print_help();
@@ -489,6 +504,8 @@ int run_window(const Args &a, AppMemory &m) {
                 di.work_sm[5] = work.sm_taps;
                 di.work_sm[6] = work.sm_wait;
                 di.work_sm[7] = work.sm_blend;
+                di.work_sm[8] = work.sm_dyn;
+                di.work_sm[9] = work.sm_dyn_draws;
                 di.work_sdf[0] = work.sdf_taps;
                 di.work_sdf[1] = work.sdf_tris;
                 di.work_sdf[2] = work.sdf_bricks;
@@ -501,11 +518,23 @@ int run_window(const Args &a, AppMemory &m) {
                 di.work_lc[3] = work.lc_rays;
                 di.work_lc[4] = work.lc_over;
                 di.work_lc[5] = work.lc_wait;
+                di.work_lsm[0] = work.lsm_faces;
+                di.work_lsm[1] = work.lsm_draws;
+                di.work_lsm[2] = work.lsm_taps;
+                di.work_lsm[3] = work.lsm_dyn_faces;
+                di.work_lsm[4] = work.lsm_dyn_draws;
+                di.work_air[0] = work.air_cells;
+                di.work_air[1] = work.air_steps;
+                di.work_air[2] = work.air_taps;
                 di.gc_off = work.gc_off;
                 di.light = eye_have;
                 di.lux_key = eye_info.lux_key;
                 di.lux_sky = eye_info.lux_sky;
                 di.lux_eye = eye_info.lux_eye;
+                di.lux_cam = eye_info.lux_cam;
+                di.lux_view = eye_info.lux_view;
+                for (u32 k = 0; k < 3; ++k) di.wb_white[k] = eye_info.wb_white[k];
+                di.wb_degree = eye_info.wb_degree;
                 di.ev100 = eye_info.ev100;
                 di.ev100_goal = eye_info.ev100_goal;
                 di.overflows = nover_last;
@@ -550,6 +579,20 @@ int run_window(const Args &a, AppMemory &m) {
         if (a.spin != 0.0f) cam.yaw += a.spin * (3.14159265f / 180.0f) * (f32)dt;
         // Край экрана — только когда мышь над окном, а не над интерфейсом и не в меню
         bool edge = in.mouse_in && !menu.open && !(hud_on && ui_wants_mouse()) && !a.frames;
+        if (a.cam_to_set && a.cam_set && a.frames > 1) {
+            // Пролёт (--cam-to): камера ровно идёт от --cam к --cam-to за кадры снимка — подлёт к стене для видео
+            // света (docs/lcache.md); скорость — путь на число кадров по 1/30 с
+            const f32 deg = PI_F / 180.0f, k = (f32)frames / (f32)(a.frames - 1);
+            auto at = [&](int i) { return a.cam[i] + (a.cam_to[i] - a.cam[i]) * k; };
+            cam.yaw = at(0) * deg;
+            cam.pitch = at(1) * deg;
+            cam.dist = at(2);
+            cam.pivot = WPos{};
+            cam.pivot.x = at(3);
+            cam.pivot.z = at(4);
+            wpos_rebase(cam.pivot);
+            view_camera_place(cam, w.terrain, &w.coll);
+        }
         if (a.cam_play) {
             // Видео камеры: ввод камеры — записанный показ (cam_test.cpp), кадр — 1/30 с
             f32 t0 = (f32)frames / 30.0f, t1 = (f32)(frames + 1) / 30.0f;
@@ -668,17 +711,39 @@ int run_window(const Args &a, AppMemory &m) {
         vi.time = (f32)sky_time;
         cloud_time = a.frames ? (f64)frames / 30.0 : cloud_time + dt;
         vi.cloud_time = cloud_time;
-        vi.eye_snap = frames < 2 || a.timelapse || a.shot;
+        {
+            const Clock &c0 = vi.prev->clock, &c1 = vi.cur->clock;
+            // Обычный ход — rate тиков за шаг (ускорение тоже ход); скачок — назад или вперёд больше двух минут суток
+            u64 lim = (u64)c1.rate * 2 + c1.day_ticks / 720;
+            bool jump = c1.tick < c0.tick || c1.tick - c0.tick > lim;
+            if (jump && c1.tick != cut_tick && frames >= 2) {
+                cut_tick = c1.tick;
+                cut_frames = 2;
+            }
+        }
+        vi.eye_snap = frames < 2 || a.timelapse || a.shot || cut_frames > 0;
+        if (cut_frames) --cut_frames;
         vi.tonemap = ds.tonemap;
         vi.local_off = a.local_off || ds.local_off;
+        vi.lsm_off = a.lsm_off || ds.lsm_off;
+        vi.dyn_off = a.dyn_off || ds.dyn_off;
+        vi.air_off = a.air_off || ds.air_off;
         vi.scans = ds.scans;
         vi.gclight_off = ds.gclight_off;
         vi.lamps_off = a.lamps_off || ds.lamps_off;
+        vi.eye_exposure = eye_have ? eye_info.exposure : 0.0f;
         vi.shadow_pages = a.shadow_pages ? a.shadow_pages : ds.shadow_pages;
         vi.sdf_view = a.sdf_view ? a.sdf_view : ds.sdf_view;
         vi.gi_view = a.gi_view ? a.gi_view : ds.gi_view;
-        vi.light_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.light_quality;
+        // --light — все части разом, как набор в меню
+        vi.shadow_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.shadow_quality;
+        vi.gi_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.gi_quality;
+        vi.air_quality = a.light_quality >= 0 ? (u32)a.light_quality : set.air_quality;
         vi.aa = a.aa >= 0 ? (u32)a.aa : set.aa;
+        vi.glare = set.glare;
+        vi.lens = a.lens_off ? 0u
+                             : (set.lens_flare ? (u32)RENDER_LENS_FLARE : 0u) | (set.aberration ? (u32)RENDER_LENS_CA : 0u) |
+                                   (set.vignette ? (u32)RENDER_LENS_VIGNETTE : 0u) | (set.grain ? (u32)RENDER_LENS_GRAIN : 0u);
         if (!ds.lines) vi.dbg = nullptr;
         vi.people_debug = vi.dbg && ds.people_lines;
         vi.people_show = ds.people_show;
@@ -716,6 +781,7 @@ int run_window(const Args &a, AppMemory &m) {
         prof_part(*prof, FP_VIEW, platform_time_ns());
         bool last_frame = a.frames && frames + 1 >= a.frames;
         if ((last_frame && a.shot) || a.timelapse || a.video) render_capture_next();
+        if (a.hdr && a.shot) render_capture_hdr(true);
         if (!render_frame(rf)) { rc_exit = 1; break; }
         if (frames == 0) {
             // Первый кадр тяжёлый (горизонт, поле расстояний, снимок зондов, кеш земли): дождаться его на GPU —
@@ -811,7 +877,7 @@ int run_window(const Args &a, AppMemory &m) {
             log_info("%s", title);
             // Проходы GPU за секунду — те же числа, что в F3, для журнала и сравнения на другой машине
             if (npass_avg) {
-                char line[640];
+                char line[2000];  // имена по-русски — два байта на букву: 640 байт обрезали список; журнал берёт 2048
                 i32 len = snprintf(line, sizeof line, "проходы GPU, мс:");
                 for (u32 i = 0; i < npass_avg && len > 0 && len < (i32)sizeof line; ++i)
                     len += snprintf(line + len, sizeof line - (size_t)len, " %s %.3f", pass_names[i] ? pass_names[i] : "?",
@@ -829,10 +895,7 @@ int run_window(const Args &a, AppMemory &m) {
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
                          work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts, work.sm_used, work.sm_new,
                          work.sm_over, work.sm_taps, work.sm_miss, work.sm_draws);
-            if (eye_have)
-                log_info("глаз: светило %.4g лк, небо %.4g лк, у глаза %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g",
-                         (double)eye_info.lux_key, (double)eye_info.lux_sky, (double)eye_info.lux_eye, (double)eye_info.ev100,
-                         (double)eye_info.ev100_goal, (double)eye_info.exposure);
+            if (eye_have) log_eye(eye_info);
             frames_window = 0;
             window_t0 = now;
             prof_part(*prof, FP_LOG, platform_time_ns());
@@ -841,11 +904,18 @@ int run_window(const Args &a, AppMemory &m) {
     }
 
     if (save_settings) settings_save(set, settings_path());
-    if (a.frames && eye_have)
-        log_info("глаз: светило %.4g лк, небо %.4g лк, у глаза %.4g лк, EV100 %.2f (цель %.2f), экспозиция %.3g",
-                 (double)eye_info.lux_key, (double)eye_info.lux_sky, (double)eye_info.lux_eye, (double)eye_info.ev100,
-                 (double)eye_info.ev100_goal, (double)eye_info.exposure);
+    // Глаз последнего кадра (в цикле прочитан кадр N−2). Счётчики --work остаются от кадра в цикле: так их сверяет CI
+    if (a.frames) {
+        render_collect();
+        eye_have = render_light(eye_info);
+    }
+    if (a.frames && eye_have) log_eye(eye_info);
     if (a.shot && !debug_write_shot(a.shot, m.load)) rc_exit = 1;
+    if (a.shot && a.hdr) {
+        char hp[512];
+        snprintf(hp, sizeof hp, "%s.hdr16", a.shot);
+        if (!debug_write_hdr(hp, m.load)) rc_exit = 1;
+    }
     if (a.work) {
         // Счётчики работы для сверки CI (tools/work_check.sh): «имя значение» по строке
         char t[1024];
@@ -856,14 +926,18 @@ int run_window(const Args &a, AppMemory &m) {
                          "gc_over %u\ngc_direct %u\nskin_verts %u\nsm_used %u\nsm_new %u\nsm_over %u\nsm_miss %u\n"
                          "sm_draws %u\nsm_taps %u\nsm_wait %u\nsdf_taps %u\nsdf_bricks %u\ngi_probes %u\ngi_rays %u\n"
                          "gi_taps %u\nlc_live %u\nlc_new %u\nlc_jobs %u\nlc_rays %u\nlc_over %u\nlc_taps %u\n"
-                         "lc_wait %u\ngc_lit %u\n",
+                         "lc_wait %u\ngc_lit %u\nlsm_faces %u\nlsm_draws %u\nlsm_over %u\nlsm_taps %u\n"
+                         "air_cells %u\nair_steps %u\nair_taps %u\nsm_dyn %u\nsm_dyn_draws %u\nsm_dyn_over %u\n"
+                         "lsm_dyn_faces %u\nlsm_dyn_draws %u\n",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
                          work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts, work.sm_used, work.sm_new,
                          work.sm_over, work.sm_miss, work.sm_draws, work.sm_taps, work.sm_wait,
                          work.sdf_taps, work.sdf_bricks, work.gi_probes, work.gi_rays, work.gi_taps,
                          work.lc_live, work.lc_new, work.lc_jobs, work.lc_rays, work.lc_over, work.lc_taps, work.lc_wait,
-                         work.gc_lit);
+                         work.gc_lit, work.lsm_faces, work.lsm_draws, work.lsm_over, work.lsm_taps,
+                         work.air_cells, work.air_steps, work.air_taps, work.sm_dyn, work.sm_dyn_draws, work.sm_dyn_over,
+                         work.lsm_dyn_faces, work.lsm_dyn_draws);
         if (!work_have) log_error("--work: кадр мира не прочитан (мало кадров)");
         if (!work_have || n <= 0 || !platform_write_file(a.work, t, (usize)n)) rc_exit = 1;
     }

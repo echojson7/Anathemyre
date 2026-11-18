@@ -54,7 +54,7 @@ static void tab_main(UiForm &f, const DebugInfo &in, DebugState &d) {
 static void tab_light(UiForm &f, DebugState &d) {
     // Свет (docs/light.md): тонмаппинг на выбор по кадрам, местная экспозиция
     ui_section(f, "СВЕТ");
-    static const char *const TONEMAPS[] = {"AgX", "ACES"};
+    static const char *const TONEMAPS[] = {"AgX", "ACES", "UE5"};
     ui_segment(f, "тонмаппинг", d.tonemap, TONEMAPS, ANA_COUNTOF(TONEMAPS));
     bool local = !d.local_off;
     if (ui_toggle(f, "местная экспозиция", local)) d.local_off = !local;
@@ -73,6 +73,9 @@ static void tab_light(UiForm &f, DebugState &d) {
     ui_toggle(f, "ячейки, старое правило  (P)", d.pixel);
     ui_toggle(f, "без кеша земли", d.gcache_off);
     ui_toggle(f, "свет земли без кеша", d.gclight_off);
+    ui_toggle(f, "тени огней полем, не картами", d.lsm_off);
+    ui_toggle(f, "без теней людей и машин", d.dyn_off);
+    ui_toggle(f, "без воздуха (лучей в пыли)", d.air_off);
     ui_toggle(f, "тестовые огни", d.test_lights);
     ui_toggle(f, "огни по клеткам", d.froxel_heat);
     ui_toggle(f, "сканы CC0", d.scans);

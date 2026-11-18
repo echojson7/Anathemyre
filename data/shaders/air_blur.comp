@@ -1,0 +1,28 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Размытие лучей солнца половины кадра (docs/air.md): 5×5 с весами 0.5, 1, 1, 1, 0.5 по каждой оси — ровно период
+// узора Байера шагов (air_march.comp), так что узор уходит целиком, — × вес по расстоянию вдоль луча: свет в пыли
+// перед стеной не течёт на небо в проёме и обратно. Один проход, один цикл (lavapipe под GPU-AV падает на
+// вложенных циклах с доступом к буферу, docs/graph.md)
+#include "air.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    FrameData f = pc.frame;
+    ivec2 hp = ivec2(gl_GlobalInvocationID.xy);
+    if (hp.x >= int(f.air_w2) || hp.y >= int(f.air_h2)) return;
+    uint i = uint(hp.y) * f.air_w2 + uint(hp.x);
+    float dc = f.air_depth.v[i];
+    ivec2 hmax = ivec2(f.air_w2, f.air_h2) - 1;
+    vec3 s = vec3(0.0);
+    float ws = 0.0;
+    for (int j = 0; j < 25; ++j) {
+        ivec2 o = ivec2(j % 5, j / 5) - 2;
+        ivec2 h = clamp(hp + o, ivec2(0), hmax);
+        uint k = uint(h.y) * f.air_w2 + uint(h.x);
+        float w = (abs(o.x) == 2 ? 0.5 : 1.0) * (abs(o.y) == 2 ? 0.5 : 1.0) * air_depth_w(f.air_depth.v[k], dc);
+        s += w * air_unpack(f.air_ray.v[k]);
+        ws += w;
+    }
+    f.air_tmp.v[i] = air_pack(s / max(ws, 1e-12));
+}

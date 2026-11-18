@@ -188,21 +188,22 @@ bool ui_choice(UiForm &f, const char *label, u32 &v, const char *const *names, u
     f32 bh = f.row - ui_px(10), by = floorf(f.y + (f.row - bh) * 0.5f);
     f32 cx = f.x + f.w - f.ctl, ty = text_y(f, f.font);
     bool changed = false;
+    // v ≥ count — ничего не выбрано («—»): стрелки ведут к последнему и к первому
     if (hov && u.pressed && count) {
-        if (hit(cx, f.y, f.ctl * 0.5f, f.row)) v = (v + count - 1) % count, changed = true;
-        else if (hit(cx + f.ctl * 0.5f, f.y, f.ctl * 0.5f, f.row)) v = (v + 1) % count, changed = true;
+        if (hit(cx, f.y, f.ctl * 0.5f, f.row)) v = v < count ? (v + count - 1) % count : count - 1, changed = true;
+        else if (hit(cx + f.ctl * 0.5f, f.y, f.ctl * 0.5f, f.row)) v = v < count ? (v + 1) % count : 0, changed = true;
     }
-    if (v >= count) v = 0;
     ui_round(cx, by, f.ctl, bh, ui_col::SIDE, ui_px(R_CTL));
     u32 arrow = hov ? ui_col::TEXT : ui_col::FAINT;
     f32 ap = ui_px(10);
     ui_text(cx + ap, ty, f.font, arrow, "‹");
     ui_text_right(cx + f.ctl - ap, ty, f.font, arrow, "›");
     if (count) {
+        const char *name = v < count ? names[v] : "—";
         f32 room = f.ctl - 2 * ui_px(26);
-        f32 nw = ui_text_width(f.font, names[v]);
+        f32 nw = ui_text_width(f.font, name);
         if (nw > room) nw = room;
-        ui_text_fit(cx + floorf((f.ctl - nw) * 0.5f), ty, f.font, ui_col::TEXT, names[v], room);
+        ui_text_fit(cx + floorf((f.ctl - nw) * 0.5f), ty, f.font, ui_col::TEXT, name, room);
     }
     f.y += f.row;
     return changed;
@@ -221,7 +222,6 @@ bool ui_segment(UiForm &f, const char *label, u32 &v, const char *const *names, 
     if (!count || maxw + 2 * pad > sw) return ui_choice(f, label, v, names, count);
     bool hov = row_begin(f, label);
     (void)hov;
-    if (v >= count) v = 0;
     f32 bh = f.row - ui_px(10), by = floorf(f.y + (f.row - bh) * 0.5f);
     f32 bx = f.x + f.w - sw * (f32)count;
     ui_round(bx, by, sw * (f32)count, bh, ui_col::SIDE, ui_px(R_CTL));

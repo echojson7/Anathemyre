@@ -40,7 +40,8 @@ static void free_slot(u32 id) {
     if (s.vtx) vmaVirtualFree(g_vk.vtx_block, s.vtx);
     if (s.idx) vmaVirtualFree(g_vk.idx_block, s.idx);
     if (s.cls) vmaVirtualFree(g_vk.cls_block, s.cls);
-    if (!s.skin) g_vk.shadow.mesh_gen++;  // страницы теней нарисованы и из этой сетки (копии людей в них не входят)
+    if (!s.skin && !s.moving) g_vk.shadow.mesh_gen++;  // страницы теней нарисованы и из этой сетки (подвижные в них не входят)
+    if (s.moving) g_vk.meshes_moving--;
     s = MeshSlot{};
     memset((MeshGpu *)g_vk.mesh_table.mapped + id, 0, sizeof(MeshGpu));  // lod_count 0: отсечение её пропускает
 }
@@ -264,6 +265,9 @@ u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices,
 void render_mesh_moving(u32 mesh) {
     if (mesh == 0 || mesh >= RENDER_MAX_MESHES || !g_vk.meshes[mesh].used) return;
     ((MeshGpu *)g_vk.mesh_table.mapped)[mesh].pad |= MESH_DYNAMIC;
+    // Тень — слоем подвижных (vk_shadow.cpp): экземпляры такой сетки — заслонки каждого кадра
+    if (!g_vk.meshes[mesh].moving) g_vk.meshes_moving++;
+    g_vk.meshes[mesh].moving = true;
 }
 
 void render_mesh_alpha(u32 mesh) {

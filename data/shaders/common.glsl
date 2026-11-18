@@ -42,7 +42,20 @@ layout(buffer_reference, scalar) buffer CloudWords { uint v[]; };
 layout(buffer_reference, scalar) buffer GlareTexels { uvec2 v[]; };  // блеск (glare.glsl): rgb половинками  // облака (clouds.glsl): карта купола, шум, карта тени
 // Счётчики GPU кадра (docs/graph.md «Переполнения»): сколько не влезло; номера — как STAT_* в vk_state.h
 layout(buffer_reference, scalar) buffer Stats { uint v[]; };
+// Грань карты огня кадра (LsmJobGpu, vk_lamp_shadow.cpp): огонь от камеры, м; радиус его светильника от отрезка, м;
+// полуось трубки; место · 6 + грань; куда светит (нули — во все стороны)
+struct LsmJob { vec3 c; float self_r; vec3 axis; uint layer; vec3 face; uint dyn; };  // dyn: 1 — грань слоя подвижных
+layout(buffer_reference, scalar) readonly buffer LsmJobs { LsmJob v[]; };
+layout(buffer_reference, scalar) buffer LsmCounts { uint v[]; };  // вызовов на грань кадра (атомарно)
 layout(buffer_reference, scalar) buffer HMap { uint v[]; };  // карта горизонта (horizon.glsl), пишет horizon.comp
+// Воздух (docs/air.md, air.glsl): коробка пыли зала от камеры — середина, пыль 1/м; ось x коробки в плоскости xz,
+// мягкий край, м; половины сторон (RenderAirBox). Расстояния половины кадра, свет солнца в воздухе (rgb половинками),
+// дальний край плитки воздуха (биты f32, атомарный максимум)
+struct AirBox { vec3 c; float dust; vec2 u; float soft; float pad0; vec3 h; float pad1; };
+layout(buffer_reference, scalar) readonly buffer AirBoxes { AirBox v[]; };
+layout(buffer_reference, scalar) buffer AirFloats { float v[]; };
+layout(buffer_reference, scalar) buffer AirTexels { uvec2 v[]; };
+layout(buffer_reference, scalar) buffer AirWords { uint v[]; };
 const uint STAT_VIS_WANT = 0u;       // видимых кластеров до обрезки по vis_max
 const uint STAT_FROXEL_LIGHTS = 1u;  // клеток, где огни не влезли (свет перебирает все огни кадра)
 const uint STAT_FROXEL_DECALS = 2u;  // клеток, где декали не влезли
@@ -87,8 +100,18 @@ layout(buffer_reference, scalar) buffer GiJobs { uint v[]; };
 const uint STAT_LC_LIVE = 32u, STAT_LC_NEW = 33u, STAT_LC_JOBS = 34u, STAT_LC_RAYS = 35u, STAT_LC_OVER = 36u,
            STAT_LC_TAPS = 37u, STAT_LC_WAIT = 38u;
 const uint STAT_GC_LIT = 39u;  // текселей кеша земли, чей отражённый свет посчитан в кадре (docs/gcache.md)
+// Тени огней картами (docs/lamp_shadows.md): граней нарисовано, вызовов кластеров в них (до обрезки), граней, где
+// вызовы не влезли, выборок карт светом
+const uint STAT_LSM_FACES = 40u, STAT_LSM_DRAWS = 41u, STAT_LSM_OVER = 42u, STAT_LSM_TAPS = 43u;
+// Воздух (docs/air.md): клеток с пылью, шагов лучей солнца, выборок страниц теней ими
+const uint STAT_AIR_CELLS = 44u, STAT_AIR_STEPS = 45u, STAT_AIR_TAPS = 46u;
+// Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копий страниц, вызовов кластеров в них, копий без места
+const uint STAT_SM_DYN = 47u, STAT_SM_DYN_DRAWS = 48u, STAT_SM_DYN_OVER = 49u;
+const uint STAT_LSM_DYN_FACES = 50u, STAT_LSM_DYN_DRAWS = 51u;
 const uint GC_LIGHT_ON = 1u, GC_LIGHT_ALL = 2u;  // gc_lmode: свет в кеше читается; пересчитать все страницы кадра
-struct LcMeta { ivec3 home; uint seen; uint key; uint state; vec3 org; uint pad; };  // org — точка лучей, м от якоря
+// org — точка лучей, м от якоря; ao — половинками ближнее затенение по полю у точки ячейки (x) и оно же,
+// сглаженное как свет (y): его лучи ячейки уже видят, пиксель делит своё на него (light.glsl, lc_ao)
+struct LcMeta { ivec3 home; uint seen; uint key; uint state; vec3 org; uint ao; };
 struct LcSh { uvec4 a; uvec2 b; };      // a0.rgb, a1x.rgb, a1y.rgb, a1z.rgb половинками
 struct LcAcc { vec4 a, b, c; };         // те же 12 чисел суммой круга
 layout(buffer_reference, scalar) buffer LcKeys { uint v[]; };
@@ -98,7 +121,18 @@ layout(buffer_reference, scalar) buffer LcShs { LcSh v[]; };
 layout(buffer_reference, scalar) buffer LcAccs { LcAcc v[]; };
 // Работы кадра: молодых и на обновление (до предела), живых; косвенный dispatch лучей; молодые — с v[0], на
 // обновление — с v[LC_CAP]
-layout(buffer_reference, scalar) buffer LcJobs { uint new_n, ref_n, live_n, pad; uvec4 cmd; uint v[]; };
+// Работы ячеек: счётчики, полный круг новым в этом кадре (full), косвенный dispatch, молодые по корзинам очереди
+// (bn — сколько, bs — начало корзины в номерах работ кадра; lcache_list.comp, lcache_args.comp); age — срок жизни
+// невидимой ячейки на следующий кадр (по заполнению таблицы; не чистится каждый кадр); места: молодые [0, LC_CAP),
+// обновление [LC_CAP, 2·LC_CAP)
+layout(buffer_reference, scalar) buffer LcJobs {
+    uint new_n, ref_n, live_n, full;
+    uvec4 cmd;
+    uint bn[16];
+    uint bs[16];
+    uint age, pad0, pad1, pad2;
+    uint v[];
+};
 
 // Плитки 8×8 кадра мира по видам (docs/tiles.md, light_tiles.comp): небо — пусто; земля — земля из кеша
 // (docs/gcache.md) и, может быть, небо; сетки — сетки и, может быть, небо; смесь — земля и сетки; земля на
@@ -138,12 +172,18 @@ layout(buffer_reference, scalar) buffer SmReq { uint req_n, old_n, recent_n, bg_
 struct SmDrawCmd { uint index_count, instance_count, first_index; int vertex_offset; uint first_instance; };
 layout(buffer_reference, scalar) buffer SmDraws { uint count, pad0, pad1, pad2; SmDrawCmd v[]; };
 layout(buffer_reference, scalar) buffer SmList { uvec2 v[]; };  // экземпляр; кластер | место уровня << 27
+// Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копии страниц под подвижными заслонками на этот кадр.
+// Голова — dispatch копирования (n, 1, 1); на место уровня — есть ли копии и их биты по месту в
+// окне (как fresh и bits у SmReq); дальше копии (место в окне, прежняя страница — её вернёт следующий кадр) и на
+// место в окне — кадр, в котором его взяла копия (shadow.glsl: SM_DYN_MARK)
+layout(buffer_reference, scalar) buffer SmDyn { uint n, one_y, one_z, pad; uint fresh[32]; uint bits[32 * 32];
+                                                 uint v[]; };
 
 // Кадр мира (этап 5, docs/frame.md «Кадр мира»): таблицы сеток и кластеров (MeshGpu, ClusterGpu в
 // src/render/vk_state.h), видимые кластеры кадра и косвенные вызовы, которые пишет отсечение (cull_*.comp)
 struct MeshInfo { uint first_vertex, first_index, lod_count, flags; vec4 sphere; uvec4 lods[8]; };  // lods: первый кластер, число, ошибка (биты f32), 0;
 // lods[0].w копии со скиннингом — первая вершина бинд-позы источника + 1
-const uint MESH_DYNAMIC = 1u;  // MeshInfo.flags: вершины пишет скиннинг каждый кадр (в страницы теней не идёт)
+const uint MESH_DYNAMIC = 1u;  // MeshInfo.flags: вершины пишет скиннинг каждый кадр (тень — слоем подвижных, не в кеше)
 const uint MESH_UV = 2u;       // MeshInfo.flags: у вершин есть развёртка (FrameData.uvs)
 const uint MESH_ALPHA = 4u;    // MeshInfo.flags: карточки с прозрачным краем (волосы, docs/hair.md) — свой конвейер vis_alpha
 struct Cluster { uint first_index, tri_count; vec4 sphere; uint pad0, pad1; };  // first_index — от начала индексов сетки
@@ -224,14 +264,14 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec4 a_haze;       // rgb — рассеяние нижней дымки, w — высота слоя
     vec4 a_haze_abs;   // rgb — поглощение дымки, w — высота нуля карты над уровнем моря, м
     vec4 a_ozone;      // rgb — поглощение озона, w — альбедо луны
-    vec4 a_ground;     // rgb — альбедо планеты, w — ночное свечение неба (доля освещённости солнца)
+    vec4 a_ground;     // rgb — альбедо планеты, w — яркость ночного неба в зените, кд/м²
     vec4 a_star[3];    // строки поворота «вид → небесная сфера»; w у [0] — яркость звёзд
-    vec4 a_post;       // x — поправка экспозиции, EV; y — степень привыкания глаза; z — EV100 «нормы»; w — синева ночи
+    vec4 a_post;       // x — поправка экспозиции, EV; y — степень привыкания глаза; z — EV100 «нормы»; w — сумеречное зрение (доля палочек)
     vec4 a_misc;       // x — множитель рассеянного света неба; y, z — время привыкания к темноте и к свету, с; w — ночь темнее, EV
     vec4 a_sun_halo;   // rgb — толщина узкого лепестка пыли к солнцу (ореол), w — видимый радиус диска солнца, рад
     vec4 a_moon_halo;  // то же к луне
     vec4 a_night;      // x — g узкого лепестка, y — время кадра, с, z — яркость Млечного пути, w — мерцание звёзд
-    vec4 a_night2;     // x — степень привыкания глаза ниже света полной луны, y — во сколько раз свечение ночного неба светит на землю сильнее видимого, z — блеск (docs/glare.md)
+    vec4 a_night2;     // x — степень привыкания глаза ниже света полной луны, y — свободно, z — блеск (docs/glare.md)
     // Облака (docs/clouds.md): параметры из data/sky.txt
     vec4 cl_shape;     // x, y — низ и верх кучевых, м над уровнем моря; z — доля неба под ними; w — плотность, 1/м
     vec4 cl_wind;      // xy — сдвиг облаков ветром к этому кадру (x, z), м; z — время формы, с; w — яркость облаков
@@ -253,7 +293,6 @@ layout(buffer_reference, scalar) buffer FrameData {
     // Froxels (docs/frame.md «Froxels», froxel.glsl): огни кадра, списки огней и декалей по клеткам, среда клеток
     Lights lights;
     Froxels froxels;
-    Vec4s media;              // туман и пыль на клетку — место для света пользователя, пока нули
     uint light_count, froxel_x, froxel_y, froxel_z;
     float froxel_near, froxel_far;
     uint froxel_on, froxel_heat;
@@ -261,6 +300,9 @@ layout(buffer_reference, scalar) buffer FrameData {
     Stats stats;              // счётчики GPU кадра (STAT_*)
     Tiles tiles;              // плитки по видам (light_tiles.comp → light_cells.comp)
     uint tile_cap, tile_pad;  // мест в списке одного вида (плиток кадра)
+    // Свет мест плитки для глаза следующего кадра (light_cells.comp → eye.comp), на плитку 8×8 строками:
+    // xyz — цвет света мест (Y = 1), w — log2 света места против света у камеры того кадра; средние по пикселям
+    Vec4s view_light;
     // Кеш поверхности земли (docs/gcache.md): окно страниц уровня в gc_table — gc_w × gc_w, уровни подряд
     GcTable gc_table;         // физическая страница + 1; 0 — нет; GC_REQ | кадр — заявка этого кадра
     GcPages gc_pages;
@@ -272,6 +314,8 @@ layout(buffer_reference, scalar) buffer FrameData {
     int gc_tpc0;              // текселей уровня 0 на чанк (256 м / cell_min)
     uint gc_on;               // 0 — кеш выключен: вся земля на пиксель (F3, --nogcache)
     uint gc_lmode, gc_lperiod;  // свет в кеше: GC_LIGHT_ON, GC_LIGHT_ALL; страница пересчитывается раз в gc_lperiod кадров
+    uint gc_lit_min;            // свет страницы, посчитанный раньше этого кадра кеша, устарел (снимок, резкая смена света)
+    uint gc_lturn;              // круг пересчёта в этом кадре (≤ gc_lperiod: камера быстро летит — чаще)
     // Карта горизонта земли (docs/horizon.md): H_DIRS/2 слов на узел сетки 8 м
     HMap h_map;
     uint h_on;                // 0 — карты нет (земли нет или ещё не собрана): тени земли нет
@@ -283,11 +327,16 @@ layout(buffer_reference, scalar) buffer FrameData {
     ClustersW clusters_w;
     uint skin_count, skin_pad;
     // Свет (docs/light.md): время кадра для привыкания глаза, сразу ли привыкать (первый кадр, --timelapse),
-    // тонмаппинг (TONEMAP_*), качество света (LIGHT_Q_*)
+    // тонмаппинг (TONEMAP_*), ступени (LIGHT_Q_*, «Ступени»): тени; отражённый свет; воздух и облака
     float dt;
-    uint eye_snap, tonemap, light_q;
+    uint eye_snap, tonemap, shadow_q;
+    uint gi_q, air_q, q_pad0, q_pad1;
     // Местная экспозиция (docs/light.md): колено, стопы; наклон в свет; наклон в тень; w — включена (F3, --nolocal)
     vec4 local_tone;
+    // Замер и цвет глаза (docs/light.md, «Экспозиция», «Баланс белого»): x — доля замера по свету мест в кадре
+    // (0 — только у камеры); y — 1: свет мест плиток прошлого кадра (view_light) годен для замера; z — баланс
+    // белого (доля привыкания к цвету света, 0 — выключен); w — время привыкания к цвету, с
+    vec4 eye_meter;
     // Тени солнца страницами (docs/shadow.md, shadow.glsl): окна страниц уровней, страницы, тексели, заявки,
     // вызовы и список отрисовки страниц, сферы сброса кадра
     SmTable sm_table;
@@ -305,6 +354,13 @@ layout(buffer_reference, scalar) buffer FrameData {
     vec4 sm_r[2], sm_u[2], sm_s[2];
     ivec2 sm_base[24];        // окно места уровня (набор · SM_LEVELS + уровень): первая страница на решётке уровня
     vec2 sm_off[24];          // камера от начала окна по r, u, м
+    // Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копии страниц кадра, вызовы и список их отрисовки,
+    // экземпляры-заслонки кадра (люди, машины, оружие)
+    SmDyn sm_dyn;
+    SmDraws sm_dyn_draws;
+    SmList sm_dyn_list;
+    Words sm_dyn_inst;
+    uint sm_dyn_n, sm_dyn_cap, sm_dyn_draw_cap, sm_dyn_all;  // sm_dyn_n — для солнца (0 — светило под горизонтом), all — в списке
     // Поле расстояний мира (docs/sdf.md, sdf.glsl): засыпка кадра, кирпичи и их биты, общий буфер засыпки
     SdfJobs sdf_jobs;
     SdfBricks sdf_bricks;
@@ -323,7 +379,7 @@ layout(buffer_reference, scalar) buffer FrameData {
     Vec4s gi_pos;
     ivec4 gi_lo[4];           // первый зонд окна уровня: мировой номер от якоря поля
     uint gi_on, gi_view, gi_rays_n, gi_pad0;  // зонды читаются; режим F3 (GI_VIEW_*); лучей на зонд
-    float gi_hyst, gi_pad1, gi_pad2, gi_pad3;  // доля старого значения при смешении
+    float gi_hyst, gi_pad2, glow_gain, gi_pad3;  // доля старого при смешении; множитель свечения glow (0 — лампы выключены)
     // Ячейки света (docs/lcache.md, lcache.glsl): таблица, работы кадра; ступень — тангенс угла ячейки, дальность,
     // лучей на счёт, кадров между счётами видимой ячейки, пределы работ кадра
     LcKeys lc_keys;
@@ -364,6 +420,31 @@ layout(buffer_reference, scalar) buffer FrameData {
     GlareTexels gr_buf;
     uint gr_on, gr_n, gr_pad0, gr_pad1;  // gr_n — уровней
     ivec4 gr_lv[8];           // уровень: ширина, высота, начало «вниз», начало «вверх» (в текселях)
+    // Тени огней картами (docs/lamp_shadows.md, vk_lamp_shadow.cpp): грани кадра, их вызовы (LSM_DRAW_CAP на
+    // грань), счётчики вызовов граней, список отрисовки (экземпляр, кластер)
+    LsmJobs lsm_jobs;
+    DrawCmds lsm_draws;
+    LsmCounts lsm_counts;
+    VisClusters lsm_list;
+    uint lsm_on, lsm_jobs_n, lsm_pad0, lsm_pad1;
+    // Воздух (docs/air.md, air.glsl, vk_air.cpp): коробки пыли залов, расстояния половины кадра, свет солнца в
+    // воздухе и его размытие, дальний край плиток воздуха
+    AirBoxes air_boxes;
+    AirFloats air_depth;
+    AirTexels air_ray, air_tmp;
+    AirWords air_tmax;
+    uint air_on, air_boxes_n, air_steps, air_w2;
+    uint air_h2, air_nx, air_ny, air_pad0;
+    float air_far, air_lnk, air_dust, air_dust_h;
+    vec3 air_tint;
+    float air_g;
+    float air_iso, air_pad1, air_pad2, air_pad3;
+    // Объектив (docs/lens.md, lens.glsl, vk_glare.cpp): солнце в кадре (glare.comp → [0]: x — видимая доля диска, yz —
+    // середина диска в пикселях, w — отступ от края кадра, 0–1); что включено (биты LENS_*), номер кадра (зерно);
+    // множитель долей отражения бликов, аберрация (доля полудиагонали), виньетка (доля закона cos⁴), зерно (доля шкалы)
+    Vec4s lens_sun;
+    uint lens_on, lens_frame, lens_pad0, lens_pad1;
+    float lens_flare, lens_ca, lens_vignette, lens_grain;
 };
 
 layout(push_constant, scalar) uniform Push {
@@ -372,13 +453,18 @@ layout(push_constant, scalar) uniform Push {
 } pc;
 
 const float CHUNK_M = 256.0;
-const uint TONEMAP_AGX = 0u, TONEMAP_ACES = 1u;
+const uint TONEMAP_AGX = 0u, TONEMAP_ACES = 1u, TONEMAP_UE = 2u;
 const uint LIGHT_Q_LOW = 0u, LIGHT_Q_MEDIUM = 1u, LIGHT_Q_HIGH = 2u, LIGHT_Q_ULTRA = 3u;
 // Свет неба и экспозиция (sky_sum.comp, eye.comp → sky_out): [4] — x множитель экспозиции (на него умножен HDR
 // кадра), y — освещённость открытой горизонтальной земли, лк, z — EV100 глаза (с привыканием), w — от неба, лк;
 // [5] — x от светила, лк, y — EV100, к которому глаз привыкает, z — освещённость у глаза с заслонкой полем, лк,
-// w — рассеянный свет у глаза против открытого неба (дымка ближних отрезков, light.glsl)
-const int SKY_OUT_EYE = 4, SKY_OUT_EYE2 = 5;
+// w — рассеянный свет у глаза против открытого неба (дымка ближних отрезков, light.glsl);
+// [6] — баланс белого (eye.comp → post.glsl): xyz — множители конусов CAT02, w — доля привыкания к цвету (0 — нет);
+// [7] — xyz — цвет света, к которому глаз привык (линейный sRGB, Y = 1), w — свет мест в кадре (замер), лк;
+// [8] — xyz — свет открытой земли (небо и светило на горизонтальную площадку, лк, цветом), w — свет у камеры, лк;
+// [9], [10] — свет мест в кадре (eye_view.comp → eye.comp): x — сумма логарифма с весами, y — сумма весов; цвет
+const int SKY_OUT_EYE = 4, SKY_OUT_EYE2 = 5, SKY_OUT_WB = 6, SKY_OUT_WB2 = 7, SKY_OUT_VIEW = 8;
+const int SKY_OUT_VSUM = 9, SKY_OUT_VSUM2 = 10;
 // Начало отсчёта узоров земли и материалов (world_cell, t_split…): по умолчанию чанк камеры. Запекание кеша
 // земли считает тексель от его собственного чанка (gcache.glsl), чтобы тексель зависел только от себя
 #ifndef ORIGIN_CHUNK

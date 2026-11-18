@@ -594,6 +594,54 @@ material tat_cable flat
     color 0.30 0.03 0.02
     rough 0.6
 
+# «Гридь» (docs/gryd.md): светлая пыльно-серая краска щитков и корпуса, голая сталь сколов, тёмное железо механики,
+# воронёная сталь и чёрный полимер винтовки, тёплый огонёк объективов, тёмный трафарет, вспышка выстрела
+material gryd_paint metal
+    color 0.30 0.295 0.27
+    color2 0.31 0.25 0.17
+    rough 0.66
+    metal 0
+    texel 0.015625
+    extra 0.14 0.09 0.22 0
+
+material gryd_worn metal
+    color 0.26 0.25 0.24
+    color2 0.20 0.11 0.06
+    rough 0.45
+    metal 0.9
+    texel 0.015625
+    extra 0.18 0.0625 0.3 0
+
+material gryd_iron metal
+    color 0.06 0.058 0.056
+    color2 0.24 0.20 0.14
+    rough 0.6
+    metal 0.45
+    texel 0.015625
+    extra 0.12 0.125 0.3 0
+
+material gryd_gun metal
+    color 0.03 0.03 0.032
+    color2 0.20 0.17 0.12
+    rough 0.55
+    metal 0.25
+    texel 0.015625
+    extra 0.08 0.125 0.2 0
+
+material gryd_lens glow
+    color 1.0 0.62 0.3
+    rough 0.3
+    extra 60 0 0 0
+
+material gryd_mark flat
+    color 0.05 0.045 0.04
+    rough 0.75
+
+material gryd_flash glow
+    color 1.0 0.72 0.36
+    rough 0.5
+    extra 30000 0 0 0
+
 # Волосы, бороды, брови (docs/hair.md): вид hair — цвет от зерна (тёмность, седина, рыжина), пряди узором вдоль
 # направления. hair — от макушки (стрижки, распущенные), hair_back — зачёсанные назад; hair_stubble — щетина на
 # коже (color, color2 — тон кожи как у human_skin). Завязки — кожаный шнур и медное кольцо

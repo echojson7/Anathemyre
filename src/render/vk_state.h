@@ -29,157 +29,7 @@ struct GpuImage {
     VkImageView view = VK_NULL_HANDLE;
 };
 
-// Данные кадра для шейдеров (FrameData в data/shaders/common.glsl), пишутся раз за кадр
-struct FrameGpu {
-    VkDeviceAddress vertices, materials, lines, points;
-    VkDeviceAddress uvs;  // развёртка и касательные вершин (MeshUv), те же номера, что у vertices (docs/textures.md)
-    VkDeviceAddress t_height, t_mask;
-    VkDeviceAddress t_water, t_mask2, t_dune, t_fine;
-    i32 cam_cx, cam_cz;
-    f32 cam_x, cam_y, cam_z;
-    f32 tan_half_fov;
-    f32 right[4], up[4], forward[4];   // .w не используется
-    f32 proj_x, proj_y, near_m, pixel_angle;  // pixel_angle — 2·tan(fov/2)/высота: метров на пиксель на 1 м глубины
-    f32 cell_min, cell_pixels;
-    u32 pixel, scans;  // scans — поверхности из сканов CC0 (docs/scans.md)
-    f32 sun_dir[4], sun_color[4];
-    f32 viewport[2], ndc_per_pixel[2];
-    i32 t_chunk0, t_size_x, t_size_z, t_nx, t_nz, t_nmx, t_nmz;
-    u32 t_dune_seed;
-    i32 t_fine_off[4], t_fine_n, t_loc_m;  // карты дюн 2 м (RenderTerrain::fine): начало локации, −1 — нет
-    i32 t_oct_lp[5], t_oct_amp[5];
-    u32 t_oct_seed[5], t_on;
-    i32 clip_n, clip_levels, clip_morph, clip_pad;
-    i32 clip[12][4];   // начало кольца в полуметрах от угла карты (x, z), дыра кольца (x, z)
-    u32 ground_layers[8];  // материалы слоёв земли (RENDER_GROUND_LAYERS), остаток — 0
-    i32 t_mip[8];      // начало уровня k сглаженной сетки высот (шаг 8·2^k м) в буфере высот, номера u16
-    VkDeviceAddress sky_trans, sky_ms, sky_sun, sky_moon, sky_out;  // таблицы неба (vk_sky.cpp)
-    RenderSky sky;
-    VkDeviceAddress decals;  // RenderDecal подряд
-    u32 decal_count, decal_pad;
-    // Кадр мира (этап 5, vk_world.cpp): таблицы сеток и кластеров, экземпляры на GPU, отсечение, индексы
-    VkDeviceAddress meshes, clusters, vis_instances, vis, cull, draws, indices, g_indices;
-    u32 instance_count, vis_max;
-    u32 g_first[12];  // начало индексов кольца земли L в этом кадре
-    // Froxels (vk_froxel.cpp): огни кадра и списки огней и декалей по клеткам
-    VkDeviceAddress lights, froxels, media;
-    u32 light_count, froxel_x, froxel_y, froxel_z;
-    f32 froxel_near, froxel_far;
-    u32 froxel_on, froxel_heat;
-    VkDeviceAddress g_verts;  // вершины колец земли кадра (ground_bake.comp), 32 байта на вершину
-    VkDeviceAddress stats;    // счётчики GPU кадра (STAT_*), vk_diag.cpp
-    VkDeviceAddress tiles;    // плитки по видам (Tiles в common.glsl, docs/tiles.md)
-    u32 tile_cap, tile_pad;   // мест в списке одного вида
-    // Кеш поверхности земли (vk_gcache.cpp, docs/gcache.md)
-    VkDeviceAddress gc_table, gc_pages, gc_texels, gc_req, gc_cells, gc_light;
-    u32 gc_w, gc_pages_n, gc_req_cap, gc_frame;
-    i32 gc_tpc0;
-    u32 gc_on, gc_lmode, gc_lperiod;
-    // Карта горизонта земли (vk_horizon.cpp, docs/horizon.md)
-    VkDeviceAddress h_map;
-    u32 h_on;
-    f32 h_max;
-    // Скиннинг людей (vk_skin.cpp, docs/people.md): работы кадра и палитры костей
-    VkDeviceAddress skin_jobs, bones;
-    VkDeviceAddress vertices_w, clusters_w;  // те же общие вершины и кластеры — для записи (skin*.comp)
-    u32 skin_count, skin_pad;
-    // Свет (docs/light.md): время кадра, сразу ли привыкать глазу, тонмаппинг, качество света
-    f32 dt;
-    u32 eye_snap, tonemap, light_q;
-    f32 local_tone[4];  // местная экспозиция: колено, наклон в свет, наклон в тень, включена
-    // Тени солнца страницами (vk_shadow.cpp, docs/shadow.md): окна страниц уровней, пул страниц и их тексели,
-    // заявки, вызовы и список отрисовки страниц, сферы сброса кадра
-    VkDeviceAddress sm_table, sm_pages, sm_texels, sm_req, sm_draws, sm_list, sm_inval;
-    u32 sm_on, sm_frame, sm_pages_n, sm_req_cap;
-    u32 sm_draw_cap, sm_inval_n, sm_debug, sm_cur;  // sm_cur — набор нового шага светила
-    u32 sm_read, sm_bg, sm_build_cap, sm_pad;       // читаемые наборы (биты); набор в фоне + 1; его страниц за кадр
-    f32 sm_mix, sm_disc, sm_far, sm_t0;  // вес нового набора; тангенс радиуса светила; дальность, м; тексель уровня 0, м
-    f32 sm_r[2][4], sm_u[2][4], sm_s[2][4];  // оси наборов: r, u — плоскость карты, s — к светилу; u.w — высота
-                                             // камеры к светилу от якоря набора
-    i32 sm_base[24][2];             // окно места уровня (набор · SM_LEVELS + уровень): первая страница на решётке
-    f32 sm_off[24][2];              // камера от начала окна по r, u, м
-    // Поле расстояний мира (vk_sdf.cpp, docs/sdf.md): засыпка — кластеры экземпляров на уровнях, кирпичи кадра,
-    // их биты по месту в кольце; общий буфер засыпки (минимум расстояния и знак на воксель)
-    VkDeviceAddress sdf_jobs, sdf_bricks, sdf_bits, sdf_scratch;
-    i32 sdf_anchor[2];           // чанк якоря поля: воксели и экземпляры считаются от него
-    u32 sdf_on, sdf_view;        // поле есть и свет его читает; режим F3 (RENDER_SDF_*)
-    u32 sdf_jobs_n, sdf_bricks_n, sdf_pad0, sdf_pad1;
-    f32 sdf_cam[4];              // камера от якоря, м; w — воксель уровня 0, м
-    i32 sdf_lo[8][4], sdf_hi[8][4];  // рамка грязных вокселей уровня (засыпка пишет только в неё)
-    // Зонды непрямого света (vk_gi.cpp, docs/gi.md): таблица зондов, работы кадра, лучи работ, место и состояние
-    // зонда работы; окна уровней; режим F3, лучей на зонд, доля старого при смешении
-    VkDeviceAddress gi_probes, gi_jobs, gi_rays, gi_pos;
-    i32 gi_lo[4][4];
-    u32 gi_on, gi_view, gi_rays_n, gi_pad0;
-    f32 gi_hyst, gi_pad1, gi_pad2, gi_pad3;
-    // Ячейки света (vk_lcache.cpp, docs/lcache.md): ключи (они же по 4), места, показанный свет, сумма круга,
-    // работы кадра; ступень
-    VkDeviceAddress lc_keys, lc_keys4, lc_meta, lc_show, lc_filt, lc_acc, lc_jobs;
-    u32 lc_on, lc_frame, lc_rays_n, lc_period;
-    u32 lc_cap_new, lc_cap_ref, lc_snap, lc_ease;
-    f32 lc_angle, lc_far, lc_hyst, lc_pad1;
-    // Проёмы земли: x0, z0, x1, z1 от камеры, м (vis_ground.frag в них землю не рисует); t_hole_n — сколько
-    f32 t_hole[4][4];
-    u32 t_hole_n, t_hole_pad[3];
-    // Сглаживание (vk_aa.cpp, docs/aa.md): режим, кадр (фаза дрожания, годность прошлых экземпляров), дрожание,
-    // прошлый вид камеры: оси, проекция, сдвиг камеры (сейчас − тогда, м); прошлые вершины людей и экземпляры
-    u32 aa_mode, aa_frame, aa_hist, aa_pad;  // aa_hist: 1 — прошлый кадр годен как история
-    f32 jitter[2], prev_proj[2];
-    f32 prev_right[4], prev_up[4], prev_forward[4];
-    f32 prev_delta[4];
-    VkDeviceAddress skin_prev, mesh_prev;
-    // Облака (vk_clouds.cpp)
-    VkDeviceAddress cl_map, cl_noise, cl_shadow, cl_info;
-    u32 cl_on, cl_size, cl_slot_a, cl_slot_b;
-    f32 cl_mix, cl_mean_t;
-    u32 cl_steps, cl_pad;
-    f32 cl_off_a[4], cl_off_b[4];
-    f32 cl_build[4], cl_build_light[4], cl_cam[4];
-    // Блеск (vk_glare.cpp)
-    VkDeviceAddress gr_buf;
-    u32 gr_on, gr_n, gr_pad0, gr_pad1;
-    i32 gr_lv[8][4];
-};
-
-// Счётчики GPU (Stats в common.glsl): номера — как STAT_* там
-constexpr u32 STAT_VIS_WANT = 0;       // сколько видимых кластеров нашло отсечение (до обрезки по VIS_MAX_CLUSTERS)
-constexpr u32 STAT_FROXEL_LIGHTS = 1;  // клеток froxels, где огни не влезли
-constexpr u32 STAT_FROXEL_DECALS = 2;  // клеток froxels, где декали не влезли
-// Счётчики работы освещения (docs/tiles.md)
-constexpr u32 STAT_TILES = 3;          // плитки по видам, TILE_KINDS подряд
-constexpr u32 STAT_PX_SKY = 8, STAT_PX_GROUND = 9, STAT_PX_MESH = 10;  // пиксели по видам
-constexpr u32 STAT_SURF_GROUND = 11, STAT_SURF_MESH = 12;             // поверхности: surface() и свет раз на ячейку
-constexpr u32 STAT_SHADOW_TAPS = 13;  // выборки карты горизонта (тень земли, docs/horizon.md)
-// Кеш поверхности земли (docs/gcache.md): страницы, прочитанные кадром; запечённые; не получившие места;
-// поверхности земли, посчитанные освещением мимо кеша (крутые склоны, нет места)
-constexpr u32 STAT_GC_USED = 14, STAT_GC_BAKED = 15, STAT_GC_OVER = 16, STAT_GC_PX_DIRECT = 17;
-constexpr u32 STAT_SKIN_VERTS = 18;  // вершин скинено (skin.comp)
-// Тени солнца страницами (docs/shadow.md): страницы, прочитанные кадром; нарисованные в нём; заявки без места;
-// выборки без страницы; вызовы кластеров в страницы (до обрезки); выборки текселей карты
-constexpr u32 STAT_SM_USED = 19, STAT_SM_NEW = 20, STAT_SM_OVER = 21, STAT_SM_MISS = 22, STAT_SM_DRAWS = 23,
-              STAT_SM_TAPS = 24;
-constexpr u32 STAT_SM_WAIT = 25;  // страниц нового шага светила, отложенных на следующие кадры (стройка в фоне)
-// Поле расстояний мира (docs/sdf.md): выборки поля светом, треугольники засыпки, кирпичи, собранные в кадре
-constexpr u32 STAT_SDF_TAPS = 26, STAT_SDF_TRIS = 27, STAT_SDF_BRICKS = 28;
-// Зонды непрямого света (docs/gi.md): зондов с лучами, лучей, выборок поля лучами и сдвигом зондов
-constexpr u32 STAT_GI_PROBES = 29, STAT_GI_RAYS = 30, STAT_GI_TAPS = 31;
-// Ячейки света (docs/lcache.md): живых, заявленных заново, посчитанных, их лучей, заявок без места, выборок поля
-// лучами и поиском поверхности, молодых, отложенных до следующего кадра
-constexpr u32 STAT_LC_LIVE = 32, STAT_LC_NEW = 33, STAT_LC_JOBS = 34, STAT_LC_RAYS = 35, STAT_LC_OVER = 36,
-              STAT_LC_TAPS = 37, STAT_LC_WAIT = 38;
-// Кеш земли (docs/gcache.md, «Отражённый свет в кеше»): текселей, чей свет посчитан в кадре
-constexpr u32 STAT_GC_LIT = 39;
-constexpr u32 GC_LIGHT_ON = 1, GC_LIGHT_ALL = 2;  // gc_lmode (common.glsl): свет в кеше читается; все страницы кадра заново
-constexpr u32 STAT_COUNT = 40;
-// Виды плиток кадра мира (TILE_* в common.glsl): небо, земля из кеша (и небо), сетки (и небо), смесь земли и
-// сеток, земля на пиксель (и небо)
-constexpr u32 TILE_KINDS = 5;
-constexpr u32 TILE_KIND_GROUND = 1, TILE_KIND_MIX = 3, TILE_KIND_GROUND_PX = 4;
-constexpr u32 TILE_HEADER = TILE_KINDS * 16;  // косвенные dispatch видов перед списками
-// Буфер чтения кадра: число видимых кластеров, с READBACK_STATS — счётчики, с READBACK_EYE — глаз (sky_out [4], [5])
-constexpr VkDeviceSize READBACK_STATS = 16, READBACK_EYE = READBACK_STATS + STAT_COUNT * 4;
-constexpr VkDeviceSize READBACK_BYTES = READBACK_EYE + 32;
-constexpr u32 SKY_OUT_EYE = 4;  // sky_out: [4], [5] — экспозиция и освещённость (sky_sum.comp, common.glsl)
+#include "vk_frame_gpu.h"
 
 // Небо (vk_sky.cpp, docs/sky.md): таблицы в буферах видеопамяти, считают их compute-шейдеры sky_*.comp
 struct SkyGpu {
@@ -223,8 +73,10 @@ struct FrameSlot {
     GpuBuffer skin_jobs;    // работы скиннинга кадра (SkinJobGpu)
     GpuBuffer bones;        // палитры костей людей кадра (RenderBone)
     GpuBuffer sm_inval;     // сферы сброса страниц теней (vk_shadow.cpp)
+    GpuBuffer sm_casters;   // экземпляры-заслонки слоя подвижных кадра (vk_shadow.cpp)
     GpuBuffer sdf_jobs, sdf_bricks, sdf_bits;  // засыпка, кирпичи и их биты поля расстояний (vk_sdf.cpp)
     GpuBuffer gi_jobs;      // работы зондов кадра (vk_gi.cpp)
+    GpuBuffer lsm_jobs;     // грани карт огней кадра (LsmJobGpu, vk_lamp_shadow.cpp)
     GpuBuffer mesh_prev;    // прошлые экземпляры динамических сеток (MeshPrevGpu на номер сетки, vk_skin.cpp)
     u32 sm_frame = 0;       // кадр теней, чьи счётчики придут в readback (vk_shadow_read)
     u8 rg_readback = 0;     // он же в графе кадра
@@ -241,10 +93,12 @@ struct WorldGpu {
     GpuBuffer vis;       // видимый кластер: экземпляр, кластер
     GpuBuffer gverts;    // вершины колец земли кадра (ground_bake.comp)
     GpuBuffer tiles;     // плитки по видам: косвенные dispatch и списки (light_tiles.comp), под размер кадра
+    GpuBuffer view_light;  // свет мест плитки (light_cells.comp → eye.comp следующего кадра), vec4 на плитку
     u32 tile_cap = 0;    // плиток кадра — мест в списке одного вида
     u32 inst_count = 0;  // сколько экземпляров лежит в inst
     GpuImage id;         // visibility buffer R32_UINT
-    GpuImage hdr;        // линейный цвет кадра RGBA16F (освещение → стиль)
+    GpuImage hdr;        // линейный цвет кадра RGBA16F (освещение → стиль); a — свет места × экспозиция
+    bool hdr_lit = false;  // кадр освещён: свет мест плиток (view_light) годен для замера глаза следующего кадра
     VkExtent2D extent = {};
     VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
     VkDescriptorPool pool = VK_NULL_HANDLE;
@@ -254,12 +108,17 @@ struct WorldGpu {
     VkPipeline pipe_vis_alpha = VK_NULL_HANDLE;  // карточки с прозрачным краем: отсечение по альфе карты (vis_alpha.frag)
     VkPipeline pipe_cull_count = VK_NULL_HANDLE, pipe_cull_scan = VK_NULL_HANDLE, pipe_cull_write = VK_NULL_HANDLE;
     VkPipeline pipe_light[TILE_KINDS] = {}, pipe_tiles = VK_NULL_HANDLE, pipe_ground_bake = VK_NULL_HANDLE;
+    // Освещение для отладки (LIGHT_DEBUG 1: правило ячеек P и виды F3 поверх кадра, docs/perf_arch.md) — собирается,
+    // когда такой режим впервые включат
+    VkPipeline pipe_light_dbg[TILE_KINDS] = {};
+    bool light_dbg_failed = false;
     u32 vis_clusters = 0;  // видимых кластеров в последнем прочитанном кадре
     u32 work[STAT_COUNT] = {};  // счётчики последнего прочитанного кадра мира (STAT_*)
-    f32 eye[8] = {};            // глаз того же кадра: sky_out [4], [5] (render_light)
+    f32 eye[20] = {};           // глаз того же кадра: sky_out [4]…[8] (render_light)
     bool work_valid = false;
     // Ресурсы графа кадра (vk_graph.h)
     u8 rg_inst = 0, rg_cull = 0, rg_draws = 0, rg_vis = 0, rg_gverts = 0, rg_id = 0, rg_hdr = 0, rg_tiles = 0;
+    u8 rg_view = 0;
 };
 
 // Кеш поверхности земли (vk_gcache.cpp, docs/gcache.md): виртуальная текстура страницами 8×8 текселей по
@@ -282,6 +141,9 @@ struct GcacheGpu {
     // (ступень света, режимы F3, что включено) — сменилось — все страницы заново
     bool lit = false, lit_all = true;
     u32 lit_sig = ~0u;
+    u32 lit_min = 0;  // кадр кеша последнего «все страницы заново»: свет старше — устарел у всех страниц, не только прочитанных
+    i32 lit_cx = 0, lit_cz = 0;  // камера прошлого кадра (круг пересчёта — от её хода)
+    f32 lit_x = 0, lit_y = 0, lit_z = 0;
     VkPipeline pipe_scan = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE, pipe_bake = VK_NULL_HANDLE,
                pipe_light = VK_NULL_HANDLE;
     u8 rg_table = 0, rg_pages = 0, rg_texels = 0, rg_req = 0, rg_cells = 0, rg_light = 0;
@@ -312,13 +174,16 @@ struct CloudGpu {
 };
 
 // Блеск (vk_glare.cpp, docs/glare.md): пирамида кадра после сглаживания — уровни вниз и вверх в одном буфере
+// Там же солнце в кадре для бликов объектива и короны (docs/lens.md): видимая доля диска и место — одним вызовом
 struct GlareGpu {
-    GpuBuffer buf;
+    GpuBuffer buf, sun;
     VkPipeline pipe = VK_NULL_HANDLE;
-    u8 rg_buf = 0;
+    u8 rg_buf = 0, rg_sun = 0;
     u32 w = 0, h = 0, n = 0;  // кадр, под который собран буфер; уровней
     i32 lv[8][4] = {};
-    bool on = false;
+    u32 frame = 0;            // номер кадра для зерна объектива
+    bool on = false;          // пирамида блеска в этом кадре
+    bool sun_on = false;      // солнце в кадре меряется в этом кадре
 };
 
 // Карта горизонта земли (vk_horizon.cpp, docs/horizon.md): H_DIRS/2 слов u32 на узел сетки 8 м. Собирается
@@ -338,13 +203,22 @@ struct HorizonGpu {
 constexpr u32 SM_LEVELS = 12, SM_SETS = 2, SM_SLOTS = SM_LEVELS * SM_SETS, SM_PAGE = 128, SM_WIN = 32;
 constexpr u32 SM_INVAL_MAX = 4096;      // сфер сброса за кадр (изменившиеся экземпляры); больше — сброс всего
 constexpr u32 SM_DRAW_CAP = 1u << 18;   // вызовов кластеров в страницы за кадр
+// Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копий страниц на кадр (места сверх пула), экземпляров-
+// заслонок кадра, вызовов их кластеров. SmDyn (common.glsl): голова до списка копий, список, кадр захвата места
+constexpr u32 SM_DYN_PAGES = 512, SM_DYN_CASTERS = 512, SM_DYN_DRAW_CAP = 1u << 16;
+constexpr VkDeviceSize SM_DYN_HEAD = 16 + 32 * 4 + 32 * 32 * 4;
+constexpr VkDeviceSize SM_DYN_BYTES = SM_DYN_HEAD + (VkDeviceSize)SM_DYN_PAGES * 8 + (VkDeviceSize)SM_SLOTS * SM_WIN * SM_WIN * 4;
 struct ShadowSet {
     i32 key[2] = {0x7FFFFFFF, 0};  // шаг светила (октаэдр, 1/SM_STEP), по которому нарисован набор
     f64 anchor = 0;                // якорь высоты к светилу, м
 };
 struct ShadowGpu {
     GpuBuffer table, pages, texels, req, draws, list;
+    GpuBuffer dyn, dyn_draws, dyn_list;  // слой подвижных: копии кадра, вызовы и список их отрисовки
     u32 pages_n = 0, req_cap = 0, frame = 0;
+    u32 dyn_n = 0;           // экземпляров-заслонок слоя подвижных для солнца в кадре (0 — светило под горизонтом)
+    u32 dyn_all = 0;         // заслонок кадра в списке (для огней — и ночью)
+    f32 dyn_sph[SM_DYN_CASTERS][4] = {};  // их сферы от камеры (vk_lamp_shadow.cpp ищет их у огней)
     bool reset = true;       // окна и страницы обоих наборов с нуля в начале кадра
     bool on = false;
     u32 grow = 0;            // заявок без места в прочитанном кадре: пул растёт
@@ -363,8 +237,10 @@ struct ShadowGpu {
     bool sun_fast = false;   // светило идёт быстрее SM_FAST (ускоренное время): тени и зонды без перетекания
     u32 inval_n = 0;         // сфер сброса этого кадра
     VkPipeline pipe_inval = VK_NULL_HANDLE, pipe_scan = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE,
-               pipe_alloc = VK_NULL_HANDLE, pipe_cull = VK_NULL_HANDLE, pipe_draw = VK_NULL_HANDLE;
+               pipe_alloc = VK_NULL_HANDLE, pipe_cull = VK_NULL_HANDLE, pipe_draw = VK_NULL_HANDLE,
+               pipe_dyn = VK_NULL_HANDLE;
     u8 rg_table = 0, rg_pages = 0, rg_texels = 0, rg_req = 0, rg_draws = 0, rg_list = 0;
+    u8 rg_dyn = 0, rg_dyn_draws = 0, rg_dyn_list = 0;
 };
 
 // Поле расстояний мира (vk_sdf.cpp, docs/sdf.md): SDF_LEVELS колец SDF_N³ вокселей вокруг камеры, воксель уровня
@@ -396,6 +272,7 @@ struct SdfGpu {
     GpuBuffer scratch;        // засыпка: u32 на воксель уровня (расстояние и знак), между кадрами — «пусто»
     VkSampler sampler = VK_NULL_HANDLE;
     VkPipeline pipe_splat = VK_NULL_HANDLE, pipe_final = VK_NULL_HANDLE, pipe_eye = VK_NULL_HANDLE;
+    VkPipeline pipe_eye_view = VK_NULL_HANDLE;  // свет мест в кадре для глаза (eye_view.comp)
     bool on = false;
     bool reset = true;        // всё с нуля: якорь, окна, все кирпичи
     bool clear = true;        // залить засыпку «пусто» перед первым кадром
@@ -405,6 +282,50 @@ struct SdfGpu {
     u32 jobs_n = 0, bricks_n = 0, groups_x = 0;
     u32 seen_mesh = ~0u;
     u8 rg_field = 0, rg_scratch = 0;
+};
+
+// Тени огней картами (vk_lamp_shadow.cpp, docs/lamp_shadows.md): куб глубины на огонь в LSM_SLOTS местах. Грань —
+// LSM_N² D16, значение — 1 − расстояние до огня / LSM_RANGE (обратная глубина, как у кадра: ближе — больше).
+// В карте — статичные заслонки (как в поле расстояний): рисуется, когда огонь получает место, живёт, пока огонь
+// в кадре и мир сеток тот же. За ними — LSM_DYN_SLOTS кубов слоя подвижных («Подвижные заслонки»): каждый кадр —
+// копия куба места огня и поверх неё люди, машины и оружие у него; свет огня читает этот куб
+constexpr u32 LSM_SLOTS = 64, LSM_DYN_SLOTS = 8, LSM_N = 256, LSM_LAYERS = (LSM_SLOTS + LSM_DYN_SLOTS) * 6;
+constexpr f32 LSM_RANGE = 48.0f;    // м: как в lamps.glsl и предел дальности ламп (lamps.cpp)
+constexpr f32 LSM_SELF = 0.15f;     // м сверх радиуса тела: светильник огня (как конец конуса у поля, lamps.glsl)
+constexpr u32 LSM_JOB_CAP = 96;     // граней неподвижного за кадр (16 огней)
+constexpr u32 LSM_JOB_ALL = LSM_JOB_CAP + LSM_DYN_SLOTS * 6;  // и граней слоя подвижных
+constexpr u32 LSM_DRAW_CAP = 8192;  // вызовов (кластеров) на грань
+constexpr VkDeviceSize LSM_COUNTS = 1024;  // начало вызовов в буфере работ: до него — счётчики граней (u32)
+static_assert(LSM_JOB_ALL * 4 <= LSM_COUNTS, "счётчики граней не влезают перед вызовами");
+struct LsmJobGpu {  // LsmJob в common.glsl
+    f32 c[3];       // огонь от камеры, м
+    f32 self_r;     // ближе к отрезку огня — его светильник: заслонкой не считается (lamp_map.glsl, lsm_own), м
+    f32 axis[3];    // полуось трубки, м
+    u32 layer;      // место · 6 + грань
+    f32 face[3];    // куда светит (нули — во все стороны): стена за огнём заслоняет и вблизи
+    u32 dyn;        // 1 — грань слоя подвижных: заслонки — только подвижные кадра (sm_dyn_inst), поверх копии места
+};
+static_assert(sizeof(LsmJobGpu) == 48, "LsmJobGpu — 48 байт");
+struct LsmSlot {
+    f64 pos[3] = {};     // огонь в мире, м
+    f32 range = 0;       // до какой дальности нарисованы заслонки, м
+    u32 used = 0;        // кадр последнего показа (0 — место не занято)
+    bool ready = false;  // грани нарисованы: свет читает (и пока ждёт перерисовки — тоже)
+    bool dirty = false;  // ждёт перерисовки: новый огонь, заслонка рядом ушла или пришла, дальность выросла
+};
+struct LampShadowGpu {
+    GpuImage cube;                       // D16 LSM_N² × LSM_LAYERS; view — массив кубов для выборки
+    VkImageView faces[LSM_LAYERS] = {};  // грань — цель глубины
+    VkSampler cmp = VK_NULL_HANDLE, raw = VK_NULL_HANDLE;  // сравнение (2×2) и глубина как есть (поиск заслонок)
+    GpuBuffer work;                      // счётчики граней кадра, вызовы, список отрисовки
+    VkPipeline pipe_cull = VK_NULL_HANDLE, pipe_draw = VK_NULL_HANDLE;
+    bool on = false;
+    LsmSlot slots[LSM_SLOTS];
+    u32 slots_n = 0;                     // мест в картинке (меньше LSM_SLOTS, если слоёв у карты меньше)
+    u32 jobs_n = 0, frame = 0;           // граней кадра всего (неподвижного — первые static_n)
+    u32 static_n = 0;
+    u32 seen_mesh = ~0u;
+    u8 rg_cube = 0, rg_work = 0;
 };
 
 // Зонды непрямого света (vk_gi.cpp, docs/gi.md): GI_LEVELS окон GI_NX × GI_NY × GI_NZ зондов вокруг камеры с шагом
@@ -486,7 +407,7 @@ struct MeshGpu {
     } lods[8];
 };
 static_assert(sizeof(MeshGpu) == 160, "MeshGpu — как MeshInfo в common.glsl");
-constexpr u32 MESH_DYNAMIC = 1;  // MeshGpu::pad: вершины пишет скиннинг каждый кадр (копии людей)
+constexpr u32 MESH_DYNAMIC = 1;  // MeshGpu::pad: копии людей (вершины пишет скиннинг) и render_mesh_moving
 constexpr u32 MESH_UV = 2;       // MeshGpu::pad: у вершин есть развёртка (буфер uvs, docs/textures.md)
 constexpr u32 MESH_ALPHA = 4;    // MeshGpu::pad: карточки с прозрачным краем — конвейер vis_alpha (docs/hair.md)
 struct ClusterGpu {
@@ -508,6 +429,7 @@ struct MeshSlot {
     RenderLod lods[RENDER_MESH_MAX_LODS];  // от начала индексов сетки
     bool used = false;
     bool dying = false;  // ждёт освобождения в очереди
+    bool moving = false; // render_mesh_moving: ходит каждый кадр — тень слоем подвижных, не страницами (docs/shadow.md)
 };
 
 // Скиннинг (vk_skin.cpp, docs/people.md «Скиннинг»): данные источников в одном буфере видеопамяти (только
@@ -538,6 +460,7 @@ struct SkinGpu {
     u32 skinned_verts = 0;                          // вершин скинено в этом кадре (CPU)
     u8 lod_min[RENDER_MAX_INSTANCES] = {};          // LOD экземпляра не тоньше (RenderInstance::lod_min)
     u32 touched[RENDER_MAX_SKINNED] = {};           // экземпляры с lod_min этого кадра (обнулить в следующем)
+    u32 job_inst[RENDER_MAX_SKINNED] = {};          // экземпляры работ кадра: заслонки слоя подвижных (vk_shadow.cpp)
     u32 touched_count = 0;
     u8 rg_vertices = 0, rg_clusters = 0;            // общие буферы вершин и кластеров в графе кадра
     // Векторы движения TAA (docs/aa.md): прошлые положения вершин (пишет skin.comp); прошлый экземпляр и кадр
@@ -566,6 +489,20 @@ struct AaGpu {
     bool have_prev = false;
     i32 cx = 0, cz = 0;
     f32 x = 0, y = 0, z = 0, right[3] = {}, up[3] = {}, forward[3] = {}, proj[2] = {};
+};
+// Воздух (vk_air.cpp, docs/air.md): клетки плиток AIR_TILE пикселей × AIR_NZ слоёв до AIR_FAR по расстоянию,
+// слой z — на t = AIR_A·((1 + AIR_FAR/AIR_A)^(z/AIR_NZ) − 1); лучи солнца — на пиксель половины кадра
+constexpr u32 AIR_TILE = 16, AIR_NZ = 64;
+constexpr f32 AIR_FAR = 160.0f, AIR_A = 1.0f;  // м: как в air.glsl
+struct AirGpu {
+    GpuImage sum, sun;               // 3D RGBA16F nx × ny × AIR_NZ: свет в пыли и его сумма; солнце в клетке
+    GpuBuffer depth, ray, tmp, tmax; // расстояния и лучи половины кадра, размытие, дальний край плиток
+    GpuBuffer boxes[FRAMES_IN_FLIGHT];
+    VkPipeline pipe_cells = VK_NULL_HANDLE, pipe_sum = VK_NULL_HANDLE, pipe_march = VK_NULL_HANDLE,
+               pipe_blur = VK_NULL_HANDLE;
+    u8 rg_sum = 0, rg_sun = 0, rg_depth = 0, rg_ray = 0, rg_tmp = 0, rg_tmax = 0;
+    u32 nx = 0, ny = 0, w2 = 0, h2 = 0;
+    bool on = false;  // воздух в этом кадре
 };
 struct PendingFree {
     u32 mesh;
@@ -613,6 +550,7 @@ struct VkState {
     GpuBuffer clusters;    // ClusterGpu всех сеток
     VmaVirtualBlock vtx_block = VK_NULL_HANDLE, idx_block = VK_NULL_HANDLE, cls_block = VK_NULL_HANDLE;
     MeshSlot meshes[RENDER_MAX_MESHES];
+    u32 meshes_moving = 0;  // сеток с MeshSlot::moving: 0 — экземпляры на подвижные не перебираются
     PendingFree pending[MAX_PENDING_FREES];
     u32 pending_count = 0;
 
@@ -622,6 +560,10 @@ struct VkState {
     GpuBuffer capture;
     u8 rg_capture = 0;
     VkExtent2D capture_extent = {};
+    // HDR-снимок (отладка света, --hdr): копия HDR кадра мира до сглаживания, RGBA16F; a — свет места, лк
+    bool capture_hdr = false;
+    GpuBuffer capture_hdr_buf;
+    u8 rg_capture_hdr = 0;
 
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipe_points = VK_NULL_HANDLE;
@@ -636,19 +578,20 @@ struct VkState {
     GlareGpu glare;
     ShadowGpu shadow;
     SdfGpu sdf;
+    LampShadowGpu lsm;
     GiGpu gi;
     LcGpu lc;
     ScansGpu scans;
     TexturesGpu textures;
     // Froxels (vk_froxel.cpp): клетки 64×64 пикселя × FROXEL_Z слоёв глубины
     GpuBuffer froxels;     // списки на клетку, FROXEL_STRIDE u32
-    GpuBuffer media;       // среда на клетку (туман и пыль, vec4) — место для света пользователя, пока нули
     u32 froxel_cap = 0;    // на сколько клеток выделены буферы
     VkPipeline pipe_froxel = VK_NULL_HANDLE;
-    u8 rg_froxels = 0, rg_media = 0;
+    u8 rg_froxels = 0;
     DiagGpu diag;
     SkinGpu skin;
     AaGpu aa;
+    AirGpu air;
     // Время проходов на GPU за прошлый кадр слота (render_gpu_passes)
     u32 pass_count = 0;
     const char *pass_names[GPU_MAX_MARKS] = {};
@@ -731,6 +674,8 @@ struct PipeDesc {
     VkFormat color = VK_FORMAT_UNDEFINED;  // UNDEFINED — формат swapchain
     bool depth_test = true;
     bool no_attach = false;  // без картинок: проход пишет только в буферы (страницы теней)
+    bool depth_only = false;  // только глубина своего формата, без цвета (грани карт огней)
+    VkFormat depth = VK_FORMAT_UNDEFINED;  // UNDEFINED — DEPTH_FORMAT
 };
 bool vk_make_pipeline(VkPipeline *out, const PipeDesc &d);
 // Собрать все заявки в нескольких потоках; false — какой-то не собрался (причина в журнале). Число, потоки и
@@ -767,6 +712,14 @@ void vk_sdf_shutdown();
 void vk_sdf_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool images);
 // Кластеры новой сетки (render_mesh_create): сферы — в копию процессора для отбора засыпки
 void vk_sdf_mesh_clusters(u32 first, const ClusterGpu *cls, u32 n);
+// Неподвижные заслонки, ушедшие и пришедшие в этом кадре (после vk_sdf_fill): шары от якоря поля (sdf.anchor), м.
+// all — изменилось всё (поле с нуля) или шары не влезли
+u32 vk_sdf_moved(const f32 (**spheres)[4], bool *all);
+// Тени огней картами (vk_lamp_shadow.cpp, docs/lamp_shadows.md): картинка, буферы, конвейеры и запись в набор
+// кадра мира; места огней кадра и грани к отрисовке (после vk_froxel_fill: огни кадра уже в буфере слота)
+bool vk_lsm_init();
+void vk_lsm_shutdown();
+void vk_lsm_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
 // Зонды непрямого света (vk_gi.cpp, docs/gi.md): атласы, буферы и запись в набор кадра мира; работы кадра
 // (после vk_sdf_fill: окна и якорь — поля)
 bool vk_gi_init();
@@ -790,12 +743,21 @@ void vk_froxel_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
 bool vk_skin_init();
 void vk_skin_shutdown();
 void vk_skin_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs);
+// Тень подвижной заслонки (сфера c, r от камеры) может попасть в кадр: сфера видна, её тень от светила кадра (sun)
+// до земли задевает пирамиду взгляда или она в дальности огня с тенью, чей свет в кадре (lamps; docs/shadow.md)
+bool vk_dyn_caster_seen(const FrameGpu &g, const RenderFrame &f, const f32 c[3], f32 r, bool sun, bool lamps);
 // Сглаживание (vk_aa.cpp, docs/aa.md): конвейер; картинки под размер кадра и их места в наборе кадра мира;
 // режим, дрожание и прошлый вид камеры в кадр (до vk_skin_fill — кадр сглаживания нужен прошлым экземплярам)
 bool vk_aa_init();
 void vk_aa_shutdown();
 bool vk_aa_images(VkDescriptorSet set);
 void vk_aa_fill(FrameGpu &g, const RenderFrame &f);
+// Воздух (vk_air.cpp, docs/air.md): конвейеры; картинки под размер кадра и места 16–19 набора кадра мира; данные
+// кадра (images — картинки кадра мира есть)
+bool vk_air_init();
+void vk_air_shutdown();
+bool vk_air_images(VkDescriptorSet set);
+void vk_air_fill(FrameGpu &g, const RenderFrame &f, bool images);
 // Интерфейс поверх кадра (vk_ui.cpp): свой конвейер без глубины; проход — в vk_graph.h
 bool vk_ui_init();
 void vk_ui_shutdown();

@@ -25,7 +25,11 @@ void bone_rows(uint b, out vec4 r0, out vec4 r1, out vec4 r2) {
 
 void main() {
     FrameData f = pc.frame;
-    SkinJob j = f.skin_jobs.v[gl_WorkGroupID.y];
+    // Веса и шаги морфов читаются из буфера по месту: копия задания с массивами по переменному номеру уходит в
+    // медленную память потока (scratch, 440 байт на вершину; docs/perf_arch.md)
+    SkinJobs jobs = f.skin_jobs;
+    uint jy = gl_WorkGroupID.y;
+    SkinJob j = jobs.v[jy];
     uint base = gl_WorkGroupID.x * 64u;
     if (base >= j.vertex_count) return;
     if (gl_LocalInvocationIndex == 0u) atomicAdd(f.stats.v[STAT_SKIN_VERTS], min(64u, j.vertex_count - base));
@@ -44,13 +48,13 @@ void main() {
     vec3 n = oct_decode(v.normal);
     // Морфы: i16 × шаг для положения, i8 / 127 для нормали (MeshMorphs, src/asset/mesh.h)
     for (uint k = 0u; k < j.morph_count; ++k) {
-        float w = j.morph[k];
+        float w = jobs.v[jy].morph[k];
         if (w == 0.0) continue;
         uint o = (i * j.morph_count + k) * 3u;
         uint a = j.morphs.v[o], b = j.morphs.v[o + 1u], c = j.morphs.v[o + 2u];
         vec3 dp = vec3(float(int(a << 16) >> 16), float(int(a) >> 16), float(int(b << 16) >> 16));
         vec3 dn = vec3(float(int(b << 8) >> 24), float(int(b) >> 24), float(int(c << 24) >> 24)) / 127.0;
-        p += dp * (w * j.step[k]);
+        p += dp * (w * jobs.v[jy].step[k]);
         n += dn * w;
     }
     uint bi = j.skin.v[i * 2u], wi = j.skin.v[i * 2u + 1u];

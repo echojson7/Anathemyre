@@ -1,9 +1,11 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
-// Ячейки света: работы кадра (docs/lcache.md). Поток — место таблицы. Не видели дольше LC_AGE кадров — место
-// свободно. Видимые в этом кадре: молодые (заявлены заново или не прошли круг) — в список молодых, считаются каждый
-// кадр; остальные — в список обновления раз в lc_period кадров (фаза — от ключа, не от места). Снимок — все видимые
-// в список молодых, полным кругом. Списки переполнились — ячейки ждут следующего кадра (lcache_args.comp)
+// Ячейки света: работы кадра (docs/lcache.md). Поток — место таблицы. Не видели дольше срока жизни (LC_AGE кадров;
+// таблица полна — меньше, lcache_args.comp) — место свободно. Видимые в этом кадре: молодые (заявлены заново или не прошли круг) — в очередь молодых, считаются каждый
+// кадр; остальные — в список обновления раз в lc_period кадров (фаза — от ключа, не от места). Очередь — корзинами:
+// сначала не считанные ни разу, в каждой половине крупные уровни раньше — предел кадра достаётся сперва дырам и
+// родителям (их свет берут мелкие, пока молоды). Снимок — все видимые одной корзиной, полным кругом. Не влезшие
+// ждут следующего кадра (lcache_args.comp)
 #include "lcache.glsl"
 layout(local_size_x = 256) in;
 
@@ -15,7 +17,7 @@ void main() {
     if (key == 0u) return;
     LcMeta m = f.lc_meta.v[e];
     uint age = f.lc_frame - m.seen;
-    if (age > LC_AGE) {
+    if (age > (f.lc_jobs.age != 0u ? f.lc_jobs.age : LC_AGE)) {
         f.lc_keys.v[e] = 0u;
         f.lc_meta.v[e].key = 0u;
         return;
@@ -23,10 +25,16 @@ void main() {
     atomicAdd(f.lc_jobs.live_n, 1u);
     if (age != 0u) return;  // не видна в этом кадре: значение ждёт
     uint counts = (m.state >> 2) & 7u;
-    bool young = (m.state & LC_INIT) != 0u || counts < LC_K;
-    if (young || f.lc_snap != 0u) {
+    bool fresh = (m.state & LC_INIT) != 0u || counts == 0u;
+    bool young = fresh || counts < LC_K;
+    if (f.lc_snap != 0u) {
         uint i = atomicAdd(f.lc_jobs.new_n, 1u);
         if (i < LC_CAP) f.lc_jobs.v[i] = e;
+    } else if (young) {
+        atomicAdd(f.lc_jobs.new_n, 1u);
+        uint b = (fresh ? 0u : uint(LC_LEVELS)) + uint(LC_LEVELS - 1 - lc_key_level(key));
+        uint i = atomicAdd(f.lc_jobs.bn[b], 1u);
+        if (i < LC_QCAP) f.lc_jobs.v[b * LC_QCAP + i] = e;
     } else if ((lc_hash(key) + f.lc_frame) % f.lc_period == 0u) {
         uint i = atomicAdd(f.lc_jobs.ref_n, 1u);
         if (i < LC_CAP) f.lc_jobs.v[LC_CAP + i] = e;

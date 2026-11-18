@@ -23,11 +23,12 @@ def num(v):
 
 
 def block(meshes):
-    lines = [BEGIN, "#   light <x> <y> <z> <ax> <ay> <az> <fx> <fy> <fz> <назад> <лм> <К> <радиус>"]
+    lines = [BEGIN, "#   light <x> <y> <z> <ax> <ay> <az> <fx> <fy> <fz> <назад> <лм> <К> <радиус> [<r> <g> <b>]"]
     for name in sorted(meshes):
         body, _ = meshes[name]()
-        for c, axis, face, back, lm, kelvin, size in body.lights:
-            lines.append("light " + " ".join(num(v) for v in (*c, *axis, *face, back, lm, kelvin, size)) + f"  # {name}")
+        for c, axis, face, back, lm, kelvin, size, rgb in body.lights:
+            vals = (*c, *axis, *face, back, lm, kelvin, size, *(rgb or ()))
+            lines.append("light " + " ".join(num(v) for v in vals) + f"  # {name}")
     lines.append(END)
     return "\n".join(lines) + "\n"
 

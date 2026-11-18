@@ -92,16 +92,25 @@ struct ViewInput {
     Turn tex_probe_yaw = 0;
     MechView *mech = nullptr;      // шагающие машины (состояние вида между кадрами, docs/vezha.md, docs/tat.md), может быть nullptr
     bool lamps_off = false;        // лампы карты не светят (F3 «лампы карты», --nolamps): сравнение было/стало
+    f32 eye_exposure = 0.0f;       // экспозиция глаза прочитанного кадра (render_light), 0 — нет: дальность ламп
     // Свет (docs/light.md): секунды кадра и «привыкнуть сразу» для глаза, тонмаппинг (F3), качество (меню)
     f32 dt = 0.0f;
     f32 time = 0.0f;  // время от запуска, с (мерцание звёзд, docs/sky.md); в снимках — номер кадра / 30
     f64 cloud_time = 0.0;  // то же без круга: ветер и смена формы облаков (docs/clouds.md)
     bool eye_snap = true;
-    u32 tonemap = RENDER_TONEMAP_AGX;
+    u32 tonemap = RENDER_TONEMAP_UE;
     bool local_off = false;  // без местной экспозиции (F3, --nolocal): сравнение было/стало
+    bool lsm_off = false;    // тени огней полем расстояний, не картами (F3, --nolsm): сравнение было/стало
+    bool dyn_off = false;    // без теней подвижных: людей, машин, оружия (F3, --nodyn): сравнение было/стало
+    bool air_off = false;    // без воздуха: лучей солнца и огней в пыли (F3, --noair): сравнение было/стало
+    // Эффекты камеры (меню «Графика» → «Камера», docs/lens.md): блеск (docs/glare.md) и биты RENDER_LENS_*
+    bool glare = true;
+    u32 lens = RENDER_LENS_FLARE | RENDER_LENS_CA | RENDER_LENS_VIGNETTE | RENDER_LENS_GRAIN;
     bool scans = false;  // поверхности из сканов CC0 (docs/scans.md), F3 и --scans
     bool gclight_off = false;  // отражённый свет земли на пиксель, не из кеша (docs/gcache.md, F3, --nogclight)
-    u32 light_quality = RENDER_LIGHT_HIGH;
+    u32 shadow_quality = RENDER_LIGHT_HIGH;  // ступени (docs/light.md): тени, отражённый свет, воздух и облака
+    u32 gi_quality = RENDER_LIGHT_HIGH;
+    u32 air_quality = RENDER_LIGHT_HIGH;
     u32 aa = RENDER_AA_TAA;
     u32 shadow_pages = 0;  // F3 (docs/shadow.md): 1 — страницы теней поверх кадра, 2 — только тень
     u32 sdf_view = RENDER_SDF_FRAME;  // F3 (docs/sdf.md): поле расстояний мира — кадр, только небо, поле, выкл

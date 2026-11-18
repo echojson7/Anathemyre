@@ -1,12 +1,14 @@
 // Светящаяся поверхность (стекло лампы, табло): color — цвет, extra.x — яркость, кд/м². Сама светится, но мир
-// не освещает: свет на стены дают огни (docs/light.md, этап 6е)
+// не освещает: свет на стены дают огни (docs/light.md, этап 6е). Внутри тела огня цвет берётся у огня
+// (light.glsl, g_glow_*: стекло колбы 2700 К — цвета её света). Лампы выключены (F3, --nolamps) — не светится
+// (glow_gain 0): иначе тёмный зал с горящим стеклом и глазом, привыкшим к темноте, — белые пятна блеска
 Surface surf_glow(SurfIn i) {
     Surface s;
     s.albedo = i.m.p0.rgb * 0.6;
     s.rough = i.m.p0.a;
     s.normal = i.n;
     s.ao = 1.0;
-    s.emissive = i.m.p0.rgb * i.m.p2.x;
+    s.emissive = i.m.p0.rgb * (i.m.p2.x * pc.frame.glow_gain);
     s.height = 0.5;
     s.metal = 0.0;
     s.nvar = 0.0;

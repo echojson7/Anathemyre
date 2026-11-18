@@ -114,22 +114,32 @@ vec3 sky_dir(vec2 uv, float alt) {
     return vec3(cos(el) * cos(az), sin(el), cos(el) * sin(az));
 }
 
+// Свечение ночного неба (docs/sky.md, «Ночь»): светится верхняя атмосфера (~97 км: кислород, натрий, OH), и свет
+// звёзд рассеян воздухом. К горизонту ярче: луч идёт по слою косо (ван Рейн: 1 / √(1 − (R/(R+h))²·sin²z),
+// (R/(R+h))² = 0.97025), воздух гасит его (0.15 звёздной величины на воздушную массу); ниже ~13° гашение и
+// рассеянное в воздухе уравновешены — яркость держится, ×2.2 от зенита (как меряют на тёмных местах). Цвет — чуть
+// тёплый нейтральный (B−V ≈ 0.9): синим ночь видит глаз (палочки, light_cells.comp), а не небо. a_ground.w —
+// яркость в зените, кд/м²; на землю свечение светит тем же профилем (sky_sum.comp)
+const vec3 NIGHT_RGB = vec3(1.03, 1.0, 0.89);  // Y ≈ 1
+float atmo_night_profile(float y) {
+    y = max(y, 0.225);
+    float m = 1.0 / (y + 0.025 * exp(-11.0 * y));  // воздушная масса
+    return inversesqrt(0.02975 + 0.97025 * y * y) * exp(-0.138 * (m - 1.0));
+}
+vec3 atmo_night(vec3 dir) {
+    return NIGHT_RGB * (pc.frame.a_ground.w * atmo_night_profile(dir.y) * smoothstep(-0.15, 0.0, dir.y));
+}
+
 // Рассеянный свет неба по направлению (без дисков солнца и луны): rgb — яркость, a — пропускание вдоль луча
 vec4 atmo_sky_lut(vec3 dir) {
     FrameData f = pc.frame;
     float alt = atmo_cam_alt();
     vec4 s = lut_fetch(f.sky_sun, SKY_W, SKY_H, sky_uv(dir, f.a_sun.xyz, alt));
     vec3 m = lut_fetch(f.sky_moon, MOON_W, MOON_H, sky_uv(dir, f.a_moon.xyz, alt)).rgb;
-    vec3 glow = vec3(0.55, 0.65, 1.0) * f.a_ground.w * f.a_sun.w * smoothstep(-0.2, 0.3, dir.y);
-    return vec4((s.rgb * f.a_sun.w + m * f.a_moon.w) * f.a_misc.x + glow, s.a);
+    return vec4((s.rgb * f.a_sun.w + m * f.a_moon.w) * f.a_misc.x + atmo_night(dir), s.a);
 }
-// Яркость неба для света (отражения, лучи зондов): ночное свечение — с добавкой night_fill, как у
-// atmo_ambient(); в кадре и дымке (atmo_sky_lut) небо остаётся тёмным
-vec3 atmo_sky(vec3 dir) {
-    FrameData f = pc.frame;
-    vec3 fill = vec3(0.55, 0.65, 1.0) * ((f.a_night2.y - 1.0) * f.a_ground.w * f.a_sun.w * smoothstep(-0.2, 0.3, dir.y));
-    return atmo_sky_lut(dir).rgb + fill;
-}
+// Яркость неба для света (отражения, лучи зондов) — та же, что в кадре: ночное небо светит на землю так, как видно
+vec3 atmo_sky(vec3 dir) { return atmo_sky_lut(dir).rgb; }
 
 // Ореол у светил: узкий лепесток пыли вперёд (Хеньи–Гринстейн, g ~0.96). В таблицы он не идёт (их сетка его
 // не держит, а лучи зондов ловили бы его искрами): свет лепестка считается прямым (sky.cpp), а здесь он

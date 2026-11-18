@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Разбор следа движения машины (docs/vezha.md, docs/tat.md): anathemyre --frames N --mech-trace след.txt [--mech-kind tat]
+"""Разбор следа движения машины (docs/vezha.md, docs/tat.md, docs/gryd.md): anathemyre --frames N --mech-trace след.txt
+[--mech-kind tat|gryd]. Ног — четыре или две (у Гриди), по длине строки
 
     python tools/mech_trace.py след.txt                                        итог по состояниям и проверки
     python tools/mech_trace.py след.txt --sheet лист.png [первый шаг число азимут подъём]   кадры-палочки (нужен PIL)
@@ -11,7 +12,7 @@
 import math
 import sys
 
-STATES = ("лежит", "раскл", "стоит", "идёт", "склад", "лёжка")
+STATES = ("лежит", "раскл", "стоит", "идёт", "склад", "лёжка", "выпад")
 
 
 def load(path):
@@ -26,7 +27,7 @@ def load(path):
         for name in ("chassis", "hull", "gun", "eye"):
             pts[name] = f[k:k+3]; k += 3
         legs = []
-        for _ in range(4):
+        for _ in range(4 if len(v) >= 87 else 2):
             j = [f[k+3*i:k+3*i+3] for i in range(5)]; k += 15
             legs.append((j, int(f[k]))); k += 1
         out.append(dict(st=st, at=at, yaw=yaw, h=h, pitch=pitch, roll=roll, hull=hull, gun=gun, eye=eye, pts=pts, legs=legs))
@@ -51,7 +52,7 @@ def summary(fr):
 
 def checks(fr):
     slip, slip_at, low, near, close, dig = 0.0, None, [], [], [], []
-    yaw_max = [0.0] * 4
+    yaw_max = [0.0] * len(fr[0]["legs"])
     for i, f in enumerate(fr):
         ch, yaw = f["pts"]["chassis"], f["yaw"]
         s, c = math.sin(yaw), math.cos(yaw)
@@ -111,7 +112,7 @@ def sheet(fr, path, first=0, step=3, count=36, az=35.0, el=18.0):
             d.line([proj(base, c, ox, oy), proj(end, c, ox, oy)], fill=(225, 225, 225))
         ch, hu, gu = f["pts"]["chassis"], f["pts"]["hull"], f["pts"]["gun"]
         cols_leg = [(200, 60, 40), (40, 110, 200), (40, 160, 90), (190, 130, 30)]
-        order = sorted(range(4), key=lambda k: -(f["legs"][k][0][0][0] * sa + f["legs"][k][0][0][2] * ca))
+        order = sorted(range(len(f["legs"])), key=lambda k: -(f["legs"][k][0][0][0] * sa + f["legs"][k][0][0][2] * ca))
         for k in order:
             j, flag = f["legs"][k]
             d.line([proj(ch, c, ox, oy), proj(j[0], c, ox, oy)], fill=(90, 90, 90), width=3)
@@ -128,12 +129,12 @@ def sheet(fr, path, first=0, step=3, count=36, az=35.0, el=18.0):
     y0 = H * rows + 10
     n = len(fr)
     sx = (W * cols - 60) / max(n, 1)
-    for k in range(4):
+    for k in range(len(fr[0]["legs"])):
         for i, f in enumerate(fr):
             flag = f["legs"][k][1]
             col = (0, 150, 0) if flag == 1 else ((220, 0, 0) if flag == 0 else (170, 170, 170))
             d.rectangle([50 + i * sx, y0 + k * 12, 50 + (i + 1) * sx, y0 + k * 12 + 9], fill=col)
-        d.text((5, y0 + k * 12 - 2), "fr fl rl rr".split()[k], fill=(0, 0, 0))
+        d.text((5, y0 + k * 12 - 2), ("fr fl rl rr" if len(fr[0]["legs"]) == 4 else "r l").split()[k], fill=(0, 0, 0))
     prev = None
     for i, f in enumerate(fr):
         p = (50 + i * sx, y0 + 140 - f["h"] * 70)

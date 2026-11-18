@@ -41,6 +41,14 @@ struct RenderDecal {
 };
 static_assert(sizeof(RenderDecal) == 48, "RenderDecal — 48 байт");
 
+// Коробка пыли зала (воздух, docs/air.md) относительно камеры. 48 байт, как AirBox в data/shaders/common.glsl
+struct RenderAirBox {
+    f32 x, y, z, dust;       // середина коробки, метры от камеры; пыль, 1/м
+    f32 ux, uz, soft, pad0;  // ось x коробки в мире (ux, 0, uz), ось z — (−uz, 0, ux); мягкий край внутрь, м
+    f32 hx, hy, hz, pad1;    // половины сторон
+};
+static_assert(sizeof(RenderAirBox) == 48, "RenderAirBox — 48 байт");
+
 // Огонь (огни 6е, docs/lamps.md): колба (шар) или трубка (отрезок) относительно камеры. 64 байта, как Light в
 // data/shaders/common.glsl. Каркас раскладывает огни по клеткам (froxels), светит ими light.glsl
 constexpr u32 LIGHT_SHADOW = 1;  // flags: тень по полю расстояний мира
@@ -91,7 +99,7 @@ struct RenderView {
 // cell_min метров и растёт с глубиной степенями двойки, пока не станет пикселем кадра. Выключено: свет на пиксель.
 // cell_min и cell_pixels по-прежнему задают решётки кеша земли и теней солнца
 // Тонмаппинг (post.glsl) и ступени качества света (docs/light.md, «Ступени»): номера — как в common.glsl
-enum RenderTonemap : u32 { RENDER_TONEMAP_AGX, RENDER_TONEMAP_ACES, RENDER_TONEMAPS };
+enum RenderTonemap : u32 { RENDER_TONEMAP_AGX, RENDER_TONEMAP_ACES, RENDER_TONEMAP_UE, RENDER_TONEMAPS };
 // Поле расстояний мира (docs/sdf.md), режим F3: кадр, только видимость неба, поле изолиниями, свет без поля
 enum RenderSdfView : u32 { RENDER_SDF_FRAME, RENDER_SDF_SKY, RENDER_SDF_FIELD, RENDER_SDF_OFF, RENDER_SDF_VIEWS };
 // Зонды непрямого света (docs/gi.md), режим F3: кадр, только непрямой свет, без зондов
@@ -113,12 +121,42 @@ struct RenderStyle {
     f32 cell_min = 1.0f / 80.0f;
     f32 cell_pixels = 1.0f;  // ячейка — не меньше стольких пикселей кадра
     // Свет (docs/light.md)
-    u32 tonemap = RENDER_TONEMAP_AGX;
-    u32 light_quality = RENDER_LIGHT_HIGH;
+    u32 tonemap = RENDER_TONEMAP_UE;
+    // Ступени качества (docs/light.md, «Ступени»): тени; отражённый свет; воздух и облака
+    u32 shadow_quality = RENDER_LIGHT_HIGH;
+    u32 gi_quality = RENDER_LIGHT_HIGH;
+    u32 air_quality = RENDER_LIGHT_HIGH;
     // Местная экспозиция (data/sky.txt, local_tone): колено, стопы; наклон в свет; в тень; 1 — включена
     f32 local_tone[4] = {1.0f, 0.05f, 1.0f, 1.0f};
+    // Замер и цвет глаза (data/sky.txt: meter_view, white_balance, adapt_color): доля замера по кадру; [1] ставит
+    // рендер; доля привыкания к цвету света; время привыкания к цвету, с
+    f32 eye_meter[4] = {0.8f, 0.0f, 0.8f, 1.5f};
     f32 dt = 0.0f;         // секунды кадра: привыкание глаза
     bool eye_snap = true;  // глаз привыкает сразу (первый кадр, --timelapse: кадр — свой час)
+    bool glow = true;      // светящиеся детали (стекло ламп, табло) светятся; выкл — вместе с лампами (F3, --nolamps)
+    bool lamp_maps = true; // тени огней картами (docs/lamp_shadows.md); выкл — полем расстояний (F3, --nolsm)
+    bool shadow_dyn = true; // тени подвижных — людей, машин, оружия (docs/shadow.md); выкл — сравнение (F3, --nodyn)
+    bool air = true;       // воздух: лучи солнца и огней в пыли (docs/air.md); выкл — без него (F3, --noair)
+};
+
+// Воздух (docs/air.md, data/sky.txt air_*): пыль у земли — слой по высоте от нуля карты, и коробки пыли залов
+struct RenderAir {
+    f32 dust = 0.0f;        // рассеяние и поглощение у нуля карты, 1/м
+    f32 dust_h = 30.0f;     // высота слоя, м
+    f32 tint[3] = {1.0f, 1.0f, 1.0f};  // доля рассеяния по каналам
+    f32 g = 0.8f, iso = 0.3f;          // лепесток вперёд; доля рассеяния во все стороны
+    Span<const RenderAirBox> boxes;
+};
+
+// Объектив (docs/lens.md, data/sky.txt lens_*, settings.txt): то, что добавляет кадру камера, а не глаз. Биты —
+// как LENS_* в lens.glsl; 0 в силе — то же, что выключено
+enum RenderLensFx : u32 { RENDER_LENS_FLARE = 1, RENDER_LENS_CA = 2, RENDER_LENS_VIGNETTE = 4, RENDER_LENS_GRAIN = 8 };
+struct RenderLens {
+    u32 on = 0;              // биты RENDER_LENS_*
+    f32 flare = 1.0f;        // блики солнца в линзах: множитель долей отражения (1 — просветлённый объектив)
+    f32 ca = 0.0f;           // хроматическая аберрация: сдвиг крайних длин волн в углу кадра, доля полудиагонали
+    f32 vignette = 0.0f;     // виньетка: доля закона cos⁴ (1 — объектив без поправки)
+    f32 grain = 0.0f;        // зерно: разброс в средних тонах, доля шкалы экрана
 };
 
 // Главный свет (light.glsl): солнце, ночью луна
@@ -140,9 +178,9 @@ struct RenderSky {
     f32 haze[3], haze_h;          // нижняя дымка
     f32 haze_abs[3], alt0;        // её поглощение; высота нуля карты над уровнем моря, м
     f32 ozone[3], moon_albedo;
-    f32 ground[3], night_glow;    // альбедо планеты; ночное свечение неба (доля освещённости солнца)
+    f32 ground[3], night_sky;     // альбедо планеты; яркость ночного неба в зените, кд/м² (docs/sky.md, «Ночь»)
     f32 star[3][4];               // строки поворота «вид → небесная сфера», star[0][3] — яркость звёзд
-    f32 post[4];                  // глаз: поправка экспозиции, EV; степень привыкания; EV100 «нормы»; синева ночи
+    f32 post[4];                  // глаз: поправка экспозиции, EV; степень привыкания; EV100 «нормы»; сумеречное зрение
     f32 sky_gain;                 // множитель рассеянного света неба (docs/sky.md)
     f32 adapt_dark, adapt_light;  // время привыкания глаза к темноте и к свету, с (docs/light.md)
     f32 night_dark;               // ночь темнее привыкания, EV (docs/sky.md, «Ночь»)
@@ -152,7 +190,7 @@ struct RenderSky {
     f32 halo_g, time;             // g узкого лепестка; время кадра, с (мерцание звёзд)
     f32 milky, twinkle;           // яркость Млечного пути; сила мерцания звёзд
     f32 adapt_night;              // степень привыкания глаза ниже света полной луны (docs/sky.md, «Ночь»)
-    f32 night_fill;               // во сколько раз свечение ночного неба светит на землю сильнее видимого
+    f32 spare;                    // свободно
     f32 glare;                    // блеск: доля света, что глаз рассеивает вокруг ярких мест (docs/glare.md)
     f32 pad;
     // Облака (docs/clouds.md)
@@ -181,6 +219,8 @@ struct RenderFrame {
     Span<const RenderLineVertex> lines;  // пары вершин
     Span<const RenderDecal> decals;      // все, что задевают видимое; по клеткам их раскладывает рендер (froxels)
     Span<const RenderPointLight> lights; // огни кадра; по клеткам их раскладывает рендер (froxels)
+    RenderAir air;                       // пыль у земли и в залах (docs/air.md)
+    RenderLens lens;                     // эффекты объектива (docs/lens.md)
     Span<const RenderSkinned> skinned;   // люди кадра: экземпляр, палитра, морфы (скиннинг, ниже)
     Span<const RenderBone> bones;        // палитры костей людей кадра подряд
 };
@@ -194,16 +234,18 @@ struct RenderConfig {
     bool gpu_validation = false;  // слои проверки с проверкой на GPU (выход за границы буферов, GPU-AV) вместо синхронизации
     const char *gpu_validation_skip = nullptr;  // шейдеры без проверки на GPU, через запятую (lavapipe их не тянет)
     const char *shader_dir = "";
+    u32 pipe_threads = 0;  // потоков сборки конвейеров при запуске (--pipe-threads); 0 — по ядрам
 };
 
 constexpr u32 RENDER_MAX_POINTS = 4096;
-constexpr u32 RENDER_MAX_PASSES = 24;  // строк времени проходов GPU (F3)
+constexpr u32 RENDER_MAX_PASSES = 32;  // строк времени проходов GPU (F3)
 constexpr u32 RENDER_MAX_LINE_VERTICES = 32768;
 constexpr u32 RENDER_MAX_INSTANCES = 65536;
 constexpr u32 RENDER_MAX_MESHES = 4096;
 constexpr u32 RENDER_MAX_MATERIALS = 1024;
 constexpr u32 RENDER_MAX_DECALS = 512;
 constexpr u32 RENDER_MAX_LIGHTS = 1024;
+constexpr u32 RENDER_MAX_AIR_BOXES = 32;
 constexpr u32 RENDER_MAX_SKINS = 64;       // источников скиннинга (сетка × скелет)
 constexpr u32 RENDER_MAX_SKINNED = 768;    // сеток на костях в кадре: люди (48 × тело и до 10 вещей), машины
 constexpr u32 RENDER_MAX_BONES = 16384;    // матриц костей в кадре
@@ -217,6 +259,8 @@ bool render_frame(const RenderFrame &f);
 void render_resized();
 // Дождаться, пока GPU доделает всё отправленное (строка запуска после первого кадра). В игровом цикле не нужно
 void render_wait_idle();
+// Дождаться GPU и прочитать счётчики и глаз последнего отправленного кадра (конец снимка: иначе прочитан кадр N−2)
+void render_collect();
 // Число ошибок слоя проверки за всё время
 u32 render_validation_errors();
 const char *render_device_name();
@@ -242,7 +286,8 @@ struct RenderCluster {
 u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices, Span<const RenderLod> lods,
                        Span<const RenderCluster> clusters, Span<const MeshUv> uvs = {});
 void render_mesh_destroy(u32 mesh);
-// Сетка движется каждый кадр целиком (меч в руках): в страницы теней не идёт до 6б-3, как скин-копии людей
+// Сетка движется каждый кадр целиком (меч в руках, машина): в кеш страниц теней и кубов огней не идёт, как скин-копии
+// людей, — тень слоем подвижных каждый кадр (docs/shadow.md)
 void render_mesh_moving(u32 mesh);
 // Сетка с прозрачным краем (волосы карточками, docs/hair.md): visibility buffer рисует её конвейером с отсечением
 // по альфе карты цвета её материалов (у материала без карты — сплошь). До копий скиннинга — они берут флаг у источника
@@ -366,6 +411,16 @@ struct RenderWork {
     // отложено до следующего кадра
     u32 lc_live, lc_new, lc_jobs, lc_rays, lc_over, lc_taps, lc_wait;
     u32 gc_lit;  // текселей кеша земли с пересчитанным отражённым светом (docs/gcache.md)
+    // Тени огней картами (docs/lamp_shadows.md): граней нарисовано, вызовов кластеров в них, кластеров без места,
+    // выборок карт светом
+    u32 lsm_faces, lsm_draws, lsm_over, lsm_taps;
+    // Воздух (docs/air.md): клеток с пылью, шагов лучей солнца, выборок страниц теней ими
+    u32 air_cells, air_steps, air_taps;
+    // Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копий страниц под людьми, машинами и оружием; вызовов их
+    // кластеров в копии; копий без места
+    u32 sm_dyn, sm_dyn_draws, sm_dyn_over;
+    // Слой подвижных у огней (docs/lamp_shadows.md): граней его кубов (копия места, подвижные поверх) и вызовов в них
+    u32 lsm_dyn_faces, lsm_dyn_draws;
     u32 sm_blend;  // перетекание шага светила: % нового набора, 100 — один набор (в --work не пишется)
     const char *gc_off;  // почему кеш земли выключен (nullptr — включён); в --work не пишется
 };
@@ -373,9 +428,12 @@ bool render_work(RenderWork &out);
 // Глаз прочитанного кадра (docs/light.md, «Экспозиция»): освещённость горизонтальной земли и EV100. F3
 struct RenderLightInfo {
     f32 lux, lux_sky, lux_key;  // всего, от неба, от главного светила (солнце или луна) — на открытой земле
-    f32 lux_eye;                // у глаза: с заслонкой полем расстояний (eye.comp), к нему привыкает глаз
+    f32 lux_eye;                // замер глаза (eye.comp): смесь света у камеры и в кадре, к нему привыкает глаз
     f32 ev100, ev100_goal;      // глаз сейчас и к чему привыкает
     f32 exposure;               // множитель кадра
+    f32 lux_cam, lux_view;      // две части замера: свет у камеры и мест в кадре (по плиткам прошлого кадра), лк
+    f32 wb_white[3];            // цвет света, к которому привык глаз (линейный sRGB, Y = 1)
+    f32 wb_gain[3], wb_degree;  // множители конусов CAT02 и доля привыкания к цвету (баланс белого)
 };
 bool render_light(RenderLightInfo &out);
 // Процессорное время последнего render_frame по частям, мс (docs/frame_time.md). Ожидание — fence, acquire и
@@ -392,6 +450,10 @@ RenderCpuTimes render_cpu_times();
 // Снимок: render_capture_next() перед render_frame, затем render_capture_take() — пиксели RGBA8 sRGB
 // сверху вниз, память из арены. false — снимок не вышел
 void render_capture_next();
+// HDR-снимок (отладка света, --hdr): вместе со снимком — HDR кадра мира до сглаживания (RGBA половинками, уже
+// умножен на экспозицию; a — свет места, лк, для разбора местной экспозиции). Брать после render_capture_take
+void render_capture_hdr(bool on);
+bool render_capture_hdr_take(Arena &arena, u16 **rgba, u32 *width, u32 *height);
 bool render_capture_take(Arena &arena, u8 **rgba, u32 *width, u32 *height);
 
 // Интерфейс поверх кадра (src/ui, docs/ui.md): последний проход по готовой картинке, в пикселях окна.

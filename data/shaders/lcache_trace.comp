@@ -5,7 +5,8 @@
 // от мирового номера, не от пикселя. Лучи — полусфера над стороной нормали (решётка Фибоначчи, поворот — от
 // мирового номера и номера в круге из LC_K), тот же луч, что у зондов (gi_ray.glsl): в точке попадания солнце с
 // тенью, огни и свет зондов — второй отскок. Свет копится гармониками L1 (свёртка с косинусом уже внутри):
-// показывается средним за круг, молодая ячейка — бегущим средним каждый счёт. Снимок — полный круг за раз
+// показывается средним за круг, молодая ячейка — бегущим средним каждый счёт. Снимок и новая ячейка, когда кадр
+// позволяет (lcache_args.comp), — полный круг за раз
 #include "gi_ray.glsl"
 #include "lcache.glsl"
 layout(local_size_x = 64) in;
@@ -108,11 +109,11 @@ void main() {
     FrameData f = pc.frame;
     uint t = gl_LocalInvocationIndex;
     uint g = gl_WorkGroupID.x;
-    uint nn = f.lc_jobs.cmd.w;
-    uint e = g < nn ? f.lc_jobs.v[g] : f.lc_jobs.v[LC_CAP + g - nn];
+    uint e = lc_job(g);
     LcMeta m = f.lc_meta.v[e];
-    bool snap = f.lc_snap != 0u;
     bool init = (m.state & (LC_INIT | LC_EMPTY)) != 0u;  // заново или была пустой: счёт с нуля
+    // Полный круг за раз: снимок, и новая ячейка, если кадр позволяет (lcache_args.comp) — сразу зрелая
+    bool snap = f.lc_snap != 0u || ((m.state & LC_INIT) != 0u && f.lc_jobs.full != 0u);
     uint turn = init ? 0u : m.state & 3u;
     if (t == 0u) {
         s_o = lc_origin(m.key, m.home);
@@ -122,7 +123,7 @@ void main() {
     }
     barrier();
     vec4 o = s_o;
-    g_lamp_steps = max(lamp_steps(f.light_q) / 2u, 6u);
+    g_lamp_steps = max(lamp_steps(f.gi_q) / 2u, 6u);
     uint n = f.lc_rays_n;
     int a = lc_key_axis(m.key);
     vec3 N = lc_axis_n(a);
@@ -159,7 +160,7 @@ void main() {
     s_r1[t] = vec4(ax.gb, ay.rg);
     s_r2[t] = vec4(ay.b, az);
     if (back != 0u) atomicAdd(s_back, back);
-    atomicAdd(s_taps, g_sdf_taps);
+    atomicAdd(s_taps, g_sdf_taps + g_lsm_taps);  // выборки поля и карт огней
     barrier();
     for (uint w = 32u; w > 0u; w >>= 1u) {
         if (t < w) {
@@ -228,5 +229,9 @@ void main() {
     }
     f.lc_acc.v[e] = acc;
     f.lc_meta.v[e].org = o.xyz;
+    // Ближнее затенение у точки ячейки — тем же lc_ao, что у пикселя (с поверхности под точкой лучей): лучи ячейки
+    // уже видят эти заслонки, пиксель берёт только разницу с ним (light.glsl). Сглаженное — до сглаживания соседей
+    float ao = lc_cell_ao(o.xyz - N * lc_lift(lc_size(lc_key_level(m.key))) - f.sdf_cam.xyz, N);
+    f.lc_meta.v[e].ao = packHalf2x16(vec2(ao));
     f.lc_meta.v[e].state = turn | cnt << 2 | LC_LIT;
 }

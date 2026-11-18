@@ -23,9 +23,19 @@ struct Settings {
     bool cam_zoom_cursor = true;  // колесо приближает к курсору
     bool cam_edge_pan = false;    // курсор у края экрана двигает камеру
     f32 cam_pan_speed = 1.0f;     // скорость WASD и края экрана
-    // Графика (docs/light.md, «Ступени»): RENDER_LIGHT_* — низко, средне, высоко, ультра
-    u32 light_quality = 2;
+    // Графика (docs/light.md, «Ступени»): RENDER_LIGHT_* — низко, средне, высоко, ультра, по частям света. Набор
+    // «Качество света» в меню — не своё значение: ставит три части разом и показывает их общую ступень
+    u32 shadow_quality = 2;   // тени: солнце и луна, огни, люди и машины
+    u32 gi_quality = 2;       // отражённый свет: зонды, ячейки, видимость неба, отражение неба у гладкого
+    u32 air_quality = 2;      // воздух: лучи в пыли, облака
     u32 aa = 2;               // сглаживание (docs/aa.md): RENDER_AA_* — выкл, FXAA, TAA
+    // Эффекты камеры (docs/lens.md; силы — data/sky.txt): свечение ярких мест (блеск, docs/glare.md), блики солнца
+    // в линзах, цветная кайма к краям кадра, виньетка, зерно плёнки
+    bool glare = true;
+    bool lens_flare = true;
+    bool aberration = true;
+    bool vignette = true;
+    bool grain = true;
     // Отладка
     bool debug = true;        // отладочные клавиши и панель
     bool debug_panel = false; // окна отладки (F3): отладка слева, показатели справа
