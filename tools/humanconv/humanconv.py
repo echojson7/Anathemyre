@@ -4,7 +4,7 @@
     tools/humanconv/fetch.sh            (скачать исходники и пересобрать; зовёт make meshes)
     python3 -I tools/humanconv/humanconv.py <папка исходников> <data> <meshpack>
 
-Папка исходников (fetch.sh): base.obj, rig.game_engine.json, weights.game_engine.json, rig.mixamo.json,
+Папка исходников (fetch.sh): base.obj, default.mhskel, default_weights.mhw, rig.game_engine.json, weights.game_engine.json, rig.mixamo.json,
 weights.mixamo.json (MPFB2, CC0) и targets.npz (морфы из пакета makehuman на PyPI, CC0).
 
 Что делает: морфы сложения → поза покоя MakeHuman (A-поза) → рост 1.80 м, низ на y = 0 → оси игры (x восток,
@@ -22,9 +22,14 @@ import tempfile
 
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # python -I не кладёт папку скрипта в путь
+import decimate  # noqa: E402
+
 HEIGHT = 1.80  # все тела этого роста, в игре — масштаб экземпляра
-# LOD 1..4 — треугольников (LOD 0 — вся сетка MakeHuman). Каждый — упрощение предыдущего (meshpack)
-LOD_TRIS = (9000, 2400, 700, 300)
+# LOD 0..4 — треугольников тела: упрощение беты (decimate.py), лицо дороже; LOD k+1 — продолжение того же
+# упрощения после LOD k, meshpack берёт их готовыми (кусок LODI). У беты LOD 0 — 16 000 треугольников тела
+LOD0_TRIS = 16000
+LOD_TRIS = (9000, 2400, 800, 500)
 SKELETONS = ("game_engine", "mixamo")  # оба пишутся, выбор — этап 8 (docs/people.md)
 # Материалы граней. Бельё у мужчин и женщин разное на одной сетке: грань знает, чем она будет у мужчины и чем у
 # женщины (PAIR), вид skin выбирает по биту женщины в зерне экземпляра (src/view/appear.h, materials/skin.glsl)
@@ -44,10 +49,14 @@ _HEAD_ARMS = {"head/head-scale-vert-decr": 0.4, "head/head-scale-horiz-decr": 0.
               "measure/measure-upperarm-length-incr": 0.6, "measure/measure-lowerarm-length-decr": 0.4}
 # Стопы чуть меньше, как в бете: родные ступни MakeHuman бросаются в глаза
 FEET = {"armslegs/%s-foot-scale-%s-decr" % (sd, a): w for sd in "lr" for a, w in (("depth", 0.38), ("horiz", 0.3))}
+# Голова мужчины беты (mh_male, HEAD_SMALLER): у MakeHuman голова крупная и затылок раздут за ухом
+_HEAD_BETA = {"head/head-scale-vert-decr": 0.5, "head/head-scale-horiz-decr": 0.3, "head/head-scale-depth-decr": 0.4,
+              "head/head-back-scale-depth-decr": 0.5}
 PEOPLE = [
-    # Как мужчина беты (2026-11-17): грудные мышцы крупнее, талия чуть шире
-    dict(name="human_m", gender=1.0, age=0.0, muscle=0.6, weight=0.5,
-         mods=dict(_HEAD_ARMS, **FEET, **{"torso/torso-muscle-pectoral-incr": 0.5, "measure/measure-waist-circ-incr": 0.3})),
+    # Мужчина беты 1 в 1 (mh_male, 18.11): мышцы 0.8, голова, руки, грудные, талия, стопы
+    dict(name="human_m", gender=1.0, age=0.0, muscle=0.8, weight=0.5,
+         mods=dict(_HEAD_BETA, **{k: w for k, w in _HEAD_ARMS.items() if k.startswith("measure/")}, **FEET,
+                   **{"torso/torso-muscle-pectoral-incr": 0.5, "measure/measure-waist-circ-incr": 0.3})),
 ]
 # Скелет бинда — от тела до правок 2026-11-17 (стопы, грудь): суставы те же, .skel, клипы и дорожки шага мира прежние
 RIG = dict(name="human_m", gender=1.0, age=0.0, muscle=0.6, weight=0.5, mods=dict(_HEAD_ARMS))
@@ -88,7 +97,7 @@ def both(names, w=1.0):
 
 
 # Женщина (числа беты, docs/legacy.md): талия уже бёдер без «галифе», плечи уже мужских, колени и икры суше
-FEMALE = dict(gender=0.0, muscle=0.5, weight=0.55, cup=0.6, firm=0.7, replace_mods={
+FEMALE = dict(gender=0.0, muscle=0.5, weight=0.55, cup=0.65, firm=0.7, replace_mods={
     "head/head-scale-vert-decr": 0.3, "head/head-scale-horiz-decr": 0.35, "head/head-scale-depth-decr": 0.3,
     "head/head-back-scale-depth-decr": 0.5, "bodyshapes/bodyshapes-elvs-fem-neat-hourglass": 0.5,
     "hip/hip-scale-horiz-decr": 0.4, "measure/measure-hips-circ-decr": 0.15, "measure/measure-thigh-circ-decr": 0.15,
@@ -320,15 +329,189 @@ def skeleton(v_obj, groups, rig, to_game):
     return out
 
 
-def skin_weights(W, order, nv):
-    # До 4 костей на вершину: самые тяжёлые (при равенстве — меньший номер), сумма весов ровно 255
+# ---- Поза привязки — стойка тел беты (stage0/test-room, tools/humanconv/humanconv.py: repose, fingers)
+# Слово пользователя 18.11: «облик старой модели, а технически — v2». Тело стоит, как стояло у беты: руки вниз,
+# ноги наполовину к отвесу, кисти в свободном хвате. Стойку даёт скелет MakeHuman по умолчанию (163 кости,
+# дельтовидная кость на полповорота плеча, свои веса) — сгибы плеч, паха и ягодиц беты. Скелеты игры (.skel) —
+# прежние, в A-позе (клипы и шаг мира не меняются); стойка беты — только обратные бинд-матрицы (rest_skeleton)
+# и вершины сеток людей (тело, одежда, волосы)
+
+
+def mh_load(srcdir):
+    # Скелет MakeHuman по умолчанию: суставы — средние вершин, веса — списки (вершина, вес) на кость
+    sk = json.load(open(os.path.join(srcdir, "default.mhskel")))
+    W = json.load(open(os.path.join(srcdir, "default_weights.mhw")))["weights"]
+    joints = {k: np.array(ix, np.int64) for k, ix in sorted(sk["joints"].items())}
+    ws = []
+    for n in sorted(W):
+        a = np.array(W[n], np.float64)
+        ws.append((n, a[:, 0].astype(np.int64), a[:, 1]))
+    return dict(joints=joints, weights=ws)
+
+
+def rot_to(a, b):
+    a = a / np.linalg.norm(a)
+    b = b / np.linalg.norm(b)
+    c = np.cross(a, b)
+    s = np.linalg.norm(c)
+    d = float(np.dot(a, b))
+    if s < 1e-9:
+        return np.eye(3)
+    k = c / s
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + s * K + (1 - d) * K @ K
+
+
+def rot_axis(k, a):
+    k = k / np.linalg.norm(k)
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + np.sin(a) * K + (1 - np.cos(a)) * K @ K
+
+
+def half(R):
+    # Половина поворота
+    ang = np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1))
+    if ang < 1e-6:
+        return np.eye(3)
+    ax = np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]) / (2 * np.sin(ang))
+    return rot_axis(ax, ang / 2)
+
+
+# Свободный хват беты: сгиб фаланг, градусы (большой палец, затем указательный..мизинец)
+CURL = ((10, 20, 20), (40, 50, 30), (45, 55, 30), (50, 55, 30), (55, 55, 30))
+
+
+def rest_xf(J):
+    """Стойка беты в осях MakeHuman (до зеркала): кость MH → (R, точка до, точка после), x → R (x − до) + после.
+    J — суставы скелета MH этого тела. Цифры направлений — беты (руки по костям её игры, ноги наполовину к отвесу)"""
+    xf = {}
+    for sd, sg in (("L", 1), ("R", -1)):
+        j = lambda n, e="head": J["%s.%s____%s" % (n, sd, e)]
+        S0, E0, W0 = j("upperarm01"), j("lowerarm01"), j("wrist")
+        R_ua = rot_to(E0 - S0, np.array([0.03 * sg, -0.28, 0.0]))
+        E1 = S0 + R_ua @ (E0 - S0)
+        R_fa = rot_to(R_ua @ (W0 - E0), np.array([0.01 * sg, -0.21, 0.01])) @ R_ua
+        W1 = E1 + R_fa @ (W0 - E0)
+        H0, K0, A0 = j("upperleg01"), j("lowerleg01"), j("foot")
+        # Ноги сводятся наполовину: отвесно бёдра у паха входят друг в друга
+        R_th = half(rot_to(K0 - H0, np.array([0.0, -1.0, 0.0])))
+        K1 = H0 + R_th @ (K0 - H0)
+        R_sh = rot_to(R_th @ (A0 - K0), R_th @ (K0 - H0)) @ R_th
+        A1 = K1 + R_sh @ (A0 - K0)
+        # Пальцы к ладони; ладонь после стойки смотрит к бедру
+        lat = j("finger5-1") - j("finger2-1")
+        curl = {}
+        for f, ang in enumerate(CURL, 1):
+            d = j("finger%d-3" % f, "tail") - j("finger%d-1" % f)
+            d = d / np.linalg.norm(d)
+            nrm = np.cross(d, lat)
+            nrm /= np.linalg.norm(nrm)
+            if (R_fa @ nrm)[0] * sg > 0:
+                nrm = -nrm
+            if f == 1:  # большой — поперёк ладони, к указательному
+                nrm = j("finger2-1") - j("finger1-2")
+                nrm = nrm - d * (nrm @ d)
+                nrm /= np.linalg.norm(nrm)
+            k = np.cross(d, nrm)
+            R, t = np.eye(3), np.zeros(3)
+            for s, a in enumerate(ang, 1):
+                Rs = rot_axis(k, np.radians(a))
+                h = R @ j("finger%d-%d" % (f, s)) + t
+                R, t = Rs @ R, Rs @ (t - h) + h
+                curl["finger%d-%d" % (f, s)] = (R, t)
+        hand_t = W1 - R_fa @ W0
+        xf[sd] = dict(shoulder=(half(R_ua), S0, S0), upperarm=(R_ua, S0, S0), lowerarm=(R_fa, E0, E1),
+                      hand=(R_fa, W0, W1), upperleg=(R_th, H0, H0), lowerleg=(R_sh, K0, K1), foot=(np.eye(3), A0, A1),
+                      curl={b: (R_fa @ R, np.zeros(3), R_fa @ t + hand_t) for b, (R, t) in curl.items()})
+    return xf
+
+
+def rest_of(xf, n):
+    # Преобразование стойки для кости MH n (None — кость не движется)
+    if n[-2:] not in (".L", ".R"):
+        return None
+    x, b = xf[n[-1]], n[:-2]
+    if b in x["curl"]:
+        return x["curl"][b]
+    for pre, key in (("shoulder", "shoulder"), ("upperarm", "upperarm"), ("lowerarm", "lowerarm"),
+                     (("wrist", "finger", "metacarpal"), "hand"), ("upperleg", "upperleg"), ("lowerleg", "lowerleg"),
+                     (("foot", "toe"), "foot")):
+        if b.startswith(pre):
+            return x[key]
+    return None
+
+
+def rest(vo, mh):
+    """Вершины тела в стойке беты (оси MakeHuman): смесь преобразований костей MH по их весам"""
+    J = {k: vo[ix].mean(0) for k, ix in mh["joints"].items()}
+    xf = rest_xf(J)
+    out = np.zeros_like(vo)
+    wsum = np.zeros(len(vo))
+    for n, i, w in mh["weights"]:
+        t = rest_of(xf, n)
+        out[i] += w[:, None] * (vo[i] if t is None else (vo[i] - t[1]) @ t[0].T + t[2])
+        wsum[i] += w
+    free = wsum < 1e-6
+    out[~free] /= wsum[~free, None]
+    out[free] = vo[free]
+    return out
+
+
+def rest_frames(vo, mh):
+    # Повороты (Ri) и точки до и после (на кость MH) — для поворота нормалей и для скелета
+    J = {k: vo[ix].mean(0) for k, ix in mh["joints"].items()}
+    return rest_xf(J)
+
+
+def rest_skeleton(bones, r_obj, groups, rig, wlist, mh, to_game):
+    """Обратные бинд-матрицы скелета игры в стойке беты. Кость игры поворачивается, как кость MH, с которой у
+    неё больше всего общего веса (без дельтовидной — она на полповорота); головы — прямой кинематикой от A-позы
+    (как pose_world), поэтому вид, повернув кости к этим поворотам, получит палитру ровно единичную"""
+    xf = rest_frames(r_obj, mh)
+    nv = len(r_obj)
+    mh_names = [n for n, _, _ in mh["weights"] if not n.startswith("shoulder")]
+    MW = np.zeros((nv, len(mh_names)))
+    for k, n in enumerate(mh_names):
+        _, i, w = next(x for x in mh["weights"] if x[0] == n)
+        np.add.at(MW[:, k], i, w)
+    Dm = np.diag([-1.0, 1.0, 1.0])
+    out = []
+    Rw, Pw = [], []
+    for b in bones:
+        lst = wlist.get(b["name"], [])
+        Rg = np.eye(3)
+        if lst:
+            a = np.array(lst, np.float64)
+            ov = (MW[a[:, 0].astype(np.int64)] * a[:, 1:2]).sum(0)
+            t = rest_of(xf, mh_names[int(np.argmax(ov))])
+            if t is not None:
+                Rg = Dm @ t[0] @ Dm  # зеркало осей MakeHuman → игра
+        R = Rg @ b["rot"]
+        if b["parent"] < 0:
+            p = b["pos"]
+        else:
+            pb = bones[b["parent"]]
+            p = Pw[b["parent"]] + Rw[b["parent"]] @ (pb["rot"].T @ (b["pos"] - pb["pos"]))
+        Rw.append(R)
+        Pw.append(p)
+        out.append(dict(b, inv=np.concatenate([R.T, (-R.T @ p)[:, None]], 1)))
+    return out
+
+
+def skin_dense(W, order, nv):
+    # Плотные веса (вершины × кости) из списков (вершина, вес) на кость
     acc = np.zeros((nv, len(order)))
     for k, n in enumerate(order):
         lst = W.get(n, [])
         if lst:
             a = np.array(lst)
             np.add.at(acc[:, k], a[:, 0].astype(int), a[:, 1])
-    return skin_quant(acc)
+    return acc
+
+
+def skin_weights(W, order, nv):
+    # До 4 костей на вершину: самые тяжёлые (при равенстве — меньший номер), сумма весов ровно 255
+    return skin_quant(skin_dense(W, order, nv))
 
 
 def skin_quant(acc):
@@ -457,14 +640,14 @@ def fields(v, J, vf, Jf, T, Z):
     topf = hipf + 0.065
     legf = crotch + 0.012 + front * 0.155 * (1.0 - (1.0 - t) ** 2) + (1.0 - front) * 0.165 * t
     out.update(ftop=topf - yf, fleg=yf - legf, fband=yf - (topf - 0.017), flegband=(legf + 0.007) - yf)
-    # Лиф: чашки спереди до соска + 3.5 см (ореол мужчины на теле женщины крупнее), сзади лента 4.5 см, между чашками край плавно спускается к узкой перемычке;
+    # Лиф: чашки спереди до соска + 4 см (грудь беты, cup 0.65) (ореол мужчины на теле женщины крупнее), сзади лента 4.5 см, между чашками край плавно спускается к узкой перемычке;
     # снизу резинка 1.2 см; лямки 14 мм через плечо, на спине наискось к другому боку
     nf = vf[nip[0]] if vf[nip[0], 0] > 0 else vf[nip[1]]
     lo = nf[1] - 0.075
     k = np.clip((zf - nf[2] + 0.14) / 0.08, 0.0, 1.0)
     k = k * k * (3.0 - 2.0 * k)
     gore = np.clip(1.0 - axf / 0.055, 0.0, 1.0)
-    cup = lo + 0.045 + (nf[1] + 0.035 - lo - 0.045) * k
+    cup = lo + 0.045 + (nf[1] + 0.040 - lo - 0.045) * k
     hi = cup + (lo + 0.05 - cup) * k * gore * gore * (3.0 - 2.0 * gore)
     out.update(blo=yf - lo, bhi=hi - yf, bband=(lo + 0.012) - yf)
     # Лямка — две границы (по обе стороны линии): узкая полоса одним полем терялась бы между вершинами
@@ -552,7 +735,7 @@ def cut(T, f, EI, EW):
     return np.array(out, np.int64), f, EI, EW
 
 
-def build(p, base, groups, Z, rigs, weights, data_dir, meshpack, regions):
+def build(p, base, groups, Z, rigs, weights, mh, data_dir, meshpack, regions):
     body_q, eye_q = groups["body"], np.concatenate([groups["helper-l-eye"], groups["helper-r-eye"]])
     used = np.unique(body_q)
 
@@ -564,13 +747,16 @@ def build(p, base, groups, Z, rigs, weights, data_dir, meshpack, regions):
     v_obj = morph(base, Z, p)
     y0 = v_obj[used, 1].min()
     fit = (y0, HEIGHT / (v_obj[used, 1].max() - y0))
-    to_game = lambda x: place(x[None, :], fit)[0]
-    v = place(v_obj, fit)
+    # Вершины — в стойке беты (rest); поля белья размечаются в A-позе (числа полей — от суставов скелета игры)
+    v_a = place(v_obj, fit)
+    v = place(rest(v_obj, mh), fit)
     # Скелет — от тела RIG (суставы прежние, см. RIG); его рост и низ — свои
     r_obj = morph(base, Z, RIG)
     r0 = r_obj[used, 1].min()
     rfit = (r0, HEIGHT / (r_obj[used, 1].max() - r0))
-    skels = {s: skeleton(r_obj, groups, rigs[s], lambda x: place(x[None, :], rfit)[0]) for s in SKELETONS}
+    r_game = lambda x: place(x[None, :], rfit)[0]
+    skels = {s: skeleton(r_obj, groups, rigs[s], r_game) for s in SKELETONS}
+    skels = {s: rest_skeleton(b, r_obj, groups, rigs[s], weights[s], mh, r_game) for s, b in skels.items()}
     J = {b["name"]: b["pos"] for b in skels["game_engine"]}
     # Тело женщины: на нём размечается женское бельё (те же вершины, места — её)
     f_obj = morph(base, Z, P(**FEMALE))
@@ -597,7 +783,7 @@ def build(p, base, groups, Z, rigs, weights, data_dir, meshpack, regions):
     EW = np.zeros((len(base), 8))
     EW[:, 0] = 1.0
     Tb = tri(quads[:nbody]).astype(np.int64)
-    F, M = fields(v, J, vf, Jf, Tb, Z)
+    F, M = fields(v_a, J, vf, Jf, Tb, Z)
     for name in sorted(F):
         Tb, _, EI, EW = cut(Tb, ext_eval(F[name], EI, EW), EI, EW)
     fe = {k: ext_eval(f, EI, EW)[Tb].mean(1) > 0 for k, f in F.items()}
@@ -635,19 +821,61 @@ def build(p, base, groups, Z, rigs, weights, data_dir, meshpack, regions):
     r3 = regions[dom3]
     treg = np.where(r3[:, 1] == r3[:, 2], r3[:, 1], r3[:, 0])
     treg[len(Tb):] = 0
+    # LOD 0 — упрощение беты (decimate.py): лицо дороже (голова ×40, шея ×8), швы материалов и областей держатся.
+    # Нормали — от упрощённых граней в номерах вершин среза (до деления по материалу): шва нормалей нет
+    nb_ = len(Tb)
+    ge = [b["name"] for b in skels["game_engine"]]
+    gdom = np.array(ge)[np.argmax(skin_dense(weights["game_engine"], ge, len(base)), 1)]
+    wmh = np.where(gdom == "head", 40.0, np.where(gdom == "neck_01", 8.0, 1.0))
+    wv = wmh[EI[np.arange(len(EI)), np.argmax(EW, 1)]]
+    Vc = grid(ext_eval(v, EI, EW), 17)
+    res = decimate.decimate(Vc.tolist(), Tb.tolist(), (tm[:nb_] * 32 + treg[:nb_]).tolist(),
+                            [LOD0_TRIS] + list(LOD_TRIS), wv.tolist())
+    keep, Tk, _ = res[0]
+    keep = np.array(keep, np.int64)
+    bm_, br_ = tm[:nb_], treg[:nb_]
+    T = np.concatenate([np.array(Tk, np.int64).reshape(-1, 3), Te])
+    tm = np.concatenate([tm[:nb_][keep], tm[nb_:]])
+    treg = np.concatenate([treg[:nb_][keep], treg[nb_:]])
+    Td = T[:len(keep)]
+    eye_v = np.unique(eye_q)
+
+    def cut_normals(X):
+        # Нормали в номерах вершин среза по упрощённым граням; у глаз — свои (шаром), как в X без среза
+        N = normals(X, Td)
+        N[eye_v] = n[eye_v]
+        return N
+    Nc = cut_normals(ext_eval(v, EI, EW))
+    head_tris = int((gdom[EI[Td, 0]] == "head").all(1).sum())
+    print("humanconv: LOD 0 — треугольников %d (голова %d), было %d" % (len(Td), head_tris, nb_))
     # Вершины делятся по материалу и области граней: край белья резкий, область скрывается целыми треугольниками.
     # Вершина сетки — (вершина среза, материал, область); область — в байте доли смеси (у тела m0 == m1, docs/mesh.md)
     key = (T * len(MATERIALS) + tm[:, None]) * 32 + treg[:, None]
     uk, inv = np.unique(key.ravel(), return_inverse=True)
+    uk_all = uk.copy()
     vreg = uk % 32
     uk = uk // 32
     src, vmat = uk // len(MATERIALS), uk % len(MATERIALS)
     T = inv.reshape(-1, 3)
+    # LOD 1… — дальше то же упрощение (лицо дороже), глаза в каждом; вершины — из вершин LOD 0 (decimate их не
+    # создаёт, вершина уходит вдоль шва), meshpack берёт их готовыми (кусок LODI)
+    lodi = struct.pack("<I", len(res) - 1)
+    for kl, Tl, el in res[1:]:
+        kl = np.array(kl, np.int64)
+        Tl = np.concatenate([np.array(Tl, np.int64).reshape(-1, 3), Te])
+        ml = np.concatenate([bm_[kl], tm[len(keep):]])
+        rl = np.concatenate([br_[kl], treg[len(keep):]])
+        kk = ((Tl * len(MATERIALS) + ml[:, None]) * 32 + rl[:, None]).ravel()
+        j = np.searchsorted(uk_all, kk)
+        if (j >= len(uk_all)).any() or (uk_all[np.minimum(j, len(uk_all) - 1)] != kk).any():
+            sys.exit("humanconv: вершина LOD вне вершин LOD 0")
+        lodi += struct.pack("<If", len(kk), el) + j.astype("<u4").tobytes()
+        print("humanconv: LOD — треугольников %d, ошибка %.1f мм" % (len(Tl), el * 1000))
     SI, SW = EI[src], EW[src]
     dom = SI[np.arange(len(src)), np.argmax(SW, 1)]  # веса костей — от главной вершины смеси
     at = lambda X: ext_eval(X, SI, SW)
     unit = lambda X: X / np.linalg.norm(X, axis=1, keepdims=True)
-    n_s = unit(at(n))
+    n_s = unit(Nc[src])
 
     pos = grid(at(v), 17)
     nx, nz = oct_encode(n_s)
@@ -663,6 +891,7 @@ def build(p, base, groups, Z, rigs, weights, data_dir, meshpack, regions):
     out += chunk(b"MATS", struct.pack("<I", len(MATERIALS)) + b"".join(name_bytes(m) for m in MATERIALS))
     out += chunk(b"VERT", vert.tobytes())
     out += chunk(b"INDX", T.astype("<u4").tobytes())
+    out += chunk(b"LODI", lodi)
     for s in SKELETONS:
         order = [b["name"] for b in skels[s]]
         bones, wq = skin_weights(weights[s], order, len(base))
@@ -680,15 +909,13 @@ def build(p, base, groups, Z, rigs, weights, data_dir, meshpack, regions):
             vo = morph(base, Z, q)
             lo = vo[used, 1].min()
             f = (lo, HEIGHT / (vo[used, 1].max() - lo))
-            vk = place(vo, f)
-            nk = normals(vk, tri(quads[:nbody]))
-            nk[np.unique(eye_q)] = n[np.unique(eye_q)]
+            vk = place(rest(vo, mh), f)
             jk = {}
             for sn in SKELETONS:
                 h = np.array([place(joint(vo, groups, rigs[sn][b["name"]]["head"])[None, :], f)[0] for b in skels[sn]])
                 t = np.array([place(joint(vo, groups, rigs[sn][b["name"]]["tail"])[None, :], f)[0] for b in skels[sn]])
                 jk[sn] = np.concatenate([h, np.linalg.norm(t - h, axis=1)[:, None]], 1)
-            shapes[key] = (grid(at(vk), 17), unit(at(nk)), jk)
+            shapes[key] = (grid(at(vk), 17), unit(cut_normals(ext_eval(vk, EI, EW))[src]), jk)
         return shapes[key]
 
     head = struct.pack("<I", len(MORPHS))
@@ -755,9 +982,10 @@ def main():
         weights[s] = json.load(open(os.path.join(srcdir, "weights.%s.json" % s)))["weights"]
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # python -I не кладёт папку скрипта в путь
     import wear  # одежда над этим телом (docs/wear.md)
-    body = wear.W.Body(base, groups, Z, rigs, weights)
+    mh = mh_load(srcdir)
+    body = wear.W.Body(base, groups, Z, rigs, weights, mh)
     for p in PEOPLE:
-        build(p, base, groups, Z, rigs, weights, data_dir, meshpack, body.regions())
+        build(p, base, groups, Z, rigs, weights, mh, data_dir, meshpack, body.regions())
     wear.build_all(body, data_dir, meshpack)
     import hair  # волосы над этим телом (docs/hair.md)
     hair.build_all(body, data_dir, meshpack)
