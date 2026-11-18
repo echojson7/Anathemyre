@@ -8,7 +8,7 @@
 """
 import math
 
-from kit import Body, rnd, uniform
+from kit import Body, rnd, seg_for, uniform
 from plan import Box, Prism
 
 F = -9.0                      # пол платформы и коридора
@@ -57,8 +57,9 @@ def steps_down(x0, n=6):
 def arch(r, y_low):
     """Свод тоннеля в плоскости (x, y): полукруг над пятой и полоса до y_low под ней."""
     pts = [(TUN_X + r, y_low)]
-    for k in range(17):
-        a = math.pi * k / 16
+    n = seg_for(r, math.pi)  # полукруг по допуску хорды (docs/parts.md, «Гладкость»)
+    for k in range(n + 1):
+        a = math.pi * k / n
         pts.append((TUN_X + r * math.cos(a), SPRING + r * math.sin(a)))
     pts.append((TUN_X - r, y_low))
     return pts

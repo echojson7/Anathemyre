@@ -7,6 +7,40 @@
 """
 import math
 
+# Допуск хорды на LOD 0 (docs/parts.md, «Гладкость»): отклонение многоугольника от круга не больше 0.5 мм
+CHORD = 0.0005
+
+
+def seg_for(r, angle=2 * math.pi, tol=CHORD, lo=8, hi=160):
+    """Сколько отрезков нужно дуге радиуса r на угол angle, чтобы хорда отходила от дуги не больше tol.
+    Полный круг — кратно 4 (симметрия по осям), не меньше lo и не больше hi."""
+    if r <= tol:
+        n = 3
+    else:
+        n = math.ceil(angle / (2.0 * math.acos(1.0 - tol / r)) - 1e-9)
+    if angle >= 2 * math.pi - 1e-9:
+        n = max(lo, -(-n // 4) * 4)
+    return max(1, min(n, hi))
+
+
+def _round_seg(seg, r, exact):
+    """Число отрезков круга: заданное как нижняя граница, поднятое до допуска хорды. exact — гранёная деталь по
+    замыслу (шестигранник гайки), число как задано."""
+    return seg if exact else max(seg, seg_for(r))
+
+
+_GROUP = [1]
+
+
+def new_group():
+    """Своя группа сглаживания (поле «гладкая» грани, export.build_mesh): нормаль не делится через излом
+    профиля. Номера с 2: True (= 1) — общая гладкая группа."""
+    _GROUP[0] += 1
+    return _GROUP[0]
+
+
+TURN = math.radians(25.0)  # излом профиля или пути круче этого — резкая кромка, а не сглаженная
+
 
 def add(a, b): return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
 def sub(a, b): return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
@@ -89,8 +123,13 @@ class Body:
 
     # --- рецепты ---
     def tube(self, pts, r, mat, seg=12, fillet=0.0, radii=None, smooth=True):
-        """Труба вдоль ломаной pts; fillet — радиус отвода на углах; radii(i, n) — радиус по узлам пути."""
-        path = fillet_path(pts, fillet) if fillet > 0 else [tuple(map(float, p)) for p in pts]
+        """Труба вдоль ломаной pts; fillet — радиус отвода на углах; radii(i, n) — радиус по узлам пути.
+        seg — нижняя граница числа отрезков круга, сверх неё — по допуску хорды (smooth=False — ровно seg)."""
+        # Без отвода пологие изломы (мельче TURN) всё равно скругляются дугой на всю длину соседних отрезков:
+        # шланг по ломаной из трёх точек иначе виден ломаным при гладком блике. Крутые изломы — стык колен
+        path = fillet_path(pts, fillet, r_out=r) if fillet > 0 else fillet_path(pts, 1e3, n=2, r_out=r, max_turn=TURN)
+        rmax = max([r] + [radii(i, len(path)) for i in range(len(path))]) if radii else r
+        seg = _round_seg(seg, rmax, not smooth)
         t0 = unit(sub(path[1], path[0]))
         n, _ = _side(t0)
         prev = t0
@@ -118,31 +157,52 @@ class Body:
                 k = 1.0 / max(ca, 0.5)
             rings.append([add(p, mul(add(mul(n, cx), mul(b, sx)), rr * k)) for cx, sx in cs])
             prev = t
+        # На изломе пути без отвода круче TURN — новая группа сглаживания (резкий стык колен)
         faces = []
-        for r0, r1 in zip(rings, rings[1:]):
+        g = new_group() if smooth else False
+        for i, (r0, r1) in enumerate(zip(rings, rings[1:])):
+            if smooth and 0 < i < len(path) - 1:
+                if dot(unit(sub(path[i], path[i - 1])), unit(sub(path[i + 1], path[i]))) < math.cos(TURN):
+                    g = new_group()
             for k in range(seg):
-                faces.append(((r0[k], r0[(k + 1) % seg], r1[(k + 1) % seg], r1[k]), mat, smooth))
+                faces.append(((r0[k], r0[(k + 1) % seg], r1[(k + 1) % seg], r1[k]), mat, g))
         faces.append((tuple(reversed(rings[0])), mat, False))
         faces.append((tuple(rings[-1]), mat, False))
         self._closed(faces)
 
     def lathe(self, origin, axis, profile, mat, seg=16, smooth=True):
-        """Тело вращения вокруг оси: profile — [(радиус, высота вдоль оси)], радиусы больше нуля."""
+        """Тело вращения вокруг оси: profile — [(радиус, высота вдоль оси)], радиусы больше нуля.
+        seg — нижняя граница, сверх неё — по допуску хорды; smooth=False или seg ≤ 6 — гранёное по замыслу
+        (гайка, шестигранная головка: плоские грани), ровно seg."""
+        seg = _round_seg(seg, max(p[0] for p in profile), not smooth or seg <= 6)
         axis = unit(axis)
         n, b = _side(axis)
         cs = [(math.cos(2 * math.pi * k / seg), math.sin(2 * math.pi * k / seg)) for k in range(seg)]
         rings = [[add(add(origin, mul(axis, h)), mul(add(mul(n, cx), mul(b, sx)), r)) for cx, sx in cs]
                  for r, h in profile]
+        # Группа сглаживания на участок профиля между изломами круче TURN: плечо и бок не сливаются в один блик
+        groups = []
+        g = new_group()
+        for i in range(len(profile) - 1):
+            if i > 0:
+                d0 = (profile[i][0] - profile[i - 1][0], profile[i][1] - profile[i - 1][1])
+                d1 = (profile[i + 1][0] - profile[i][0], profile[i + 1][1] - profile[i][1])
+                l0, l1 = math.hypot(*d0), math.hypot(*d1)
+                if l0 > 0 and l1 > 0 and (d0[0] * d1[0] + d0[1] * d1[1]) / (l0 * l1) < math.cos(TURN):
+                    g = new_group()
+            groups.append(g if smooth and seg > 6 else False)
         faces = []
-        for r0, r1 in zip(rings, rings[1:]):
+        for i, (r0, r1) in enumerate(zip(rings, rings[1:])):
             for k in range(seg):
-                faces.append(((r0[k], r0[(k + 1) % seg], r1[(k + 1) % seg], r1[k]), mat, smooth and seg > 6))
+                faces.append(((r0[k], r0[(k + 1) % seg], r1[(k + 1) % seg], r1[k]), mat, groups[i]))
         faces.append((tuple(reversed(rings[0])), mat, False))
         faces.append((tuple(rings[-1]), mat, False))
         self._closed(faces)
 
-    def box(self, c, size, mat, bevel=0.004, rot=None, smooth=True):
-        """Брус с серединой c и размерами size, рёбра сняты фаской bevel; rot — матрица поворота вокруг середины."""
+    def box(self, c, size, mat, bevel=0.004, rot=None, smooth=True, segs=None):
+        """Брус с серединой c и размерами size, рёбра скруглены радиусом bevel; rot — матрица поворота вокруг
+        середины. Скругление — дуга из 2·segs отрезков (segs по умолчанию: 2, если брус длиннее 5 см, иначе 1),
+        углы — части сферы: кромка ловит блик, а не ломается одной фаской (docs/parts.md, «Гладкость»)."""
         h = (size[0] / 2, size[1] / 2, size[2] / 2)
         b = min(bevel, min(h) * 0.6)
         faces = []
@@ -157,37 +217,38 @@ class Body:
                         q.append(tuple(p))
                     faces.append((tuple(q), mat, False))
         else:
-            def vert(ax, sg):
-                """Вершина у угла sg на грани поперёк оси ax."""
-                return tuple(sg[k] * (h[k] if k == ax else h[k] - b) for k in range(3))
+            m = segs or max(2 if max(size) > 0.05 else 1, -(-seg_for(b, math.pi / 2) // 2))
+            hi = [h[k] - b for k in range(3)]
+            # Узлы по оси на поверхности внешней коробки: внутри грани — два, на скруглении — tan углов до 45°;
+            # точка внешней коробки проецируется на скругление (ближняя точка внутренней коробки + b по направлению)
+            ts = [math.tan(math.pi / 4 * j / m) for j in range(m + 1)]
+            nodes = [[-(hi[k] + b * t) for t in reversed(ts)] + [hi[k] + b * t for t in ts] for k in range(3)]
+
+            def proj(p):
+                q = [max(-hi[k], min(hi[k], p[k])) for k in range(3)]
+                d = [p[k] - q[k] for k in range(3)]
+                ln = math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
+                return tuple(q[k] + b * d[k] / ln for k in range(3))
             for ax in range(3):
                 u, v = (ax + 1) % 3, (ax + 2) % 3
                 for s in (-1, 1):
-                    q = []
-                    for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
-                        sg = [0, 0, 0]
-                        sg[ax], sg[u], sg[v] = s, su, sv
-                        q.append(vert(ax, sg))
-                    faces.append((tuple(q), mat, smooth))
-                # Фаски рёбер вдоль оси ax: между гранями u и v
-                for su in (-1, 1):
-                    for sv in (-1, 1):
-                        q = []
-                        for s, first in ((-1, u), (1, u), (1, v), (-1, v)):
-                            sg = [0, 0, 0]
-                            sg[ax], sg[u], sg[v] = s, su, sv
-                            q.append(vert(first, sg))
-                        faces.append((tuple(q), mat, smooth))
-            for sx in (-1, 1):
-                for sy in (-1, 1):
-                    for sz in (-1, 1):
-                        sg = (sx, sy, sz)
-                        faces.append((tuple(vert(ax, sg) for ax in range(3)), mat, smooth))
+                    nu, nv = nodes[u], nodes[v]
+                    grid = []
+                    for pu in nu:
+                        row = []
+                        for pv in nv:
+                            p = [0.0, 0.0, 0.0]
+                            p[ax], p[u], p[v] = s * h[ax], pu, pv
+                            row.append(proj(p))
+                        grid.append(row)
+                    for i in range(len(nu) - 1):
+                        for j in range(len(nv) - 1):
+                            faces.append(((grid[i][j], grid[i + 1][j], grid[i + 1][j + 1], grid[i][j + 1]), mat, smooth))
         # Выпуклое тело: каждую грань развернуть от середины
         out = []
         for pts, m, s in faces:
-            nrm = cross(sub(pts[1], pts[0]), sub(pts[2], pts[0]))
-            if dot(nrm, pts[0]) < 0:
+            nrm = cross(sub(pts[2], pts[0]), sub(pts[3], pts[1]))  # по диагоналям четырёхугольника
+            if dot(nrm, add(pts[0], pts[2])) < 0:
                 pts = tuple(reversed(pts))
             if rot is not None:
                 pts = tuple(mat_vec(rot, p) for p in pts)
@@ -227,7 +288,10 @@ class Body:
         self._closed(faces)
 
     def torus(self, c, axis, big, small, mat, seg=14, tseg=8):
-        """Кольцо (тор): середина c, ось axis, радиус кольца big, радиус прутка small. Рым, скоба, манжета."""
+        """Кольцо (тор): середина c, ось axis, радиус кольца big, радиус прутка small. Рым, скоба, манжета.
+        seg и tseg — нижние границы, сверх них — по допуску хорды (большой круг по наружному радиусу)."""
+        seg = _round_seg(seg, big + small, False)
+        tseg = _round_seg(tseg, small, False)
         axis = unit(axis)
         n, b = _side(axis)
         faces = []
@@ -297,8 +361,10 @@ def rnd(seed, k=0):
 def uniform(seed, k, a, b): return a + (b - a) * rnd(seed, k)
 
 
-def fillet_path(pts, radius, n=6):
-    """Ломаная со скруглёнными углами: дуга радиуса radius из n отрезков на каждом изломе."""
+def fillet_path(pts, radius, n=6, r_out=0.0, max_turn=None):
+    """Ломаная со скруглёнными углами: дуга радиуса radius на каждом изломе, отрезков не меньше n и столько,
+    чтобы наружная сторона трубы (радиус дуги + r_out) держала допуск хорды. max_turn — излом круче этого
+    оставить углом."""
     pts = [tuple(map(float, p)) for p in pts]
     out = [pts[0]]
     for i in range(1, len(pts) - 1):
@@ -306,7 +372,7 @@ def fillet_path(pts, radius, n=6):
         d1, d2 = unit(sub(a, b)), unit(sub(c, b))
         ca = max(-1.0, min(1.0, dot(d1, d2)))
         ang = math.acos(ca)
-        if ang > math.pi - 1e-3:
+        if ang > math.pi - 1e-3 or (max_turn is not None and math.pi - ang >= max_turn):
             out.append(b)
             continue
         t = min(radius / math.tan(ang / 2), length(sub(a, b)) * 0.45, length(sub(c, b)) * 0.45)
@@ -315,8 +381,9 @@ def fillet_path(pts, radius, n=6):
         v1, v2 = sub(add(b, mul(d1, t)), cen), sub(add(b, mul(d2, t)), cen)
         tot = math.acos(max(-1.0, min(1.0, dot(unit(v1), unit(v2)))))
         ax = unit(cross(v1, v2))
-        for k in range(n + 1):
-            th = tot * k / n
+        nk = max(n, seg_for(r + r_out, tot, tol=CHORD * 0.7))  # с запасом: нормали на стыке с прямым участком усреднены
+        for k in range(nk + 1):
+            th = tot * k / nk
             # Поворот v1 вокруг ax на th (v1 перпендикулярен ax)
             out.append(add(cen, add(mul(v1, math.cos(th)), mul(cross(ax, v1), math.sin(th)))))
     out.append(pts[-1])
