@@ -629,3 +629,14 @@ material hair_brow hair
     color 0.08 0.05 0.03
     rough 0.45
     extra 0.2 0.003 3 0
+
+# Проба текстур (docs/textures.md, tools/texprobe.py): крашеная сталь щита и трубы картами ассета — цвет и
+# затенение, нормаль, кривизна, шероховатость; износ по кривизне открывает сталь, грязь копится в канавках
+material tex_probe_paint baked
+    maps tex_probe_color tex_probe_normal tex_probe_curv tex_probe_rough
+    scan paint 1
+    color 1 1 1
+    color2 0.52 0.52 0.50
+    rough 0.55
+    metal 1
+    extra 0.35 0.6 0.35 1

@@ -18,6 +18,15 @@ struct Surface {
                     // его в шероховатость (Токсвиг), свет его не видит
 };
 
+// Развёртка точки сетки (resolve.glsl, Hit): uv, приращение на пиксель вправо (duv.xy) и вниз (duv.zw),
+// касательная в осях нормали узора (мир или оси движущейся детали) и знак битангенса. on — у сетки есть развёртка
+struct SurfUv {
+    bool on;
+    vec2 uv;
+    vec4 duv;
+    vec4 tan;
+};
+
 // Вход вида материала
 struct SurfIn {
     vec3 p;         // точка мира: метры от начала чанка камеры (x, z), высота (y); центр ячейки
@@ -26,6 +35,7 @@ struct SurfIn {
     float foot;     // пиксель кадра на этой глубине, м (плавно): гасить узор мельче пикселя без ступенек
     uint seed;      // зерно экземпляра
     Material m;
+    SurfUv t;       // развёртка (только сетки с VUV0, docs/textures.md); узор по миру её не берёт
 };
 
 // Целочисленный хеш (PCG) → [0, 1). Одинаков на всех GPU, узор не плывёт
@@ -152,10 +162,13 @@ float surf_toksvig(float rough, float nvar) {
     return sqrt(sqrt(a * a + min(2.0 * max(nvar, 0.0), 0.18)));
 }
 
-#include "materials.glsl"
+#include "textures.glsl"
 #include "scan.glsl"
+#include "materials.glsl"
 
-Surface surface(uint id, vec3 p, vec3 n, float cell, float foot, uint seed) {
+// t — развёртка точки (сетки с VUV0) или t.on = false. Материал с картами (вид baked) берёт скан сам, деталью поверх
+// карт (scan_detail), остальные — целиком вместо узора (scan_apply)
+Surface surface_uv(uint id, vec3 p, vec3 n, float cell, float foot, uint seed, SurfUv t) {
     SurfIn i;
     i.p = p;
     i.n = n;
@@ -163,14 +176,23 @@ Surface surface(uint id, vec3 p, vec3 n, float cell, float foot, uint seed) {
     i.foot = foot;
     i.seed = seed;
     i.m = pc.frame.materials.v[id];
+    i.t = t;
     Surface s = surface_kind(i.m.kind, i);
-    if (pc.frame.scans != 0u && i.m.scan != 0u) scan_apply(i, s);
+    if (pc.frame.scans != 0u && i.m.scan != 0u && i.m.tex == 0u) scan_apply(i, s);
     s.normal = normalize(s.normal);
     s.metal = clamp(s.metal * uintBitsToFloat(i.m.pad0), 0.0, 1.0);
     s.rough = surf_toksvig(s.rough, s.nvar);
     s.nvar = 0.0;
     s.pos = vec3(0.0);
     return s;
+}
+
+Surface surface(uint id, vec3 p, vec3 n, float cell, float foot, uint seed) {
+    SurfUv t;
+    t.on = false;
+    t.uv = vec2(0.0);
+    t.duv = t.tan = vec4(0.0);
+    return surface_uv(id, p, n, cell, foot, seed, t);
 }
 
 // Правило ячейки: не мельче cell_min, растёт степенями двойки, пока не станет cell_pixels пикселей кадра.

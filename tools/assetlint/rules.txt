@@ -24,6 +24,7 @@ budget old_body_* 22000
 budget hair_* 14000
 budget beard_* 7000
 budget wear_* 18000
+budget tex_probe 1000
 
 # --- люди, волосы, одежда: оболочки, а не тела ---
 allow human_m chord 3564 — сетка MakeHuman, упрощённая как у беты (decimate.py, 16 000 треугольников): LOD 0 задан числом треугольников, не хордой; гладкость — путь Б (docs/body.md)

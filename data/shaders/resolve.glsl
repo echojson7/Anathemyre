@@ -27,6 +27,13 @@ struct Hit {
     // к детали и не плывёт по ней, когда она едет через мир
     vec3 obj, obj_n;
     bool dyn;
+    // Развёртка (сетка с MESH_UV, docs/textures.md): uv в точке, её приращение на пиксель вправо (duv.xy) и вниз
+    // (duv.zw) — аналитически, лучами соседних пикселей на плоскость треугольника (производных фрагмента в
+    // compute нет); касательная — в мире, у движущейся сетки — в её осях, как obj_n; w — знак битангенса
+    bool has_uv;
+    vec2 uv;
+    vec4 duv;
+    vec4 tan;
 };
 
 // Луч пикселя относительно камеры, его проекция на взгляд = 1: точка = dir · глубина. Через центр пикселя со
@@ -54,6 +61,19 @@ vec4 ray_tri(vec3 dir, vec3 a, vec3 b, vec3 c) {
     return vec4(1.0 - u - v, u, v, t);
 }
 
+// Барицентрические веса точки луча на плоскости треугольника, без зажима в треугольник: для соседних пикселей,
+// чьи лучи могут уйти за его край (производные развёртки продолжают плоскость)
+vec3 ray_bary(vec3 dir, vec3 a, vec3 b, vec3 c) {
+    vec3 e1 = b - a, e2 = c - a;
+    vec3 pv = cross(dir, e2);
+    float det = dot(e1, pv);
+    if (abs(det) < 1e-20) return vec3(1.0, 0.0, 0.0);
+    float inv = 1.0 / det;
+    float u = dot(-a, pv) * inv;
+    float v = dot(dir, cross(-a, e1)) * inv;
+    return vec3(1.0 - u - v, u, v);
+}
+
 Hit resolve(ivec2 px, uint id) {
     FrameData f = pc.frame;
     Hit h;
@@ -64,6 +84,10 @@ Hit resolve(ivec2 px, uint id) {
     h.m0 = h.m1 = h.seed = h.level = 0u;
     h.obj = h.obj_n = vec3(0.0);
     h.dyn = false;
+    h.has_uv = false;
+    h.uv = vec2(0.0);
+    h.duv = vec4(0.0);
+    h.tan = vec4(0.0);
     if (id == 0u) return h;
     vec3 dir = h.rel;
     if ((id & VIS_GROUND) != 0u) {
@@ -113,12 +137,29 @@ Hit resolve(ivec2 px, uint id) {
     h.m1 = va.mats >> 16;
     if (it.material < 0xFFFFFF00u) h.m0 = h.m1 = it.material;   // выше — без подмены, младший байт — морок (RENDER_VEIL)
     h.seed = it.seed;
+    uint bind = m.lods[0].w;  // копия со скиннингом: вершины бинд-позы источника + 1
+    if ((m.flags & MESH_UV) != 0u) {
+        uint ub = bind != 0u ? bind - 1u : m.first_vertex;
+        VertexUv ua = f.uvs.v[f.indices.v[base] + ub];
+        VertexUv ub2 = f.uvs.v[f.indices.v[base + 1u] + ub];
+        VertexUv uc = f.uvs.v[f.indices.v[base + 2u] + ub];
+        vec2 ta = unpackHalf2x16(ua.uv), tb = unpackHalf2x16(ub2.uv), tc = unpackHalf2x16(uc.uv);
+        h.has_uv = true;
+        h.uv = ta * w.x + tb * w.y + tc * w.z;
+        vec3 bx = ray_bary(pixel_ray(px + ivec2(1, 0)), pa, pb, pcc);
+        vec3 by = ray_bary(pixel_ray(px + ivec2(0, 1)), pa, pb, pcc);
+        vec2 dx = ta * bx.x + tb * bx.y + tc * bx.z - h.uv, dy = ta * by.x + tb * by.y + tc * by.z - h.uv;
+        // Скользящий взгляд: соседний луч почти вдоль плоскости — приращение не больше всей картинки
+        h.duv = vec4(dx / max(1.0, length(dx)), dy / max(1.0, length(dy)));
+        vec4 qa = tan_decode(ua.tan), qb = tan_decode(ub2.tan), qc = tan_decode(uc.tan);
+        vec3 t = qa.xyz * w.x + qb.xyz * w.y + qc.xyz * w.z;
+        h.tan = vec4((m.flags & MESH_DYNAMIC) != 0u ? t : quat_rotate(q, t), qa.w);
+    }
     if ((m.flags & MESH_DYNAMIC) != 0u) {
         // Копия со скиннингом — те же номера вершин у источника в бинд-позе; жёсткая движущаяся сетка — свои вершины
         h.dyn = true;
         h.obj = vec3(va.px, va.py, va.pz) * w.x + vec3(vb.px, vb.py, vb.pz) * w.y + vec3(vcx.px, vcx.py, vcx.pz) * w.z;
         h.obj_n = oct_decode(va.normal) * w.x + oct_decode(vb.normal) * w.y + oct_decode(vcx.normal) * w.z;
-        uint bind = m.lods[0].w;
         if (bind != 0u) {
             Vertex ba = f.vertices.v[f.indices.v[base] + bind - 1u];
             Vertex bb = f.vertices.v[f.indices.v[base + 1u] + bind - 1u];
