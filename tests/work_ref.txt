@@ -14,7 +14,7 @@ gc_baked 216
 gc_over 0
 gc_direct 4410
 gc_lit 61824
-skin_verts 75105
+skin_verts 82370
 sm_used 96
 sm_new 4
 sm_over 0
