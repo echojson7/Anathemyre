@@ -354,6 +354,18 @@ int run_window(const Args &a, AppMemory &m) {
         }
         show_old_yaw = (Turn)face << 24;
     }
+    // Проба текстур (docs/textures.md): справа от точки старта, в 4 м ближе к камере, лицом к ней; только вид
+    WPos tex_probe;
+    Turn tex_probe_yaw = 0;
+    if (w.start.set) {
+        const f32 deg = PI_F / 180.0f;
+        const f32 rx = cos_f(w.start.yaw * deg), rz = sin_f(w.start.yaw * deg);
+        tex_probe.x = w.start.x + rx * 6.0f + rz * 4.0f;
+        tex_probe.z = w.start.z + rz * 6.0f - rx * 4.0f;
+        wpos_rebase(tex_probe);
+        // Лицо щита — +z сетки; курс к камере старта — как у показа тел, лицо сетки смотрит против него
+        tex_probe_yaw = (Turn)(((i32)(256.0f - w.start.yaw * (256.0f / 360.0f) + 0.5f) % 256 + 256) % 256) << 24;
+    }
     if (w.start.set && w.start.people && !brawl && !a.lineup && !show) {
         WPos at;
         at.x = w.start.x;
@@ -732,6 +744,8 @@ int run_window(const Args &a, AppMemory &m) {
         vi.show_old = show ? show_old : nullptr;
         vi.show_old_n = show ? SHOW_OLD : 0;
         vi.show_old_yaw = show_old_yaw;
+        vi.tex_probe = w.start.set ? &tex_probe : nullptr;
+        vi.tex_probe_yaw = tex_probe_yaw;
         vi.mech = mechs;
         RenderFrame rf;
         u32 dbg_keep = dbg.count;  // метка осмотра — только на этот кадр, шаг мира её не видит

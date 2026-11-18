@@ -7,8 +7,8 @@
 // ту же долю в .g — её берут лучи солнца (air_march.comp)
 #include "air.glsl"
 layout(local_size_x = 8, local_size_y = 8) in;
-layout(set = 0, binding = 16, rgba16f) uniform image3D u_air_sum_w;
-layout(set = 0, binding = 17, rgba16f) uniform image3D u_air_sun_w;
+layout(set = 0, binding = 18, rgba16f) uniform image3D u_air_sum_w;
+layout(set = 0, binding = 19, rgba16f) uniform image3D u_air_sun_w;
 
 // Отрезок длины len в пыли m (свет на метр, плотность): свет s и доля tr — дальше по лучу
 void air_seg(vec4 m, float len, inout vec3 s, inout float tr) {

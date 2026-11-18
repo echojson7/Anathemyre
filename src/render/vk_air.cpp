@@ -74,8 +74,8 @@ static bool air_image(GpuImage &im, u32 nx, u32 ny, const char *name) {
     return true;
 }
 
-// Картинки и буферы под размер кадра (зовёт vk_world при смене размера, GPU уже стоит) и места 16–19 набора кадра
-// мира: 16, 17 — сумма и клетки солнца для записи, 18, 19 — они же для выборки (трилинейно, по краю)
+// Картинки и буферы под размер кадра (зовёт vk_world при смене размера, GPU уже стоит) и места 18–21 набора кадра
+// мира: 18, 19 — сумма и клетки солнца для записи, 20, 21 — они же для выборки (трилинейно, по краю)
 bool vk_air_images(VkDescriptorSet set) {
     AirGpu &a = g_vk.air;
     air_free();
@@ -106,7 +106,7 @@ bool vk_air_images(VkDescriptorSet set) {
     for (u32 i = 0; i < 4; ++i) {
         wr[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         wr[i].dstSet = set;
-        wr[i].dstBinding = 16 + i;
+        wr[i].dstBinding = 18 + i;
         wr[i].descriptorCount = 1;
         wr[i].descriptorType = i < 2 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         wr[i].pImageInfo = &ii[i & 1];

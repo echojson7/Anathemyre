@@ -7,6 +7,7 @@
 
 constexpr u32 MATERIAL_MAX = 1024;
 constexpr u32 MATERIAL_MAX_KINDS = 64;
+constexpr u32 MATERIAL_MAPS = 4;  // карты вида baked: цвет, нормаль, кривизна, шероховатость (docs/textures.md)
 
 struct MaterialDesc {
     Str name;
@@ -18,6 +19,7 @@ struct MaterialDesc {
     Str scan;      // имя слоя сканов CC0 (docs/scans.md); пусто — только узор
     f32 scan_tile; // сторона плитки скана, м
     f32 scan_tint[3];
+    Str maps[MATERIAL_MAPS];  // имена текстур data/textures/<имя>.tex; пусто — карты нет
 };
 
 struct MaterialTable {

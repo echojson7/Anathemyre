@@ -32,7 +32,7 @@ def load_body(src):
         r = json.load(open(os.path.join(src, "rig.%s.json" % s)))
         rigs[s] = r["bones"] if "bones" in r else r
         weights[s] = json.load(open(os.path.join(src, "weights.%s.json" % s)))["weights"]
-    return W.Body(base, groups, Z, rigs, weights)
+    return W.Body(base, groups, Z, rigs, weights, H.mh_load(src))
 
 
 class F:

@@ -283,7 +283,7 @@ class Hair(W.Garment):
         hd = self.hd
         base = len(self.VM)
         FA, FL, VM, TT, TM, WB = [], [], [], [], [], []
-        shape = self.body.shape(H.BASE)
+        shape = self.body.shape(H.BASE, rest=False)  # пряди заданы в A-позе, их оси — там же
         for it in self.free:
             V, G, ring = it["V"], it["G"], it["ring"]
             # Привязка: кольцо держится за вершину тела, ближнюю к точке направляющей

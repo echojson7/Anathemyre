@@ -92,6 +92,7 @@ u32 render_gpu_passes(const char **names, f64 *ms, u32 cap) {
 static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g = FrameGpu{};
     g.vertices = g_vk.vertices.address;
+    g.uvs = g_vk.uvs.address;
     g.materials = g_vk.materials.address;
     g.lines = fs.lines.address;
     g.points = fs.points.address;

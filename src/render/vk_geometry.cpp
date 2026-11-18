@@ -16,6 +16,9 @@ bool vk_geometry_init() {
     // Источник копии — для людей: копия вершин и кластеров на человека (vk_skin.cpp)
     const VkBufferUsageFlags dst = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     if (!vk_create_buffer(g_vk.vertices, GEOMETRY_VERTEX_BYTES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true)) return false;
+    // Развёртка и касательные (docs/textures.md): 8 байт на место вершины, тот же номер, что в vertices
+    if (!vk_create_buffer(g_vk.uvs, GEOMETRY_VERTEX_BYTES / sizeof(MeshVertex) * sizeof(MeshUv), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true))
+        return false;
     if (!vk_create_buffer(g_vk.indices, GEOMETRY_INDEX_BYTES, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | dst, true)) return false;
     if (!vk_create_buffer(g_vk.materials, RENDER_MAX_MATERIALS * sizeof(RenderMaterial), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT))
         return false;
@@ -52,6 +55,7 @@ void vk_geometry_shutdown() {
     if (g_vk.cls_block) vmaDestroyVirtualBlock(g_vk.cls_block);
     g_vk.vtx_block = g_vk.idx_block = g_vk.cls_block = VK_NULL_HANDLE;
     vk_destroy_buffer(g_vk.vertices);
+    vk_destroy_buffer(g_vk.uvs);
     vk_destroy_buffer(g_vk.indices);
     vk_destroy_buffer(g_vk.materials);
     vk_destroy_buffer(g_vk.mesh_table);
@@ -100,7 +104,7 @@ bool vk_one_shot(void (*record)(VkCommandBuffer, void *), void *user) {
 
 struct UploadCopy {
     VkBuffer staging;
-    VkBufferCopy vtx, idx, cls;
+    VkBufferCopy vtx, idx, cls, uv;  // uv.size 0 — сетка без развёртки
 };
 
 static void record_upload(VkCommandBuffer cmd, void *user) {
@@ -108,6 +112,7 @@ static void record_upload(VkCommandBuffer cmd, void *user) {
     vkCmdCopyBuffer(cmd, u.staging, g_vk.vertices.buffer, 1, &u.vtx);
     vkCmdCopyBuffer(cmd, u.staging, g_vk.indices.buffer, 1, &u.idx);
     vkCmdCopyBuffer(cmd, u.staging, g_vk.clusters.buffer, 1, &u.cls);
+    if (u.uv.size) vkCmdCopyBuffer(cmd, u.staging, g_vk.uvs.buffer, 1, &u.uv);
     // Копия видна чтению вершин, индексов и кластеров в следующих кадрах (растр и compute)
     auto mb = vk_info<VkMemoryBarrier2>(VK_STRUCTURE_TYPE_MEMORY_BARRIER_2);
     mb.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
@@ -144,8 +149,12 @@ static void bound_sphere(const MeshVertex *v, const u32 *idx, u32 count, f32 out
 }
 
 u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices, Span<const RenderLod> lods_in,
-                       Span<const RenderCluster> clusters_in) {
+                       Span<const RenderCluster> clusters_in, Span<const MeshUv> uvs) {
     if (!vertices.count || !indices.count) return 0;
+    if (uvs.count && uvs.count != vertices.count) {
+        log_error("развёртка не на каждую вершину сетки");
+        return 0;
+    }
     for (const RenderLod &l : lods_in)
         if ((u64)l.first_index + l.index_count > indices.count ||
             (u64)l.first_cluster + l.cluster_count > clusters_in.count) {
@@ -208,9 +217,10 @@ u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices,
     for (u32 i = 0; i < nlods; ++i) s.lods[i] = lods[i];
 
     // Загрузка: временный буфер, копия на GPU, ожидание. Только при загрузке, не в игровом цикле
-    VkDeviceSize cbytes = (VkDeviceSize)ncls * sizeof(ClusterGpu);
+    VkDeviceSize cbytes = (VkDeviceSize)ncls * sizeof(ClusterGpu), ubytes = uvs.count * sizeof(MeshUv);
     GpuBuffer staging;
-    if (!vk_create_buffer(staging, vbytes + ibytes + cbytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) { free_slot(id); return 0; }
+    if (!vk_create_buffer(staging, vbytes + ibytes + cbytes + ubytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) { free_slot(id); return 0; }
+    if (ubytes) memcpy((u8 *)staging.mapped + vbytes + ibytes + cbytes, uvs.data, ubytes);
     memcpy(staging.mapped, vertices.data, vbytes);
     memcpy((u8 *)staging.mapped + vbytes, indices.data, ibytes);
     // Кластеры: свои, потом нарезанные для LOD без кластеров; строка таблицы сеток — с номерами в общей таблице
@@ -224,6 +234,7 @@ u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices,
     mg.first_vertex = s.first_vertex;
     mg.first_index = s.first_index;
     mg.lod_count = nlods;
+    if (ubytes) mg.pad |= MESH_UV;
     bound_sphere(vertices.data, nullptr, (u32)vertices.count, mg.sphere);
     g_vk.shadow.mesh_gen++;  // номер сетки мог достаться новой: страницы теней — с нуля
     u32 nc = (u32)clusters_in.count;
@@ -243,7 +254,8 @@ u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices,
     }
     vk_sdf_mesh_clusters(s.first_cluster, cg, ncls);  // сферы кластеров — отбору засыпки поля расстояний
     vmaFlushAllocation(g_vk.vma, staging.alloc, 0, VK_WHOLE_SIZE);
-    UploadCopy u{staging.buffer, {0, voff, vbytes}, {vbytes, ioff, ibytes}, {vbytes + ibytes, coff * sizeof(ClusterGpu), cbytes}};
+    UploadCopy u{staging.buffer, {0, voff, vbytes}, {vbytes, ioff, ibytes}, {vbytes + ibytes, coff * sizeof(ClusterGpu), cbytes},
+                 {vbytes + ibytes + cbytes, voff / sizeof(MeshVertex) * sizeof(MeshUv), ubytes}};
     bool ok = vk_one_shot(record_upload, &u);
     vk_destroy_buffer(staging);
     if (!ok) { free_slot(id); return 0; }

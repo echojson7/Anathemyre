@@ -5,6 +5,7 @@
 // Данные кадра для шейдеров (FrameData в data/shaders/common.glsl), пишутся раз за кадр
 struct FrameGpu {
     VkDeviceAddress vertices, materials, lines, points;
+    VkDeviceAddress uvs;  // развёртка и касательные вершин (MeshUv), те же номера, что у vertices (docs/textures.md)
     VkDeviceAddress t_height, t_mask;
     VkDeviceAddress t_water, t_mask2, t_dune, t_fine;
     i32 cam_cx, cam_cz;

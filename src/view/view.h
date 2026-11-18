@@ -87,6 +87,9 @@ struct ViewInput {
     const WPos *show_old = nullptr;
     u32 show_old_n = 0;
     Turn show_old_yaw = 0;
+    // Проба текстур (docs/textures.md): сетка tex_probe у точки старта, лицом к камере старта; только вид
+    const WPos *tex_probe = nullptr;
+    Turn tex_probe_yaw = 0;
     MechView *mech = nullptr;      // шагающие машины (состояние вида между кадрами, docs/vezha.md, docs/tat.md), может быть nullptr
     bool lamps_off = false;        // лампы карты не светят (F3 «лампы карты», --nolamps): сравнение было/стало
     f32 eye_exposure = 0.0f;       // экспозиция глаза прочитанного кадра (render_light), 0 — нет: дальность ламп

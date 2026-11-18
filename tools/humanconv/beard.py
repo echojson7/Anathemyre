@@ -55,22 +55,28 @@ def chin_field(P):
     return np.minimum.reduce([0.03 - r, 1.611 - P[:, 1], P[:, 1] - 1.572, lips(P), P[:, 2] - 0.10])
 
 
-def shell(g, hd, m, field, height, mat, edge=0.006):
-    """Кусок волос по коже внутри поля field(P): высота height(P, f), у края — на нет и смесь с кожей"""
+def shell(g, hd, m, field, height, mat, edge=0.006, parts=None, blend=True):
+    """Кусок волос по коже внутри поля field(P): высота height(P, f), у края — на нет и смесь с кожей. parts(P) —
+    границы поля по отдельности (узкая полоса: одно поле min() терялось бы между вершинами, срез — по каждой).
+    blend=False — без смеси с кожей, край резкий по срезу: у узкой полосы все углы треугольника бывают на срезе,
+    и смесь по вершинам красила бы его целиком в кожу"""
     b = hd.b
-    keep = [np.minimum(field(b.V), face_front(b.V) * 0.002)]
+    keep = [np.minimum(field(b.V), face_front(b.V) * 0.002)] if parts is None else \
+        parts(b.V) + [face_front(b.V) * 0.002]
 
     def corner(v, t):
         P = pts(v)
         f = field(P)
-        return 0.0006 + height(P, f) * ss(0.0, edge, f)
+        # 1.6 мм над кожей MakeHuman: тело в игре — упрощённое (LOD 0, decimate.py), его грани между вершинами
+        # выходят над исходной кожей до ~1 мм у бровей и скул, и тонкий слой волос протыкался кожей
+        return 0.0016 + height(P, f) * ss(0.0, edge, f)
 
     def dirt(v, t):
         f = field(pts(v))
-        return m["human_skin"], np.clip((1.0 - ss(0.0, edge * 0.9, f)) / W.DIRT, 0.0, 1.0)
+        return m["human_skin"], np.clip((1.0 - ss(0.0, edge * 0.9, f)) / W.DIRT, 0.0, 1.0) * blend
 
     def ao(v, t):
-        return 0.6 + 0.3 * ss(0.0, edge, field(pts(v)))
+        return 0.6 + 0.3 * (ss(0.0, edge, field(pts(v))) if blend else 1.0)
     g.add(W.Part(b, keep, (), corner, lambda t: m[mat], dirt, thick=0.0015, ao=ao))
 
 
@@ -80,16 +86,26 @@ def full_field(P):
 
 # ---------------------------------------------------------------- брови
 def brows(b, hd):
+    """Брови беты (stage0/test-room, лента бровей у глаза, 18.11 «как в бете»): у переносья толще и ниже, подъём к
+    2/3 длины, хвост тонкий и опускается; лента почти на коже (1.7 мм: над гранями упрощённого тела), край резкий
+    по срезу, как окраска граней у беты. Размеры — в долях головы беты (hk: макушка над глазом 11.25 см), середина
+    между мужской и женской бровью беты"""
     M = ["hair_brow", "human_skin"]
     m = mats(M)
     g = C.Hair("hair_brows", M, hd)
+    hk = (hd.top - hd.eye_y) / 0.1125
 
     def field(P):
         r = np.abs(P[:, 0])
-        yb = np.interp(r, [0.010, 0.022, 0.036, 0.05], [1.7165, 1.7215, 1.7235, 1.7185])
-        th = np.interp(r, [0.010, 0.02, 0.04, 0.052], [0.0052, 0.0055, 0.0042, 0.0016])
-        return np.minimum.reduce([th - np.abs(P[:, 1] - yb), r - 0.0105, 0.053 - r, P[:, 2] - 0.12])
-    shell(g, hd, m, field, lambda P, f: 0.0015 + 0.0015 * ss(0.0, 0.004, f), "hair_brow", edge=0.0018)
+        t = ((r - hd.eye_x) / hk + 0.017) / 0.044
+        tc = np.clip(t, 0.0, 1.0)
+        rise = np.where(tc < 0.65, 1 - ((tc - 0.65) / 0.65) ** 2, 1 - ((tc - 0.65) / 0.35) ** 2 * 1.25)
+        cy = hd.eye_y + (0.0145 + 0.0045 * rise) * hk
+        th = (0.0105 - 0.004 * tc - 0.0045 * tc ** 3) * hk * (0.5 + 0.5 * np.sqrt(np.clip(tc / 0.15, 0, 1))) * 1.04
+        ln = 0.044 * hk
+        return [(cy + 0.5 * th) - P[:, 1], P[:, 1] - (cy - 0.5 * th), t * ln, (1.0 - t) * ln, P[:, 2] - 0.12]
+    shell(g, hd, m, lambda P: np.minimum.reduce(field(P)), lambda P, f: 0.0001 + 0.0 * f, "hair_brow", edge=0.0022,
+          parts=field, blend=False)
     return g
 
 

@@ -148,6 +148,9 @@ static bool create_device() {
     f10.imageCubeArray = VK_TRUE;
     // Косвенные вызовы кластеров (кадр, тени солнца, грани огней) несут свой номер в firstInstance
     f10.drawIndirectFirstInstance = VK_TRUE;
+    // Текстуры ассетов (docs/textures.md): сжатие BC7/BC5/BC4 и анизотропная выборка
+    f10.textureCompressionBC = VK_TRUE;
+    f10.samplerAnisotropy = VK_TRUE;
 
     vkb::PhysicalDeviceSelector sel(vi);
     auto pick = sel.set_surface(g_vk.surface)

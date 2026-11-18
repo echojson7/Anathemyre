@@ -235,14 +235,14 @@ material human_band flat
     color 0.17 0.16 0.13
     rough 0.8
 
-# Глаза: белок и радужка
+# Глаза: белок и радужка. Матовые, как у беты (там глаз — материал кожи): с rough 0.3 углы белка горели бликом
 material human_eye flat
     color 0.46 0.43 0.39
-    rough 0.3
+    rough 0.6
 
 material human_iris flat
     color 0.07 0.05 0.04
-    rough 0.3
+    rough 0.6
 
 # Исподь (docs/ispod.md): чугун труб, крашеная и оцинкованная сталь, резина кабелей, просмолённое дерево шпал.
 # Вид metal: color — металл или краска, color2 — ржавчина, extra — доля ржавчины, размер пятен (м), разброс
@@ -594,6 +594,54 @@ material tat_cable flat
     color 0.30 0.03 0.02
     rough 0.6
 
+# «Гридь» (docs/gryd.md): светлая пыльно-серая краска щитков и корпуса, голая сталь сколов, тёмное железо механики,
+# воронёная сталь и чёрный полимер винтовки, тёплый огонёк объективов, тёмный трафарет, вспышка выстрела
+material gryd_paint metal
+    color 0.30 0.295 0.27
+    color2 0.31 0.25 0.17
+    rough 0.66
+    metal 0
+    texel 0.015625
+    extra 0.14 0.09 0.22 0
+
+material gryd_worn metal
+    color 0.26 0.25 0.24
+    color2 0.20 0.11 0.06
+    rough 0.45
+    metal 0.9
+    texel 0.015625
+    extra 0.18 0.0625 0.3 0
+
+material gryd_iron metal
+    color 0.06 0.058 0.056
+    color2 0.24 0.20 0.14
+    rough 0.6
+    metal 0.45
+    texel 0.015625
+    extra 0.12 0.125 0.3 0
+
+material gryd_gun metal
+    color 0.03 0.03 0.032
+    color2 0.20 0.17 0.12
+    rough 0.55
+    metal 0.25
+    texel 0.015625
+    extra 0.08 0.125 0.2 0
+
+material gryd_lens glow
+    color 1.0 0.62 0.3
+    rough 0.3
+    extra 60 0 0 0
+
+material gryd_mark flat
+    color 0.05 0.045 0.04
+    rough 0.75
+
+material gryd_flash glow
+    color 1.0 0.72 0.36
+    rough 0.5
+    extra 30000 0 0 0
+
 # Волосы, бороды, брови (docs/hair.md): вид hair — цвет от зерна (тёмность, седина, рыжина), пряди узором вдоль
 # направления. hair — от макушки (стрижки, распущенные), hair_back — зачёсанные назад; hair_stubble — щетина на
 # коже (color, color2 — тон кожи как у human_skin). Завязки — кожаный шнур и медное кольцо
@@ -629,3 +677,14 @@ material hair_brow hair
     color 0.08 0.05 0.03
     rough 0.45
     extra 0.2 0.003 3 0
+
+# Проба текстур (docs/textures.md, tools/texprobe.py): крашеная сталь щита и трубы картами ассета — цвет и
+# затенение, нормаль, кривизна, шероховатость; износ по кривизне открывает сталь, грязь копится в канавках
+material tex_probe_paint baked
+    maps tex_probe_color tex_probe_normal tex_probe_curv tex_probe_rough
+    scan paint 1
+    color 1 1 1
+    color2 0.52 0.52 0.50
+    rough 0.55
+    metal 1
+    extra 0.35 0.6 0.35 1

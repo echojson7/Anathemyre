@@ -5,7 +5,7 @@
 #ifndef AIR_APPLY_GLSL
 #define AIR_APPLY_GLSL
 #include "air.glsl"
-layout(set = 0, binding = 18) uniform sampler3D u_air_sum;
+layout(set = 0, binding = 20) uniform sampler3D u_air_sum;
 
 // Воздух показан: включён в кадре, и режим F3 не заменяет кадр картой (тени, поле, зонды, froxels)
 bool air_shown() {

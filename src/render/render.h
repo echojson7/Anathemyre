@@ -68,7 +68,7 @@ struct RenderMaterial {
     u32 kind;
     f32 metal;  // 0 — диэлектрик, 1 — металл (docs/materials.md)
     u32 scan;   // слой сканов + 1 (docs/scans.md); 0 — нет, только узор
-    u32 pad;
+    u32 tex;    // карты вида baked (docs/textures.md): номера текстур по байту — цвет, нормаль, кривизна, шероховатость; 0 — нет
     f32 p[12];  // смысл — asset/material.h
     f32 scan_tint[3], scan_tile;  // множитель цвета скана; сторона плитки скана, м (делит 256 нацело)
 };
@@ -267,6 +267,7 @@ const char *render_device_name();
 // Кластеры (≤ 124 треугольников, индексы подряд) — для отсечения на GPU кадра мира; LOD — диапазон индексов
 // и диапазон кластеров. Без кластеров рендер режет индексы LOD на куски сам
 struct MeshVertex;
+struct MeshUv;
 constexpr u32 RENDER_MESH_MAX_LODS = 8;
 struct RenderLod {
     u32 first_index, index_count;
@@ -277,8 +278,9 @@ struct RenderCluster {
     u32 first_index, tri_count;  // от начала индексов сетки
     f32 sphere[4];               // в осях сетки
 };
+// uvs — развёртка и касательные (кусок VUV0, по вершине) или пусто
 u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices, Span<const RenderLod> lods,
-                       Span<const RenderCluster> clusters);
+                       Span<const RenderCluster> clusters, Span<const MeshUv> uvs = {});
 void render_mesh_destroy(u32 mesh);
 // Сетка движется каждый кадр целиком (меч в руках, машина): в кеш страниц теней и кубов огней не идёт, как скин-копии
 // людей, — тень слоем подвижных каждый кадр (docs/shadow.md)
@@ -326,6 +328,16 @@ struct RenderScans {
     usize array_bytes;
 };
 bool render_set_scans(const RenderScans &s);
+// Текстура ассета (docs/textures.md): блоки BC всех мипов подряд, format — TexFormat (src/asset/tex.h). Номер в
+// таблице текстур кадра мира (1…RENDER_MAX_TEXTURES) или 0 — не загрузилась. Только при загрузке
+constexpr u32 RENDER_MAX_TEXTURES = 255;
+struct RenderTexture {
+    u32 format, width, height, mips;
+    const u8 *blocks;
+    const usize *mip_offset;  // начало мипа в blocks
+    usize bytes;
+};
+u32 render_texture_create(const RenderTexture &t);
 
 // Земля (docs/terrain.md): сетка высот и маски копируются в видеопамять один раз, числа — как Terrain
 // в src/sim/terrain.h (рендер шаг мира не видит, их передаёт app). Рисуется clipmap'ом вокруг камеры

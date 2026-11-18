@@ -8,7 +8,7 @@
 // лучами заявили клетки (air_cells.comp). Сумма × фаза × свет солнца × экспозиция
 #include "air.glsl"
 layout(local_size_x = 8, local_size_y = 8) in;
-layout(set = 0, binding = 19) uniform sampler3D u_air_sun;
+layout(set = 0, binding = 21) uniform sampler3D u_air_sun;
 
 // Страница не выше hmin: ни одна заслонка в ней не закрывает точку (или страницы нет — свет, как у sm_occ)
 bool air_page_clear(int k, ivec2 page, float hmin) {

@@ -13,8 +13,8 @@
 #include "clouds.glsl"
 #include "horizon.glsl"
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
-layout(set = 0, binding = 16, rgba16f) uniform writeonly image3D u_air_sum_w;
-layout(set = 0, binding = 17, rgba16f) uniform writeonly image3D u_air_sun_w;
+layout(set = 0, binding = 18, rgba16f) uniform writeonly image3D u_air_sum_w;
+layout(set = 0, binding = 19, rgba16f) uniform writeonly image3D u_air_sun_w;
 
 // Дальний край плитки воздуха (м по лучу, до AIR_FAR), за краем кадра — край
 float air_tmax_at(int x, int y) {

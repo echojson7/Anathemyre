@@ -12,7 +12,10 @@ struct Vertex { float px, py, pz; uint normal; uint mats; uint misc; };
 struct Instance { int cx, cz; float x, y, z; uint rot_xy, rot_zw; float scale; uint mesh, material, seed, lod_min; };
 // Материал — RenderMaterial, 64 байта: p0 = color.rgb + rough, p1 = color2.rgb + texel, p2 = extra;
 // pad0 — биты f32 metal (0 — диэлектрик, 1 — металл)
-struct Material { uint kind, pad0, scan, pad2; vec4 p0, p1, p2, p3; };  // scan, p3 — сканы (docs/scans.md)
+struct Material { uint kind, pad0, scan, tex; vec4 p0, p1, p2, p3; };  // scan, p3 — сканы (docs/scans.md); tex — карты baked
+// Развёртка и касательная вершины (MeshUv, src/asset/mesh.h; docs/textures.md): uv — две f16 (v вниз по картинке),
+// tan — касательная октаэдром 15 + 15 бит и знак битангенса в бите 31 (tan_decode)
+struct VertexUv { uint uv; uint tan; };
 struct LineVtx { float x, y, z; uint rgba; };
 // Декаль — RenderDecal (src/render/render.h), 48 байт
 struct Decal { vec3 c; float ux, uz; vec3 h; uint kind, material, seed, pad; };
@@ -23,6 +26,7 @@ const uint LIGHT_SHADOW = 1u;  // тень по полю расстояний м
 struct PointVtx { float x, y, z, size; uint rgba, pad0, pad1, pad2; };
 
 layout(buffer_reference, scalar) readonly buffer Vertices { Vertex v[]; };
+layout(buffer_reference, scalar) readonly buffer VertexUvs { VertexUv v[]; };
 layout(buffer_reference, scalar) readonly buffer Instances { Instance v[]; };
 layout(buffer_reference, scalar) readonly buffer Materials { Material v[]; };
 layout(buffer_reference, scalar) readonly buffer Lines { LineVtx v[]; };
@@ -180,6 +184,7 @@ layout(buffer_reference, scalar) buffer SmDyn { uint n, one_y, one_z, pad; uint 
 struct MeshInfo { uint first_vertex, first_index, lod_count, flags; vec4 sphere; uvec4 lods[8]; };  // lods: первый кластер, число, ошибка (биты f32), 0;
 // lods[0].w копии со скиннингом — первая вершина бинд-позы источника + 1
 const uint MESH_DYNAMIC = 1u;  // MeshInfo.flags: вершины пишет скиннинг каждый кадр (тень — слоем подвижных, не в кеше)
+const uint MESH_UV = 2u;       // MeshInfo.flags: у вершин есть развёртка (FrameData.uvs)
 struct Cluster { uint first_index, tri_count; vec4 sphere; uint pad0, pad1; };  // first_index — от начала индексов сетки
 struct DrawCmd { uint index_count, instance_count, first_index; int vertex_offset; uint first_instance; };
 layout(buffer_reference, scalar) readonly buffer MeshInfos { MeshInfo v[]; };
@@ -215,6 +220,7 @@ layout(buffer_reference, scalar) buffer FrameData {
     Materials materials;
     Lines lines;
     Points points;
+    VertexUvs uvs;      // развёртка вершин, номер — как у vertices (только у сеток с MESH_UV)
     Words t_height;     // сетка высот земли, u16 парами (docs/terrain.md)
     Words t_mask;       // маски 32 м, u32: шероховатость, песок, трава, сырость по байту
     Words t_water;      // уровень воды 32 м, u16 парами, 5 см; 0 — воды нет
@@ -502,6 +508,14 @@ vec3 oct_decode(uint packed) {
     vec3 n = vec3(e.x, 1.0 - abs(e.x) - abs(e.y), e.y);
     if (n.y < 0.0) n.xz = (1.0 - abs(n.zx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.z >= 0.0 ? 1.0 : -1.0);
     return normalize(n);
+}
+
+// Касательная VUV0 → xyz (единичная) и w = ±1 (знак битангенса B = cross(N, T) · w), как tangent_pack в meshpack
+vec4 tan_decode(uint t) {
+    vec2 e = vec2(float(t & 0x7FFFu), float((t >> 15) & 0x7FFFu)) * (2.0 / 32767.0) - 1.0;
+    vec3 v = vec3(e.x, e.y, 1.0 - abs(e.x) - abs(e.y));
+    if (v.z < 0.0) v.xy = (1.0 - abs(v.yx)) * vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0);
+    return vec4(normalize(v), (t & 0x80000000u) != 0u ? -1.0 : 1.0);
 }
 
 // sRGB 8 бит → линейный цвет (картинка swapchain *_SRGB сама кодирует обратно)

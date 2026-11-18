@@ -56,8 +56,8 @@ static void usage() {
     log_info("           --frames N --video префикс --cam … --cam-to yaw pitch расст x z   пролёт камеры от --cam к --cam-to, 1/30 с на кадр");
     log_info("           [--spin град/с]                                              камера поворачивается сама (видео мерцания при повороте)");
     log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines] [--sides]  выбрать, камера за ним, приказы, отладка");
-    log_info("           [--mech pack|stand|walk|show|veil|prone] [--mech-follow]     шагающие машины: лежат, стоят, обходят, показ всего по порядку, морок по кругу, лёжка; камера за машиной (docs/vezha.md, docs/tat.md)");
-    log_info("           [--mech-kind vezha|tat]                                      за какой машиной камера и след");
+    log_info("           [--mech pack|stand|walk|show|veil|prone|aim] [--mech-follow] шагающие машины: лежат, стоят, обходят, показ всего по порядку, морок по кругу, лёжка, выпад с очередями; камера за машиной (docs/vezha.md, docs/tat.md, docs/gryd.md)");
+    log_info("           [--mech-kind vezha|tat|gryd]                                 за какой машиной камера и след");
     log_info("           --frames N --mech-trace файл.txt                             след её движения без окна: N кадров по 1/30 с, строка чисел на кадр");
     log_info("           [--attack \"кадр место цель; …\"] [--slow кадр]  приказы «атаковать» по кадрам, замедление ×0.25 (видео удара)");
     log_info("           --sim N [--seed N] [--record файл.rec] [--hashes файл.txt]   шаг мира без окна");
@@ -249,7 +249,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--mech")) {
             a.mech = next;
             ok = next && (!strcmp(next, "pack") || !strcmp(next, "stand") || !strcmp(next, "walk") || !strcmp(next, "show") ||
-                            !strcmp(next, "veil") || !strcmp(next, "prone"));
+                            !strcmp(next, "veil") || !strcmp(next, "prone") || !strcmp(next, "aim"));
             i++;
         }
         else if (!strcmp(s, "--people-lines")) a.people_lines = true;
@@ -262,7 +262,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--mech-follow")) a.mech_follow = true;
         else if (!strcmp(s, "--mech-kind")) {
             a.mech_kind = next;
-            ok = next && (!strcmp(next, "vezha") || !strcmp(next, "tat"));
+            ok = next && (!strcmp(next, "vezha") || !strcmp(next, "tat") || !strcmp(next, "gryd"));
             i++;
         }
         else if (!strcmp(s, "--mech-trace")) { a.mech_trace = next; ok = next != nullptr; i++; }
