@@ -100,8 +100,10 @@ static bool bind(PeopleView &pv, const ViewAssets &a) {
     }
     const ViewClip *stance = find_clip(a, STANCE_CLIP, ge);
     pv.armed = a.weapons.issue_sum > 0.0f;
+    // Привязка рук нужна и без оружия: свободная кисть (arms_relax)
+    const bool arms_ok = stance && arms_bind(pv.arms, s, stance->clip, STANCE_T, idle->clip, IDLE_T);
     if (!pv.armed) log_warn("люди: нет оружия в data/weapons.txt — в руках пусто");
-    else if (!(stance && arms_bind(pv.arms, s, stance->clip, STANCE_T, idle->clip, IDLE_T))) {
+    else if (!arms_ok) {
         log_warn("люди: нет клипа %s или костей рук — оружия у людей не будет", STANCE_CLIP);
         pv.armed = false;
     }
@@ -520,6 +522,7 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const Appea
     const ActWeights aw = pose_actions(pw);
     // Таз клипа — на высоте таза сетки: у человека с другой длиной ног он выше или ниже во столько же раз
     trans.y *= fit.pelvis;
+    arms_relax(pv.arms, rot);
 
     // Наклон: вперёд от ускорения (позвоночник), вбок к центру поворота (таз; стопы вернёт IK)
     pose_world(s, rot, tb, &trans, wr, wp);
@@ -555,8 +558,24 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const Appea
     return out;
 }
 
-// Показ тел (docs/body.md, «Показ»): поза привязки как есть — стоит ровно, руки в стороны, взгляд прямо, без оружия.
-// Низ сетки — на нуле, поэтому корень — на опоре под человеком
+// Показ тел (docs/body.md, «Показ»): стоит, как тела беты, — руки вдоль тела, ноги наполовину к отвесу, кисти в
+// свободном хвате, без оружия. Это и есть поза, в которой вылеплена сетка (стойка беты, humanconv.rest): кости
+// встают по обратным бинд-матрицам, палитра единичная. Стопы — на опоре A-позы: таз поднимается на выпрямление ног
+static void show_stand(const PeopleView &pv, const Skel &s, Quat *rot, Quat *wr, Vec3 *wp, Vec3 &trans) {
+    const i32 *B = pv.bones;
+    const u32 nb = (u32)s.bones.count;
+    for (u32 b = 0; b < nb; ++b) rot[b] = Quat{0, 0, 0, 1};
+    const i32 tb = B[B_PELVIS];
+    const SkelBone &pel = s.bones.data[tb];
+    trans = Vec3{pel.pos[0], pel.pos[1], pel.pos[2]};
+    pose_world(s, rot, tb, &trans, wr, wp);
+    const f32 ankle0 = f_min(wp[B[B_FOOT]].y, wp[B[B_FOOT + 1]].y);
+    pose_mesh_rest(s, rot);
+    pose_world(s, rot, tb, &trans, wr, wp);
+    trans.y += ankle0 - f_min(wp[B[B_FOOT]].y, wp[B[B_FOOT + 1]].y);
+    pose_world(s, rot, tb, &trans, wr, wp);
+}
+
 static PoseOut pose_show(PeopleView &pv, const AppearFit &fit, const ViewInput &in, u32 i, const Root &r,
                          PoseMatrix *palette) {
     const Extract &c = *in.cur;
@@ -565,7 +584,10 @@ static PoseOut pose_show(PeopleView &pv, const AppearFit &fit, const ViewInput &
         L = PersonLook{};
         L.gen = c.person_gen[i];
     }
-    pose_palette(fit.skel, nullptr, palette);
+    Quat rot[SKEL_MAX_BONES], wr[SKEL_MAX_BONES];
+    Vec3 wp[SKEL_MAX_BONES], trans;
+    show_stand(pv, fit.skel, rot, wr, wp, trans);
+    pose_palette_world(fit.skel, wr, wp, palette);
     PoseOut out{};
     out.base = r.at;
     L.y = r.at.y;
@@ -674,6 +696,8 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
         if (slot_copy[k] < 0 || ni >= RENDER_MAX_INSTANCES) continue;
         u32 i = pick[k];
         Root r = person_root(*in.prev, c, in.alpha, i);
+        // Показ: ровно лицом к камере старта, как тела беты рядом (курс человека шага мира может уйти на градусы)
+        if (in.people_show && in.show_old) r.yaw = in.show_old_yaw;
         const u32 cj = (u32)slot_copy[k];
         PoseOut po = in.people_show ? pose_show(pv, pv.fit[cj], in, i, r, (PoseMatrix *)(bones + nbo))
                                     : pose_person(pv, assets, pv.fit[cj], in, i, r, f_sqrt(pick_d[k]),

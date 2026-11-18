@@ -48,20 +48,21 @@ Appear appear_make(u32 seed) {
     f32 ks = k0 + k1 + k2;
     if (ks < 1e-4f) k0 = k1 = k2 = 1.0f / 3.0f;
     else { k0 /= ks; k1 /= ks; k2 /= ks; }
-    m[AM_KIN_A] = k0 - k2;
-    m[AM_KIN_B] = k1 - k2;
+    // Вполсилы (2026-11-17): у краёв наборы MakeHuman карикатурны, лицо беты — середина
+    m[AM_KIN_A] = (k0 - k2) * 0.6f;
+    m[AM_KIN_B] = (k1 - k2) * 0.6f;
     // Тон кожи: темнее у первого рода, все загорелые
     a.skin = f_clamp(0.3f + 0.5f * k0 - 0.12f * k2 + d.bell() * 0.25f, 0.0f, 1.0f);
-    // Лицо
-    m[AM_NOSE] = d.bell() * 0.9f;
-    m[AM_NOSE_HUMP] = d.bell() * 0.8f;
-    m[AM_JAW] = f_clamp(d.bell() * 0.8f + (a.female ? -0.2f : 0.15f), -1.0f, 1.0f);
-    m[AM_CHIN] = d.bell() * 0.8f;
-    m[AM_LIPS] = f_clamp(d.bell() * 0.8f + (a.female ? 0.15f : 0.0f), -1.0f, 1.0f);
-    m[AM_EYES] = d.bell() * 0.9f;
-    m[AM_CHEEKS] = f_clamp(d.bell() * 0.8f - m[AM_THIN] * 0.2f + m[AM_FULL] * 0.3f, -1.0f, 1.0f);
-    m[AM_BROW] = f_clamp(d.bell() * 0.7f + (a.female ? -0.2f : 0.15f), -1.0f, 1.0f);
-    m[AM_EARS] = d.bell() * 0.8f;
+    // Лицо: черты мягче (2026-11-17, лица беты нейтральные) — разные, но без карикатуры
+    m[AM_NOSE] = d.bell() * 0.5f;
+    m[AM_NOSE_HUMP] = d.bell() * 0.4f;
+    m[AM_JAW] = f_clamp(d.bell() * 0.45f + (a.female ? -0.15f : 0.1f), -1.0f, 1.0f);
+    m[AM_CHIN] = d.bell() * 0.45f;
+    m[AM_LIPS] = f_clamp(d.bell() * 0.45f + (a.female ? 0.15f : 0.0f), -1.0f, 1.0f);
+    m[AM_EYES] = d.bell() * 0.45f;
+    m[AM_CHEEKS] = f_clamp(d.bell() * 0.45f - m[AM_THIN] * 0.2f + m[AM_FULL] * 0.3f, -1.0f, 1.0f);
+    m[AM_BROW] = f_clamp(d.bell() * 0.4f + (a.female ? -0.15f : 0.1f), -1.0f, 1.0f);
+    m[AM_EARS] = d.bell() * 0.5f;
     return a;
 }
 
@@ -148,8 +149,16 @@ void appear_fit(AppearFit &f, const Skel &base, const f32 *joints, u32 morph_cou
         o.pos[1] += dy;
         o.pos[2] += dz;
         o.length += dl;
-        // Обратная бинд-матрица [R | t]: поворот тот же, голова сдвинулась на d — t' = t − R·d
-        for (u32 r = 0; r < 3; ++r) o.inv[r * 4 + 3] -= o.inv[r * 4] * dx + o.inv[r * 4 + 1] * dy + o.inv[r * 4 + 2] * dz;
+        // Обратная бинд-матрица [R | t]: поворот тот же, голова сдвинулась на d (в осях бинда, A-поза) — в осях
+        // кости это Bᵀ·d (B — поворот бинда), t' = t − Bᵀ·d. Сетка людей вылеплена в другой позе (стойка беты,
+        // docs/body.md), поэтому не R·d: в осях кости сдвиг у сетки и у бинда один
+        const f32 x = o.rot[0], y = o.rot[1], z = o.rot[2], w = o.rot[3];
+        const f32 bt[9] = {1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w),
+                           2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w),
+                           2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y)};
+        const f32 l[3] = {bt[0] * dx + bt[1] * dy + bt[2] * dz, bt[3] * dx + bt[4] * dy + bt[5] * dz,
+                          bt[6] * dx + bt[7] * dy + bt[8] * dz};
+        for (u32 r = 0; r < 3; ++r) o.inv[r * 4 + 3] -= l[r];
     }
     f.skel.bones = {f.bones, nb};
     f.scale = height / APPEAR_MESH_HEIGHT;
@@ -163,32 +172,32 @@ void appear_fit(AppearFit &f, const Skel &base, const f32 *joints, u32 morph_cou
 // Сдвиг поверхности тела у мест ношения на вес морфа (бедро +1, бедро −1, спина +1, спина −1), м, относительно
 // головы кости места; порядок AppearMorph. Мерит tools/humanconv/carry.py — перемерить после правки MORPHS
 static const f32 APPEAR_CARRY[AM_COUNT][4] = {
-    {-0.0004f, 0.0153f, 0.0233f, -0.0006f},  // female
-    {0.0146f, -0.0140f, 0.0107f, -0.0107f},  // full
-    {-0.0022f, 0.0050f, 0.0011f, -0.0011f},  // thin
-    {0.0003f, -0.0003f, 0.0072f, -0.0046f},  // strong
-    {0.0191f, -0.0182f, 0.0021f, 0.0101f},  // old
+    {0.0012f, 0.0143f, 0.0212f, 0.0026f},  // female
+    {0.0132f, -0.0101f, 0.0224f, -0.0195f},  // full
+    {-0.0036f, 0.0052f, 0.0033f, -0.0028f},  // thin
+    {0.0004f, -0.0001f, 0.0057f, -0.0021f},  // strong
+    {0.0190f, -0.0169f, 0.0065f, 0.0096f},  // old
     {0.0000f, 0.0000f, 0.0000f, 0.0000f},  // belly
-    {-0.0058f, 0.0058f, -0.0093f, 0.0093f},  // female_full
-    {-0.0070f, 0.0166f, 0.0041f, 0.0084f},  // female_thin
-    {-0.0043f, 0.0057f, 0.0099f, -0.0043f},  // female_strong
+    {0.0040f, 0.0043f, -0.0181f, 0.0210f},  // female_full
+    {-0.0042f, 0.0136f, 0.0042f, 0.0106f},  // female_thin
+    {-0.0042f, 0.0054f, 0.0106f, -0.0057f},  // female_strong
     {0.0000f, 0.0000f, 0.0000f, 0.0000f},  // shoulders
-    {0.0359f, -0.0358f, 0.0000f, 0.0000f},  // hips
-    {0.0020f, 0.0013f, -0.0048f, 0.0053f},  // legs
-    {-0.0155f, 0.0176f, -0.0019f, 0.0024f},  // torso
+    {0.0359f, -0.0359f, 0.0000f, 0.0000f},  // hips
+    {-0.0039f, 0.0080f, -0.0083f, 0.0078f},  // legs
+    {-0.0112f, 0.0157f, -0.0025f, 0.0044f},  // torso
     {0.0000f, 0.0000f, 0.0000f, 0.0000f},  // arms
-    {-0.0057f, 0.0079f, -0.0006f, -0.0012f},  // neck
-    {-0.0042f, 0.0014f, -0.0005f, -0.0017f},  // head
-    {0.0004f, -0.0004f, 0.0002f, -0.0001f},  // kin_a
-    {-0.0038f, 0.0008f, -0.0009f, -0.0013f},  // kin_b
+    {-0.0039f, 0.0067f, 0.0008f, -0.0010f},  // neck
+    {-0.0024f, 0.0014f, 0.0013f, 0.0004f},  // head
+    {0.0004f, -0.0013f, 0.0001f, 0.0019f},  // kin_a
+    {-0.0019f, 0.0008f, 0.0012f, 0.0007f},  // kin_b
     {0.0000f, 0.0000f, 0.0000f, 0.0000f},  // nose
     {0.0000f, 0.0000f, 0.0000f, 0.0000f},  // nose_hump
-    {0.0006f, -0.0006f, 0.0002f, -0.0002f},  // jaw
+    {0.0006f, -0.0006f, 0.0002f, 0.0016f},  // jaw
     {0.0000f, 0.0000f, 0.0000f, 0.0000f},  // chin
     {0.0000f, 0.0000f, 0.0000f, 0.0000f},  // lips
     {0.0000f, 0.0000f, 0.0000f, 0.0000f},  // eyes
     {0.0000f, 0.0000f, 0.0000f, 0.0000f},  // cheeks
-    {-0.0012f, 0.0012f, -0.0004f, -0.0018f},  // brow
+    {-0.0022f, 0.0012f, 0.0014f, 0.0003f},  // brow
     {0.0000f, 0.0000f, 0.0000f, 0.0000f},  // ears
 };
 

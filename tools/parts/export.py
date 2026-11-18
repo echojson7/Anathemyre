@@ -150,36 +150,82 @@ def canonical(tris):
     return out
 
 
-def build_mesh(tris, cos_smooth=0.5):
-    """Треугольники → Mesh (tools/meshgen.py). Нормаль угла гладкой грани — сумма нормалей соседних гладких
-    граней у этой вершины с весом площади (не круче 60°): большая стена перевешивает фаску, кромка читается скруглённой."""
+def _planes(tris, nrm):
+    """Плоские участки: соседние по ребру треугольники одной группы сглаживания с одной нормалью — один участок.
+    Возвращает номер участка на треугольник и площадь (×2) участка."""
+    parent = list(range(len(tris)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    by_edge = {}
+    for k, (a, b, c, _, g) in enumerate(tris):
+        if not g or nrm[k][1] is None:
+            continue
+        for p, q in ((a, b), (b, c), (c, a)):
+            by_edge.setdefault((p, q) if p < q else (q, p), []).append(k)
+    for ks in by_edge.values():
+        for i in range(len(ks)):
+            for j in range(i + 1, len(ks)):
+                x, y = ks[i], ks[j]
+                if tris[x][4] == tris[y][4] and dot(nrm[x][1], nrm[y][1]) > 0.999999:
+                    rx, ry = find(x), find(y)
+                    if rx != ry:
+                        parent[max(rx, ry)] = min(rx, ry)
+    root = [find(k) for k in range(len(tris))]
+    area = {}
+    for k, r in enumerate(root):
+        if nrm[k][1] is not None:
+            area[r] = area.get(r, 0.0) + dot(nrm[k][0], nrm[k][0]) ** 0.5
+    return root, area
+
+
+def build_mesh(tris, cos_smooth=0.5, dominance=4.0):
+    """Треугольники → Mesh (tools/meshgen.py). Поле «гладкая» треугольника — группа сглаживания: 0/False —
+    своя нормаль, иначе нормаль угла делят грани той же группы у этой вершины не круче 60° к своей.
+
+    Нормали взвешенные (docs/parts.md, «Гладкость»): если среди соседей вершины есть плоский участок, площадь
+    которого в dominance раз больше всех остальных соседей вместе, угол берёт ровно его нормаль — плоская грань
+    остаётся плоской до самой кромки, а фаска или скругление между двумя гранями плавно переходит от одной нормали
+    к другой. Иначе (бок цилиндра, ком) — сумма нормалей соседей с весом площади."""
     mats = sorted({t[3] for t in tris})
     mi = {m: k for k, m in enumerate(mats)}
     nrm = []
     for a, b, c, _, _ in tris:
         n = cross(sub(b, a), sub(c, a))
         l = dot(n, n) ** 0.5
-        nrm.append((n, (n[0] / l, n[1] / l, n[2] / l) if l > 1e-12 else None))
+        nrm.append((n, (n[0] / l, n[1] / l, n[2] / l) if l > 1e-15 else None))
+    root, area = _planes(tris, nrm)
     at = {}
-    for k, (a, b, c, _, smooth) in enumerate(tris):
-        if smooth and nrm[k][1] is not None:
+    for k, (a, b, c, _, g) in enumerate(tris):
+        if g and nrm[k][1] is not None:
             for p in (a, b, c):
-                at.setdefault(p, []).append(k)
+                at.setdefault((p, g), []).append(k)
     m = Mesh(mats)
-    for k, (a, b, c, mat, smooth) in enumerate(tris):
+    for k, (a, b, c, mat, g) in enumerate(tris):
         own = nrm[k][1]
         for p in (a, b, c):
             n = own
-            if smooth and own is not None:
-                sx = sy = sz = 0.0
-                for j in at[p]:
-                    if dot(nrm[j][1], own) >= cos_smooth:
+            if g and own is not None:
+                near = [j for j in at[(p, g)] if dot(nrm[j][1], own) >= cos_smooth]
+                regions = {}
+                for j in near:
+                    regions[root[j]] = area[root[j]]
+                top = max(regions, key=lambda r: (regions[r], -r))
+                rest = sum(v for r, v in regions.items() if r != top)
+                if regions[top] >= dominance * rest and len(regions) > 1:
+                    n = nrm[top][1]
+                else:
+                    sx = sy = sz = 0.0
+                    for j in near:
                         sx += nrm[j][0][0]
                         sy += nrm[j][0][1]
                         sz += nrm[j][0][2]
-                l = (sx * sx + sy * sy + sz * sz) ** 0.5
-                if l > 1e-12:
-                    n = (sx / l, sy / l, sz / l)
+                    l = (sx * sx + sy * sy + sz * sz) ** 0.5
+                    if l > 1e-15:
+                        n = (sx / l, sy / l, sz / l)
             if n is None:
                 n = (0.0, 1.0, 0.0)
             m.verts.append((p[0], p[1], p[2], n[0], n[1], n[2], mi[mat], mi[mat], 0, 255))

@@ -48,8 +48,8 @@ class Body:
     """Тело стенда и всё, что о нём знает одежда: параметры вершин (часть тела, длина вдоль руки или ноги, угол
     вокруг оси), плотные веса костей, сглаженные тела морфов."""
 
-    def __init__(self, base, groups, Z, rigs, weights):
-        self.base, self.groups, self.Z, self.rigs = base, groups, Z, rigs
+    def __init__(self, base, groups, Z, rigs, weights, mh):
+        self.base, self.groups, self.Z, self.rigs, self.mh = base, groups, Z, rigs, mh
         self.quads = groups["body"][:, ::-1]
         self.T = H.tri(self.quads).astype(np.int64)
         self.used = np.unique(groups["body"])
@@ -59,7 +59,7 @@ class Body:
         self.E = np.unique(np.sort(e, 1), axis=0)
         self.deg = np.bincount(self.E.ravel(), minlength=nv).astype(np.float64)
         self.cache = {}
-        vo = H.morph(base, Z, H.BASE)
+        vo = H.morph(base, Z, H.RIG)  # скелет — от тела RIG, как у human_m (humanconv)
         y0 = vo[self.used, 1].min()
         fit = (y0, H.HEIGHT / (vo[self.used, 1].max() - y0))
         to_game = lambda x: self.place(x[None, :], fit)[0]
@@ -76,7 +76,8 @@ class Body:
                     a = np.array(lst)
                     np.add.at(acc[:, k], a[:, 0].astype(int), a[:, 1])
             self.W[s] = acc
-        self.V, self.N, self.S, self.Ns = self.shape(H.BASE)[:4]
+        # Разметка вещей — в A-позе (по ней заданы числа частей и суставы скелета); вершины сеток — в стойке беты
+        self.V, self.N, self.S, self.Ns = self.shape(H.BASE, rest=False)[:4]
         self._params()
 
     @staticmethod
@@ -84,14 +85,15 @@ class Body:
         g = vo * H.OBJ_TO_GAME
         return (g - np.array([0.0, fit[0], 0.0])) * fit[1]
 
-    def shape(self, q):
-        # Тело с параметрами q (как shape в humanconv.build): вершины, нормали, тело для ткани и его нормали
-        key = json.dumps(q, sort_keys=True)
+    def shape(self, q, rest=True):
+        # Тело с параметрами q (как shape в humanconv.build): вершины, нормали, тело для ткани и его нормали.
+        # rest — в стойке беты (поза привязки сеток, humanconv.rest), иначе в A-позе MakeHuman (разметка)
+        key = json.dumps([q, rest], sort_keys=True)
         if key in self.cache:
             return self.cache[key]
         vo = H.morph(self.base, self.Z, q)
         lo = vo[self.used, 1].min()
-        V = self.place(vo, (lo, H.HEIGHT / (vo[self.used, 1].max() - lo)))
+        V = self.place(H.rest(vo, self.mh) if rest else vo, (lo, H.HEIGHT / (vo[self.used, 1].max() - lo)))
         N = H.normals(V, self.T)
         S = self.smooth(V, N, SMOOTH_IT)
         S2 = self.smooth(V, N, SMOOTH_LOOSE)

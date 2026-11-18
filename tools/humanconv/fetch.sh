@@ -23,6 +23,10 @@ get rig.game_engine.json "$MPFB/rigs/standard/rig.game_engine.json" b324ddb4b707
 get weights.game_engine.json "$MPFB/rigs/standard/weights.game_engine.json" 9f4a773e74ce5ba08415b4f30070338e9f75bae5971b5075b10cd6b9caa58473
 get rig.mixamo.json "$MPFB/rigs/standard/rig.mixamo.json" b4e491bacdcae797e53b7692169cf6a160c50fcc1eda5f0982e92fac1561ae56
 get weights.mixamo.json "$MPFB/rigs/standard/weights.mixamo.json" 4561be4d7c0093d70e3dba4fbacbbbb6d66781573779fb12a0509cefa181b8ae
+# Скелет MakeHuman по умолчанию и его веса — стойка тел беты (поза привязки, humanconv.rest)
+MH=https://raw.githubusercontent.com/makehumancommunity/makehuman/a8bc2d54ff0ac92e78ff71431b1023eda42bf482/makehuman/data/rigs
+get default.mhskel "$MH/default.mhskel" 99f179bce0aa850b45d4191a1d0d234c5851f881c057439470ded3bddf729a24
+get default_weights.mhw "$MH/default_weights.mhw" 0f3641d651ae3d00ad6b4ccee43142edb109d3bd909d27d9e4139ef1beed8625
 get makehuman.whl "$WHL" 384f0553a66659be95ff05b7c2d2d837376062f1d525dbd8920b029c4c6fa85e
 [ -f "$DL/targets.npz" ] || python3 -I -c "import sys, zipfile; open(sys.argv[2], 'wb').write(zipfile.ZipFile(sys.argv[1]).read('makehuman/data/targets.npz'))" "$DL/makehuman.whl" "$DL/targets.npz"
 python3 -I tools/humanconv/humanconv.py "$DL" data "$MESHPACK"

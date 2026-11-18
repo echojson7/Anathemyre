@@ -64,6 +64,9 @@ bool arms_bind(ArmsBind &b, const Skel &s, const AnimClip &stance, f32 stance_t,
 ArmsState arms_update(ArmsLook &L, const WeaponHold &h, bool fight, bool urgent, f32 speed, f32 dt, bool fresh);
 // Стойка и рука с оружием поверх ходьбы, до клипов действий. wr — поза до правки (pose_world)
 void arms_pose_hold(const ArmsBind &b, const ArmsState &a, Quat *rot, const Quat *wr);
+// Свободная кисть у всех: пальцы согнуты частью сжатия, а не прямые, как в бинде (клипы CMU пальцев не двигают).
+// Ставить после клипов, до pose_world; сжатие под оружие (arms_pose_weapon) идёт уже от неё
+void arms_relax(const ArmsBind &b, Quat *rot);
 // После всей позы: кисть к месту ношения, пальцы, место и поворот оружия в осях сетки человека. act_any, act_two,
 // act_block — веса клипа действия: любого, с оружием (хват двумя руками, как в дорожках шага мира), блока.
 // rot, wr, wp — поза (wr, wp пересчитаны на выходе)
