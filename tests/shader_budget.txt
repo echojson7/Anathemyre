@@ -6,15 +6,17 @@
 #
 # освещение, игра: TILE_KIND (0 небо, 1 земля, 2 сетки, 3 смесь, 4 земля на пиксель), LIGHT_DEBUG 0
 light_cells.comp         0,0      64      0    46
-light_cells.comp         1,0     168      0   145
-light_cells.comp         2,0     168      0   345
-light_cells.comp         3,0     256      0   591
-light_cells.comp         4,0     168      0   564
+light_cells.comp         1,0     168      0   109
+light_cells.comp         2,0     168      0   309
+light_cells.comp         3,0     256      0   556
+light_cells.comp         4,0     168      0   527
 # освещение, отладка (правило ячеек P, виды F3): LIGHT_DEBUG 1; небо в отладке то же, что в игре
 light_cells.comp         1,1     168      0   224
 light_cells.comp         2,1     256      0   412
 light_cells.comp         3,1     256      0   656
 light_cells.comp         4,1     168      0   627
+# тень солнца своим проходом (шаг 2): освещение в игре её только читает
+sun_vis.comp             -        56      0    44
 # остальные проходы кадра
 aa.comp                  -        48      0    12
 air_blur.comp            -        32      0     5

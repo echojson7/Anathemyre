@@ -54,6 +54,7 @@ layout(buffer_reference, scalar) buffer HMap { uint v[]; };  // карта го�
 struct AirBox { vec3 c; float dust; vec2 u; float soft; float pad0; vec3 h; float pad1; };
 layout(buffer_reference, scalar) readonly buffer AirBoxes { AirBox v[]; };
 layout(buffer_reference, scalar) buffer AirFloats { float v[]; };
+layout(buffer_reference, scalar) buffer SunVis { float v[]; };
 layout(buffer_reference, scalar) buffer AirTexels { uvec2 v[]; };
 layout(buffer_reference, scalar) buffer AirWords { uint v[]; };
 const uint STAT_VIS_WANT = 0u;       // видимых кластеров до обрезки по vis_max
@@ -443,6 +444,10 @@ layout(buffer_reference, scalar) buffer FrameData {
     Vec4s lens_sun;
     uint lens_on, lens_frame, lens_pad0, lens_pad1;
     float lens_flare, lens_ca, lens_vignette, lens_grain;
+    // Тень солнца на пиксель (sun_vis.comp пишет, light_cells.comp читает; docs/shadow.md, «Свой проход»): 1 — свет,
+    // 0 — тень; по плиткам 8×8 кадра, 64 подряд
+    SunVis sun_vis;
+    uint sun_pad0, sun_pad1;
 };
 
 layout(push_constant, scalar) uniform Push {

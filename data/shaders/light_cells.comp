@@ -32,6 +32,8 @@ shared uint s_lamp_any;
 #define LAMP_TILE_MASK
 ivec2 g_origin;  // начало отсчёта узоров: чанк камеры, у текселя кеша — его чанк (gcache.glsl)
 #define ORIGIN_CHUNK g_origin
+// Игра: тень солнца пикселя — из своего прохода (sun_vis.comp), отладка считает её в точке ячейки
+#define SUN_VIS_READ (LIGHT_DEBUG == 0u)
 #define GC_ORIGIN_VAR
 #include "resolve.glsl"
 #include "gcache.glsl"
@@ -380,6 +382,7 @@ void main_pixel(uint t, uint tile, ivec2 origin, ivec2 px, bool inside) {
     if (f.light_count != 0u && f.froxel_on != 0u && s_box[0] != 0xFFFFFFFFu) lamp_tile(t);
     barrier();
     if (inside) {
+        g_sun_px = px;
         vec3 col = pre_exposed(shade_hit(h, phys), g_e_local);
         float gain = local_gain(g_e_local);
         s_view[t] = view_value(g_c_local, g_e_local);

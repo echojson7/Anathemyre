@@ -94,6 +94,7 @@ struct WorldGpu {
     GpuBuffer gverts;    // вершины колец земли кадра (ground_bake.comp)
     GpuBuffer tiles;     // плитки по видам: косвенные dispatch и списки (light_tiles.comp), под размер кадра
     GpuBuffer view_light;  // свет мест плитки (light_cells.comp → eye.comp следующего кадра), vec4 на плитку
+    GpuBuffer sun_vis;   // тень солнца на пиксель (sun_vis.comp → light_cells.comp), f32, 64 подряд на плитку
     u32 tile_cap = 0;    // плиток кадра — мест в списке одного вида
     u32 inst_count = 0;  // сколько экземпляров лежит в inst
     GpuImage id;         // visibility buffer R32_UINT
@@ -107,6 +108,7 @@ struct WorldGpu {
     VkPipeline pipe_vis_veil = VK_NULL_HANDLE;   // кластеры под мороком: сито пикселей (vis_veil.frag)
     VkPipeline pipe_cull_count = VK_NULL_HANDLE, pipe_cull_scan = VK_NULL_HANDLE, pipe_cull_write = VK_NULL_HANDLE;
     VkPipeline pipe_light[TILE_KINDS] = {}, pipe_tiles = VK_NULL_HANDLE, pipe_ground_bake = VK_NULL_HANDLE;
+    VkPipeline pipe_sun = VK_NULL_HANDLE;  // тень солнца своим проходом (sun_vis.comp, docs/shadow.md)
     // Освещение для отладки (LIGHT_DEBUG 1: правило ячеек P и виды F3 поверх кадра, docs/perf_arch.md) — собирается,
     // когда такой режим впервые включат
     VkPipeline pipe_light_dbg[TILE_KINDS] = {};
@@ -117,7 +119,7 @@ struct WorldGpu {
     bool work_valid = false;
     // Ресурсы графа кадра (vk_graph.h)
     u8 rg_inst = 0, rg_cull = 0, rg_draws = 0, rg_vis = 0, rg_gverts = 0, rg_id = 0, rg_hdr = 0, rg_tiles = 0;
-    u8 rg_view = 0;
+    u8 rg_view = 0, rg_sun = 0;
 };
 
 // Кеш поверхности земли (vk_gcache.cpp, docs/gcache.md): виртуальная текстура страницами 8×8 текселей по

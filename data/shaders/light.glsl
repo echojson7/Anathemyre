@@ -44,6 +44,18 @@ float sun_visibility(Surface s, vec3 l) {
     return v > 0.0 ? v * sm_visibility(s.pos, s.normal) * cloud_shadow(s.pos) : 0.0;
 }
 
+// Тень солнца своим проходом (sun_vis.comp, docs/shadow.md «Свой проход»): SUN_VIS_READ — освещение берёт число
+// пикселя g_sun_px из sun_vis, а не считает его. Отладочное освещение (точка ячейки, виды F3) считает само
+#ifndef SUN_VIS_READ
+#define SUN_VIS_READ false
+#endif
+ivec2 g_sun_px = ivec2(0);
+float sun_vis_of(Surface s, vec3 l) {
+    if (!SUN_VIS_READ) return sun_visibility(s, l);
+    uint tx = (uint(pc.frame.viewport.x) + 7u) / 8u;
+    return pc.frame.sun_vis.v[(uint(g_sun_px.y >> 3) * tx + uint(g_sun_px.x >> 3)) * 64u + uint((g_sun_px.y & 7) * 8 + (g_sun_px.x & 7))];
+}
+
 // GGX (Trowbridge–Reitz), a2 = α²
 float brdf_d(float nh, float a2) {
     float d = nh * nh * (a2 - 1.0) + 1.0;
@@ -299,7 +311,7 @@ vec3 light_surface(Surface s) {
 
     // Главный свет: освещённость E (лк) на перпендикулярную площадку у камеры
     vec3 c = vec3(0.0);
-    float vis = nl > 0.0 ? sun_visibility(s, l) : 0.0;
+    float vis = nl > 0.0 ? sun_vis_of(s, l) : 0.0;
     g_e_local = 0.0;
     g_c_local = vec3(0.0);
     if (vis > 0.0) {
