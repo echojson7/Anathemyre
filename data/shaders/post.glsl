@@ -1,6 +1,7 @@
 // Стиль кадра (docs/render.md, проход 8; docs/light.md, «Экспозиция», «Баланс белого», «Тонмаппинг»): HDR кадра
-// уже умножен на экспозицию (light_cells.comp — иначе диск солнца и блики не влезут в f16). Здесь баланс белого
-// глаза, ночная синева и тонмаппинг: плёночная кривая UE5 (по умолчанию), AgX или ACES (Hill), выбор в F3
+// уже умножен на экспозицию (light_cells.comp — иначе диск солнца и блики не влезут в f16) и прошёл сумеречное
+// зрение (там же, до сглаживания). Здесь баланс белого глаза и тонмаппинг: плёночная кривая UE5 (по умолчанию), AgX
+// или ACES (Hill), выбор в F3
 #ifndef POST_GLSL
 #define POST_GLSL
 #include "common.glsl"
@@ -73,21 +74,8 @@ vec3 white_balance(vec3 c) {
 }
 
 vec3 post_color(vec3 c) {
-    FrameData f = pc.frame;
+    uint tm = pc.frame.tonemap;
     c = white_balance(max(c, vec3(0.0)));
-    // Ночью глаз видит палочками: цвет уходит в холодный серо-синий. По освещённости открытой земли, лк: полная
-    // синева — ниже ~0.3 лк (луна), без неё — выше ~30 лк: сумерки после заката ещё цветные (заря).
-    // Под лампами глаз видит колбочками: свет у глаза сверх открытой земли (лампы и отражённое от них) снимает
-    // синеву — от 2 лк начинает, с 20 лк её нет. Свет у глаза — из EV, к которому глаз уже привык (плавно, eye.comp)
-    float e = f.sky_out.v[SKY_OUT_EYE].y;
-    float night = f.a_post.w * (1.0 - smoothstep(-1.7, 4.9, log2(max(e, 1e-6))));
-    if (night > 0.0) {
-        float e_eye = f.a_post.y > 0.05 ? 2.5 * exp2(f.a_post.z + (f.sky_out.v[SKY_OUT_EYE].z - f.a_post.z) / f.a_post.y)
-                                        : f.sky_out.v[SKY_OUT_EYE2].z;
-        night *= 1.0 - smoothstep(1.0, 4.32, log2(max(e_eye - e, 1e-3)));
-    }
-    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-    c = mix(c, l * vec3(0.72, 0.88, 1.25), night);
-    return f.tonemap == TONEMAP_ACES ? tonemap_aces(c) : f.tonemap == TONEMAP_AGX ? tonemap_agx(c) : tonemap_ue(c);
+    return tm == TONEMAP_ACES ? tonemap_aces(c) : tm == TONEMAP_AGX ? tonemap_agx(c) : tonemap_ue(c);
 }
 #endif

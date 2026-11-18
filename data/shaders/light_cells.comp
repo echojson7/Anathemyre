@@ -63,6 +63,22 @@ vec3 pre_exposed(vec3 c, float e) { return min(c * (pc.frame.sky_out.v[SKY_OUT_E
 // Альфа HDR — свет места × экспозиция кадра (без местной): её пишет --hdr (tools/lightlab/hdr.py делит на
 // экспозицию из журнала)
 float elocal_alpha(float e) { return min(e * pc.frame.sky_out.v[SKY_OUT_EYE].x, 60000.0); }
+// Сумеречное зрение (docs/light.md, «Сумеречное зрение»): в темноте видят палочки — цвета нет, синее светлее красного (сдвиг
+// Пуркинье), серое чуть голубое. Доля палочек — по яркости пикселя до экспозиции: с ~10 кд/м² их нет, к ~0.01 —
+// почти всё (мезопика CIE — 0.005…5 кд/м²), × night_vision; и по свету, к которому привык глаз (яркость среднего
+// серого кадра, 0.18 / экспозиция): с 20 кд/м² палочки ослеплены — днём тёмный проём тёмный, но не серо-синий; к
+// 0.5 кд/м² (глубокие сумерки, луна) работают в полную силу. Под лампой ночью пиксель яркий — цвет есть, песок под
+// луной — серебристый. До сглаживания: смесь по яркости пикселя у края предмета не дрожит. gain — местная экспозиция
+const vec3 ROD_W = vec3(0.016915, 0.590105, 0.392990);  // палочки в линейном sRGB (Kirk, O'Brien 2011), белое → 1
+const vec3 ROD_TINT = vec3(0.8875, 1.0114, 1.2178);     // голубизна видимого палочками, Y = 1
+vec3 night_vision(vec3 c, float gain) {
+    float ex = pc.frame.sky_out.v[SKY_OUT_EYE].x;
+    float rods = pc.frame.a_post.w * (1.0 - smoothstep(-0.3, 1.3, log2(0.18 / ex) * 0.30103));
+    if (rods <= 0.0) return c;
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722)) / (ex * gain);
+    float s = rods * (1.0 - smoothstep(-2.0, 1.0, log2(max(l, 1e-9)) * 0.30103));
+    return mix(c, dot(c, ROD_W) * ROD_TINT, s);
+}
 // Свет места для глаза следующего кадра (eye.comp): цвет (Y = 1) и log2 света места против света у камеры этого
 // кадра — отношение, а не лк: после скачка часов замер не тянет старый свет, а переносит его соотношение к камере
 vec4 view_value(vec3 c, float e) {
@@ -218,9 +234,10 @@ void main() {
     if (TILE_KIND == TILE_SKY) {
         // Только небо: то же, что shade_hit() пустого пикселя
         if (inside) {
-            vec3 c = pre_exposed(sky_radiance(normalize(pixel_ray(px))), local_sky_e());
-            if (air_shown()) c = air_apply(px, c, 2.0 * AIR_FAR, local_gain(local_sky_e()));
-            imageStore(u_hdr, px, vec4(c, elocal_alpha(local_sky_e())));
+            float es = local_sky_e(), gs = local_gain(es);
+            vec3 c = pre_exposed(sky_radiance(normalize(pixel_ray(px))), es);
+            if (air_shown()) c = air_apply(px, c, 2.0 * AIR_FAR, gs);
+            imageStore(u_hdr, px, vec4(night_vision(c, gs), elocal_alpha(es)));
         }
         if (t == 0u) view_store(origin, view_value(local_sky_c(), local_sky_e()));
         if (inside && f.aa_mode == AA_TAA) {
@@ -338,7 +355,7 @@ void main() {
         uint r = s_rank[s_lead[t]];
         vec3 out_c = s_color[r];
         if (air_shown()) out_c = air_apply(px, out_c, h.kind == HIT_SKY ? 2.0 * AIR_FAR : length(h.rel), s_gain[r]);
-        imageStore(u_hdr, px, vec4(out_c, s_elocal[r]));
+        imageStore(u_hdr, px, vec4(night_vision(out_c, s_gain[r]), s_elocal[r]));
     }
     if (inside && f.aa_mode == AA_TAA) imageStore(u_motion, px, mv);
     if (t == 0u) {

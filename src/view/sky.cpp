@@ -21,8 +21,8 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"rayleigh", &d.rayleigh, 1},     {"mie", &d.mie, 1},             {"mie_g", &d.mie_g, 1},
         {"haze", &d.haze, 1},             {"haze_height", &d.haze_height, 1}, {"haze_tint", d.haze_tint, 3},
         {"ozone", &d.ozone, 1},           {"alt0", &d.alt0, 1},           {"ground", d.ground, 3},
-        {"stars", &d.stars, 1},           {"night_glow", &d.night_glow, 1}, {"exposure_ev", &d.exposure_ev, 1},
-        {"adapt", &d.adapt, 1},           {"exposure_ref", &d.exposure_ref, 1}, {"night_blue", &d.night_blue, 1},
+        {"stars", &d.stars, 1},           {"night_sky", &d.night_sky, 1}, {"exposure_ev", &d.exposure_ev, 1},
+        {"adapt", &d.adapt, 1},           {"exposure_ref", &d.exposure_ref, 1}, {"night_vision", &d.night_vision, 1},
         {"adapt_dark", &d.adapt_dark, 1}, {"adapt_light", &d.adapt_light, 1},
         {"sky_gain", &d.sky_gain, 1},     {"desert_mie", &d.desert_mie, 1}, {"desert_haze", &d.desert_haze, 1},
         {"desert_haze_height", &d.desert_haze_height, 1}, {"desert_haze_tint", d.desert_haze_tint, 3},
@@ -34,7 +34,7 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"cloud_density", &d.cloud_density, 1}, {"cloud_light", &d.cloud_light, 1},
         {"cirrus", &d.cirrus, 1},         {"cirrus_height", &d.cirrus_height, 1},
         {"wind", &d.wind, 1},             {"wind_dir", &d.wind_dir, 1},
-        {"night_fill", &d.night_fill, 1}, {"glare", &d.glare, 1},
+        {"glare", &d.glare, 1},
         {"lens_flare", &d.lens_flare, 1}, {"lens_ca", &d.lens_ca, 1}, {"lens_vignette", &d.lens_vignette, 1},
         {"film_grain", &d.film_grain, 1},
         {"local_tone", d.local_tone, 3},
@@ -246,7 +246,7 @@ void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f
     o.mie_g = d.mie_g;
     o.alt0 = d.alt0;
     o.moon_albedo = d.moon_albedo;
-    o.night_glow = d.night_glow * 1e-6f;
+    o.night_sky = d.night_sky;
     o.sun_radius = SUN_RADIUS;
     o.moon_radius = MOON_RADIUS;
     o.sun_size = d.sun_size * 0.5f * (f32)deg;
@@ -254,7 +254,6 @@ void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f
     o.halo_g = d.halo_g;
     o.night_dark = d.night_dark;
     o.adapt_night = d.adapt_night;
-    o.night_fill = d.night_fill;
     o.glare = d.glare;
     o.milky = d.milky;
     o.twinkle = d.twinkle;
@@ -274,7 +273,7 @@ void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f
     o.post[0] = d.exposure_ev;
     o.post[1] = d.adapt;
     o.post[2] = log2f(d.exposure_ref / 2.5f);
-    o.post[3] = d.night_blue;
+    o.post[3] = d.night_vision;
     o.sky_gain = d.sky_gain;
     o.adapt_dark = d.adapt_dark;
     o.adapt_light = d.adapt_light;

@@ -2,7 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 // Проход стиля (docs/render.md, проход 8): HDR-картинка кадра мира после сглаживания (история этого кадра, pc.a;
 // docs/aa.md) → аберрация объектива, блеск (docs/glare.md), блики солнца в линзах, виньетка (docs/lens.md),
-// ночная синева и тонмаппинг (post_color) → зерно и дизеринг
+// баланс белого и тонмаппинг (post_color) → зерно и дизеринг
 #include "post.glsl"
 #include "glare.glsl"
 #include "lens.glsl"
