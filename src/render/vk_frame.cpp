@@ -125,7 +125,7 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.eye_snap = f.style.eye_snap ? 1u : 0u;
     g.glow_gain = f.style.glow ? 1.0f : 0.0f;
     g.tonemap = f.style.tonemap < RENDER_TONEMAPS ? f.style.tonemap : RENDER_TONEMAP_UE;
-    auto q = [](u32 v) { return v < RENDER_LIGHT_QUALITIES ? v : (u32)RENDER_LIGHT_HIGH; };
+    auto q = [](u32 s) { return s < RENDER_LIGHT_QUALITIES ? s : (u32)RENDER_LIGHT_HIGH; };
     g.shadow_q = q(f.style.shadow_quality);
     g.gi_q = q(f.style.gi_quality);
     g.air_q = q(f.style.air_quality);
