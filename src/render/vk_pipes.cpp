@@ -291,6 +291,15 @@ bool vk_pipelines_build(u32 *count, u32 *threads, const char **slowest, f64 *slo
             worst_name = j.name;
         }
     }
+    // Долгие (больше секунды) — поимённо: у шейдера с видами (специализация) — с числом вида
+    for (u32 i = 0; i < g_pipe_njobs; ++i) {
+        const PipeJob &j = g_pipe_jobs[i];
+        if (j.ns < 1000000000ull) continue;
+        u32 sv = 0;
+        if (j.has_spec && j.spec.dataSize >= sizeof sv) memcpy(&sv, j.spec_data, sizeof sv);
+        if (j.has_spec) log_info("  конвейер %s (вид %u): %.1f с", j.name, sv, (f64)j.ns / 1e9);
+        else log_info("  конвейер %s: %.1f с", j.name, (f64)j.ns / 1e9);
+    }
     if (count) *count = g_pipe_njobs;
     if (threads) *threads = started ? started : 1;
     if (slowest) *slowest = worst_name;
