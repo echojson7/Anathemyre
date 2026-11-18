@@ -565,19 +565,9 @@ static PoseOut pose_person(PeopleView &pv, const ViewAssets &assets, const Appea
     return out;
 }
 
-// Показ тел (docs/body.md, «Показ»): стоит, как тела беты, — руки вдоль тела, ноги прямые, кисти свободные, взгляд
-// прямо, без оружия. Поза привязки MakeHuman — A-поза с согнутыми локтями и коленями, поэтому доворот
-constexpr f32 SHOW_ARM_OUT = 0.09f;   // рад: плечо от вертикали наружу
-constexpr f32 SHOW_ELBOW = 0.12f;     // рад: локоть чуть согнут вперёд
-constexpr f32 SHOW_LEGS = 0.5f;       // доля доворота бедра к вертикали: отвесно бёдра у паха входят друг в друга
-
-static Quat quat_part(Quat q, f32 w) {
-    // Доля поворота q от нуля (короткая дуга, нормировано)
-    Quat r{q.x * w, q.y * w, q.z * w, q.w * w + (1.0f - w) * (q.w < 0.0f ? -1.0f : 1.0f)};
-    f32 n = f_sqrt(r.x * r.x + r.y * r.y + r.z * r.z + r.w * r.w);
-    return {r.x / n, r.y / n, r.z / n, r.w / n};
-}
-
+// Показ тел (docs/body.md, «Показ»): стоит, как тела беты, — руки вдоль тела, ноги наполовину к отвесу, кисти в
+// свободном хвате, без оружия. Это и есть поза, в которой вылеплена сетка (стойка беты, humanconv.rest): кости
+// встают по обратным бинд-матрицам, палитра единичная. Стопы — на опоре A-позы: таз поднимается на выпрямление ног
 static void show_stand(const PeopleView &pv, const Skel &s, Quat *rot, Quat *wr, Vec3 *wp, Vec3 &trans) {
     const i32 *B = pv.bones;
     const u32 nb = (u32)s.bones.count;
@@ -587,32 +577,8 @@ static void show_stand(const PeopleView &pv, const Skel &s, Quat *rot, Quat *wr,
     trans = Vec3{pel.pos[0], pel.pos[1], pel.pos[2]};
     pose_world(s, rot, tb, &trans, wr, wp);
     const f32 ankle0 = f_min(wp[B[B_FOOT]].y, wp[B[B_FOOT + 1]].y);
-    const Vec3 down{0, -1, 0};
-    if (pv.arms.ok) {
-        for (u32 k = 0; k < 2; ++k) {
-            const i32 U = pv.arms.upper[k], F = pv.arms.lower[k], H = pv.arms.hand[k];
-            const f32 out = wp[U].x < 0.0f ? -1.0f : 1.0f;
-            const Vec3 up_dir = normalize(Vec3{out * sin_f(SHOW_ARM_OUT), -cos_f(SHOW_ARM_OUT), 0.0f});
-            pose_turn_world(rot, wr, (u32)U, quat_between(normalize(wp[F] - wp[U]), up_dir));
-            pose_world(s, rot, tb, &trans, wr, wp);
-            const Vec3 fore = normalize(up_dir * cos_f(SHOW_ELBOW) + Vec3{0, 0, sin_f(SHOW_ELBOW)});
-            pose_turn_world(rot, wr, (u32)F, quat_between(normalize(wp[H] - wp[F]), fore));
-            pose_world(s, rot, tb, &trans, wr, wp);
-        }
-        arms_relax(pv.arms, rot);
-    }
-    for (u32 k = 0; k < 2; ++k) {
-        const i32 T = B[B_THIGH + k], C = B[B_CALF + k], Fo = B[B_FOOT + k];
-        const Quat foot0 = wr[Fo];
-        pose_turn_world(rot, wr, (u32)T, quat_part(quat_between(normalize(wp[C] - wp[T]), down), SHOW_LEGS));
-        pose_world(s, rot, tb, &trans, wr, wp);
-        pose_turn_world(rot, wr, (u32)C, quat_between(normalize(wp[Fo] - wp[C]), normalize(wp[C] - wp[T])));
-        pose_world(s, rot, tb, &trans, wr, wp);
-        // Стопа — как в бинде, ровно на земле
-        pose_turn_world(rot, wr, (u32)Fo, quat_mul(foot0, quat_conj(wr[Fo])));
-        pose_world(s, rot, tb, &trans, wr, wp);
-    }
-    // Прямые ноги длиннее согнутых: таз поднять, чтобы стопы остались на опоре
+    pose_mesh_rest(s, rot);
+    pose_world(s, rot, tb, &trans, wr, wp);
     trans.y += ankle0 - f_min(wp[B[B_FOOT]].y, wp[B[B_FOOT + 1]].y);
     pose_world(s, rot, tb, &trans, wr, wp);
 }
@@ -737,6 +703,8 @@ void people_view_build(PeopleView &pv, const ViewAssets &assets, const ViewInput
         if (slot_copy[k] < 0 || ni >= RENDER_MAX_INSTANCES) continue;
         u32 i = pick[k];
         Root r = person_root(*in.prev, c, in.alpha, i);
+        // Показ: ровно лицом к камере старта, как тела беты рядом (курс человека шага мира может уйти на градусы)
+        if (in.people_show && in.show_old) r.yaw = in.show_old_yaw;
         const u32 cj = (u32)slot_copy[k];
         PoseOut po = in.people_show ? pose_show(pv, pv.fit[cj], in, i, r, (PoseMatrix *)(bones + nbo))
                                     : pose_person(pv, assets, pv.fit[cj], in, i, r, f_sqrt(pick_d[k]),
