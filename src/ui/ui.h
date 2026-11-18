@@ -129,9 +129,10 @@ bool ui_toggle(UiForm &f, const char *label, bool &v);
 // Ползунок; fmt — printf-формат значения справа от подписи (например "%.2f×"), shown — готовый текст вместо него
 bool ui_slider(UiForm &f, const char *label, f32 &v, f32 lo, f32 hi, f32 step, const char *fmt,
                const char *shown = nullptr);
-// Выбор из списка стрелками ‹ ›
+// Выбор из списка стрелками ‹ ›; v ≥ count — ничего не выбрано (показ «—»), v не меняется, пока не нажали
 bool ui_choice(UiForm &f, const char *label, u32 &v, const char *const *names, u32 count);
-// Выбор из короткого списка — все варианты в ряд (сегменты); не влезают в колонку управления — стрелками ‹ ›
+// Выбор из короткого списка — все варианты в ряд (сегменты); не влезают в колонку управления — стрелками ‹ ›.
+// v ≥ count — ни один сегмент не выбран
 bool ui_segment(UiForm &f, const char *label, u32 &v, const char *const *names, u32 count);
 // Кнопка во всю ширину формы
 bool ui_button_row(UiForm &f, const char *label);

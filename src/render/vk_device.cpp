@@ -81,7 +81,17 @@ static bool create_device() {
     u32 ext_count = 0;
     const char *const *ext = platform_vk_instance_extensions(&ext_count);
     for (u32 i = 0; i < ext_count; ++i) ib.enable_extension(ext[i]);
-    if (g_vk.cfg.validation || g_vk.cfg.gpu_validation) {
+    // Слой проверки ищем сам: сообщения отладки (debug utils) даёт и загрузчик без слоя — по ним не видно, что
+    // проверки нет, и прогон «без ошибок» шёл бы вхолостую
+    bool checks = g_vk.cfg.validation || g_vk.cfg.gpu_validation;
+    if (checks) {
+        auto si = vkb::SystemInfo::get_system_info(gipa);
+        if (!si || !si.value().validation_layers_available) {
+            log_warn("слои проверки Vulkan не найдены, иду без них");
+            checks = g_vk.cfg.validation = g_vk.cfg.gpu_validation = false;
+        }
+    }
+    if (checks) {
         ib.request_validation_layers(true)
             .set_debug_callback(on_debug)
             .set_debug_messenger_severity(VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
@@ -108,7 +118,6 @@ static bool create_device() {
     g_vk.instance = vi.instance;
     g_vk.messenger = vi.debug_messenger;
     volkLoadInstanceOnly(g_vk.instance);
-    if ((g_vk.cfg.validation || g_vk.cfg.gpu_validation) && !g_vk.messenger) log_warn("слои проверки Vulkan не найдены, иду без них");
 
     g_vk.surface = (VkSurfaceKHR)platform_vk_create_surface(g_vk.instance);
     if (!g_vk.surface) return false;
@@ -135,6 +144,10 @@ static bool create_device() {
     f10.fragmentStoresAndAtomics = VK_TRUE;
     // Поле расстояний мира (docs/sdf.md): сборка пишет R16F в картинку
     f10.shaderStorageImageExtendedFormats = VK_TRUE;
+    // Тени огней картами (docs/lamp_shadows.md): массив кубов глубины
+    f10.imageCubeArray = VK_TRUE;
+    // Косвенные вызовы кластеров (кадр, тени солнца, грани огней) несут свой номер в firstInstance
+    f10.drawIndirectFirstInstance = VK_TRUE;
     // Текстуры ассетов (docs/textures.md): сжатие BC7/BC5/BC4 и анизотропная выборка
     f10.textureCompressionBC = VK_TRUE;
     f10.samplerAnisotropy = VK_TRUE;
@@ -375,6 +388,7 @@ bool render_init(const RenderConfig &cfg) {
     if (!create_frames()) return false;
     g_vk.rg_swap = rg_image("картинка кадра", VK_IMAGE_ASPECT_COLOR_BIT);
     g_vk.rg_capture = rg_buffer("снимок кадра");
+    g_vk.rg_capture_hdr = rg_buffer("снимок HDR");
     if (!vk_diag_init()) return false;
     if (!vk_geometry_init()) return false;
     if (!vk_pipeline_cache_open()) return false;
@@ -396,6 +410,7 @@ void render_shutdown() {
         vk_terrain_shutdown();
         vk_geometry_shutdown();
         vk_destroy_buffer(g_vk.capture);
+        vk_destroy_buffer(g_vk.capture_hdr_buf);
         vk_diag_shutdown();
         if (g_vk.queries) vkDestroyQueryPool(g_vk.device, g_vk.queries, nullptr);
         for (FrameSlot &f : g_vk.frames) {

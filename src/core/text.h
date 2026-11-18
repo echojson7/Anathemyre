@@ -12,11 +12,11 @@ bool str_eq(Str s, const char *lit);
 // Устойчивый хеш имени — как hash_str у строки C (содержимое по имени)
 u64 str_hash(Str s);
 
-constexpr u32 TEXT_MAX_WORDS = 16;
+constexpr u32 TEXT_MAX_WORDS = 20;
 struct TextLine {
     u32 line = 0;   // номер строки в файле, с 1
     u32 count = 0;  // слов
-    Str w[TEXT_MAX_WORDS];
+    Str w[TEXT_MAX_WORDS + 1];  // последнее место всегда пустое: перебор до count не выходит за массив и при лишних словах
 };
 
 struct TextReader {

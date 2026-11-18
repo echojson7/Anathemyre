@@ -25,9 +25,16 @@ float g_moving = 0.0;
 // открытости небу и огни без тени. Тени светила и огней в него не входят: поле гладкое, поэтому свет и тень
 // одного места сдвигаются вместе и контраст между ними цел. Копит light_surface() своими частями, читать после неё
 float g_e_local = 0.0;
+// Цвет того же света (линейный sRGB, после light_surface — с Y = 1): к нему привыкает глаз (eye.comp, «Баланс белого»)
+vec3 g_c_local = vec3(0.0);
 // Свет места у пикселя неба и у открытой земли — один и тот же: небо и светило на открытую землю.
 // Один на всё небо: градиент неба, облака и диск светила между собой не сжимаются
 float local_sky_e() { return pc.frame.sky_out.v[SKY_OUT_EYE].y; }
+// Цвет того же света (Y = 1): небо и светило на открытую землю (eye.comp)
+vec3 local_sky_c() {
+    vec3 c = pc.frame.sky_out.v[SKY_OUT_VIEW].rgb;
+    return c / max(dot(c, vec3(0.2126, 0.7152, 0.0722)), 1e-12);
+}
 
 // Видимость главного светила: 1 — свет, 0 — тень, всегда мягко (docs/light.md, правило 5). Земля — карта
 // горизонта (docs/horizon.md), сетки — карта теней страницами (docs/shadow.md, 6б-1), облака — их карта тени
@@ -65,9 +72,18 @@ float spec_occlusion(float nv, float ao, float a) {
     return clamp(pow(nv + ao, exp2(-16.0 * a - 1.0)) - 1.0 + ao, 0.0, 1.0);
 }
 
+// Цвет свечения стекла (docs/lamps.md, «Стекло»): светящаяся поверхность внутри тела огня (ближе size + 12 см к
+// его отрезку) светит цветом этого огня — материал стекла один на все лампы, а лампы разных кельвинов и цветов.
+// Ставит light_lamps: g_glow_d — расстояние до ближайшего такого огня (1e9 — нет), g_glow_c — его цвет
+float g_glow_d = 1e9;
+vec3 g_glow_c = vec3(1.0);
+const float LAMP_GLOW_R = 0.12;  // м сверх радиуса тела
+const float LAMP_PLACE_NEAR = 3.0, LAMP_PLACE_FAR = 8.0;  // м: огонь в свете места без тени → с тенью
+
 // Огни клетки на поверхность s: рассеянное kd/π и отражение GGX (как у солнца в light.glsl). v — к глазу,
 // a, a2 — α и α², f0, comp — Френель и поправка многократного рассеяния
 vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd, vec3 f0, vec3 comp) {
+    g_glow_d = 1e9;
     uint fi = froxel_at(s.pos);
     uint cnt = froxel_light_count(fi);
     if (cnt == 0u) return vec3(0.0);
@@ -75,7 +91,8 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
     if (s_lamp_any == 0u) return vec3(0.0);  // ни один огонь не достаёт до плитки (light_cells.comp)
 #endif
     FrameData f = pc.frame;
-    uint steps = lamp_steps(f.light_q);
+    uint steps = lamp_steps(f.shadow_q);
+    float skip = lamp_e_skip();
     vec3 r = reflect(-v, n);
     vec3 c = vec3(0.0);
     for (uint k = 0u; k < cnt; ++k) {
@@ -87,10 +104,18 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
         vec3 q = lamp_closest(l, s.pos);
         vec3 dl = q - s.pos;
         float d = length(dl);
+        if (d < l.size + LAMP_GLOW_R && d < g_glow_d) {
+            g_glow_d = d;
+            g_glow_c = l.color;
+        }
         if (d >= l.radius || d < 1e-4) continue;
         float w = lamp_window(d, l.radius) * lamp_face(l, -dl / d);
         float e = lamp_irr(l, s.pos, n) * w;
-        if (e * max(l.color.r, max(l.color.g, l.color.b)) < LAMP_E_SKIP) continue;
+        float em = e * max(l.color.r, max(l.color.g, l.color.b));
+        float ks = lamp_skip_k(em, skip);
+        if (ks <= 0.0) continue;
+        e *= ks;
+        w *= ks;
         // Отражение: точка отрезка, ближайшая к лучу отражения, потом точка шара тела у луча (Karis 2013)
         vec3 L0 = l.c - l.axis - s.pos, Ld = 2.0 * l.axis;
         vec3 lc = L0;
@@ -118,9 +143,25 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
             float es = nls / (ds * ds + l.size * l.size) * w;
             spec = brdf_d(nh, a2) * brdf_v(nv, nls, a2) * brdf_f(vh, f0) * comp * (norm * es);
         }
-        float sh = lamp_shadow(s.pos, n, l, q, steps);
+        // Тень: картой огня, если у него есть место (docs/lamp_shadows.md), иначе конусом по полю. У огня с людьми,
+        // машинами или оружием рядом — куб слоя подвижных: копия места с ними поверх, одна выборка на обе
+        uint md = lamp_map_dyn(l);
+        uint ms = md != 0u ? md : lamp_map_slot(l);
+        float sh;
+        if (ms != 0u) {
+            sh = lamp_map_vis(l, ms, s.pos, n, lamp_map_q(em));
+        } else {
+            float soft;
+            uint st = lamp_lod_steps(em, steps, soft);
+            sh = lamp_shadow(s.pos, n, l, q, st, soft);
+        }
         c += (kd * (e / A_PI) + spec) * l.color * sh;
-        g_e_local += e * dot(l.color, vec3(0.2126, 0.7152, 0.0722));
+        // Свет места: ближний огонь — без тени (свет и тень одного места сдвигаются вместе), дальний — с тенью:
+        // его заслоняют стены, и лампы соседнего зала за стеной в свет места не идут (иначе в зале станции глаз
+        // привыкал к 40 лк вместо 6 и кадр темнел втрое — после дальности ламп по глазу, разбор 18.11)
+        float el = e * mix(1.0, sh, smoothstep(LAMP_PLACE_NEAR, LAMP_PLACE_FAR, d));
+        g_e_local += el * dot(l.color, vec3(0.2126, 0.7152, 0.0722));
+        g_c_local += el * l.color;
     }
     return c;
 }
@@ -128,12 +169,12 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
 bool lc_use() { return g_moving == 0.0 && pc.frame.gi_view != GI_VIEW_PROBES && pc.frame.gi_view != GI_VIEW_CELLS; }
 
 // Ближнее затенение по полю: у зондов — на 1 м (углы мельче их шага), у ячеек — на полторы стороны ячейки у точки
-// (не меньше 25 см: старт конусов — полвокселя поля), дальше ячейка затенена своими лучами
-float lc_ao(vec3 pos, vec3 n, float cells) {
-    float tc = clamp(length(pos) * pc.frame.lc_angle * 1.5, 0.25, 1.0);
-    uint q = pc.frame.light_q;
-    uint steps = q == LIGHT_Q_LOW ? 4u : q == LIGHT_Q_MEDIUM ? 5u : q == LIGHT_Q_HIGH ? 6u : 7u;
-    return sdf_cones(pos, n, q, mix(1.0, tc, cells), steps).x;
+// и только разница с затенением у точек ячеек (ao_cell — сглаженное, как их свет): их лучи эти заслонки уже видят.
+// Иначе у основания колонн и стен тень считалась дважды — тёмное кольцо (разбор 17.11). Светлее ячейки — нет:
+// конусы тень переоценивают (заслонка для них чёрная), лучи ячейки видят и отражённое заслонкой
+float lc_ao(vec3 pos, vec3 n, float cells, float ao_cell) {
+    float v = lc_near_ao(pos, n, mix(1.0, lc_near_t(pos), cells));
+    return min(v / mix(1.0, max(ao_cell, 0.05), cells), 1.0);
 }
 
 // Непрямой свет (6г, docs/gi.md): рассеянное и отражение от неба и от того, что отразили стены и земля.
@@ -180,6 +221,7 @@ vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, v
         }
         lit = vis * (1.0 - g.cov);
         g_e_local += A_PI * sky_y * lit;
+        g_c_local += A_PI * irr * lit;
         float ao = s.ao * vis;
         float so = spec_occlusion(nv, ao, a);
         c = (kd * irr * ao + (fss_ess * env + fms_ems * irr) * so) * (1.0 - g.cov);
@@ -193,12 +235,14 @@ vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, v
         else
 #endif
         {
-            vec4 lc = lc_use() ? lc_gather(s.pos, n, g_ground != 0.0) : vec4(0.0);
+            float ao_c = 1.0;
+            vec4 lc = lc_use() ? lc_gather(s.pos, n, g_ground != 0.0, ao_c) : vec4(0.0);
             g.irr = mix(g.irr, lc.rgb, lc.a);
-            lao = lc_ao(s.pos, n, lc.a);
+            lao = lc_ao(s.pos, n, lc.a, ao_c);
         }
         lit += clamp(dot(g.irr, Y) / sky_y, 0.0, 1.0) * g.cov;
         g_e_local += A_PI * max(dot(g.irr, Y), 0.0) * g.cov;
+        g_c_local += A_PI * max(g.irr, vec3(0.0)) * g.cov;
         float ao = s.ao * lao;
         float so = spec_occlusion(nv, ao, a);
         vec3 bounce = max(g.refl.rgb - atmo_ambient(rd) * g.refl.a, vec3(0.0));
@@ -221,8 +265,9 @@ vec3 light_indirect_view(Surface s) {
     vec3 irr = atmo_ambient(s.normal);
     float bury = g_ground == 0.0 ? gi_buried(s.pos + pc.frame.sdf_cam.xyz) : 0.0;
     vec3 fb = irr * (s.ao * (g.cov < 1.0 ? sdf_sky(s.pos, s.normal).x * (1.0 - bury) : 1.0));
-    vec4 lc = lc_use() ? lc_gather(s.pos, s.normal, g_ground != 0.0) : vec4(0.0);
-    vec3 gi = g.cov > 0.0 ? mix(g.irr, lc.rgb, lc.a) * (s.ao * lc_ao(s.pos, s.normal, lc.a)) : vec3(0.0);
+    float ao_c = 1.0;
+    vec4 lc = lc_use() ? lc_gather(s.pos, s.normal, g_ground != 0.0, ao_c) : vec4(0.0);
+    vec3 gi = g.cov > 0.0 ? mix(g.irr, lc.rgb, lc.a) * (s.ao * lc_ao(s.pos, s.normal, lc.a, ao_c)) : vec3(0.0);
     vec3 c = 0.5 * mix(fb, gi, g.cov);
     return pc.frame.gi_view == GI_VIEW_CELLS ? c * vec3(1.0, 0.45, 0.45) : c;
 }
@@ -256,6 +301,7 @@ vec3 light_surface(Surface s) {
     vec3 c = vec3(0.0);
     float vis = nl > 0.0 ? sun_visibility(s, l) : 0.0;
     g_e_local = 0.0;
+    g_c_local = vec3(0.0);
     if (vis > 0.0) {
         vec3 h = normalize(l + v);
         float nh = max(dot(n, h), 0.0), vh = max(dot(v, h), 0.0);
@@ -273,17 +319,28 @@ vec3 light_surface(Surface s) {
     float blur = smoothstep(0.1, 0.75, rough);
     vec3 env = atmo_ambient(rd);
     // Таблица неба — только у гладкого и со ступени «Средне» (на «Низко» отражение — из гармоник неба)
-    if (blur < 1.0 && f.light_q >= LIGHT_Q_MEDIUM) env = mix(atmo_sky(vec3(rd.x, max(rd.y, 0.0), rd.z)), env, blur);
+    if (blur < 1.0 && f.gi_q >= LIGHT_Q_MEDIUM) env = mix(atmo_sky(vec3(rd.x, max(rd.y, 0.0), rd.z)), env, blur);
     c += light_lamps(s, n, v, nv, a, a2, kd, f0, comp);
     float lit;
     c += light_indirect(s, n, nv, a, rd, blur, irr, env, kd, fss_ess, fms * ems, lit);
-    c += s.emissive;
+    // Свечение: у стекла лампы — цветом её огня при той же яркости (g_glow_*, light_lamps)
+    vec3 em = s.emissive;
+    if (g_glow_d < 1e8) {
+        const vec3 YE = vec3(0.2126, 0.7152, 0.0722);
+        em = dot(em, YE) * g_glow_c / max(dot(g_glow_c, YE), 1e-9);
+    }
+    c += em;
     // Воздух отрезка освещён как у точки вдали и как у глаза вблизи (глаз — eye.comp, sky_out [5].w)
     float lc = clamp(f.sky_out.v[SKY_OUT_EYE2].w, 0.0, 1.0);
     // Свет места: к непрямому свету и огням — светило на землю в доле открытости небу (lit: под открытым небом
     // весь, в зале — ничего). Вдали пиксель — уже не поверхность, а воздух перед ней: свет места сходит к небу
-    g_e_local += f.sky_out.v[SKY_OUT_EYE2].x * smoothstep(0.25, 0.75, lit);
+    float open = smoothstep(0.25, 0.75, lit);
+    g_e_local += f.sky_out.v[SKY_OUT_EYE2].x * open;
     float air = 1.0 - dot(exp(-atmo_depth(s.pos)), vec3(1.0 / 3.0));
     g_e_local = exp2(mix(log2(max(g_e_local, 1e-6)), log2(max(local_sky_e(), 1e-6)), air));
+    // Цвет: светило того же света (его доля в свете открытой земли), к дали — цвет света открытой земли
+    const vec3 YL = vec3(0.2126, 0.7152, 0.0722);
+    g_c_local += f.sun_color.rgb * (f.sky_out.v[SKY_OUT_EYE2].x * open / max(dot(f.sun_color.rgb, YL), 1e-12));
+    g_c_local = mix(g_c_local / max(dot(g_c_local, YL), 1e-12), local_sky_c(), air);
     return atmo_fog_lit(c, s.pos, mix(lit, lc, exp(-dist / 32.0)));
 }

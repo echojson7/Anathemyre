@@ -22,7 +22,10 @@ struct DebugState {
     u32 sdf_view = 0;         // поле расстояний (docs/sdf.md): кадр, только небо, поле, выкл (RENDER_SDF_*, не сохраняется)
     u32 gi_view = 0;          // непрямой свет (docs/gi.md): кадр, только он, без зондов (RENDER_GI_*, не сохраняется)
     bool local_off = false;   // без местной экспозиции (docs/light.md; сравнение, не сохраняется)
-    u32 tonemap = 0;          // тонмаппинг: 0 — AgX, 1 — ACES (RENDER_TONEMAP_*; docs/light.md), выбор по кадрам
+    bool lsm_off = false;     // тени огней полем расстояний, не картами (docs/lamp_shadows.md; сравнение, не сохраняется)
+    bool dyn_off = false;     // без теней подвижных: людей, машин, оружия (docs/shadow.md; сравнение, не сохраняется)
+    bool air_off = false;     // без воздуха: лучей солнца и огней в пыли (docs/air.md; сравнение, не сохраняется)
+    u32 tonemap = 2;          // тонмаппинг: 0 — AgX, 1 — ACES, 2 — плёночная кривая UE5 (RENDER_TONEMAP_*; docs/light.md)
     // Стенд людей (stand.cpp): человек у Остова, кость согнута (B), скелет, морф (0 — нет, k — морф k − 1)
     bool people_lines = false; // люди мира: капсулы шага, путь выбранного, след касаний стоп (при отрезках L)
     bool people_show = false;  // показ тел (docs/body.md, «Показ»): поза привязки, без одежды и оружия; ставит start show
@@ -79,7 +82,7 @@ constexpr f32 STAND_SPEEDS[] = {1.0f, 0.5f, 0.25f, 0.1f};
 enum DebugTab : u32 { DEBUG_TAB_MAIN, DEBUG_TAB_LIGHT, DEBUG_TAB_PEOPLE, DEBUG_TAB_WORLD, DEBUG_TABS };
 
 // Строк проходов GPU и переполнений в панели
-constexpr u32 DEBUG_MAX_PASSES = 24, DEBUG_MAX_OVERFLOWS = 8, DEBUG_MAX_FRAME_PARTS = PROF_MAX_PARTS;
+constexpr u32 DEBUG_MAX_PASSES = 32, DEBUG_MAX_OVERFLOWS = 8, DEBUG_MAX_FRAME_PARTS = PROF_MAX_PARTS;
 // Что панель показывает: числа кадра (раз в секунду) и состояние, которое знает run_window
 struct DebugInfo {
     f64 fps, frame_ms, frame_max_ms, cpu_ms, gpu_ms, step_ms;
@@ -109,15 +112,20 @@ struct DebugInfo {
     u32 work_shadow;           // выборки карты горизонта (тень земли, docs/horizon.md)
     u32 work_gc[4];           // кеш земли: страницы кадра, запечено, без места, поверхности мимо кеша
     u32 work_skin;            // вершин скинено (люди)
-    u32 work_sm[8];           // тени: страниц кадра, нарисовано, без места, выборок без страницы, вызовов, выборок,
-                              // отложено стройкой нового шага светила, перетекание на него (%)
+    u32 work_sm[10];          // тени: страниц кадра, нарисовано, без места, выборок без страницы, вызовов, выборок,
+                              // отложено стройкой нового шага светила, перетекание на него (%), копий подвижных, их вызовов
     u32 work_sdf[3];          // поле расстояний: выборок светом, треугольников засыпки, собрано кирпичей
     u32 work_gi[3];           // зонды: посчитано, лучей, выборок поля лучами
     u32 work_lc[6];           // ячейки света: живых, новых, посчитано, лучей, без места, отложено
+    u32 work_lsm[5];          // тени огней картами: граней нарисовано, вызовов в них, выборок карт светом; граней и
+                              // вызовов слоя подвижных
+    u32 work_air[3];          // воздух: клеток с пылью, шагов лучей солнца, выборок страниц теней ими
     const char *gc_off;       // почему кеш земли выключен (nullptr — включён)
     // Глаз прочитанного кадра (render_light, docs/light.md): освещённость земли, лк, и EV100; light = false — нет
     bool light;
     f32 lux_key, lux_sky, lux_eye, ev100, ev100_goal;
+    f32 lux_cam, lux_view;          // свет у камеры и мест в кадре — две части замера глаза, лк
+    f32 wb_white[3], wb_degree;     // цвет света, к которому привык глаз (Y = 1), и доля привыкания к цвету
     // Что не влезло за секунду (render_overflows): сколько просили, сколько есть (0 — счёт клеток без предела)
     u32 overflows;
     const char *over_what[DEBUG_MAX_OVERFLOWS];
@@ -191,6 +199,7 @@ void debug_inspect_mark(const World &w, const WorldInspect &wi, DebugDraw &dbg);
 void debug_inspect_pick(const World &w, WorldInspect &wi, const WPos &at);
 // Снимок кадра (render_capture_next перед кадром) → файл .bmp
 bool debug_write_shot(const char *path, Arena &scratch);
+bool debug_write_hdr(const char *path, Arena &scratch);  // HDR-снимок (--hdr, отладка света)
 // Карта земли сверху (отмывка рельефа и маски) → .bmp
 bool debug_write_terrain_map(const Terrain &t, const char *path, Arena &scratch);
 // Стенд людей (stand.cpp, docs/people.md «Стенд», docs/anim.md): до view_build — время клипа, поза и капсулы
@@ -229,6 +238,7 @@ inline void debug_panel(const DebugInfo &, const World &, DebugState &, WorldIns
 inline void debug_inspect_pick(const World &, WorldInspect &, const WPos &) {}
 inline void debug_inspect_mark(const World &, const WorldInspect &, DebugDraw &) {}
 inline bool debug_write_shot(const char *, Arena &) { return false; }
+inline bool debug_write_hdr(const char *, Arena &) { return false; }
 inline bool debug_write_terrain_map(const Terrain &, const char *, Arena &) { return false; }
 inline void debug_stand_update(DebugState &, const ViewAssets &, const Terrain &, f64, DebugDraw *) {}
 inline void debug_stand(const DebugState &, const ViewAssets &, Arena &, RenderFrame &) {}

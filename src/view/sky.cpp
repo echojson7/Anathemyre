@@ -21,8 +21,8 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"rayleigh", &d.rayleigh, 1},     {"mie", &d.mie, 1},             {"mie_g", &d.mie_g, 1},
         {"haze", &d.haze, 1},             {"haze_height", &d.haze_height, 1}, {"haze_tint", d.haze_tint, 3},
         {"ozone", &d.ozone, 1},           {"alt0", &d.alt0, 1},           {"ground", d.ground, 3},
-        {"stars", &d.stars, 1},           {"night_glow", &d.night_glow, 1}, {"exposure_ev", &d.exposure_ev, 1},
-        {"adapt", &d.adapt, 1},           {"exposure_ref", &d.exposure_ref, 1}, {"night_blue", &d.night_blue, 1},
+        {"stars", &d.stars, 1},           {"night_sky", &d.night_sky, 1}, {"exposure_ev", &d.exposure_ev, 1},
+        {"adapt", &d.adapt, 1},           {"exposure_ref", &d.exposure_ref, 1}, {"night_vision", &d.night_vision, 1},
         {"adapt_dark", &d.adapt_dark, 1}, {"adapt_light", &d.adapt_light, 1},
         {"sky_gain", &d.sky_gain, 1},     {"desert_mie", &d.desert_mie, 1}, {"desert_haze", &d.desert_haze, 1},
         {"desert_haze_height", &d.desert_haze_height, 1}, {"desert_haze_tint", d.desert_haze_tint, 3},
@@ -34,8 +34,13 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         {"cloud_density", &d.cloud_density, 1}, {"cloud_light", &d.cloud_light, 1},
         {"cirrus", &d.cirrus, 1},         {"cirrus_height", &d.cirrus_height, 1},
         {"wind", &d.wind, 1},             {"wind_dir", &d.wind_dir, 1},
-        {"night_fill", &d.night_fill, 1}, {"glare", &d.glare, 1},
+        {"glare", &d.glare, 1},
+        {"lens_flare", &d.lens_flare, 1}, {"lens_ca", &d.lens_ca, 1}, {"lens_vignette", &d.lens_vignette, 1},
+        {"film_grain", &d.film_grain, 1},
         {"local_tone", d.local_tone, 3},
+        {"meter_view", &d.meter_view, 1}, {"white_balance", &d.white_balance, 1}, {"adapt_color", &d.adapt_color, 1},
+        {"air_dust", &d.air_dust, 1},     {"air_dust_height", &d.air_dust_height, 1}, {"air_tint", d.air_tint, 3},
+        {"air_g", &d.air_g, 1},           {"air_iso", &d.air_iso, 1}, {"desert_air_dust", &d.desert_air_dust, 1},
     };
     TextReader r = text_reader(text, size);
     TextLine l;
@@ -71,6 +76,11 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
         snprintf(err, err_cap, "glare 0–0.3");
         return false;
     }
+    if (d.lens_flare < 0.0f || d.lens_flare > 20.0f || d.lens_ca < 0.0f || d.lens_ca > 0.01f || d.lens_vignette < 0.0f ||
+        d.lens_vignette > 1.0f || d.film_grain < 0.0f || d.film_grain > 0.1f) {
+        snprintf(err, err_cap, "lens_flare 0–20, lens_ca 0–0.01, lens_vignette 0–1, film_grain 0–0.1");
+        return false;
+    }
     if (d.clouds < 0.0f || d.clouds > 1.0f || d.cirrus < 0.0f || d.cirrus > 1.0f || d.cloud_base < 500.0f ||
         d.cloud_top < d.cloud_base + 300.0f || d.cloud_top > 8000.0f || d.cirrus_height < d.cloud_top + 500.0f ||
         d.cirrus_height > 14000.0f || d.cloud_density <= 0.0f || d.cloud_light < 0.0f || d.wind < 0.0f || d.wind > 60.0f) {
@@ -80,6 +90,18 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
     }
     if (d.local_tone[0] < 0.0f || d.local_tone[1] <= 0.0f || d.local_tone[1] > 1.0f || d.local_tone[2] <= 0.0f || d.local_tone[2] > 1.0f) {
         snprintf(err, err_cap, "local_tone: колено ≥ 0, наклоны в (0, 1]");
+        return false;
+    }
+    if (d.meter_view < 0.0f || d.meter_view > 1.0f || d.white_balance < 0.0f || d.white_balance > 1.0f || d.adapt_color <= 0.0f) {
+        snprintf(err, err_cap, "meter_view и white_balance в [0, 1], adapt_color > 0");
+        return false;
+    }
+    bool tint_ok = true;
+    for (f32 t : d.air_tint) tint_ok = tint_ok && t >= 0.0f && t <= 1.0f;
+    if (d.air_dust < 0.0f || d.air_dust > 50.0f || d.desert_air_dust < 0.0f || d.desert_air_dust > 50.0f ||
+        d.air_dust_height < 1.0f || d.air_dust_height > 2000.0f || !tint_ok || d.air_g < 0.0f || d.air_g > 0.95f ||
+        d.air_iso < 0.0f || d.air_iso > 1.0f) {
+        snprintf(err, err_cap, "air_dust и desert_air_dust 0–50, air_dust_height 1–2000, air_tint 0–1, air_g 0–0.95, air_iso 0–1");
         return false;
     }
     return true;
@@ -224,7 +246,7 @@ void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f
     o.mie_g = d.mie_g;
     o.alt0 = d.alt0;
     o.moon_albedo = d.moon_albedo;
-    o.night_glow = d.night_glow * 1e-6f;
+    o.night_sky = d.night_sky;
     o.sun_radius = SUN_RADIUS;
     o.moon_radius = MOON_RADIUS;
     o.sun_size = d.sun_size * 0.5f * (f32)deg;
@@ -232,7 +254,6 @@ void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f
     o.halo_g = d.halo_g;
     o.night_dark = d.night_dark;
     o.adapt_night = d.adapt_night;
-    o.night_fill = d.night_fill;
     o.glare = d.glare;
     o.milky = d.milky;
     o.twinkle = d.twinkle;
@@ -252,7 +273,7 @@ void sky_build(const SkyDesc &desc, f32 desert, const Clock &clock, f64 ticks, f
     o.post[0] = d.exposure_ev;
     o.post[1] = d.adapt;
     o.post[2] = log2f(d.exposure_ref / 2.5f);
-    o.post[3] = d.night_blue;
+    o.post[3] = d.night_vision;
     o.sky_gain = d.sky_gain;
     o.adapt_dark = d.adapt_dark;
     o.adapt_light = d.adapt_light;

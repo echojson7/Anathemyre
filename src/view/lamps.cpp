@@ -1,14 +1,27 @@
-// Огни кадра (6е, docs/lamps.md). Лампа карты — поток в люменах и цвет кельвинами; свету кадра нужна сила света
-// в канделах: I = Φ / (4π · доля сферы), где доля сферы у направленной лампы — (1 + назад) / 2 (light.glsl
-// светит назад долей back). Дальность — где освещённость падает до LAMP_E_CUT лк (дальше окно гасит её в ноль)
+// Огни кадра (6е, docs/lamps.md). Лампа карты — поток в люменах и цвет кельвинами или своим цветом; свету кадра
+// нужна сила света в канделах: I = Φ / (4π · доля сферы), где доля сферы у направленной лампы — (1 + назад) / 2
+// (light.glsl светит назад долей back). Дальность — где освещённость падает до порога lamp_e_cut (дальше окно
+// гасит её в ноль): порог — от глаза, а не постоянный (docs/lamps.md, «Дальность»)
 #include "lamps.h"
 #include "../core/hash.h"
 #include "../core/math3.h"
 #include "../sim/ground.h"
 
-static constexpr f32 LAMP_E_CUT = 2.0f;      // лк: дальше лампа не светит (окно light.glsl доводит до нуля)
-static constexpr f32 LAMP_RANGE_MAX = 16.0f;  // м
+// Порог дальности: белая стена под ним на экране (до кривой) — LAMP_CUT_D, это ~1/255 после кривой: свет лампы
+// там глазу уже не виден, и окно (1 − (d/R)⁴)² гасит его в ноль без края. Ночью и в зале лампа светит на десятки
+// метров, как в жизни. Не выше LAMP_E_CUT0 (2 лк, прежний постоянный порог): днём дальность прежняя, и глаз,
+// отстающий на два кадра (прочитан кадр N−2; час из --hour мир ставит после первого кадра), лампы не укорачивает.
+// Местная экспозиция тёмное не высветляет (local_tone в тень — 1, data/sky.txt), поэтому хватает глаза кадра
+static constexpr f32 LAMP_CUT_D = 0.002f;
+static constexpr f32 LAMP_E_CUT0 = 2.0f, LAMP_E_CUT_MIN = 0.005f;  // лк
+static constexpr f32 LAMP_RANGE_MAX = 48.0f;                     // м
 static constexpr f32 LAMPS_VIEW_R = 96.0f, LAMPS_FADE_R = 80.0f;  // круг ламп кадра и начало угасания, м
+
+// Порог дальности ламп по экспозиции глаза (множитель HDR, render_light; 0 — глаза ещё нет), лк
+static f32 lamp_e_cut(f32 exposure) {
+    if (!(exposure > 0.0f)) return LAMP_E_CUT0;
+    return f_clamp(LAMP_CUT_D * PI_F / exposure, LAMP_E_CUT_MIN, LAMP_E_CUT0);
+}
 
 void lamp_kelvin_rgb(f32 kelvin, f32 rgb[3]) {
     f64 t = (f64)f_clamp(kelvin, 1667.0f, 25000.0f);
@@ -39,25 +52,38 @@ static Vec3 rel_of(const WPos &eye, i32 cx, i32 cz, f32 x, f32 y, f32 z) {
     return {d.x, y - eye.y, d.y};
 }
 
-// Сила света (кд) и дальность (м) лампы с потоком lm
-static void lamp_power(f32 lm, bool directed, f32 back, f32 half_len, f32 &cd, f32 &range) {
+// Сила света (кд) и дальность (м) лампы с потоком lm при пороге e_cut лк. Дальность — по силе с запасом на цвет:
+// у цветной лампы (табло) самый сильный канал ярче её яркости в разы
+static void lamp_power(f32 lm, bool directed, f32 back, f32 half_len, f32 cmax, f32 e_cut, f32 &cd, f32 &range) {
     f32 sphere = directed ? 0.5f * (1.0f + back) : 1.0f;
     cd = lm / (4.0f * PI_F * sphere);
-    range = f_min(f_sqrt(cd / LAMP_E_CUT) + half_len, LAMP_RANGE_MAX);
+    range = f_min(f_sqrt(cd * cmax / e_cut) + half_len, LAMP_RANGE_MAX);
 }
 
-static void build_map_lamps(const Lamps &l, const WPos &eye, RenderPointLight *out, u32 &n, u32 cap) {
+// Цвет лампы с яркостью 1 (линейный sRGB): свой r g b или по кельвинам
+static void lamp_rgb(const Lamps &l, u32 i, f32 rgb[3]) {
+    f32 y = 0.2126f * l.r[i] + 0.7152f * l.g[i] + 0.0722f * l.b[i];
+    if (y <= 1e-6f) {
+        lamp_kelvin_rgb(l.kelvin[i], rgb);
+        return;
+    }
+    rgb[0] = l.r[i] / y;
+    rgb[1] = l.g[i] / y;
+    rgb[2] = l.b[i] / y;
+}
+
+static void build_map_lamps(const Lamps &l, const WPos &eye, f32 e_cut, RenderPointLight *out, u32 &n, u32 cap) {
     for (u32 i = 0; i < l.count && n < cap; ++i) {
         Vec3 rel = rel_of(eye, l.cx[i], l.cz[i], l.x[i], l.y[i], l.z[i]);
         f32 d = length(rel);
         if (d > LAMPS_VIEW_R) continue;
         f32 fade = d > LAMPS_FADE_R ? 1.0f - (d - LAMPS_FADE_R) / (LAMPS_VIEW_R - LAMPS_FADE_R) : 1.0f;
         f32 rgb[3];
-        lamp_kelvin_rgb(l.kelvin[i], rgb);
+        lamp_rgb(l, i, rgb);
         bool directed = l.fx[i] != 0.0f || l.fy[i] != 0.0f || l.fz[i] != 0.0f;
         f32 half_len = f_sqrt(l.ax[i] * l.ax[i] + l.ay[i] * l.ay[i] + l.az[i] * l.az[i]);
         f32 cd, range;
-        lamp_power(l.lm[i], directed, l.back[i], half_len, cd, range);
+        lamp_power(l.lm[i], directed, l.back[i], half_len, f_max(rgb[0], f_max(rgb[1], rgb[2])), e_cut, cd, range);
         cd *= fade * fade * (3.0f - 2.0f * fade);
         RenderPointLight &o = out[n++];
         o = RenderPointLight{rel.x, rel.y, rel.z, range, rgb[0] * cd, rgb[1] * cd, rgb[2] * cd, l.size[i],
@@ -68,8 +94,8 @@ static void build_map_lamps(const Lamps &l, const WPos &eye, RenderPointLight *o
 // Тестовые огни (F3): по одному в клетке 8 м мира в круге TEST_LIGHTS_R м вокруг опоры камеры, место, высота,
 // поток и цвет — из хеша клетки: костры (тёплые колбы) и реже холодные лампы. Проверяют списки froxels и свет
 constexpr f32 TEST_LIGHT_CELL = 8.0f, TEST_LIGHTS_R = 44.0f;
-static void build_test_lights(const Camera &cam, const Terrain &t, const WPos &eye, RenderPointLight *ls, u32 &n,
-                              u32 cap) {
+static void build_test_lights(const Camera &cam, const Terrain &t, const WPos &eye, f32 e_cut, RenderPointLight *ls,
+                              u32 &n, u32 cap) {
     const i32 per_chunk = (i32)(CHUNK_M / TEST_LIGHT_CELL), rc = (i32)(TEST_LIGHTS_R / TEST_LIGHT_CELL) + 1;
     const WPos &c = cam.pivot;
     i32 gx0 = c.cx * per_chunk + f_floor_i(c.x / TEST_LIGHT_CELL), gz0 = c.cz * per_chunk + f_floor_i(c.z / TEST_LIGHT_CELL);
@@ -91,21 +117,23 @@ static void build_test_lights(const Camera &cam, const Terrain &t, const WPos &e
             f32 rgb[3];
             lamp_kelvin_rgb(cold ? 6500.0f : 1900.0f, rgb);
             f32 cd, range;
-            lamp_power(400.0f + 1600.0f * u01(3), false, 0.0f, 0.0f, cd, range);
+            lamp_power(400.0f + 1600.0f * u01(3), false, 0.0f, 0.0f, f_max(rgb[0], f_max(rgb[1], rgb[2])), e_cut, cd,
+                       range);
             ls[n++] = RenderPointLight{rel.x, rel.y, rel.z, range, rgb[0] * cd, rgb[1] * cd, rgb[2] * cd, 0.15f,
                                        0, 0, 0, 0, 0, 0, 0, LIGHT_SHADOW};
         }
 }
 
-void lamps_build(const Lamps *lamps, bool test, const Camera &cam, const Terrain *t, const WPos &eye, Arena &frame,
-                 RenderFrame &out) {
+void lamps_build(const Lamps *lamps, bool test, const Camera &cam, const Terrain *t, const WPos &eye, f32 exposure,
+                 Arena &frame, RenderFrame &out) {
     const u32 nt = (u32)(2 * (i32)(TEST_LIGHTS_R / TEST_LIGHT_CELL) + 3);
     u32 cap = (lamps ? lamps->count : 0) + (test && t ? nt * nt : 0);
     if (cap > RENDER_MAX_LIGHTS) cap = RENDER_MAX_LIGHTS;
     if (!cap) return;
     RenderPointLight *ls = arena_push<RenderPointLight>(frame, cap);
     u32 n = 0;
-    if (lamps) build_map_lamps(*lamps, eye, ls, n, cap);
-    if (test && t) build_test_lights(cam, *t, eye, ls, n, cap);
+    f32 e_cut = lamp_e_cut(exposure);
+    if (lamps) build_map_lamps(*lamps, eye, e_cut, ls, n, cap);
+    if (test && t) build_test_lights(cam, *t, eye, e_cut, ls, n, cap);
     out.lights = {ls, n};
 }

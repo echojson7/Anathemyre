@@ -2,6 +2,7 @@
 # Виды материалов (docs/materials.md) по файлам data/shaders/materials/<вид>.glsl, в порядке имён.
 # Из одного списка — switch в шейдере и номера видов для игры, поэтому они не расходятся:
 #   <out>/shaders/gen/materials.glsl   #include всех видов и surface_kind()
+#   <out>/shaders/gen/material_kinds.glsl  номера видов константами KIND_<ВИД> (без самих видов)
 #   <out>/data/material_kinds.txt      имена видов по строке, номер = строка
 # Файл переписывается только при изменении (иначе make пересобирал бы шейдеры каждый раз).
 # ./tools/matgen.sh build/<цель>
@@ -14,6 +15,7 @@ kinds=$(ls data/shaders/materials/*.glsl | sed 's|.*/||; s|\.glsl$||' | LC_ALL=C
 first=$(echo "$kinds" | head -n 1)
 
 glsl="$out/shaders/gen/materials.glsl"
+kglsl="$out/shaders/gen/material_kinds.glsl"
 list="$out/data/material_kinds.txt"
 {
     echo '// создано tools/matgen.sh по data/shaders/materials/*.glsl, не править'
@@ -26,7 +28,12 @@ list="$out/data/material_kinds.txt"
     echo '    }'
     echo '}'
 } > "$glsl.new"
+{
+    echo '// создано tools/matgen.sh по data/shaders/materials/*.glsl, не править'
+    n=0
+    for k in $kinds; do echo "const uint KIND_$(echo "$k" | tr 'a-z' 'A-Z') = ${n}u;"; n=$((n + 1)); done
+} > "$kglsl.new"
 echo "$kinds" > "$list.new"
-for f in "$glsl" "$list"; do
+for f in "$glsl" "$kglsl" "$list"; do
     if cmp -s "$f.new" "$f"; then rm -f -- "$f.new"; else mv -- "$f.new" "$f"; fi
 done

@@ -123,9 +123,14 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     g.scans = f.style.scans && g_vk.scans.layers ? 1u : 0u;
     g.dt = f.style.dt;
     g.eye_snap = f.style.eye_snap ? 1u : 0u;
-    g.tonemap = f.style.tonemap < RENDER_TONEMAPS ? f.style.tonemap : RENDER_TONEMAP_AGX;
-    g.light_q = f.style.light_quality < RENDER_LIGHT_QUALITIES ? f.style.light_quality : RENDER_LIGHT_HIGH;
+    g.glow_gain = f.style.glow ? 1.0f : 0.0f;
+    g.tonemap = f.style.tonemap < RENDER_TONEMAPS ? f.style.tonemap : RENDER_TONEMAP_UE;
+    auto q = [](u32 s) { return s < RENDER_LIGHT_QUALITIES ? s : (u32)RENDER_LIGHT_HIGH; };
+    g.shadow_q = q(f.style.shadow_quality);
+    g.gi_q = q(f.style.gi_quality);
+    g.air_q = q(f.style.air_quality);
     for (u32 k = 0; k < 4; ++k) g.local_tone[k] = f.style.local_tone[k];
+    for (u32 k = 0; k < 4; ++k) g.eye_meter[k] = f.style.eye_meter[k];  // [1] — vk_world_fill (картинка кадра)
     g.viewport[0] = w;
     g.viewport[1] = h;
     g.ndc_per_pixel[0] = 2.0f / (w > 0 ? w : 1.0f);
@@ -139,6 +144,7 @@ static void fill_frame(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
     vk_skin_fill(g, f, fs);  // до vk_world_fill: LOD людей идёт в их экземпляры
     vk_world_fill(g, f, fs);
     vk_froxel_fill(g, f, fs);
+    vk_lsm_fill(g, f, fs);  // после огней кадра в буфере слота: их места карт — в их flags
 }
 
 // Снимок: копия картинки кадра в буфер (после интерфейса, до показа)
@@ -150,6 +156,13 @@ static void record_capture(VkCommandBuffer cmd, void *) {
     c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     c.imageExtent = {g_vk.extent.width, g_vk.extent.height, 1};
     vkCmdCopyImageToBuffer(cmd, img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_vk.capture.buffer, 1, &c);
+}
+
+static void record_capture_hdr(VkCommandBuffer cmd, void *) {
+    VkBufferImageCopy c{};
+    c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    c.imageExtent = {g_vk.extent.width, g_vk.extent.height, 1};
+    vkCmdCopyImageToBuffer(cmd, g_vk.world.hdr.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_vk.capture_hdr_buf.buffer, 1, &c);
 }
 
 static void capture_pass(u32 img) {
@@ -164,6 +177,17 @@ static void capture_pass(u32 img) {
     rg_pass("снимок", nullptr, record_capture, nullptr);
     rg_use(g_vk.rg_swap, RG_IMG_COPY_READ);
     rg_use(g_vk.rg_capture, RG_COPY_WRITE);
+    if (g_vk.capture_hdr) {
+        if (g_vk.capture_hdr_buf.size < bytes * 2) {
+            vk_destroy_buffer(g_vk.capture_hdr_buf);
+            if (!vk_create_buffer(g_vk.capture_hdr_buf, bytes * 2, VK_BUFFER_USAGE_TRANSFER_DST_BIT)) return;
+            vk_buffer_name(g_vk.capture_hdr_buf, "снимок HDR");
+            rg_reset(g_vk.rg_capture_hdr);
+        }
+        rg_pass("снимок HDR", nullptr, record_capture_hdr, nullptr);
+        rg_use(g_vk.world.rg_hdr, RG_IMG_COPY_READ);
+        rg_use(g_vk.rg_capture_hdr, RG_COPY_WRITE);
+    }
     g_vk.capture_extent = g_vk.extent;
     g_vk.capture_ready = true;
 }
@@ -298,7 +322,28 @@ void render_wait_idle() {
     if (g_vk.device) vkDeviceWaitIdle(g_vk.device);
 }
 
+// Дождаться GPU и прочитать счётчики и глаз всех кадров в полёте по порядку: прочитанное — последний кадр
+void render_collect() {
+    if (!g_vk.device) return;
+    vkDeviceWaitIdle(g_vk.device);
+    for (u32 k = 0; k < FRAMES_IN_FLIGHT; ++k) vk_stats_read(g_vk.frames[(g_vk.frame_index + k) % FRAMES_IN_FLIGHT]);
+}
+
 void render_capture_next() { g_vk.capture_next = true; }
+void render_capture_hdr(bool on) { g_vk.capture_hdr = on; }
+
+bool render_capture_hdr_take(Arena &arena, u16 **rgba, u32 *width, u32 *height) {
+    if (!g_vk.capture_hdr || !g_vk.capture_hdr_buf.buffer) return false;
+    vkDeviceWaitIdle(g_vk.device);
+    u32 w = g_vk.capture_extent.width, h = g_vk.capture_extent.height;
+    vmaInvalidateAllocation(g_vk.vma, g_vk.capture_hdr_buf.alloc, 0, VK_WHOLE_SIZE);
+    u16 *out = arena_push<u16>(arena, (usize)w * h * 4);
+    memcpy(out, g_vk.capture_hdr_buf.mapped, (usize)w * h * 8);
+    *rgba = out;
+    *width = w;
+    *height = h;
+    return true;
+}
 
 bool render_capture_take(Arena &arena, u8 **rgba, u32 *width, u32 *height) {
     if (!g_vk.capture_ready) return false;

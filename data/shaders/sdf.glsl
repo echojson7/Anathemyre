@@ -120,12 +120,12 @@ vec2 sdf_sky_q(vec3 pos, vec3 n, uint q) {
     float tmax = q == LIGHT_Q_LOW ? 16.0 : q == LIGHT_Q_MEDIUM ? 20.0 : q == LIGHT_Q_HIGH ? 24.0 : 32.0;
     return sdf_cones(pos, n, q, tmax, steps);
 }
-vec2 sdf_sky(vec3 pos, vec3 n) { return sdf_sky_q(pos, n, pc.frame.light_q); }
+vec2 sdf_sky(vec3 pos, vec3 n) { return sdf_sky_q(pos, n, pc.frame.gi_q); }
 
 // Ближнее затенение под светом зондов (6г, docs/gi.md): те же конусы, но не дальше SDF_NEAR — углы, низ колонн,
 // под балкой. Дальнюю заслонку зонды уже знают (их шаг 1–4 м)
 float sdf_ao(vec3 pos, vec3 n) {
-    uint q = pc.frame.light_q;
+    uint q = pc.frame.gi_q;
     uint steps = q == LIGHT_Q_LOW ? 4u : q == LIGHT_Q_MEDIUM ? 5u : q == LIGHT_Q_HIGH ? 6u : 7u;
     return sdf_cones(pos, n, q, 1.0, steps).x;
 }

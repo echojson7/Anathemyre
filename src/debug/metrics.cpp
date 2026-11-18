@@ -142,6 +142,8 @@ static void metrics_body(UiForm &f, const DebugInfo &in, DebugState &d) {
             // Шаг светила (6б-2): страниц нового набора, отложенных стройкой в фоне, и сколько света уже на нём
             snprintf(t, sizeof t, "%u · %u %%", in.work_sm[6], in.work_sm[7]);
             ui_value(f, "тени: стройка шага · перетекание", t);
+            // Слой подвижных (люди, машины, оружие): копии страниц под ними и вызовы их кластеров в копии
+            pair_row(f, "тени подвижных: копий · вызовов", in.work_sm[8], in.work_sm[9]);
             // Поле расстояний мира (docs/sdf.md): выборки светом; засыпка и сборка — только когда кирпичи грязные
             pair_row(f, "поле: выборок · кирпичей", in.work_sdf[0], in.work_sdf[2]);
             snprintf(t, sizeof t, "%u", in.work_sdf[1]);
@@ -154,6 +156,15 @@ static void metrics_body(UiForm &f, const DebugInfo &in, DebugState &d) {
             pair_row(f, "ячейки: живых · новых", in.work_lc[0], in.work_lc[1]);
             pair_row(f, "ячейки: посчитано · лучей", in.work_lc[2], in.work_lc[3]);
             pair_row(f, "ячейки: без места · ждут", in.work_lc[4], in.work_lc[5]);
+            // Тени огней картами (docs/lamp_shadows.md): грани рисуются, только когда огонь получил место
+            pair_row(f, "огни: граней · вызовов в них", in.work_lsm[0], in.work_lsm[1]);
+            snprintf(t, sizeof t, "%u", in.work_lsm[2]);
+            ui_value(f, "огни: выборок карт", t);
+            pair_row(f, "огни, подвижные: граней · вызовов", in.work_lsm[3], in.work_lsm[4]);
+            // Воздух (docs/air.md): клетки с пылью; шаги лучей солнца и их выборки страниц теней
+            dbg_count(in.work_air[0], t, sizeof t);
+            ui_value(f, "воздух: клеток", t);
+            pair_row(f, "воздух: шагов · выборок", in.work_air[1], in.work_air[2]);
             dbg_count(in.work_skin, t, sizeof t);
             ui_value(f, "скинено вершин", t);
         }
@@ -182,9 +193,14 @@ static void metrics_body(UiForm &f, const DebugInfo &in, DebugState &d) {
             snprintf(t, sizeof t, "%.4g · %.4g лк", (double)in.lux_key, (double)in.lux_sky);
             ui_value(f, "светило · небо", t);
             snprintf(t, sizeof t, "%.4g лк", (double)in.lux_eye);
-            ui_value(f, "у глаза (с заслонкой)", t);
+            ui_value(f, "замер глаза", t);
+            snprintf(t, sizeof t, "%.4g · %.4g лк", (double)in.lux_cam, (double)in.lux_view);
+            ui_value(f, "у камеры · в кадре", t);
             snprintf(t, sizeof t, "%.2f → %.2f", (double)in.ev100, (double)in.ev100_goal);
             ui_value(f, "EV100 глаза → цель", t);
+            snprintf(t, sizeof t, "%.2f %.2f %.2f · %.0f%%", (double)in.wb_white[0], (double)in.wb_white[1],
+                     (double)in.wb_white[2], (double)(in.wb_degree * 100.0f));
+            ui_value(f, "цвет света · привыкание", t);
         }
     }
 

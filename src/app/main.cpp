@@ -34,8 +34,13 @@ static void usage() {
     log_info("           [--smpages] [--smonly]                                       страницы теней поверх кадра, только тень (docs/shadow.md)");
     log_info("           [--sdfsky] [--sdffield] [--nosdf]                            видимость неба, поле расстояний, свет без поля (docs/sdf.md)");
     log_info("           [--gionly] [--nogi] [--gicells] [--nocells]                  только непрямой свет, без зондов, ячейки света, кадр без ячеек (docs/gi.md, docs/lcache.md)");
-    log_info("           [--tonemap agx|aces] [--light low|medium|high|ultra]         тонмаппинг, качество света (docs/light.md)");
+    log_info("           [--tonemap ue|agx|aces] [--light low|medium|high|ultra]      тонмаппинг, все части качества света (docs/light.md)");
     log_info("           [--nolocal]                                                  без местной экспозиции (было/стало, docs/light.md)");
+    log_info("           [--nolsm]                                                    тени огней полем, не картами (было/стало, docs/lamp_shadows.md)");
+    log_info("           [--nodyn]                                                    без теней людей, машин и оружия (было/стало, docs/shadow.md)");
+    log_info("           [--noair]                                                    без воздуха: лучей солнца и огней в пыли (было/стало, docs/air.md)");
+    log_info("           [--nolens]                                                   без эффектов объектива: бликов, аберрации, виньетки, зерна (было/стало, docs/lens.md)");
+    log_info("           [--hdr]                                                      со снимком — HDR кадра мира в <снимок>.hdr16 (tools/lightlab/hdr.py)");
     log_info("           [--window W H]                                               размер окна, по умолчанию 1600 900");
     log_info("           [--frames N --shot файл.bmp] [--cam yaw pitch расстояние x z] [--pivot м]   снимок (градусы, метры; опора над землёй)");
     log_info("           [--work файл.txt]                                            счётчики работы освещения в файл (с --frames)");
@@ -48,6 +53,7 @@ static void usage() {
     log_info("           --frames N --video префикс                                   каждый кадр → префикс_0000.bmp… (стенд: 1/30 с на кадр)");
     log_info("           --cam-test файл.txt                                          проверка камеры записанным вводом без окна (docs/camera.md)");
     log_info("           --frames N --video префикс --cam-play                        видео камеры: показ записанным вводом");
+    log_info("           --frames N --video префикс --cam … --cam-to yaw pitch расст x z   пролёт камеры от --cam к --cam-to, 1/30 с на кадр");
     log_info("           [--spin град/с]                                              камера поворачивается сама (видео мерцания при повороте)");
     log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines] [--sides]  выбрать, камера за ним, приказы, отладка");
     log_info("           [--mech pack|stand|walk|show|veil|prone|aim] [--mech-follow] шагающие машины: лежат, стоят, обходят, показ всего по порядку, морок по кругу, лёжка, выпад с очередями; камера за машиной (docs/vezha.md, docs/tat.md, docs/gryd.md)");
@@ -141,6 +147,14 @@ int main(int argc, char **argv) {
             }
             i += 5;
         }
+        else if (!strcmp(s, "--cam-to")) {
+            a.cam_to_set = true;
+            for (int k = 0; k < 5 && ok; ++k) {
+                const char *v = i + 1 + k < argc ? argv[i + 1 + k] : nullptr;
+                ok = v && parse_f32(Str{v, (u32)strlen(v)}, a.cam_to[k]);
+            }
+            i += 5;
+        }
         else if (!strcmp(s, "--cells")) a.cells = true;
         else if (!strcmp(s, "--aa")) {
             ok = next != nullptr;
@@ -164,8 +178,16 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--gicells")) a.gi_view = RENDER_GI_CELLS;
         else if (!strcmp(s, "--nocells")) a.gi_view = RENDER_GI_PROBES;
         else if (!strcmp(s, "--nolocal")) a.local_off = true;
+        else if (!strcmp(s, "--nolsm")) a.lsm_off = true;
+        else if (!strcmp(s, "--nodyn")) a.dyn_off = true;
+        else if (!strcmp(s, "--noair")) a.air_off = true;
+        else if (!strcmp(s, "--nolens")) a.lens_off = true;
+        else if (!strcmp(s, "--hdr")) a.hdr = true;
         else if (!strcmp(s, "--tonemap")) {
-            a.tonemap = next && !strcmp(next, "agx") ? (i32)RENDER_TONEMAP_AGX : next && !strcmp(next, "aces") ? (i32)RENDER_TONEMAP_ACES : -1;
+            a.tonemap = next && !strcmp(next, "agx")    ? (i32)RENDER_TONEMAP_AGX
+                        : next && !strcmp(next, "aces") ? (i32)RENDER_TONEMAP_ACES
+                        : next && !strcmp(next, "ue")   ? (i32)RENDER_TONEMAP_UE
+                                                        : -1;
             ok = a.tonemap >= 0;
             i++;
         }

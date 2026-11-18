@@ -11,6 +11,10 @@ part ostov_gallery 0 0 0
 part ostov_rooms 0 0 0
 part ostov_debris 0 0 0
 
+# Пыль зала (air <x> <y> <z> <sx> <sy> <sz> <пыль 1/км> [yaw градусы], docs/air.md): коробка по внутренней стороне
+# стен, пола и плиты крыши — лучи в проёмах крыши и окнах. Новые строки — ниже частей: seed части — от номера её строки
+air 0 3.625 1 28.8 6.75 20.8 2
+
 # Потёки снаружи: от края крыши вниз
 decal streak decal_water -13 5.5 -10 3.6 3 0.4 seed 7
 decal streak decal_water -13 5.5 12 3.6 3 0.4 seed 8

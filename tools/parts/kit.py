@@ -110,10 +110,12 @@ class Body:
         self.lights += other.lights
         return self
 
-    def light(self, c, axis, face, back, lm, kelvin, size):
+    def light(self, c, axis, face, back, lm, kelvin, size, rgb=None):
         """Лампа: середина тела света c, полуось трубки axis (нули — колба), куда светит face (нули — во все
-        стороны), доля света назад back, поток lm, цвет kelvin, радиус тела size. В сетку не идёт."""
-        self.lights.append((c, axis, face, back, lm, kelvin, size))
+        стороны), доля света назад back, поток lm, цвет kelvin, радиус тела size. Цветная лампа (табло) — kelvin 0 и
+        rgb: линейный sRGB, яркость не важна. В сетку не идёт."""
+        assert (rgb is None) == (kelvin != 0), "цвет: либо кельвины, либо kelvin 0 и rgb"
+        self.lights.append((c, axis, face, back, lm, kelvin, size, rgb))
 
     def _closed(self, faces):
         """Добавить одно замкнутое тело с согласованным обходом: развернуть наружу по знаку объёма."""

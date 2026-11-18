@@ -8,7 +8,8 @@
 // считается раз, на первом из них, и раздаётся остальным. Ведущие пиксели сжимаются в начало группы, поэтому
 // считают их подряд идущие потоки. Пустые пиксели — небо (sky.glsl). Пишет линейный цвет в HDR-картинку,
 // уже умноженный на экспозицию (docs/light.md: яркости в кд/м², диск солнца ~10⁹ — f16 их не держит), тонмаппинг —
-// стиль, отдельным проходом. Заодно считает свою работу (STAT_PX_*, STAT_SURF_*, STAT_SHADOW_TAPS).
+// стиль, отдельным проходом. Поверх — воздух: пыль перед точкой пикселя (docs/air.md, air_apply.glsl). Заодно
+// считает свою работу (STAT_PX_*, STAT_SURF_*, STAT_SHADOW_TAPS).
 // Земля (docs/gcache.md): поверхность — из кеша земли по текселю, который разбор плиток записал в gc_cells;
 // у земли поверхность — тексель, свет — раз на тексель. Плитка земли без разбора треугольников: если хоть
 // одного текселя нет в кеше (не хватило места), она уходит в «землю на пиксель». Та и смесь считают
@@ -34,6 +35,7 @@ ivec2 g_origin;  // начало отсчёта узоров: чанк каме�
 #include "sky.glsl"
 #include "froxel.glsl"
 #include "motion.glsl"
+#include "air_apply.glsl"
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0, r32ui) uniform readonly uimage2D u_vis;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D u_hdr;
@@ -58,6 +60,35 @@ float local_gain(float e) {
 // Цвет в HDR кадра: × экспозиция глаза этого кадра (sky_sum.comp) × местная экспозиция по свету точки e, лк;
 // предел — запас до края f16
 vec3 pre_exposed(vec3 c, float e) { return min(c * (pc.frame.sky_out.v[SKY_OUT_EYE].x * local_gain(e)), vec3(60000.0)); }
+// Альфа HDR — свет места × экспозиция кадра (без местной): её пишет --hdr (tools/lightlab/hdr.py делит на
+// экспозицию из журнала)
+float elocal_alpha(float e) { return min(e * pc.frame.sky_out.v[SKY_OUT_EYE].x, 60000.0); }
+// Сумеречное зрение (docs/light.md, «Сумеречное зрение»): в темноте видят палочки — цвета нет, синее светлее красного (сдвиг
+// Пуркинье), серое чуть голубое. Доля палочек — по яркости пикселя до экспозиции: с ~10 кд/м² их нет, к ~0.01 —
+// почти всё (мезопика CIE — 0.005…5 кд/м²), × night_vision; и по свету, к которому привык глаз (яркость среднего
+// серого кадра, 0.18 / экспозиция): с 20 кд/м² палочки ослеплены — днём тёмный проём тёмный, но не серо-синий; к
+// 0.5 кд/м² (глубокие сумерки, луна) работают в полную силу. Под лампой ночью пиксель яркий — цвет есть, песок под
+// луной — серебристый. До сглаживания: смесь по яркости пикселя у края предмета не дрожит. gain — местная экспозиция
+const vec3 ROD_W = vec3(0.016915, 0.590105, 0.392990);  // палочки в линейном sRGB (Kirk, O'Brien 2011), белое → 1
+const vec3 ROD_TINT = vec3(0.8875, 1.0114, 1.2178);     // голубизна видимого палочками, Y = 1
+vec3 night_vision(vec3 c, float gain) {
+    float ex = pc.frame.sky_out.v[SKY_OUT_EYE].x;
+    float rods = pc.frame.a_post.w * (1.0 - smoothstep(-0.3, 1.3, log2(0.18 / ex) * 0.30103));
+    if (rods <= 0.0) return c;
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722)) / (ex * gain);
+    float s = rods * (1.0 - smoothstep(-2.0, 1.0, log2(max(l, 1e-9)) * 0.30103));
+    return mix(c, dot(c, ROD_W) * ROD_TINT, s);
+}
+// Свет места для глаза следующего кадра (eye.comp): цвет (Y = 1) и log2 света места против света у камеры этого
+// кадра — отношение, а не лк: после скачка часов замер не тянет старый свет, а переносит его соотношение к камере
+vec4 view_value(vec3 c, float e) {
+    return vec4(c, log2(max(e, 1e-9) / max(pc.frame.sky_out.v[SKY_OUT_VIEW].w, 1e-9)));
+}
+// Свет мест плитки — средние по её пикселям (порядок сложения постоянный)
+void view_store(ivec2 origin, vec4 v) {
+    uint tx = (uint(pc.frame.viewport.x) + 7u) / 8u;
+    pc.frame.view_light.v[uint(origin.y / 8) * tx + uint(origin.x / 8)] = v;
+}
 
 shared Hit s_hit[64];
 shared uint s_id[64];
@@ -66,8 +97,11 @@ shared uint s_lead[64];    // поток ведущего пикселя той 
 shared uint s_rank[64];    // у ведущего — его место среди ведущих
 shared uint s_list[64];    // ведущие по порядку
 shared vec3 s_color[64];
-shared uint s_work[10];    // пиксели неба, земли, сеток; поверхности земли, сеток; выборки тени; земля на пиксель;
-                           // выборки карты теней и без страницы; выборки поля расстояний
+shared float s_gain[64];    // местная экспозиция ведущего (воздух поверх, air_apply)
+shared float s_elocal[64];  // свет места ведущего × экспозиция (альфа HDR)
+shared vec4 s_view[64];     // свет места ведущего для глаза (view_light)
+shared uint s_work[11];    // пиксели неба, земли, сеток; поверхности земли, сеток; выборки тени; земля на пиксель;
+                           // выборки карты теней и без страницы; выборки поля расстояний; выборки карт огней
 shared uint s_bail;        // плитка земли уходит в «землю на пиксель»: текселя нет в кеше
 shared uint s_box[6];      // рамка точек ведущих пикселей плитки, м от камеры: min xyz, max xyz (порядок слов — порядок чисел)
 
@@ -110,6 +144,7 @@ vec3 froxel_heat(vec3 c, vec3 rel) {
 vec3 shade_hit(Hit h, int phys) {
     if (h.kind == HIT_SKY) {
         g_e_local = local_sky_e();
+        g_c_local = local_sky_c();
         return sky_radiance(normalize(h.rel));
     }
     Surface s;
@@ -182,9 +217,10 @@ void lamp_tile(uint t) {
 
 // Работа группы — в счётчики кадра: одна атомарная операция на счётчик и плитку
 void work_flush() {
-    const uint at[10] = uint[10](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
-                                 STAT_SHADOW_TAPS, STAT_GC_PX_DIRECT, STAT_SM_TAPS, STAT_SM_MISS, STAT_SDF_TAPS);
-    for (uint k = 0u; k < 10u; ++k)
+    const uint at[11] = uint[11](STAT_PX_SKY, STAT_PX_GROUND, STAT_PX_MESH, STAT_SURF_GROUND, STAT_SURF_MESH,
+                                 STAT_SHADOW_TAPS, STAT_GC_PX_DIRECT, STAT_SM_TAPS, STAT_SM_MISS, STAT_SDF_TAPS,
+                                 STAT_LSM_TAPS);
+    for (uint k = 0u; k < 11u; ++k)
         if (s_work[k] != 0u) atomicAdd(pc.frame.stats.v[at[k]], s_work[k]);
 }
 
@@ -198,7 +234,13 @@ void main() {
     bool inside = px.x < int(f.viewport.x) && px.y < int(f.viewport.y);
     if (TILE_KIND == TILE_SKY) {
         // Только небо: то же, что shade_hit() пустого пикселя
-        if (inside) imageStore(u_hdr, px, vec4(pre_exposed(sky_radiance(normalize(pixel_ray(px))), local_sky_e()), 1.0));
+        if (inside) {
+            float es = local_sky_e(), gs = local_gain(es);
+            vec3 c = pre_exposed(sky_radiance(normalize(pixel_ray(px))), es);
+            if (air_shown()) c = air_apply(px, c, 2.0 * AIR_FAR, gs);
+            imageStore(u_hdr, px, vec4(night_vision(c, gs), elocal_alpha(es)));
+        }
+        if (t == 0u) view_store(origin, view_value(local_sky_c(), local_sky_e()));
         if (inside && f.aa_mode == AA_TAA) {
             Hit hs;
             hs.kind = HIT_SKY;
@@ -211,7 +253,7 @@ void main() {
         }
         return;
     }
-    if (t < 10u) s_work[t] = 0u;
+    if (t < 11u) s_work[t] = 0u;
     if (t == 0u) s_bail = s_lamp_any = 0u;
     if (t < 32u) s_lamp[t] = 0u;
     if (t < 6u) s_box[t] = t < 3u ? 0xFFFFFFFFu : 0u;
@@ -300,13 +342,33 @@ void main() {
     if (t < nlead) {
         vec3 col = shade_hit(hl, phys);
         s_color[t] = pre_exposed(col, g_e_local);
+        s_gain[t] = local_gain(g_e_local);
+        s_elocal[t] = elocal_alpha(g_e_local);
+        s_view[t] = view_value(g_c_local, g_e_local);
         if (g_steps != 0u) atomicAdd(s_work[5], g_steps);
         if (g_sm_taps != 0u) atomicAdd(s_work[7], g_sm_taps);
         if (g_sm_miss != 0u) atomicAdd(s_work[8], g_sm_miss);
         if (g_sdf_taps != 0u) atomicAdd(s_work[9], g_sdf_taps);
+        if (g_lsm_taps != 0u) atomicAdd(s_work[10], g_lsm_taps);
     }
     barrier();
-    if (inside) imageStore(u_hdr, px, vec4(s_color[s_rank[s_lead[t]]], 1.0));
+    if (inside) {
+        uint r = s_rank[s_lead[t]];
+        vec3 out_c = s_color[r];
+        if (air_shown()) out_c = air_apply(px, out_c, h.kind == HIT_SKY ? 2.0 * AIR_FAR : length(h.rel), s_gain[r]);
+        imageStore(u_hdr, px, vec4(night_vision(out_c, s_gain[r]), s_elocal[r]));
+    }
     if (inside && f.aa_mode == AA_TAA) imageStore(u_motion, px, mv);
-    if (t == 0u) work_flush();
+    if (t == 0u) {
+        work_flush();
+        vec4 v = vec4(0.0);
+        float n = 0.0;
+        for (uint j = 0u; j < 64u; ++j) {
+            ivec2 q = origin + ivec2(j & 7u, j >> 3u);
+            if (q.x >= int(f.viewport.x) || q.y >= int(f.viewport.y)) continue;
+            v += s_view[s_rank[s_lead[j]]];
+            n += 1.0;
+        }
+        view_store(origin, v / max(n, 1.0));
+    }
 }

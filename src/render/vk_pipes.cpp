@@ -119,7 +119,7 @@ static VkPipeline build_graphics(const PipeDesc &d, VkShaderModule vs, VkShaderM
             ba.alphaBlendOp = VK_BLEND_OP_ADD;
         }
         auto cb = vk_info<VkPipelineColorBlendStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO);
-        cb.attachmentCount = d.no_attach ? 0 : 1;
+        cb.attachmentCount = d.no_attach || d.depth_only ? 0 : 1;
         cb.pAttachments = &ba;
         VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
         auto ds = vk_info<VkPipelineDynamicStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO);
@@ -127,9 +127,9 @@ static VkPipeline build_graphics(const PipeDesc &d, VkShaderModule vs, VkShaderM
         ds.pDynamicStates = dyn;
         auto ri = vk_info<VkPipelineRenderingCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO);
         VkFormat color = d.color != VK_FORMAT_UNDEFINED ? d.color : g_vk.format;
-        ri.colorAttachmentCount = d.no_attach ? 0 : 1;
+        ri.colorAttachmentCount = d.no_attach || d.depth_only ? 0 : 1;
         ri.pColorAttachmentFormats = &color;
-        ri.depthAttachmentFormat = d.no_attach ? VK_FORMAT_UNDEFINED : DEPTH_FORMAT;
+        ri.depthAttachmentFormat = d.no_attach ? VK_FORMAT_UNDEFINED : d.depth != VK_FORMAT_UNDEFINED ? d.depth : DEPTH_FORMAT;
         auto pi = vk_info<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
         pi.pNext = &ri;
         pi.stageCount = 2;

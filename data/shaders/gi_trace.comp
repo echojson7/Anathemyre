@@ -50,7 +50,7 @@ void main() {
     }
     barrier();
     vec4 pr = s_probe;
-    g_lamp_steps = max(lamp_steps(f.light_q) / 2u, 6u);
+    g_lamp_steps = max(lamp_steps(f.gi_q) / 2u, 6u);
     uint n = f.gi_rays_n;
     if (uint(pr.w) == GI_ACTIVE) {
         vec4 q = gi_rot(ip, L, (word >> 17) & 3u);
@@ -64,7 +64,7 @@ void main() {
         }
         if (back != 0u) atomicAdd(s_back, back);
     }
-    atomicAdd(s_taps, g_sdf_taps);
+    atomicAdd(s_taps, g_sdf_taps + g_lsm_taps);  // выборки поля и карт огней
     barrier();
     if (t == 0u) {
         // Больше четверти лучей — в обратную сторону граней: зонд внутри заслонки (DDGI)

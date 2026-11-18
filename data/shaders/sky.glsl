@@ -86,8 +86,9 @@ vec3 sky_star_color(float t) {
 
 // Слой звёзд: грани куба небесной сферы разбиты на n×n клеток, в клетке — звезда с вероятностью prob,
 // звёздной величиной от m0 до m1 (тусклых больше — как у настоящего неба: втрое на величину). Возвращает
-// яркость (кд/м²): освещённость от звезды размазана по пятну sigma (рад) — энергия не зависит от разрешения
-vec3 sky_star_layer(vec3 c, float n, float prob, float m0, float m1, uint salt, float sigma, float twinkle) {
+// яркость (кд/м²): освещённость от звезды размазана по пятну sigma (рад) — энергия не зависит от разрешения.
+// mlim — предельная величина, какую глаз видит на этом фоне (sky_stars): тусклее — гаснет за ±0.6 величины
+vec3 sky_star_layer(vec3 c, float n, float prob, float m0, float m1, uint salt, float sigma, float twinkle, float mlim) {
     vec3 a = abs(c);
     uint face;
     vec3 q;  // xy — по грани, z — к грани
@@ -119,6 +120,7 @@ vec3 sky_star_layer(vec3 c, float n, float prob, float m0, float m1, uint salt, 
     float u = sky_u01(h * 101u + 7u);
     float k = pow(10.0, 0.45 * (m1 - m0));
     float m = m0 + log(1.0 + u * (k - 1.0)) / (0.45 * 2.302585);
+    if (m > mlim + 0.6) return vec3(0.0);
     // Освещённость от звезды, лк. Перепад между величинами сжат (0.36 вместо 0.4 на величину): экран не
     // держит тысячекратный перепад точек, а глаз видит величины ровной лестницей
     float e = 2.54e-6 * pow(10.0, -0.36 * m);
@@ -131,15 +133,19 @@ vec3 sky_star_layer(vec3 c, float n, float prob, float m0, float m1, uint salt, 
                sin(pc.frame.a_night.y * (5.3 + 4.1 * sky_u01(h * 91u + 11u)) + ph * 1.7);
     float temp = sky_u01(h * 151u + 13u);
     temp = temp * temp * (3.0 - 2.0 * temp);
-    return sky_star_color(temp) * (e * psf * max(1.0 + twinkle * tw, 0.0));
+    return sky_star_color(temp) * (e * psf * max(1.0 + twinkle * tw, 0.0)) * smoothstep(mlim + 0.6, mlim - 0.6, m);
 }
 
 // Звёзды и Млечный путь по направлению: яркость над атмосферой, кд/м². ex — экспозиция кадра: днём звёзд не
-// видно, их и не считаем
-vec3 sky_stars(vec3 dir, float ex) {
+// видно, их и не считаем. bg — яркость неба за ними, кд/м²: глаз на светлом фоне видит только яркие звёзды —
+// предельная величина по Шеферу (1990; через яркость неба в зв. вел./″²: 7.93 − 5·lg(10^(4.316 − B/5) + 1)) с
+// запасом в величину (небо и луна здесь ярче настоящих): в безлунную ночь — до ~6.5-й величины, при луне — до
+// ~3.7-й, у светлого горизонта меньше, в сумерках — лишь самые яркие
+vec3 sky_stars(vec3 dir, float ex, float bg) {
     FrameData f = pc.frame;
     float gain = f.a_star[0].w;
     if (gain <= 0.0 || ex * gain < 1e-2) return vec3(0.0);
+    float mlim = 8.93 - 5.0 * 0.4342945 * log(63.1 * sqrt(max(bg, 0.0)) + 1.0);
     vec3 c = sky_celestial(dir);
     // Пятно звезды: не мельче пикселя (иначе рябит в движении) и не мельче 0.9′
     float sigma = max(0.62 * f.pixel_angle, 0.00026);
@@ -152,14 +158,15 @@ vec3 sky_stars(vec3 dir, float ex) {
     float patchy = 0.45 + 1.1 * sky_noise(c * 4.3 + 7.0);
     float faint = clamp(patchy * (0.05 + 0.3 * mw.w), 0.0, 0.5);
     vec3 L = vec3(0.0);
-    L += sky_star_layer(c, 20.0, 0.075, -1.2, 3.2, 1u, sigma, tw);
-    L += sky_star_layer(c, 56.0, 0.065 * patchy, 3.2, 5.2, 2u, sigma, tw);
-    L += sky_star_layer(c, 47.0, 0.065 * patchy, 3.2, 5.2, 3u, sigma, tw);
-    L += sky_star_layer(c, 150.0, faint, 5.2, 7.0, 4u, sigma, tw * 0.5);
-    L += sky_star_layer(c, 131.0, faint, 5.2, 7.0, 5u, sigma, tw * 0.5);
+    L += sky_star_layer(c, 20.0, 0.075, -1.2, 3.2, 1u, sigma, tw, mlim);
+    L += sky_star_layer(c, 56.0, 0.065 * patchy, 3.2, 5.2, 2u, sigma, tw, mlim);
+    L += sky_star_layer(c, 47.0, 0.065 * patchy, 3.2, 5.2, 3u, sigma, tw, mlim);
+    L += sky_star_layer(c, 150.0, faint, 5.2, 7.0, 4u, sigma, tw * 0.5, mlim);
+    L += sky_star_layer(c, 131.0, faint, 5.2, 7.0, 5u, sigma, tw * 0.5, mlim);
     L *= gain;
-    // Млечный путь: яркость — от свечения ночного неба (виден на его фоне, в лунную ночь слабее)
-    L += mw.rgb * (f.a_night.z * 5.0 * f.a_ground.w * f.a_sun.w);
+    // Млечный путь: яркость — в долях свечения ночного неба в зените (виден на его фоне, в лунную ночь слабее):
+    // светлые облака полосы ~5–8 раз ярче фона, как у настоящего
+    L += mw.rgb * (f.a_night.z * 7.5 * f.a_ground.w);
     return L;
 }
 
@@ -244,7 +251,7 @@ vec3 sky_radiance(vec3 dir) {
     float cover;
     vec3 moon = sky_moon_disc(dir, ex, cover);
     vec3 top = atmo_halo(dir) + sky_sun_disc(dir, ex) + moon;
-    top += sky_stars(dir, ex) * (sky.a * (1.0 - cover));
+    top += sky_stars(dir, ex, dot(sky.rgb, vec3(0.2126, 0.7152, 0.0722))) * (sky.a * (1.0 - cover));
     return L + top * (above * tc);
 }
 #endif

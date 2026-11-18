@@ -156,6 +156,22 @@ vec3 gi_ground_albedo(vec3 pa) {
     return mix(0.5 * (a.p0.rgb + a.p1.rgb), 0.5 * (b.p0.rgb + b.p1.rgb), desert);
 }
 
+// Вес зонда w по расстояниям (Чебышёв): точка pp от зонда дальше его заслонки — вес гаснет; слабые веса прижаты
+// к нулю (crush)
+float gi_cheb(uint slot, vec3 pp, float w) {
+    float d = max(length(pp), 1e-4);
+    vec2 m = textureLod(u_gi_dep, gi_uv(slot, pp / d, GI_DEP), 0.0).rg;
+    if (d > m.x) {
+        float var = abs(m.x * m.x - m.y);
+        float dm = d - m.x;
+        float ch = var / (var + dm * dm);
+        w *= ch * ch * ch;
+    }
+    w = max(w, 1e-6);
+    if (w < 0.2) w *= w * w * 25.0;
+    return w;
+}
+
 // Свет зондов уровня L в точке pa (м от якоря) по нормали n — E/π (сумма весов в w); ir — то же в сторону rd
 // (rgb) и доля неба туда (a). Веса DDGI: трилинейный, мягкая обратная сторона, Чебышёв по расстояниям, слабые
 // веса прижаты к нулю (crush). Зонды в стене, не посчитанные и чужие месту (окно ещё не обновлено) — без веса
@@ -184,24 +200,41 @@ vec4 gi_level(int L, vec3 pa, vec3 n, vec3 rd, bool want_r, out vec4 ir) {
             float k = (dot(to / lt, n) + 1.0) * 0.5;
             w = k * k + 0.2;
         }
-        vec3 pp = pb - p.pos;
-        float d = max(length(pp), 1e-4);
-        vec2 m = textureLod(u_gi_dep, gi_uv(slot, pp / d, GI_DEP), 0.0).rg;
-        if (d > m.x) {
-            float var = abs(m.x * m.x - m.y);
-            float dm = d - m.x;
-            float ch = var / (var + dm * dm);
-            w *= ch * ch * ch;
-        }
-        w = max(w, 1e-6);
-        if (w < 0.2) w *= w * w * 25.0;
-        w *= tri.x * tri.y * tri.z;
+        w = gi_cheb(slot, pb - p.pos, w) * tri.x * tri.y * tri.z;
         sum += w * textureLod(u_gi_irr, gi_uv(slot, n, GI_IRR), 0.0).rgb;
         if (want_r) sr += w * textureLod(u_gi_irr, gi_uv(slot, rd, GI_IRR), 0.0);
         ws += w;
     }
     ir = ws > 0.0 ? sr / ws : vec4(0.0);
     return vec4(ws > 0.0 ? sum / ws : vec3(0.0), ws);
+}
+
+// То же для точки воздуха (docs/air.md): E/π вверх (rgb, сумма весов в w) и вниз (dn). У точки воздуха нет
+// поверхности: ни сдвига по нормали, ни веса обратной стороны — трилинейный и Чебышёв от самой точки. Сдвиг вверх у
+// потолка уводил точку в плиту, и зонды над крышей светили в пыль зала пятнами
+vec4 gi_level_air(int L, vec3 pa, out vec3 dn) {
+    FrameData f = pc.frame;
+    vec3 u = pa / gi_step(L);
+    vec3 fl = floor(u);
+    ivec3 i0 = ivec3(fl);
+    vec3 fr = u - fl;
+    vec3 up = vec3(0.0);
+    dn = vec3(0.0);
+    float ws = 0.0;
+    for (int c = 0; c < 8; ++c) {
+        ivec3 o = ivec3(c & 1, (c >> 1) & 1, c >> 2);
+        ivec3 ip = i0 + o;
+        uint slot = gi_slot(L, ip);
+        GiProbe p = f.gi_probes.v[slot];
+        if (p.state != GI_ACTIVE || p.home != ip || p.level != L) continue;
+        vec3 tri = mix(1.0 - fr, fr, vec3(o));
+        float w = gi_cheb(slot, pa - p.pos, 1.0) * tri.x * tri.y * tri.z;
+        up += w * textureLod(u_gi_irr, gi_uv(slot, vec3(0.0, 1.0, 0.0), GI_IRR), 0.0).rgb;
+        dn += w * textureLod(u_gi_irr, gi_uv(slot, vec3(0.0, -1.0, 0.0), GI_IRR), 0.0).rgb;
+        ws += w;
+    }
+    dn = ws > 0.0 ? dn / ws : vec3(0.0);
+    return vec4(ws > 0.0 ? up / ws : vec3(0.0), ws);
 }
 
 // Доля уровня L у точки pos (м от камеры): окно накрывает точку с запасом, пока она не дальше GI_REACH шагов от
@@ -238,6 +271,33 @@ GiSample gi_sample(vec3 pos, vec3 n, vec3 rd, bool want_r) {
         float w = c * smoothstep(0.0, 1e-3, v.w);
         g.irr += left * w * v.rgb;
         g.refl += left * w * ir;
+        g.cov += left * w;
+        left *= 1.0 - w;
+    }
+    if (g.cov > 0.0) {
+        g.irr /= g.cov;
+        g.refl /= g.cov;
+    }
+    return g;
+}
+// Непрямой свет в точке воздуха pos (м от камеры): irr — E/π вверх, refl.rgb — вниз; уровни — как у gi_sample
+GiSample gi_sample_air(vec3 pos) {
+    FrameData f = pc.frame;
+    GiSample g;
+    g.irr = vec3(0.0);
+    g.refl = vec4(0.0);
+    g.cov = 0.0;
+    if (f.gi_on == 0u) return g;
+    vec3 pa = pos + f.sdf_cam.xyz;
+    float left = 1.0;
+    for (int L = 0; L < GI_LEVELS && left > 0.0; ++L) {
+        float c = gi_cover(L, pos);
+        if (c <= 0.0) continue;
+        vec3 dn;
+        vec4 v = gi_level_air(L, pa, dn);
+        float w = c * smoothstep(0.0, 1e-3, v.w);
+        g.irr += left * w * v.rgb;
+        g.refl.rgb += left * w * dn;
         g.cov += left * w;
         left *= 1.0 - w;
     }

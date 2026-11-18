@@ -186,11 +186,16 @@ void vk_gi_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
         s.anchor[1] = sd.anchor[1];
         s.clear = true;  // таблица с нуля: мировые номера старого якоря значат другие места
     }
+    // Снимок — таблица с нуля: первый проход берёт отскок от зондов «прошлого смешения», и после скачка часов это
+    // был свет прошлого часа — днём зонды ярче ночи в десятки тысяч раз, и за четыре прохода (×0.28 альбедо на
+    // отскок) дневной свет не гас: ночной снимок у Остова — 43 лк у глаза вместо 0.4 (разбор 17.11). Пустая
+    // таблица — первый проход без отскока (темно), отскоки копятся проходами снимка
+    if (snap) s.clear = true;
     gi_windows(s, cam);
     s.reset = false;
     s.snapped = snap;
 
-    u32 q = g.light_q < RENDER_LIGHT_QUALITIES ? g.light_q : RENDER_LIGHT_HIGH;
+    u32 q = g.gi_q < RENDER_LIGHT_QUALITIES ? g.gi_q : RENDER_LIGHT_HIGH;
     s.rays_n = GI_Q_RAYS[q];
     u32 *jobs = (u32 *)fs.gi_jobs.mapped;
     u32 n = 0;
@@ -275,6 +280,7 @@ void vk_gi_passes() {
     for (u32 k = 0; k < s.chunks; ++k) {
         rg_pass("зонды: лучи", "непрямой свет", gi_record_trace, &g_gi_chunks[k]);
         rg_use(g_vk.sdf.rg_field, RG_IMG_CS_SAMPLE);
+        vk_lsm_reads();
         rg_use(s.rg_irr, RG_IMG_CS_SAMPLE);
         rg_use(s.rg_dep, RG_IMG_CS_SAMPLE);
         rg_use(s.rg_probes, RG_CS_READ);

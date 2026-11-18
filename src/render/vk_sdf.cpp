@@ -69,6 +69,7 @@ bool vk_sdf_init() {
     bool ok = true;
     ok = vk_make_compute(&s.pipe_splat, "sdf_splat.comp") && ok;
     ok = vk_make_compute(&s.pipe_final, "sdf_final.comp") && ok;
+    ok = vk_make_compute(&s.pipe_eye_view, "eye_view.comp") && ok;
     ok = vk_make_compute(&s.pipe_eye, "eye.comp") && ok;
     s.rg_field = rg_image("поле расстояний", VK_IMAGE_ASPECT_COLOR_BIT);
     rg_bind_image(s.rg_field, s.field.image);
@@ -94,7 +95,7 @@ bool vk_sdf_init() {
 
 void vk_sdf_shutdown() {
     SdfGpu &s = g_vk.sdf;
-    VkPipeline ps[] = {s.pipe_splat, s.pipe_final, s.pipe_eye};
+    VkPipeline ps[] = {s.pipe_splat, s.pipe_final, s.pipe_eye_view, s.pipe_eye};
     for (VkPipeline p : ps)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
     if (s.field.view) vkDestroyImageView(g_vk.device, s.field.view, nullptr);
@@ -217,9 +218,22 @@ static bool sdf_set_has(const RenderInstance *a, const RenderInstance &it) {
     }
     return false;
 }
+// Шары ушедших и пришедших заслонок кадра от якоря — картам огней (vk_sdf_moved); не влезли или поле с нуля — «всё»
+constexpr u32 SDF_MOVED_CAP = 4096;
+static f32 g_sdf_moved[SDF_MOVED_CAP][4];
+static u32 g_sdf_moved_n = 0;
+static bool g_sdf_moved_all = true;
+
 static void sdf_touch(SdfGpu &s, const RenderInstance &it) {
     SdfXf x;
     if (!sdf_xf(it, s.anchor, x)) return;
+    if (g_sdf_moved_n < SDF_MOVED_CAP) {
+        f32 *o = g_sdf_moved[g_sdf_moved_n++];
+        sdf_point(x, x.m->sphere, o);
+        o[3] = x.m->sphere[3] * x.s;
+    } else {
+        g_sdf_moved_all = true;
+    }
     for (u32 L = 0; L < SDF_LEVELS; ++L) {
         f32 c[3], r;
         i32 lo[3], hi[3];
@@ -324,6 +338,8 @@ void vk_sdf_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool images) 
         az = (f64)s.anchor[1] * 256.0;
     }
     f64 cam[3] = {camw[0] - ax, camw[1], camw[2] - az};
+    g_sdf_moved_n = 0;
+    g_sdf_moved_all = s.reset;
     sdf_windows(s, cam);
     sdf_changes(s, f);
     s.reset = false;
@@ -410,13 +426,16 @@ static void sdf_record_final(VkCommandBuffer cmd, void *) {
     vkCmdDispatch(cmd, s.bricks_n, 1, 1);
 }
 
-static void sdf_record_eye(VkCommandBuffer cmd, void *) {
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.sdf.pipe_eye);
+// Одна группа: eye_view — 64 потока (свет мест в кадре), eye — один
+static void sdf_record_one(VkCommandBuffer cmd, VkPipeline pipe) {
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.layout, 0, 1, &g_vk.world.set, 0, nullptr);
     PushConsts pc{g_sdf_frame, 0, 0};
     vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
     vkCmdDispatch(cmd, 1, 1, 1);
 }
+static void sdf_record_eye_view(VkCommandBuffer cmd, void *) { sdf_record_one(cmd, g_vk.sdf.pipe_eye_view); }
+static void sdf_record_eye(VkCommandBuffer cmd, void *) { sdf_record_one(cmd, g_vk.sdf.pipe_eye); }
 
 void vk_sdf_passes() {
     SdfGpu &s = g_vk.sdf;
@@ -442,14 +461,26 @@ void vk_sdf_passes() {
     }
 }
 
-// Глаз (eye.comp): экспозиция по свету у камеры с заслонкой полем и по зондам — после сборки и смешения, до освещения
+// Глаз (eye.comp): экспозиция по свету у камеры (заслонка полем, зонды, огни) и по свету мест прошлого кадра, баланс
+// белого — после сборки и смешения, до освещения. Свет мест суммирует отдельный проход (eye_view.comp): 2304 плитки
+// в 64 потока, а не по очереди в одном потоке глаза
 void vk_sdf_eye_pass() {
     if (!g_vk.sdf.on) return;
+    rg_pass("глаз: свет мест", "небо", sdf_record_eye_view, nullptr);
+    rg_use(g_vk.world.rg_view, RG_CS_READ);  // свет мест плиток прошлого кадра (замер и цвет света)
+    rg_use(g_vk.sky.rg_out, RG_CS_WRITE);
     rg_pass("глаз: экспозиция", "небо", sdf_record_eye, nullptr);
     rg_use(g_vk.sdf.rg_field, RG_IMG_CS_SAMPLE);
+    vk_lsm_reads();  // огни у глаза — с тенью картой
     rg_use(g_vk.sky.rg_out, RG_CS_WRITE);
     vk_gi_reads();
     vk_clouds_reads(RG_CS_READ);  // тень облаков над камерой
+}
+
+u32 vk_sdf_moved(const f32 (**spheres)[4], bool *all) {
+    *spheres = g_sdf_moved;
+    *all = g_sdf_moved_all;
+    return g_sdf_moved_n;
 }
 
 void vk_sdf_reads() {

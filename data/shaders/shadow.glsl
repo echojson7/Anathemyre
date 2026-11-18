@@ -29,6 +29,11 @@ const float SM_FRONT = 1.0, SM_FRONT_SLOPE = 2.0, SM_FRONT_MAX = 16.0;
 // не дальше SM_PCSS_FAR к светилу (дальше полутень не шире) и не дальше SM_PCSS_MAX текселей по карте
 const float SM_PCSS_FAR = 24.0;
 const float SM_PCSS_MAX = 12.0;
+// Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копий страниц на кадр (SM_DYN_PAGES в vk_state.h). В
+// SmDyn.v — копии по два слова (место в окне, прежняя страница), с SM_DYN_MARK — кадр захвата места окна копией
+const uint SM_DYN_PAGES = 512u;
+const uint SM_DYN_MARK = 2u * SM_DYN_PAGES;
+const float SM_DYN_KEEP = 0.07;  // доля тени машины под мороком (как VEIL_KEEP у её пикселей, vis_veil.frag)
 
 int sm_set_of(int k) { return k >= SM_LEVELS ? 1 : 0; }
 int sm_level_of(int k) { return k >= SM_LEVELS ? k - SM_LEVELS : k; }
@@ -89,9 +94,16 @@ int sm_find(int k, ivec2 page) {
 }
 
 // Радиус поиска заслонок PCSS на месте с текселем t, текселей; 0 — край жёсткий (2×2). На «Низко» PCSS нет
+// Сдвиг выборки к настоящему светилу (docs/shadow.md, «Тень без ступенек»): набор построен для шага светила, а
+// оно уже ушло на доли градуса. Луч из точки к настоящему светилу на высоте d над ней (вдоль s набора) проходит
+// столбец карты, сдвинутый на d · sm_par по r и u (метры): тень заслонки на расстоянии d — там. d — средняя высота
+// заслонок поиска PCSS. Кромка идёт за светилом каждый кадр, а не шагами; два набора при перетекании дают одно
+// и то же. Без поиска («Низко») сдвига нет
+vec2 sm_par(int set) { return vec2(pc.frame.sm_r[set].w, pc.frame.sm_s[set].w); }
+
 float sm_search(float t) {
     FrameData f = pc.frame;
-    if (f.light_q < LIGHT_Q_MEDIUM) return 0.0;
+    if (f.shadow_q < LIGHT_Q_MEDIUM) return 0.0;
     float r = min(SM_PCSS_FAR * f.sm_disc / t, SM_PCSS_MAX);
     return r >= 1.0 ? r : 0.0;
 }
@@ -162,14 +174,15 @@ float sm_vis_set(int set, vec3 pos, vec3 n, float depth) {
     float ns = max(dot(n, f.sm_s[set].xyz), 0.25);
     vec2 g = -vec2(dot(n, f.sm_r[set].xyz), dot(n, f.sm_u[set].xyz)) / ns * t;
     float rs = sm_search(t);
-    // Все выборки ниже (поиск, фильтр и их 2×2) — в квадрате w ± (rs + 2), и каждая сравнивает заслонку с высотой
-    // не ниже hr − (rs + 2)·(|g.x| + |g.y|): нет заслонки выше — свет, ровно 1, как дали бы сами выборки
-    float reach = rs + 2.0;
+    vec2 par = rs > 0.0 ? sm_par(set) / t : vec2(0.0);  // сдвиг, текселей на метр высоты заслонки
+    // Все выборки ниже (поиск, фильтр со сдвигом и их 2×2) — в квадрате w ± (rs + 2 + сдвиг), и каждая сравнивает
+    // заслонку с высотой не ниже hr − reach·(|g.x| + |g.y|): нет заслонки выше — свет, ровно 1, как дали бы выборки
+    float reach = rs + 2.0 + SM_PCSS_FAR * (abs(par.x) + abs(par.y));
     if (sm_clear(k, w, reach, hr - reach * (abs(g.x) + abs(g.y)))) return 1.0;
     if (rs == 0.0) return sm_pcf(k, w, hr, g);
     // PCSS: средняя высота заслонок над точкой в круге поиска → полутень → фильтр её радиуса
-    int ns_taps = f.light_q >= LIGHT_Q_ULTRA ? 12 : f.light_q >= LIGHT_Q_HIGH ? 8 : 6;
-    int nf_taps = f.light_q >= LIGHT_Q_ULTRA ? 20 : f.light_q >= LIGHT_Q_HIGH ? 12 : 8;
+    int ns_taps = f.shadow_q >= LIGHT_Q_ULTRA ? 12 : f.shadow_q >= LIGHT_Q_HIGH ? 8 : 6;
+    int nf_taps = f.shadow_q >= LIGHT_Q_ULTRA ? 20 : f.shadow_q >= LIGHT_Q_HIGH ? 12 : 8;
     float sum = 0.0;
     int cnt = 0;
     for (int i = 0; i < ns_taps; ++i) {
@@ -182,14 +195,19 @@ float sm_vis_set(int set, vec3 pos, vec3 n, float depth) {
             cnt++;
         }
     }
-    if (cnt == ns_taps) return 0.0;  // заслонки над всем кругом: полутень меньше круга, точка в тени
+    float d = cnt == 0 ? 0.0 : sum / float(cnt);
+    vec2 sh = par * d;  // к настоящему светилу; точка — по своей плоскости (высота hr + сдвиг · g)
+    // Заслонки над всем кругом, а сдвиг меньше полукруга: полутень меньше круга, точка в тени
+    if (cnt == ns_taps && dot(sh, sh) < 0.25 * rs * rs) return 0.0;
+    vec2 ws = w + sh;
+    float hs = hr + dot(sh, g);
     // Радиус фильтра — полутень без полутекселя, который уже даёт 2×2: от жёсткого края к мягкому без скачка
-    float pr = cnt == 0 ? 0.0 : min(sum / float(cnt) * f.sm_disc / t, rs) - 0.5;
-    if (pr <= 0.25) return sm_pcf(k, w, hr, g);
+    float pr = cnt == 0 ? 0.0 : min(d * f.sm_disc / t, rs) - 0.5;
+    if (pr <= 0.25) return sm_pcf(k, ws, hs, g);
     float v = 0.0;
     for (int i = 0; i < nf_taps; ++i) {
         vec2 o = sm_vogel(i, nf_taps) * pr;
-        v += sm_pcf(k, w + o, hr + dot(o, g), g);
+        v += sm_pcf(k, ws + o, hs + dot(o, g), g);
     }
     return v / float(nf_taps);
 }

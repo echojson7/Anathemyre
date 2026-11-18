@@ -3,9 +3,12 @@
 // Ячейки света: сглаживание по соседям (docs/lcache.md). Поток — работа кадра (ячейка, посчитанная лучами в этом
 // кадре: её показанное могло измениться; соседи, обновлённые позже, войдут в её следующий счёт — через ≤ период
 // кадров). Сетка групп — та же, что у лучей (группа на работу), работают первые; посчитанная ячейка смешивает свой показанный свет с 24 соседями 5×5 той же стороны и уровня в своей плоскости (веса — бином
-// 1 4 6 4 1 по каждой оси: 3×3 оставлял пятна в ячейку на полу под галереей).
+// 1 4 6 4 1 по каждой оси: 3×3 оставлял пятна в ячейку на полу под галереей), каждый — ещё и с доверием по числу
+// счётов (lc_conf): первая оценка молодой ячейки тонет в зрелых соседях.
 // Сосед берётся, если его точка лучей в той же плоскости (ступенька, край плиты — нет) и между точками нет заслонки
 // по полю (соседний зал за стеной — нет). Сосед поперёк плоскости — тот же номер или ±1 (пол на границе кубиков).
+// Земля сверху — без проверки плоскости: точки её ячеек на одной сетке высот, а соседний столбец на склоне 30° выше
+// на 0.6 стороны — сглаживание слабело на склонах круче ~8° и пропадало круче ~22° (шаг 6б).
 // Шум лучей уходит в 3–4 раза, а значение остаётся функцией мировых номеров: камера его не меняет
 #include "gi.glsl"
 #include "lcache.glsl"
@@ -14,15 +17,15 @@ layout(local_size_x = 64) in;
 void main() {
     FrameData f = pc.frame;
     uint i = gl_GlobalInvocationID.x;
-    uint nn = f.lc_jobs.cmd.w;
     if (i >= f.lc_jobs.cmd.x) return;
-    uint e = i < nn ? f.lc_jobs.v[i] : f.lc_jobs.v[LC_CAP + i - nn];
+    uint e = lc_job(i);
     uint key = f.lc_keys.v[e];
     if (key == 0u) return;
     LcMeta m = f.lc_meta.v[e];
     if (m.seen != f.lc_frame || m.key != key || (m.state & (LC_LIT | LC_EMPTY)) != LC_LIT) return;
     int k = lc_key_level(key), a = lc_key_axis(key);
     bool ground = (key & LC_GROUND) != 0u;
+    bool ground_up = ground && a == 2;  // земля сверху: слой по высоте один, соседи — та же сетка высот (lc_home_of)
     float s = lc_size(k);
     vec3 N = lc_axis_n(a);
     int i0 = a >> 1, i1 = (i0 + 1) % 3, i2 = (i0 + 2) % 3;
@@ -30,39 +33,44 @@ void main() {
     vec3 s0, sx, sy, sz;
     lc_unpack(f.lc_show.v[e], s0, sx, sy, sz);
     const float B[5] = float[5](1.0, 4.0, 6.0, 4.0, 1.0);
-    s0 *= 36.0;
-    sx *= 36.0;
-    sy *= 36.0;
-    sz *= 36.0;
-    float ws = 36.0;
+    float w0 = 36.0 * lc_conf(m.state);
+    s0 *= w0;
+    sx *= w0;
+    sy *= w0;
+    sz *= w0;
+    float ws = w0;
+    float ao0 = unpackHalf2x16(m.ao).x, ao = ao0 * w0;  // затенение у точки — теми же весами, что свет
     for (int j = 0; j < 25; ++j) {
         int du = j % 5 - 2, dv = j / 5 - 2;
         if (du == 0 && dv == 0) continue;
         int ne = -1;
-        for (int q = 0; q < 3 && ne < 0; ++q) {
+        float cn = 0.0;
+        for (int q = 0; q < (ground_up ? 1 : 3) && ne < 0; ++q) {
             ivec3 h = m.home;
             h[i1] += du;
             h[i2] += dv;
             h[i0] += q == 0 ? 0 : q == 1 ? -1 : 1;
-            ne = lc_lookup(lc_key(k, a, h, ground), h);
+            ne = lc_lookup_c(lc_key(k, a, h, ground), h, cn);
         }
         if (ne < 0) continue;
         vec3 o2 = f.lc_meta.v[ne].org;
-        float wp = 1.0 - smoothstep(0.15 * s, 0.4 * s, abs(dot(o2 - m.org, N)));
+        float wp = ground_up ? 1.0 : 1.0 - smoothstep(0.15 * s, 0.4 * s, abs(dot(o2 - m.org, N)));
         if (wp <= 0.0) continue;
         // Заслонка между точками: три выборки поля на отрезке
         bool open = gi_dist(mix(m.org, o2, 0.25), 0, soil) > 0.02 && gi_dist(mix(m.org, o2, 0.5), 0, soil) > 0.02 &&
                     gi_dist(mix(m.org, o2, 0.75), 0, soil) > 0.02;
         if (!open) continue;
-        float w = B[du + 2] * B[dv + 2] * wp;
+        float w = B[du + 2] * B[dv + 2] * wp * cn;
         vec3 n0, nx, ny, nz;
         lc_unpack(f.lc_show.v[ne], n0, nx, ny, nz);
         s0 += n0 * w;
         sx += nx * w;
         sy += ny * w;
         sz += nz * w;
+        ao += unpackHalf2x16(f.lc_meta.v[ne].ao).x * w;
         ws += w;
     }
     float inv = 1.0 / ws;
     f.lc_filt.v[e] = lc_pack(s0 * inv, sx * inv, sy * inv, sz * inv);
+    f.lc_meta.v[e].ao = packHalf2x16(vec2(ao0, ao * inv));
 }

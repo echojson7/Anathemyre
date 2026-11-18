@@ -85,9 +85,11 @@ vec4 gi_ray(vec3 o, vec3 d, out bool back) {
     vec3 amb = g.irr * g.cov;
     if (g.cov < 1.0) amb += atmo_ambient(n) * ((1.0 - g.cov) * (1.0 - gi_cover(GI_LEVELS - 1, ph)) * (1.0 - gi_buried(p)));
     // Огни: освещённость с тенью по полю. Все огни кадра по порядку (дальние отсекает дальность). Список огней
-    // зонда в общей памяти lavapipe не держит (падает на лучах), а огней кадра у камеры — десятки
+    // зонда в общей памяти lavapipe не держит (падает на лучах), а огней кадра у камеры — десятки. Порог счёта —
+    // вчетверо выше, чем у кадра: стена отдаёт зонду долю света, и слабые хвосты ламп в нём не видны
     vec3 e_lamp = vec3(0.0);
-    for (uint k = 0u; k < f.light_count; ++k) e_lamp += lamp_e(f.lights.v[k], p - f.sdf_cam.xyz, n, g_lamp_steps);
+    float skip = 4.0 * lamp_e_skip();
+    for (uint k = 0u; k < f.light_count; ++k) e_lamp += lamp_e(f.lights.v[k], p - f.sdf_cam.xyz, n, g_lamp_steps, skip);
     return vec4(alb * ((e_sun + e_lamp) / A_PI + amb), t);
 }
 

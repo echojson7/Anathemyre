@@ -44,13 +44,14 @@ jobs:
           . tools/ci_par.sh
           # Пять шейдеров lavapipe под GPU-AV не тянет (падает, съедает ~14 ГБ или считает минуты) — без проверки;
           # лучи зондов (gi_trace) — снимок 4 × 49 152 зонда под GPU-AV идёт дольше 10 мин; лучи ячеек света
-          # (lcache_trace) — тот же луч
+          # (lcache_trace) — тот же луч. Глаз (eye) и клетки воздуха (air_cells) — сбой JIT lavapipe под GPU-AV
+          # (чтение по нулевому указателю в коде шейдера, docs/graph.md); пропуск — решение пользователя 18.11
           # Камера у стенда людей с согнутой костью и морфом: скиннинг и сферы кластеров тоже под проверкой
           # Свет «Средне»: шейдеры и ветки те же, что на «Высоко», меньше лишь размеры (карта облаков 1024² вместо
           # 1536², зондов за кадр 1024 вместо 1536). «Высоко» идёт в окнах asan, shot и same (ci.yml)
           # Предел 1500 с — на холодный кеш: прогон никто не ждёт, а снятие по пределу без вины правки хуже
           par gpuav 1500 xvfb-run -n 92 -s "-screen 0 1600x900x24" build/linux-release/anathemyre --frames 4 --window 640 360 \
-            --gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp,lcache_trace.comp,gcache_light.comp \
+            --gpuav --gpuav-skip light_cells.comp,ground_bake.comp,cull_scan.comp,horizon.comp,gi_trace.comp,lcache_trace.comp,gcache_light.comp,eye.comp,air_cells.comp \
             --cam 45 5 6 11698 -2348.5 --stand elbow,morph1 --light medium
           par_wait 5
       - name: Сохранить кеш шейдеров Mesa

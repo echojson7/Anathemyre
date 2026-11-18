@@ -13,6 +13,7 @@ constexpr u32 GC_MIN_PAGES = 4096, GC_MAX_PAGES = 1u << 18;  // пул: 4 МБ �
 constexpr u32 GC_MAX_W = 1024;                               // окно уровня: до 1024² страниц
 constexpr u32 GC_LIGHT_BYTES = 16;                           // свет текселя: высота, E/π, доли (gcache_light.comp)
 constexpr u32 GC_LIGHT_PERIOD = 8;                           // страница пересчитывает свет раз в столько кадров
+constexpr f32 GC_LIGHT_MOVE = 2.0f;  // при полёте круг короче: камера проходит за круг не больше, м (не меньше 2 кадров)
 
 bool vk_gcache_init() {
     GcacheGpu &c = g_vk.gcache;
@@ -131,7 +132,10 @@ void vk_gcache_fill(FrameGpu &g, const RenderFrame &f, bool images) {
         c.reset = true;
     }
     c.tpc0 = tpc0;
-    if (++c.frame == 0) c.frame = 1;
+    if (++c.frame == 0) {
+        c.frame = 1;
+        c.lit_min = 0;  // счёт по кругу: старый порог иначе держал бы всё «устаревшим»
+    }
     g.gc_table = c.table.address;
     g.gc_pages = c.pages.address;
     g.gc_texels = c.texels.address;
@@ -157,12 +161,31 @@ void vk_gcache_light_fill(FrameGpu &g, const RenderFrame &f) {
         g.gc_lmode = 0;
         return;
     }
-    u32 sig = g.light_q | g.gi_view << 4 | g.sdf_view << 8 | g.gi_on << 12 | g.sdf_on << 13 | g.lc_on << 14;
+    u32 sig = g.gi_q | g.gi_view << 4 | g.sdf_view << 8 | g.gi_on << 12 | g.sdf_on << 13 | g.lc_on << 14;
     if (sig != c.lit_sig || !c.lit || c.reset || g_vk.gi.snapped || g.lc_snap || g_vk.shadow.sun_fast) c.lit_all = true;
     c.lit_sig = sig;
     c.lit = true;
+    // «Все заново» касается и страниц, которых этот кадр не читает: их свет — от прошлых зондов и ячеек (до скачка
+    // часов — дневной), а «свежим» он считался ещё круг; вернувшись в кадр, страница показала бы его белым
+    // прямоугольником на ночной земле (разбор 17.11). Свет старше lit_min пересчитывается при первом чтении
+    if (c.lit_all) c.lit_min = c.frame;
+    g.gc_lit_min = c.lit_min;
     g.gc_lmode = GC_LIGHT_ON | (c.lit_all ? GC_LIGHT_ALL : 0);
     g.gc_lperiod = GC_LIGHT_PERIOD;
+    // Свет текселя от камеры чуть зависит (окна зондов, уровни ячеек, второй отскок по зондам), и при быстром полёте
+    // страницы, пересчитанные в разные кадры круга, расходились — по освещённому песку шли квадраты страниц (разбор
+    // 18.11). Круг — столько кадров, чтобы камера прошла за него не больше GC_LIGHT_MOVE, но не меньше 2
+    f32 dx = (f32)(g.cam_cx - c.lit_cx) * 256.0f + (g.cam_x - c.lit_x), dy = g.cam_y - c.lit_y,
+        dz = (f32)(g.cam_cz - c.lit_cz) * 256.0f + (g.cam_z - c.lit_z);
+    f32 step = sqrtf(dx * dx + dy * dy + dz * dz);
+    c.lit_cx = g.cam_cx;
+    c.lit_cz = g.cam_cz;
+    c.lit_x = g.cam_x;
+    c.lit_y = g.cam_y;
+    c.lit_z = g.cam_z;
+    u32 turn = GC_LIGHT_PERIOD;
+    if (step * (f32)GC_LIGHT_PERIOD > GC_LIGHT_MOVE) turn = (u32)(GC_LIGHT_MOVE / step);
+    g.gc_lturn = turn < 2 ? 2 : turn > GC_LIGHT_PERIOD ? GC_LIGHT_PERIOD : turn;
     c.lit_all = false;
 }
 
@@ -261,6 +284,7 @@ void vk_gcache_light_pass() {
     vk_sky_reads(RG_CS_READ);
     vk_horizon_reads(RG_CS_READ);
     vk_sdf_reads();
+    vk_lsm_reads();
     vk_gi_reads();
     vk_lcache_reads();
 }

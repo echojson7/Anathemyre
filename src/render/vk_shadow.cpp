@@ -4,7 +4,9 @@
 //   сброс страниц под изменившимися экземплярами (shadow_inval.comp) → заявки в разборе плиток (light_tiles.comp)
 //   → свободные (shadow_scan.comp) → счёт (shadow_args.comp) → выдача и очистка (shadow_alloc.comp) → отбор
 //   заслонок для новых страниц (shadow_cull.comp) → отрисовка в страницы (shadow.vert/.frag) → свет читает.
-// Страница рисуется раз и живёт, пока её читают: статичный мир почти бесплатен.
+// Страница рисуется раз и живёт, пока её читают: статичный мир почти бесплатен. Подвижные (люди, машины, оружие) —
+// слоем поверх (6б-3, «Подвижные заслонки»): прочитанная кадром страница под ними на кадр подменяется копией
+// (shadow_dyn.comp), в копию поверх рисуются подвижные, следующий кадр возвращает месту прежнюю.
 // Светило идёт шагами по октаэдру (~0.1–0.2°, 6б-2). Наборов страниц два: на новый шаг строится новый набор —
 // в фоне, не больше SM_BUILD_PAGES страниц за кадр, пока показан старый; когда новый готов, свет перетекает со
 // старого на новый за SM_BLEND. Края теней не прыгают, тяжёлый кадр перерисовки размазан на несколько
@@ -30,6 +32,7 @@ bool vk_shadow_init() {
     ok = vk_make_compute(&s.pipe_args, "shadow_args.comp") && ok;
     ok = vk_make_compute(&s.pipe_alloc, "shadow_alloc.comp") && ok;
     ok = vk_make_compute(&s.pipe_cull, "shadow_cull.comp") && ok;
+    ok = vk_make_compute(&s.pipe_dyn, "shadow_dyn.comp") && ok;
     PipeDesc d{"shadow.vert", "shadow.frag"};
     d.no_attach = true;
     d.depth_test = false;
@@ -45,22 +48,30 @@ bool vk_shadow_init() {
     s.rg_req = rg_buffer("тени: заявки");
     s.rg_draws = rg_buffer("тени: вызовы");
     s.rg_list = rg_buffer("тени: список кластеров");
+    s.rg_dyn = rg_buffer("тени: копии подвижных");
+    s.rg_dyn_draws = rg_buffer("тени: вызовы подвижных");
+    s.rg_dyn_list = rg_buffer("тени: список подвижных");
     s.reset = true;
     for (FrameSlot &fs : g_vk.frames) {
         if (!vk_create_buffer(fs.sm_inval, SM_INVAL_MAX * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) return false;
         vk_buffer_name(fs.sm_inval, "тени: сферы сброса");
+        if (!vk_create_buffer(fs.sm_casters, SM_DYN_CASTERS * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) return false;
+        vk_buffer_name(fs.sm_casters, "тени: заслонки подвижных");
     }
     return ok;
 }
 
 void vk_shadow_shutdown() {
     ShadowGpu &s = g_vk.shadow;
-    VkPipeline ps[] = {s.pipe_inval, s.pipe_scan, s.pipe_args, s.pipe_alloc, s.pipe_cull, s.pipe_draw};
+    VkPipeline ps[] = {s.pipe_inval, s.pipe_scan, s.pipe_args, s.pipe_alloc, s.pipe_cull, s.pipe_draw, s.pipe_dyn};
     for (VkPipeline p : ps)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
-    GpuBuffer *bs[] = {&s.table, &s.pages, &s.texels, &s.req, &s.draws, &s.list};
+    GpuBuffer *bs[] = {&s.table, &s.pages, &s.texels, &s.req, &s.draws, &s.list, &s.dyn, &s.dyn_draws, &s.dyn_list};
     for (GpuBuffer *b : bs) vk_destroy_buffer(*b);
-    for (FrameSlot &fs : g_vk.frames) vk_destroy_buffer(fs.sm_inval);
+    for (FrameSlot &fs : g_vk.frames) {
+        vk_destroy_buffer(fs.sm_inval);
+        vk_destroy_buffer(fs.sm_casters);
+    }
     u32 mg = s.mesh_gen;
     s = ShadowGpu{};
     s.mesh_gen = mg;
@@ -75,7 +86,8 @@ static bool sm_make(GpuBuffer &b, VkDeviceSize size, const char *name, u8 rg, Vk
     return true;
 }
 
-// Пул под размер кадра: страниц — пикселей / 1024, не меньше SM_MIN_PAGES; не хватило — вдвое (с нуля)
+// Пул под размер кадра: страниц — пикселей / 1024, не меньше SM_MIN_PAGES; не хватило — вдвое (с нуля). За пулом —
+// SM_DYN_PAGES мест копий слоя подвижных (свободные их не видят: shadow_scan.comp перебирает только pages_n)
 static bool sm_ensure(u32 width, u32 height) {
     ShadowGpu &s = g_vk.shadow;
     u32 pages = s.pages_n ? s.pages_n : (width * height / 1024 < SM_MIN_PAGES ? SM_MIN_PAGES : width * height / 1024);
@@ -90,17 +102,22 @@ static bool sm_ensure(u32 width, u32 height) {
     s.pages_n = pages;
     s.req_cap = pages;
     const VkBufferUsageFlags ind = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    const VkDeviceSize all = (VkDeviceSize)pages + SM_DYN_PAGES;
     if (!sm_make(s.table, (VkDeviceSize)SM_SLOTS * SM_WIN * SM_WIN * 4, "тени: окна страниц", s.rg_table) ||
-        !sm_make(s.pages, (VkDeviceSize)pages * 20, "тени: страницы", s.rg_pages) ||
-        !sm_make(s.texels, (VkDeviceSize)pages * SM_PAGE * SM_PAGE * 4, "тени: тексели", s.rg_texels) ||
+        !sm_make(s.pages, all * 20, "тени: страницы", s.rg_pages) ||
+        !sm_make(s.texels, all * SM_PAGE * SM_PAGE * 4, "тени: тексели", s.rg_texels) ||
         !sm_make(s.req, SM_REQ_HEAD + (VkDeviceSize)(4 * s.req_cap + 2 * pages) * 4, "тени: заявки", s.rg_req, ind) ||
         !sm_make(s.draws, 16 + (VkDeviceSize)SM_DRAW_CAP * 20, "тени: вызовы", s.rg_draws, ind) ||
-        !sm_make(s.list, (VkDeviceSize)SM_DRAW_CAP * 8, "тени: список кластеров", s.rg_list)) {
+        !sm_make(s.list, (VkDeviceSize)SM_DRAW_CAP * 8, "тени: список кластеров", s.rg_list) ||
+        !sm_make(s.dyn, SM_DYN_BYTES, "тени: копии подвижных", s.rg_dyn, ind) ||
+        !sm_make(s.dyn_draws, 16 + (VkDeviceSize)SM_DYN_DRAW_CAP * 20, "тени: вызовы подвижных", s.rg_dyn_draws, ind) ||
+        !sm_make(s.dyn_list, (VkDeviceSize)SM_DYN_DRAW_CAP * 8, "тени: список подвижных", s.rg_dyn_list)) {
         s.pages_n = 0;
         return false;
     }
-    log_info("тени: окно %u² страниц по %u² текселей × %u уровней × %u набора, пул %u страниц (%.0f МБ)", SM_WIN,
-             SM_PAGE, SM_LEVELS, SM_SETS, pages, (f64)(s.texels.size + s.pages.size + s.table.size) / (1 << 20));
+    log_info("тени: окно %u² страниц по %u² текселей × %u уровней × %u набора, пул %u страниц и %u копий подвижных (%.0f МБ)",
+             SM_WIN, SM_PAGE, SM_LEVELS, SM_SETS, pages, SM_DYN_PAGES,
+             (f64)(s.texels.size + s.pages.size + s.table.size + s.dyn.size) / (1 << 20));
     s.reset = true;
     return true;
 }
@@ -162,11 +179,11 @@ static bool sm_set_has(const RenderInstance *a, const RenderInstance &it) {
     return false;
 }
 
-// Сфера экземпляра относительно камеры; false — не заслонка (нет сетки, человек)
-static bool sm_inst_sphere(const FrameGpu &g, const RenderInstance &it, f32 out[4]) {
+// Сфера экземпляра относительно камеры; false — не заслонка (нет сетки; подвижная, если не moving_ok)
+static bool sm_inst_sphere(const FrameGpu &g, const RenderInstance &it, f32 out[4], bool moving_ok = false) {
     if (!it.mesh || it.mesh >= RENDER_MAX_MESHES) return false;
     const MeshGpu &m = ((const MeshGpu *)g_vk.mesh_table.mapped)[it.mesh];
-    if (!m.lod_count || (m.pad & MESH_DYNAMIC)) return false;
+    if (!m.lod_count || (!moving_ok && (m.pad & MESH_DYNAMIC))) return false;
     auto sn = [](u32 v, u32 sh) { return f_clamp((f32)(i16)(u16)(v >> sh) / 32767.0f, -1.0f, 1.0f); };
     f32 q[4] = {sn(it.rot_xy, 0), sn(it.rot_xy, 16), sn(it.rot_zw, 0), sn(it.rot_zw, 16)};
     f32 ql = f_sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
@@ -215,14 +232,54 @@ static bool sm_invalidations(const FrameGpu &g, const RenderFrame &f, FrameSlot 
     return ok;
 }
 
-// Тексель уровня 0 по ступени «Качество света» (docs/light.md): на «Низко» карта вчетверо, на «Средне» вдвое грубее
+// Слой подвижных («Подвижные заслонки», docs/shadow.md): заслонки кадра — скиненные в этом кадре (люди и машины:
+// vk_skin_fill берёт и тех, кто за кадром, но чья тень может попасть в кадр) и экземпляры подвижных сеток (оружие),
+// чья тень может попасть в кадр, — от светила (sun) или огня (тени огней картами). Их сферы от камеры — в dyn_sph:
+// по ним огни берут кубы слоя (vk_lamp_shadow.cpp). Порядок — порядок кадра: от запуска к запуску один
+static u32 sm_dyn_casters(const FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool sun) {
+    ShadowGpu &s = g_vk.shadow;
+    if (!f.style.shadow_dyn) return 0;
+    bool lamps = f.style.lamp_maps && g_vk.lsm.cube.image;
+    if (!sun && !lamps) return 0;
+    u32 *out = (u32 *)fs.sm_casters.mapped, n = 0;
+    u64 want = 0;
+    auto add = [&](u32 i, const f32 sp[4]) {
+        ++want;
+        if (n >= SM_DYN_CASTERS) return;
+        memcpy(s.dyn_sph[n], sp, sizeof(f32) * 4);
+        out[n++] = i;
+    };
+    const SkinGpu &k = g_vk.skin;
+    for (u32 j = 0; j < k.jobs; ++j) {
+        f32 sp[4];
+        if (!sm_inst_sphere(g, f.instances.data[k.job_inst[j]], sp, true)) continue;
+        sp[3] = sp[3] * 1.05f + 0.1f;  // как у vk_skin_fill: поза шире бинд-позы
+        add(k.job_inst[j], sp);
+    }
+    if (g_vk.meshes_moving) {
+        u32 ni = f.instances.count < RENDER_MAX_INSTANCES ? (u32)f.instances.count : RENDER_MAX_INSTANCES;
+        for (u32 i = 0; i < ni; ++i) {
+            const RenderInstance &it = f.instances.data[i];
+            if (!it.mesh || it.mesh >= RENDER_MAX_MESHES || !g_vk.meshes[it.mesh].moving || g_vk.meshes[it.mesh].skin) continue;
+            f32 sp[4];
+            if (!sm_inst_sphere(g, it, sp, true) || !vk_dyn_caster_seen(g, f, sp, sp[3], sun, lamps)) continue;
+            add(i, sp);
+        }
+    }
+    vk_overflow("тени: подвижные заслонки", want, SM_DYN_CASTERS);
+    if (n) vmaFlushAllocation(g_vk.vma, fs.sm_casters.alloc, 0, VK_WHOLE_SIZE);
+    return n;
+}
+
+// Тексель уровня 0 по ступени теней (docs/light.md, «Ступени»): на «Низко» карта вчетверо, на «Средне» вдвое грубее
 static f32 sm_texel0(const RenderFrame &f) {
-    u32 q = f.style.light_quality;
+    u32 q = f.style.shadow_quality;
     return f.style.cell_min * (q == RENDER_LIGHT_LOW ? 4.0f : q == RENDER_LIGHT_MEDIUM ? 2.0f : 1.0f);
 }
 
-// Оси, высота камеры и окна уровней набора i в данные кадра
-static void sm_fill_set(FrameGpu &g, u32 i, const ShadowSet &st, const f64 cam[3], f32 t0) {
+// Оси, высота камеры и окна уровней набора i в данные кадра. sun — настоящее направление светила этого кадра:
+// сдвиг выборки к нему (docs/shadow.md, «Тень без ступенек») — в r.w и s.w набора
+static void sm_fill_set(FrameGpu &g, u32 i, const ShadowSet &st, const f64 cam[3], f32 t0, const f32 sun[3]) {
     f32 S[3];
     sm_key_dir(st.key, S);
     // Оси карты: r — горизонтальная поперёк светила, u = s × r (у светила в зените — r по x)
@@ -241,9 +298,12 @@ static void sm_fill_set(FrameGpu &g, u32 i, const ShadowSet &st, const f64 cam[3
         g.sm_u[i][c] = U[c];
         g.sm_s[i][c] = S[c];
     }
-    g.sm_r[i][3] = 0;
+    // Луч к настоящему светилу, поднявшись над точкой на 1 м вдоль s набора, уходит по r и u на столько метров
+    f32 ls = sun[0] * S[0] + sun[1] * S[1] + sun[2] * S[2];
+    bool near = ls > 0.99f;  // шаг светила — доли градуса; иначе (смена солнца на луну) сдвига нет
+    g.sm_r[i][3] = near ? (sun[0] * R[0] + sun[1] * R[1] + sun[2] * R[2]) / ls : 0.0f;
     g.sm_u[i][3] = (f32)(cam[0] * S[0] + cam[1] * S[1] + cam[2] * S[2] - st.anchor);
-    g.sm_s[i][3] = 0;
+    g.sm_s[i][3] = near ? (sun[0] * U[0] + sun[1] * U[1] + sun[2] * U[2]) / ls : 0.0f;
     // Окна уровней: камера — в странице SM_WIN/2 окна, начало окна — целая страница мировой решётки уровня
     f64 cr = cam[0] * R[0] + cam[1] * R[1] + cam[2] * R[2];
     f64 cu = cam[0] * U[0] + cam[1] * U[1] + cam[2] * U[2];
@@ -269,7 +329,12 @@ void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool image
     ShadowGpu &s = g_vk.shadow;
     s.on = images && f.style.cell_min > 0 && sm_ensure(g_vk.extent.width, g_vk.extent.height);
     s.inval_n = 0;
+    s.dyn_n = 0;
     fs.sm_frame = 0;
+    // Заслонки слоя подвижных — и без теней солнца: их берут огни
+    s.dyn_all = sm_dyn_casters(g, f, fs, s.on);
+    g.sm_dyn_inst = fs.sm_casters.address;
+    g.sm_dyn_all = s.dyn_all;
     // Скорость светила: угол за окно SM_FAST_WINDOW (за один кадр не меряем: кадр бывает короче шага часов).
     // Нужна и без теней — зондам (vk_gi_fill идёт следом)
     const f32 *sl = f.light.sun_dir;
@@ -335,7 +400,8 @@ void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool image
     }
     fs.sm_frame = s.frame;
     // Старый набор, когда он не нужен, повторяет новый: шейдер его не читает и не заявляет
-    for (u32 i = 0; i < SM_SETS; ++i) sm_fill_set(g, i, s.old_on || i == s.cur ? s.set[i] : s.set[s.cur], cam, t0);
+    for (u32 i = 0; i < SM_SETS; ++i)
+        sm_fill_set(g, i, s.old_on || i == s.cur ? s.set[i] : s.set[s.cur], cam, t0, f.light.sun_dir);
     g.sm_cur = s.cur;
     g.sm_read = (s.building ? 0u : 1u << s.cur) | (s.old_on && s.mix < 1 ? 1u << (s.cur ^ 1) : 0u);
     g.sm_bg = s.building ? s.cur + 1 : 0;
@@ -361,6 +427,14 @@ void vk_shadow_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs, bool image
     g.sm_draw_cap = SM_DRAW_CAP;
     g.sm_inval_n = s.inval_n;
     g.sm_debug = f.style.shadow_pages;
+    // Светило под горизонтом — тени от него нет, и слоя подвижных у солнца тоже
+    s.dyn_n = f.light.sun_dir[1] > 0.0f ? s.dyn_all : 0;
+    g.sm_dyn = s.dyn.address;
+    g.sm_dyn_draws = s.dyn_draws.address;
+    g.sm_dyn_list = s.dyn_list.address;
+    g.sm_dyn_n = s.dyn_n;
+    g.sm_dyn_cap = SM_DYN_PAGES;
+    g.sm_dyn_draw_cap = SM_DYN_DRAW_CAP;
 }
 
 // Перетекание шага светила, % нового набора (F3); 100 — один набор
@@ -378,13 +452,15 @@ void vk_shadow_read(const u32 *st, u32 frame) {
         vk_overflow("тени: страницы без места", (u64)st[STAT_SM_NEW] + st[STAT_SM_OVER], s.pages_n);
     }
     vk_overflow("тени: вызовы кластеров", st[STAT_SM_DRAWS], SM_DRAW_CAP);
+    if (st[STAT_SM_DYN_OVER]) vk_overflow("тени: копии подвижных", (u64)st[STAT_SM_DYN] + st[STAT_SM_DYN_OVER], SM_DYN_PAGES);
+    vk_overflow("тени: вызовы подвижных", st[STAT_SM_DYN_DRAWS], SM_DYN_DRAW_CAP);
 }
 
 static VkDeviceAddress g_sm_frame = 0;
 
-static void sm_bind(VkCommandBuffer cmd, VkPipeline p) {
+static void sm_bind(VkCommandBuffer cmd, VkPipeline p, u32 a = 0) {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p);
-    PushConsts pc{g_sm_frame, 0, 0};
+    PushConsts pc{g_sm_frame, a, 0};
     vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
 }
 
@@ -392,6 +468,13 @@ static void sm_record_reset(VkCommandBuffer cmd, void *) {
     const ShadowGpu &s = g_vk.shadow;
     vkCmdFillBuffer(cmd, s.table.buffer, 0, VK_WHOLE_SIZE, 0);
     vkCmdFillBuffer(cmd, s.pages.buffer, 0, VK_WHOLE_SIZE, 0);
+    vkCmdFillBuffer(cmd, s.dyn.buffer, 0, VK_WHOLE_SIZE, 0);  // копий нет, места окон не взяты
+}
+// Копии прошлого кадра (слой подвижных): местам окон — прежние страницы. До сброса набора и под изменившимся: те
+// пишут в окна
+static void sm_record_dyn_restore(VkCommandBuffer cmd, void *) {
+    sm_bind(cmd, g_vk.shadow.pipe_dyn, 2);
+    vkCmdDispatch(cmd, SM_DYN_PAGES / 64, 1, 1);
 }
 // Окна нового набора с нуля: прежние страницы набора (шаг назад) больше не находятся и уходят в свободные
 static void sm_record_set_reset(VkCommandBuffer cmd, void *) {
@@ -400,8 +483,16 @@ static void sm_record_set_reset(VkCommandBuffer cmd, void *) {
     vkCmdFillBuffer(cmd, s.table.buffer, s.cur * half, half, 0);
 }
 static void sm_record_clear(VkCommandBuffer cmd, void *) {
-    vkCmdFillBuffer(cmd, g_vk.shadow.req.buffer, 0, SM_REQ_HEAD, 0);
-    vkCmdFillBuffer(cmd, g_vk.shadow.draws.buffer, 0, 16, 0);
+    const ShadowGpu &s = g_vk.shadow;
+    vkCmdFillBuffer(cmd, s.req.buffer, 0, SM_REQ_HEAD, 0);
+    vkCmdFillBuffer(cmd, s.draws.buffer, 0, 16, 0);
+    // Голова копий слоя подвижных: dispatch копирования (0, 1, 1), места уровней без копий; куски не пересекаются —
+    // без барьера между ними
+    const u32 one[2] = {1, 1};
+    vkCmdFillBuffer(cmd, s.dyn.buffer, 0, 4, 0);
+    vkCmdUpdateBuffer(cmd, s.dyn.buffer, 4, sizeof one, one);
+    vkCmdFillBuffer(cmd, s.dyn.buffer, 12, SM_DYN_HEAD - 12, 0);
+    vkCmdFillBuffer(cmd, s.dyn_draws.buffer, 0, 16, 0);
 }
 static void sm_record_inval(VkCommandBuffer cmd, void *) {
     sm_bind(cmd, g_vk.shadow.pipe_inval);
@@ -425,8 +516,22 @@ static void sm_record_cull(VkCommandBuffer cmd, void *) {
     sm_bind(cmd, g_vk.shadow.pipe_cull);
     vkCmdDispatch(cmd, (n + 63) / 64, 1, 1);
 }
-// Отрисовка новых страниц: без картинок, область вывода — окно уровня (SM_WIN·SM_PAGE текселей)
-static void sm_record_draw(VkCommandBuffer cmd, void *) {
+// Слой подвижных: места (группа — заслонка × место уровня), копии текселей (по их числу), отбор кластеров заслонок
+static void sm_record_dyn_place(VkCommandBuffer cmd, void *) {
+    sm_bind(cmd, g_vk.shadow.pipe_dyn, 0);
+    vkCmdDispatch(cmd, g_vk.shadow.dyn_n, SM_SLOTS, 1);
+}
+static void sm_record_dyn_copy(VkCommandBuffer cmd, void *) {
+    sm_bind(cmd, g_vk.shadow.pipe_dyn, 1);
+    vkCmdDispatchIndirect(cmd, g_vk.shadow.dyn.buffer, 0);
+}
+static void sm_record_dyn_cull(VkCommandBuffer cmd, void *) {
+    sm_bind(cmd, g_vk.shadow.pipe_cull, 1);
+    vkCmdDispatch(cmd, (g_vk.shadow.dyn_n + 63) / 64, 1, 1);
+}
+// Отрисовка новых страниц (dyn — копий слоя подвижных): без картинок, область вывода — окно уровня (SM_WIN·SM_PAGE
+// текселей)
+static void sm_record_pages(VkCommandBuffer cmd, bool dyn) {
     const ShadowGpu &s = g_vk.shadow;
     if (!g_vk.world.inst_count) return;
     const u32 side = SM_WIN * SM_PAGE;
@@ -439,12 +544,15 @@ static void sm_record_draw(VkCommandBuffer cmd, void *) {
     vkCmdSetViewport(cmd, 0, 1, &vp);
     vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s.pipe_draw);
-    PushConsts pc{g_sm_frame, 0, 0};
+    PushConsts pc{g_sm_frame, dyn ? 1u : 0u, 0};
     vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
     vkCmdBindIndexBuffer(cmd, g_vk.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-    vkCmdDrawIndexedIndirectCount(cmd, s.draws.buffer, 16, s.draws.buffer, 0, SM_DRAW_CAP, 20);
+    const GpuBuffer &d = dyn ? s.dyn_draws : s.draws;
+    vkCmdDrawIndexedIndirectCount(cmd, d.buffer, 16, d.buffer, 0, dyn ? SM_DYN_DRAW_CAP : SM_DRAW_CAP, 20);
     vkCmdEndRendering(cmd);
 }
+static void sm_record_draw(VkCommandBuffer cmd, void *) { sm_record_pages(cmd, false); }
+static void sm_record_dyn_draw(VkCommandBuffer cmd, void *) { sm_record_pages(cmd, true); }
 
 void vk_shadow_begin(VkDeviceAddress frame) {
     ShadowGpu &s = g_vk.shadow;
@@ -454,8 +562,13 @@ void vk_shadow_begin(VkDeviceAddress frame) {
         rg_pass("тени: сброс", "тени солнца", sm_record_reset, nullptr);
         rg_use(s.rg_table, RG_COPY_WRITE);
         rg_use(s.rg_pages, RG_COPY_WRITE);
+        rg_use(s.rg_dyn, RG_COPY_WRITE);
         s.reset = false;
         s.clear_cur = false;
+    } else {
+        rg_pass("тени: подвижные — назад", "тени солнца", sm_record_dyn_restore, nullptr);
+        rg_use(s.rg_dyn, RG_CS_READ);
+        rg_use(s.rg_table, RG_CS_WRITE);
     }
     if (s.clear_cur) {
         rg_pass("тени: новый набор", "тени солнца", sm_record_set_reset, nullptr);
@@ -465,6 +578,8 @@ void vk_shadow_begin(VkDeviceAddress frame) {
     rg_pass("тени: заявки с нуля", "тени солнца", sm_record_clear, nullptr);
     rg_use(s.rg_req, RG_COPY_WRITE);
     rg_use(s.rg_draws, RG_COPY_WRITE);
+    rg_use(s.rg_dyn, RG_COPY_WRITE);
+    rg_use(s.rg_dyn_draws, RG_COPY_WRITE);
     if (s.inval_n) {
         rg_pass("тени: сброс под изменившимся", "тени солнца", sm_record_inval, nullptr);
         rg_use(s.rg_table, RG_CS_WRITE);
@@ -509,6 +624,33 @@ void vk_shadow_passes() {
     rg_use(w.rg_inst, RG_VS_READ);
     rg_use(s.rg_table, RG_FS_READ);
     rg_use(s.rg_pages, RG_FS_READ);
+    rg_use(s.rg_texels, RG_FS_WRITE);
+    vk_skin_vertices_read(RG_VS_READ);
+    if (!s.dyn_n) return;
+    // Слой подвижных: копии прочитанных страниц под заслонками, отбор кластеров заслонок, отрисовка в копии
+    rg_pass("тени: подвижные — места", "тени солнца", sm_record_dyn_place, nullptr);
+    rg_use(w.rg_inst, RG_CS_READ);
+    rg_use(s.rg_table, RG_CS_WRITE);
+    rg_use(s.rg_pages, RG_CS_WRITE);
+    rg_use(s.rg_dyn, RG_CS_WRITE);
+    rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
+    rg_pass("тени: подвижные — копия", "тени солнца", sm_record_dyn_copy, nullptr);
+    rg_use(s.rg_dyn, RG_INDIRECT);
+    rg_use(s.rg_dyn, RG_CS_READ);
+    rg_use(s.rg_texels, RG_CS_WRITE);
+    rg_pass("тени: подвижные — отбор", "тени солнца", sm_record_dyn_cull, nullptr);
+    rg_use(w.rg_inst, RG_CS_READ);
+    rg_use(s.rg_dyn, RG_CS_READ);
+    rg_use(s.rg_dyn_draws, RG_CS_WRITE);
+    rg_use(s.rg_dyn_list, RG_CS_WRITE);
+    rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
+    vk_skin_clusters_read();
+    rg_pass("тени: подвижные — отрисовка", "тени солнца", sm_record_dyn_draw, nullptr);
+    rg_use(s.rg_dyn_draws, RG_INDIRECT);
+    rg_use(s.rg_dyn_list, RG_VS_READ);
+    rg_use(w.rg_inst, RG_VS_READ);
+    rg_use(s.rg_table, RG_FS_READ);
+    rg_use(s.rg_pages, RG_FS_WRITE);
     rg_use(s.rg_texels, RG_FS_WRITE);
     vk_skin_vertices_read(RG_VS_READ);
 }

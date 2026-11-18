@@ -1,38 +1,47 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
 // Проход стиля (docs/render.md, проход 8): HDR-картинка кадра мира после сглаживания (история этого кадра, pc.a;
-// docs/aa.md) → блеск (docs/glare.md), ночная синева, тонмаппинг (post_color). Потом сюда же — виньетка, зерно,
-// сканлайны, аберрация
+// docs/aa.md) → аберрация объектива, блеск (docs/glare.md), блики солнца в линзах, виньетка (docs/lens.md),
+// баланс белого и тонмаппинг (post_color) → зерно и дизеринг
 #include "post.glsl"
 #include "glare.glsl"
+#include "lens.glsl"
+layout(set = 0, binding = 12) uniform sampler2D u_hist[2];
 layout(set = 0, binding = 13, rgba16f) uniform readonly image2D u_aa[2];
 layout(location = 0) out vec4 o_color;
 
+// HDR кадра между пикселями (билинейно, по краю — край): px — в пикселях, центр пикселя — +0.5
+vec3 hist_at(vec2 px) {
+    vec2 uv = px / pc.frame.viewport;
+    return pc.a == 0u ? textureLod(u_hist[0], uv, 0.0).rgb : textureLod(u_hist[1], uv, 0.0).rgb;
+}
+
 void main() {
-    ivec2 p = ivec2(gl_FragCoord.xy);
-    vec3 c = pc.a == 0u ? imageLoad(u_aa[0], p).rgb : imageLoad(u_aa[1], p).rgb;
-    // Блеск: доля света кадра уходит в рассеяние вокруг ярких мест (энергия сохраняется), у солнца — корона
     FrameData f = pc.frame;
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    vec2 px = gl_FragCoord.xy;
+    vec3 c;
+    // Аберрация (lens.glsl): пять длин волн со сдвигом от середины кадра; у середины сдвиг меньше 0.05 пикселя —
+    // одна выборка
+    vec2 sh = (px - 0.5 * f.viewport) * f.lens_ca;
+    if ((f.lens_on & LENS_CA) != 0u && dot(sh, sh) > 0.0025) {
+        c = vec3(0.0);
+        for (int i = 0; i < 5; ++i) c += CA_W[i] * hist_at(px + sh * CA_T[i]);
+    } else {
+        c = pc.a == 0u ? imageLoad(u_aa[0], p).rgb : imageLoad(u_aa[1], p).rgb;
+    }
+    // Блеск: доля света кадра уходит в рассеяние вокруг ярких мест (энергия сохраняется), у солнца — корона по
+    // видимой доле диска (glare.comp)
+    float vis = (f.lens_on & LENS_SUN) != 0u ? f.lens_sun.v[0].x : 0.0;
     if (f.gr_on != 0u) {
-        c = mix(c, glare_at(gl_FragCoord.xy), f.a_night2.z);
-        float vf = dot(f.a_sun.xyz, f.forward.xyz);
-        if (vf > 0.05 && f.a_sun.y > -0.02) {
-            // Видимость диска: пять точек по нему в кадре после сглаживания ярче половины его предела
-            vec2 ndc = vec2(dot(f.a_sun.xyz, f.right.xyz) * f.proj_x, -dot(f.a_sun.xyz, f.up.xyz) * f.proj_y) / vf;
-            vec2 sp = (ndc + 1.0) / f.ndc_per_pixel;
-            float rp = 0.5 * f.a_sun_halo.w / (f.pixel_angle * vf);
-            float thr = 0.4 * atmo_sun_cap(), vis = 0.0;
-            for (int k = 0; k < 5; ++k) {
-                vec2 o = k == 0 ? vec2(0.0) : vec2(k == 1 ? rp : k == 2 ? -rp : 0.0, k == 3 ? rp : k == 4 ? -rp : 0.0);
-                ivec2 q = ivec2(sp + o);
-                if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, ivec2(f.viewport)))) continue;
-                vec3 h = pc.a == 0u ? imageLoad(u_aa[0], q).rgb : imageLoad(u_aa[1], q).rgb;
-                vis += step(thr, max(h.r, max(h.g, h.b))) * 0.2;
-            }
-            vec2 nd = (gl_FragCoord.xy * f.ndc_per_pixel) - 1.0;
+        c = mix(c, glare_at(px), f.a_night2.z);
+        if (vis > 0.0) {
+            vec2 nd = px * f.ndc_per_pixel - 1.0;
             vec3 dir = normalize(f.forward.xyz + f.right.xyz * (nd.x / f.proj_x) - f.up.xyz * (nd.y / f.proj_y));
             c += glare_corona(dir, vis);
         }
     }
-    o_color = vec4(post_color(c), 1.0);
+    if ((f.lens_on & LENS_FLARE) != 0u && vis > 0.0) c += lens_flare(px);
+    if ((f.lens_on & LENS_VIGNETTE) != 0u) c *= lens_vignette(px);
+    o_color = vec4(lens_film(post_color(c), px), 1.0);
 }

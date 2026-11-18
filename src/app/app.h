@@ -40,8 +40,13 @@ struct Args {
     u32 sdf_view = 0;               // --sdfsky, --sdffield, --nosdf: поле расстояний мира (docs/sdf.md, RENDER_SDF_*)
     u32 gi_view = 0;                // --gionly, --nogi: зонды непрямого света (docs/gi.md, RENDER_GI_*)
     bool local_off = false;         // --nolocal: без местной экспозиции (сравнение, docs/light.md)
-    i32 tonemap = -1;               // --tonemap agx|aces: тонмаппинг (снимки для сравнения); −1 — как в F3
-    i32 light_quality = -1;         // --light low|medium|high|ultra: качество света; −1 — из настроек
+    bool lsm_off = false;           // --nolsm: тени огней полем расстояний, не картами (сравнение, docs/lamp_shadows.md)
+    bool dyn_off = false;           // --nodyn: без теней подвижных — людей, машин, оружия (сравнение, docs/shadow.md)
+    bool air_off = false;           // --noair: без воздуха — лучей солнца и огней в пыли (сравнение, docs/air.md)
+    bool lens_off = false;          // --nolens: без эффектов объектива — бликов, аберрации, виньетки, зерна (docs/lens.md)
+    bool hdr = false;               // --hdr: со снимком ещё HDR кадра мира в <снимок>.hdr16 (отладка света)
+    i32 tonemap = -1;               // --tonemap ue|agx|aces: тонмаппинг (снимки для сравнения); −1 — как в F3
+    i32 light_quality = -1;         // --light low|medium|high|ultra: все части качества разом; −1 — из настроек
     bool nohud = false;             // --nohud: без интерфейса (видео и снимки мира)
     const char *stand = nullptr;    // --stand off|elbow|knee|mixamo|morphN через запятую: стенд людей (снимки)
     const char *open = nullptr;     // --open menu|keys|debug|world: открыть меню или вкладку панели (снимки интерфейса)
@@ -57,6 +62,8 @@ struct Args {
     const char *video = nullptr;      // --video префикс: каждый кадр в префикс_NNNN.bmp, мир идёт ровно 1/30 с на кадр
     const char *cam_test = nullptr;   // --cam-test файл.txt: проверка камеры записанным вводом без окна и выход
     bool cam_play = false;            // --cam-play: камера окна по записанному показу (видео камеры, с --video)
+    bool cam_to_set = false;          // --cam-to yaw pitch dist x z: пролёт от --cam к ней за кадры снимка (видео подлёта)
+    f32 cam_to[5] = {};
     i32 select = -1;                  // --select место: выбрать человека (и --follow — камера за ним)
     bool follow = false;
     const char *mech = nullptr;       // --mech pack|stand|walk|show|veil|prone|aim: шагающая машина в одном режиме (кадры и видео)

@@ -52,16 +52,40 @@ static void tab_screen(UiForm &f, Settings &s, bool &ch) {
     ch |= ui_toggle(f, "Весь экран", s.fullscreen);
     ui_tip(f, "Кадр ждёт обновления экрана: без разрывов, к/с не выше частоты экрана");
     ch |= ui_toggle(f, "Вертикальная синхронизация", s.vsync);
-    // Ступени света (docs/light.md, «Ступени»): каждая — тот же облик, ниже — дешевле. Шаги этапа 6 добавляют свои
+    // Ступени света (docs/light.md, «Ступени»): каждая — тот же облик, ниже — дешевле. «Качество света» — набор:
+    // ставит три части разом и показывает их общую ступень; части разные — «своё», ни один сегмент не выбран
     ui_section(f, "КАЧЕСТВО");
-    ui_tip(f, "Тени солнца, отражённый свет, небо и огни; ниже — быстрее, облик тот же");
-    ch |= ui_segment(f, "Качество света", s.light_quality, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES));
+    u32 q = s.shadow_quality;
+    bool same = s.gi_quality == q && s.air_quality == q;
+    if (!same) q = ANA_COUNTOF(QUALITY_NAMES);
+    ui_tip(f, same ? "Все три части разом; ниже — быстрее, облик тот же" : "Части выбраны по-разному; здесь — все разом");
+    if (ui_segment(f, same ? "Качество света" : "Качество света: своё", q, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES))) {
+        s.shadow_quality = s.gi_quality = s.air_quality = q;
+        ch = true;
+    }
+    ui_tip(f, "Мягкость теней солнца и ламп, тени людей у ламп");
+    ch |= ui_segment(f, "Тени", s.shadow_quality, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES));
+    ui_tip(f, "Свет от стен и земли, затенение в углах");
+    ch |= ui_segment(f, "Отражённый свет", s.gi_quality, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES));
+    ui_tip(f, "Лучи в пыли и облака; на «Низко» — без лучей");
+    ch |= ui_segment(f, "Воздух и облака", s.air_quality, QUALITY_NAMES, ANA_COUNTOF(QUALITY_NAMES));
     // Сглаживание краёв (docs/aa.md): TAA — края и мерцание мелочи, FXAA — только края, дешевле
     ui_tip(f, "TAA — края и мерцание мелочи; FXAA — только края, дешевле");
     ch |= ui_segment(f, "Сглаживание", s.aa, AA_NAMES, ANA_COUNTOF(AA_NAMES));
     ui_section(f, "КАМЕРА");
     ui_tip(f, "Поле зрения по вертикали");
     ch |= ui_slider(f, "Поле зрения", s.fov_deg, 40.0f, 100.0f, 1.0f, "%.0f°");
+    // Эффекты камеры (docs/lens.md, docs/glare.md): силы — в data/sky.txt, здесь — включить и выключить
+    ui_tip(f, "Солнце, лампы и блики сияют: свет рассеивается вокруг ярких мест");
+    ch |= ui_toggle(f, "Свечение", s.glare);
+    ui_tip(f, "Отражения солнца в линзах объектива — цепочка цветных пятен через кадр");
+    ch |= ui_toggle(f, "Блики объектива", s.lens_flare);
+    ui_tip(f, "Едва заметная цветная кайма у краёв кадра, как у настоящего объектива");
+    ch |= ui_toggle(f, "Хроматическая аберрация", s.aberration);
+    ui_tip(f, "Края кадра чуть темнее середины");
+    ch |= ui_toggle(f, "Виньетка", s.vignette);
+    ui_tip(f, "Мелкое зерно, как на плёнке; без него тени и небо глаже");
+    ch |= ui_toggle(f, "Зерно плёнки", s.grain);
 }
 
 static void keys_column(UiForm &f, const char *title, const char *const (*rows)[2], u32 n) {
