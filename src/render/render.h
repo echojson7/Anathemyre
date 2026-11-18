@@ -234,6 +234,7 @@ struct RenderConfig {
     bool gpu_validation = false;  // слои проверки с проверкой на GPU (выход за границы буферов, GPU-AV) вместо синхронизации
     const char *gpu_validation_skip = nullptr;  // шейдеры без проверки на GPU, через запятую (lavapipe их не тянет)
     const char *shader_dir = "";
+    u32 pipe_threads = 0;  // потоков сборки конвейеров при запуске (--pipe-threads); 0 — по ядрам
 };
 
 constexpr u32 RENDER_MAX_POINTS = 4096;
