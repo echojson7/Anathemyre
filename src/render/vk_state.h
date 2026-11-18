@@ -246,6 +246,7 @@ struct SdfGpu {
     GpuBuffer scratch;        // засыпка: u32 на воксель уровня (расстояние и знак), между кадрами — «пусто»
     VkSampler sampler = VK_NULL_HANDLE;
     VkPipeline pipe_splat = VK_NULL_HANDLE, pipe_final = VK_NULL_HANDLE, pipe_eye = VK_NULL_HANDLE;
+    VkPipeline pipe_eye_view = VK_NULL_HANDLE;  // свет мест в кадре для глаза (eye_view.comp)
     bool on = false;
     bool reset = true;        // всё с нуля: якорь, окна, все кирпичи
     bool clear = true;        // залить засыпку «пусто» перед первым кадром

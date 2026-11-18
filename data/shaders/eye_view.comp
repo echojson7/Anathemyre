@@ -1,0 +1,51 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Глаз, свет мест в кадре (docs/light.md, «Экспозиция»; eye.comp — остальное): средние плиток 8×8 прошлого кадра
+// (view_light, light_cells.comp) на сетке 64×36 по экрану — сумма логарифма света места и цвета с весом к центру
+// кадра, столбец сетки на поток, сложение в общей памяти в постоянном порядке (кадр от запуска к запуску тот же).
+// Отдельный шейдер: 2304 плитки — в 64 потока, а не в одном потоке глаза. Чтение плиток и сложение развёрнуты:
+// lavapipe под GPU-AV падает на доступе к буферу в цикле шейдера с barrier() (docs/graph.md, «Проверки»).
+// Итог — sky_out [9] (сумма логарифма, сумма весов) и [10] (сумма цвета)
+#include "common.glsl"
+layout(local_size_x = 64) in;
+
+shared float s_lw[64], s_w[64];
+shared vec3 s_c[64];
+
+void main() {
+    FrameData f = pc.frame;
+    uint t = gl_LocalInvocationIndex;
+    // Первый кадр и новый размер (плитки не записаны) — мимо
+    float lw = 0.0, w = 0.0;
+    vec3 cw = vec3(0.0);
+    if (f.eye_meter.y != 0.0) {
+        uint tx = (uint(f.viewport.x) + 7u) / 8u;
+        [[unroll]] for (uint j = 0u; j < 36u; ++j) {
+            vec2 uv = (vec2(float(t), float(j)) + 0.5) / vec2(64.0, 36.0);
+            uvec2 q = uvec2(uv * f.viewport) / 8u;
+            vec4 v = f.view_light.v[min(q.y * tx + q.x, f.tile_cap - 1u)];
+            if (abs(v.w) < 60.0) {  // не число — мимо
+                vec2 d = uv * 2.0 - 1.0;
+                float wt = exp(-dot(d, d) * (1.0 / (2.0 * 0.45 * 0.45)));  // вес к центру кадра
+                lw += wt * v.w;
+                cw += wt * clamp(v.rgb, vec3(0.0), vec3(100.0));
+                w += wt;
+            }
+        }
+    }
+    s_lw[t] = lw;
+    s_w[t] = w;
+    s_c[t] = cw;
+    barrier();
+    [[unroll]] for (uint s = 32u; s > 0u; s >>= 1u) {
+        if (t < s) {
+            s_lw[t] += s_lw[t + s];
+            s_w[t] += s_w[t + s];
+            s_c[t] += s_c[t + s];
+        }
+        barrier();
+    }
+    if (t != 0u) return;
+    f.sky_out.v[SKY_OUT_VSUM] = vec4(s_lw[0], s_w[0], 0.0, 0.0);
+    f.sky_out.v[SKY_OUT_VSUM2] = vec4(s_c[0], 0.0);
+}

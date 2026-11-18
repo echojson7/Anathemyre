@@ -81,7 +81,17 @@ static bool create_device() {
     u32 ext_count = 0;
     const char *const *ext = platform_vk_instance_extensions(&ext_count);
     for (u32 i = 0; i < ext_count; ++i) ib.enable_extension(ext[i]);
-    if (g_vk.cfg.validation || g_vk.cfg.gpu_validation) {
+    // Слой проверки ищем сам: сообщения отладки (debug utils) даёт и загрузчик без слоя — по ним не видно, что
+    // проверки нет, и прогон «без ошибок» шёл бы вхолостую
+    bool checks = g_vk.cfg.validation || g_vk.cfg.gpu_validation;
+    if (checks) {
+        auto si = vkb::SystemInfo::get_system_info(gipa);
+        if (!si || !si.value().validation_layers_available) {
+            log_warn("слои проверки Vulkan не найдены, иду без них");
+            checks = g_vk.cfg.validation = g_vk.cfg.gpu_validation = false;
+        }
+    }
+    if (checks) {
         ib.request_validation_layers(true)
             .set_debug_callback(on_debug)
             .set_debug_messenger_severity(VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
@@ -108,7 +118,6 @@ static bool create_device() {
     g_vk.instance = vi.instance;
     g_vk.messenger = vi.debug_messenger;
     volkLoadInstanceOnly(g_vk.instance);
-    if ((g_vk.cfg.validation || g_vk.cfg.gpu_validation) && !g_vk.messenger) log_warn("слои проверки Vulkan не найдены, иду без них");
 
     g_vk.surface = (VkSurfaceKHR)platform_vk_create_surface(g_vk.instance);
     if (!g_vk.surface) return false;

@@ -15,15 +15,12 @@
 // Баланс белого: цвет света — та же смесь у камеры и мест в кадре (стоя в тени, глаз смотрит на освещённое
 // солнцем; в зале у камеры луч из окна, а смотрит он на стены в свете неба) → множители конусов CAT02 (фон Крис)
 // с долей привыкания CIECAM02 × eye_meter.z.
-// Группа из 64 потоков: замер сеткой, сложение в общей памяти в постоянном порядке (кадр от запуска к запуску тот
-// же), остальное — поток 0. После sky_sum, сборки поля и смешения зондов, до освещения
+// Свет мест в кадре суммирует eye_view.comp (sky_out [9], [10]) в 64 потока. Здесь — один поток: после sky_sum,
+// сборки поля, смешения зондов и eye_view, до освещения
 #include "gi.glsl"
 #include "lamps.glsl"
 #include "clouds.glsl"
-layout(local_size_x = 64) in;
-
-shared float s_lw[64], s_w[64];
-shared vec3 s_c[64];
+layout(local_size_x = 1) in;
 
 const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
 
@@ -43,37 +40,9 @@ vec3 wb_gains(vec3 w, float d) {
 
 void main() {
     FrameData f = pc.frame;
-    uint t = gl_LocalInvocationIndex;
-    // Свет мест в кадре: столбец сетки на поток. Первый кадр и новый размер (плитки не записаны) — мимо
-    float lw = 0.0, w = 0.0;
-    vec3 cw = vec3(0.0);
-    if (f.eye_meter.y != 0.0) {
-        uint tx = (uint(f.viewport.x) + 7u) / 8u;
-        for (uint j = 0u; j < 36u; ++j) {
-            vec2 uv = (vec2(float(t), float(j)) + 0.5) / vec2(64.0, 36.0);
-            uvec2 q = uvec2(uv * f.viewport) / 8u;
-            vec4 v = f.view_light.v[min(q.y * tx + q.x, f.tile_cap - 1u)];
-            if (!(abs(v.w) < 60.0)) continue;  // не число — мимо
-            vec2 d = uv * 2.0 - 1.0;
-            float wt = exp(-dot(d, d) * (1.0 / (2.0 * 0.45 * 0.45)));  // вес к центру кадра
-            lw += wt * v.w;
-            cw += wt * clamp(v.rgb, vec3(0.0), vec3(100.0));
-            w += wt;
-        }
-    }
-    s_lw[t] = lw;
-    s_w[t] = w;
-    s_c[t] = cw;
-    barrier();
-    for (uint s = 32u; s > 0u; s >>= 1u) {
-        if (t < s) {
-            s_lw[t] += s_lw[t + s];
-            s_w[t] += s_w[t + s];
-            s_c[t] += s_c[t + s];
-        }
-        barrier();
-    }
-    if (t != 0u) return;
+    // Свет мест в кадре (eye_view.comp): сумма логарифма, весов и цвета
+    vec4 vs = f.sky_out.v[SKY_OUT_VSUM];
+    vec3 vc = f.sky_out.v[SKY_OUT_VSUM2].rgb;
 
     // Плоскость вверх: E = π·(a + by) — как у sky_sum.comp
     vec3 c_sky = (f.sky_out.v[0].rgb + f.sky_out.v[2].rgb) * A_PI;
@@ -107,9 +76,9 @@ void main() {
     float e_lamp = max(dot(c_lamp, Y), 0.0);
     float e_cam = max(e_amb + e_key * vis_key + e_lamp, 1e-6);
     // Замер: свет у камеры и свет мест в кадре — в логарифме
-    bool view = s_w[0] > 1.0;
+    bool view = vs.y > 1.0;
     float mv = view ? clamp(f.eye_meter.x, 0.0, 1.0) : 0.0;
-    float e_view = view ? e_cam * exp2(s_lw[0] / s_w[0]) : e_cam;
+    float e_view = view ? e_cam * exp2(vs.x / vs.y) : e_cam;
     float e = exp2(mix(log2(e_cam), log2(e_view), mv));
     float ev_scene = log2(e / 2.5);
     float ev_ref = f.a_post.z;
@@ -135,7 +104,7 @@ void main() {
     // (серый 20 % под светом замера, кд/м²): ~0.82 в полутьме, к 1 на солнце; × eye_meter.z
     vec3 c_eye = max(c_amb + c_key * vis_key + c_lamp, vec3(0.0));
     vec3 wp = dot(c_eye, Y) > 1e-9 ? c_eye / dot(c_eye, Y) : vec3(1.0);
-    vec3 wv = s_c[0] / max(s_w[0], 1e-6);
+    vec3 wv = vc / max(vs.y, 1e-6);
     if (view && dot(wv, Y) > 1e-3) wp = mix(wp, wv / dot(wv, Y), mv);
     vec3 wp_prev = f.sky_out.v[SKY_OUT_WB2].xyz;
     bool wp_ok = all(greaterThan(wp_prev, vec3(1e-4))) && all(lessThan(wp_prev, vec3(1e4)));
