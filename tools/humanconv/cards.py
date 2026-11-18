@@ -42,11 +42,14 @@ def clump_frame(M, A, out_hint):
     if out_hint is None:
         # Главное направление разлёта по всей длине (вес — к кончику, у корня разлёта нет)
         w = np.linspace(0.2, 1.0, n)
-        cov = np.einsum("ksi,ksj,s->ij", D, D, w)
-        val, vec = np.linalg.eigh(cov)
-        e0 = vec[:, 2]
+        cov = np.array([[(D[..., i] * D[..., j] * w[None]).sum() for j in range(3)] for i in range(3)])
+        # главный вектор — степенным методом (без LAPACK: одни и те же байты на любой машине)
+        e0 = np.array([0.57735, 0.57735, 0.57735])
+        for _ in range(60):
+            e0 = cov[:, 0] * e0[0] + cov[:, 1] * e0[1] + cov[:, 2] * e0[2]
+            e0 = e0 / max(np.sqrt((e0 * e0).sum()), 1e-30)
         e0 = e0 * (1.0 if e0[np.argmax(np.abs(e0))] > 0 else -1.0)  # знак собственного вектора — один на любой машине
-        e = e0[None] - t * (t @ e0)[:, None]
+        e = e0[None] - t * (t * e0[None]).sum(1, keepdims=True)
         o = np.cross(t, unit(e))
     else:
         o = out_hint - t * (out_hint * t).sum(1, keepdims=True)

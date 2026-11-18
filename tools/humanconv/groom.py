@@ -59,11 +59,9 @@ class Skin:
             w = np.exp((c - c.max(1, keepdims=True)) / sig2) * (c > 0.0)
             tab[s:s + 512] = (w * r[None, :]).sum(1) / np.maximum(w.sum(1), 1e-300)
         self.tab = tab.reshape(A.shape)
-        # Упор: кандидаты тела в float64 (BLAS float64 расходится между машинами на 1e-16 — ничья ближних вершин с
-        # такой точностью почти невозможна; float32 давал бы другие байты)
+        # Упор: кандидаты тела; расстояния — поэлементно в float64 (байты сетки в CI те же на любой машине)
         self.cand = hd.cand
         self.Sc = hd.S[self.cand]
-        self.sq = (self.Sc ** 2).sum(1)
 
     def radius(self, d):
         d = unit(np.asarray(d, np.float64))
@@ -90,16 +88,19 @@ class Skin:
         Q = P.reshape(-1, 3)
         idx = np.full(len(Q), -1, np.int64)
         order = np.argsort(Q[:, 1], kind="stable")
-        for s in range(0, len(Q), 4096):
-            o = order[s:s + 4096]
+        for s in range(0, len(Q), 1024):
+            o = order[s:s + 1024]
             q = Q[o]
             lo, hi = q.min(0) - reach, q.max(0) + reach
             m = np.all((self.Sc >= lo) & (self.Sc <= hi), 1)
             if not m.any():
                 continue
-            d2 = self.sq[None, m] - 2.0 * (q @ self.Sc[m].T)
+            sc = self.Sc[m]
+            # поэлементно, без BLAS: матричное умножение на разных машинах суммирует в разном порядке
+            d2 = ((q[:, None, 0] - sc[None, :, 0]) ** 2 + (q[:, None, 1] - sc[None, :, 1]) ** 2
+                  + (q[:, None, 2] - sc[None, :, 2]) ** 2)
             j = np.argmin(d2, 1)
-            near = d2[np.arange(len(q)), j] + (q ** 2).sum(1) < reach ** 2
+            near = d2[np.arange(len(q)), j] < reach ** 2
             idx[o] = np.where(near, self.cand[m][j], -1)
         ok = idx >= 0
         h = np.ones(len(Q))
