@@ -38,7 +38,14 @@ bool vk_world_layout() {
     // 11 — векторы движения, 12 — две истории сглаживания для выборки (линейно, по краю — тот же сэмплер, что у
     // зондов), 13 — они же для записи и для стиля (docs/aa.md, vk_aa.cpp)
     constexpr u32 NB = 14;
-    VkDescriptorSetLayoutBinding b[NB] = {};
+    // 16 — таблица текстур ассетов, 17 — их сэмплер (docs/textures.md, vk_textures.cpp): трилинейно, анизотропия
+    // 16, с заворотом. Номера 14, 15 оставлены картам огней (docs/lamp_shadows.md)
+    si.anisotropyEnable = VK_TRUE;
+    si.maxAnisotropy = 16.0f;
+    if (!vk_check(vkCreateSampler(g_vk.device, &si, nullptr, &g_vk.textures.sampler), "vkCreateSampler")) return false;
+    si.anisotropyEnable = VK_FALSE;
+    si.maxAnisotropy = 1.0f;
+    VkDescriptorSetLayoutBinding b[NB + 2] = {};
     VkSampler hist_samplers[2] = {g_vk.gi.sampler, g_vk.gi.sampler};
     for (u32 i = 0; i < NB; ++i) {
         bool sampled = i == 2 || i == 4 || i == 5 || i == 9 || i == 10 || i == 12;
@@ -51,15 +58,18 @@ bool vk_world_layout() {
     b[4].pImmutableSamplers = b[5].pImmutableSamplers = &g_vk.gi.sampler;
     b[9].pImmutableSamplers = b[10].pImmutableSamplers = &g_vk.scans.sampler;
     b[12].pImmutableSamplers = hist_samplers;
+    b[NB] = {16, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, RENDER_MAX_TEXTURES + 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    b[NB + 1] = {17, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, &g_vk.textures.sampler};
     auto li = vk_info<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
-    li.bindingCount = NB;
+    li.bindingCount = NB + 2;
     li.pBindings = b;
     if (!vk_check(vkCreateDescriptorSetLayout(g_vk.device, &li, nullptr, &w.set_layout), "vkCreateDescriptorSetLayout"))
         return false;
-    VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 9}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7}};
+    VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 9}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7},
+                                  {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, RENDER_MAX_TEXTURES + 1}, {VK_DESCRIPTOR_TYPE_SAMPLER, 1}};
     auto pi = vk_info<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
     pi.maxSets = 1;
-    pi.poolSizeCount = 2;
+    pi.poolSizeCount = 4;
     pi.pPoolSizes = ps;
     if (!vk_check(vkCreateDescriptorPool(g_vk.device, &pi, nullptr, &w.pool), "vkCreateDescriptorPool")) return false;
     auto ai = vk_info<VkDescriptorSetAllocateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO);
@@ -123,7 +133,7 @@ bool vk_world_init() {
         ok = vk_make_compute(&w.pipe_light[k], "light_cells.comp", &si) && ok;
     }
     return ok && vk_gcache_init() && vk_shadow_init() && vk_sdf_init() &&
-           vk_gi_init() && vk_lcache_init() && vk_scans_init() && vk_aa_init();
+           vk_gi_init() && vk_lcache_init() && vk_scans_init() && vk_textures_init() && vk_aa_init();
 }
 
 static void destroy_image(GpuImage &im) {
@@ -156,12 +166,14 @@ void vk_world_shutdown() {
     vk_lcache_shutdown();
     vk_aa_shutdown();
     vk_scans_shutdown();
+    vk_textures_shutdown();
     if (w.pool) vkDestroyDescriptorPool(g_vk.device, w.pool, nullptr);
     if (w.set_layout) vkDestroyDescriptorSetLayout(g_vk.device, w.set_layout, nullptr);
     if (g_vk.sdf.sampler) vkDestroySampler(g_vk.device, g_vk.sdf.sampler, nullptr);
     if (g_vk.gi.sampler) vkDestroySampler(g_vk.device, g_vk.gi.sampler, nullptr);
     if (g_vk.scans.sampler) vkDestroySampler(g_vk.device, g_vk.scans.sampler, nullptr);
-    g_vk.sdf.sampler = g_vk.gi.sampler = g_vk.scans.sampler = VK_NULL_HANDLE;
+    if (g_vk.textures.sampler) vkDestroySampler(g_vk.device, g_vk.textures.sampler, nullptr);
+    g_vk.sdf.sampler = g_vk.gi.sampler = g_vk.scans.sampler = g_vk.textures.sampler = VK_NULL_HANDLE;
     w = WorldGpu{};
 }
 

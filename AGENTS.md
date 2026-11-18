@@ -12,7 +12,7 @@
 `docs/gcache.md`, люди, шаг мира и путь `docs/people.md`, тело и внешность людей `docs/body.md`, одежда людей `docs/wear.md`, волосы людей `docs/hair.md`, клипы захвата
 движения `docs/anim.md`, свет (этап 6) `docs/light.md`, тени солнца страницами `docs/shadow.md`, поле расстояний мира `docs/sdf.md`,
 зонды непрямого света `docs/gi.md`, ячейки отражённого света на поверхностях `docs/lcache.md`, огни и их тени `docs/lamps.md`,
-фабрика деталей (здания и предметы) `docs/parts.md`, оружие `docs/weapons.md`, подземная станция (Исподь) `docs/ispod.md`, сканы CC0 (проба) `docs/scans.md`,
+фабрика деталей (здания и предметы) `docs/parts.md`, оружие `docs/weapons.md`, подземная станция (Исподь) `docs/ispod.md`, сканы CC0 (проба) `docs/scans.md`, текстуры ассетов (UV, .tex, вид baked) `docs/textures.md`,
 сглаживание краёв `docs/aa.md`, блеск ярких мест `docs/glare.md`, запуск до первого кадра `docs/startup.md`, шагающая турель «Вежа» `docs/vezha.md`, скрытный снайпер «Тать» `docs/tat.md`, оружие на теле и в руках `docs/arms.md`.
 
 ## Что это за ветка

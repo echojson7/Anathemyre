@@ -117,6 +117,7 @@ $(shell ./tools/matgen.sh $(OUT))
 
 # Данные рядом с исполняемым файлом: описания и сетки (.mesh пишет tools/meshgen.py, лежат в data/meshes)
 DATA_SRC := data/materials.txt data/scene.txt data/sky.txt data/terrain.txt data/weapons.txt data/ui/inter.font $(sort $(wildcard data/meshes/*.mesh)) \
+            $(sort $(wildcard data/textures/*.tex)) \
             $(sort $(wildcard data/dunes/*.dun)) $(sort $(wildcard data/prefabs/*.txt)) $(sort $(wildcard data/people/*.skel)) \
             $(sort $(wildcard data/anims/*.anim data/anims/*.trk data/anims/*.txt)) \
             $(sort $(wildcard data/actions/*.txt)) data/duel.txt data/group.txt
@@ -135,16 +136,25 @@ $(OUT)/data/%: data/%
 MESHPACK := build/tools/meshpack
 MO_SRC := $(sort $(wildcard third_party/meshoptimizer/*.cpp))
 HOST_TC := $(ANA_CACHE)/llvm-$(LLVM_VER)
-$(MESHPACK): tools/meshpack/meshpack.cpp $(MO_SRC) third_party/meshoptimizer/meshoptimizer.h | $(HOST_TC)/.ok
+MP_SRC := tools/meshpack/meshpack.cpp tools/meshpack/gltf_in.cpp
+$(MESHPACK): $(MP_SRC) tools/meshpack/meshpack.h $(MO_SRC) third_party/meshoptimizer/meshoptimizer.h third_party/cgltf/cgltf.h | $(HOST_TC)/.ok
 	@mkdir -p $(dir $@)
 	$(HOST_TC)/bin/clang++ -std=c++20 -O2 -march=x86-64-v3 -ffp-contract=off -fno-math-errno -w -isystem third_party \
-	  -stdlib=libc++ -fuse-ld=lld -static-libstdc++ -l:libc++abi.a tools/meshpack/meshpack.cpp $(MO_SRC) -o $@
+	  -stdlib=libc++ -fuse-ld=lld -static-libstdc++ -l:libc++abi.a $(MP_SRC) $(MO_SRC) -o $@
+# Упаковка текстур .tex (docs/textures.md): PNG → BC7/BC5/BC4 с мипами (bc7enc_rdo, stb_image), тем же clang
+TEXPACK := build/tools/texpack
+TP_SRC := tools/texpack/texpack.cpp third_party/bc7enc/bc7enc.cpp third_party/bc7enc/rgbcx.cpp
+$(TEXPACK): $(TP_SRC) third_party/bc7enc/bc7enc.h third_party/bc7enc/rgbcx.h third_party/stb/stb_image.h | $(HOST_TC)/.ok
+	@mkdir -p $(dir $@)
+	$(HOST_TC)/bin/clang++ -std=c++20 -O2 -march=x86-64-v3 -ffp-contract=off -fno-math-errno -w -isystem third_party \
+	  -stdlib=libc++ -fuse-ld=lld -static-libstdc++ -l:libc++abi.a $(TP_SRC) -o $@
 ifneq ($(HOST_TC)/.ok,$(TC_STAMP))
 $(HOST_TC)/.ok:
 	./tools/toolchain.sh linux
 endif
-meshes: $(MESHPACK)
+meshes: $(MESHPACK) $(TEXPACK)
 	python3 tools/meshgen.py data/meshes $(MESHPACK)
+	python3 tools/texprobe.py data $(MESHPACK) $(TEXPACK)
 	python3 tools/weapons/build.py data $(MESHPACK)
 	./tools/humanconv/fetch.sh $(MESHPACK)
 # Сканы CC0 (docs/scans.md): картинки Poly Haven по sha256 в кеш и пакет в данные сборки. Нужна сеть, не в CI:

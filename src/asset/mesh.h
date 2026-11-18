@@ -1,4 +1,4 @@
-// Формат .mesh (docs/mesh.md): сетка детали без UV. Куски «тег, версия, длина» (core/ser.h), незнакомые
+// Формат .mesh (docs/mesh.md): сетка детали; развёртка и касательная — необязательный кусок VUV0. Куски «тег, версия, длина» (core/ser.h), незнакомые
 // пропускаются. Пишет tools/meshgen.py, игра только читает. Кластеры ≤ 124 треугольников — под visibility
 // buffer этапа 5 (25 бит кластер + 7 бит треугольник); коллайдер читает шаг мира, грубую форму — свет
 #pragma once
@@ -16,6 +16,14 @@ struct MeshVertex {
     u32 misc;    // доля смеси (u8, 255 — весь материал 1) | запечённое затенение << 8 (u8, 255 — без тени)
 };
 static_assert(sizeof(MeshVertex) == 24, "MeshVertex — 24 байта, как в шейдере");
+
+// Развёртка и касательная вершины (кусок VUV0), как их читает шейдер (common.glsl, VertexUv), 8 байт:
+// uv — u | v << 16 (f16, v вниз по картинке), tan — касательная октаэдром (15 + 15 бит) и знак битангенса в бите 31
+struct MeshUv {
+    u32 uv;
+    u32 tan;
+};
+static_assert(sizeof(MeshUv) == 8, "MeshUv — 8 байт, как в шейдере");
 
 struct MeshCluster {
     u32 first_index;   // от начала индексов сетки
@@ -67,6 +75,7 @@ struct MeshData {
     f32 min[3], max[3];         // границы в осях сетки
     Span<Str> material_names;   // локальные материалы вершин (номер в вершине → имя)
     Span<MeshVertex> vertices;  // mats — локальные номера, пока не вызван mesh_remap_materials
+    Span<MeshUv> uvs;           // пусто — сетка без развёртки (узор по миру, docs/materials.md)
     Span<u32> indices;
     Span<MeshCluster> clusters;
     Span<MeshLod> lods;
