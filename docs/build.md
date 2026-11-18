@@ -71,14 +71,15 @@ Windows, ~2 ГБ архив LLVM для Linux, распаковывается т
 `~/.cache/anathemyre/makehuman`, нужен Python 3 с numpy (`apt install python3-numpy`), пишет `data/meshes/human_*.mesh`
 и `data/people/*.skel` (`docs/people.md`). Байты одни на numpy 1.26 и 2.x.
 `make parts PYTHON=<python с bpy>` — детали фабрики (`docs/parts.md`, сетки `ispod_*`): нужен Blender как модуль
-(`pip install bpy==5.3.0`), поэтому отдельно от `make meshes` и не в CI.
+(`pip install bpy==5.3.0`), поэтому отдельно от `make meshes` и не в CI. Готовые сетки в CI проверяет линт
+(`python3 tools/assetlint/assetlint.py`, `docs/assetlint.md`).
 
 ## CI (`.github/workflows/ci.yml`)
 Долгое разнесено по машинам (у каждой 4 ядра), однопоточные проверки внутри задачи идут разом через
 `tools/ci_par.sh` (`par ИМЯ ПРЕДЕЛ_С команда…`, потом `par_wait`): у каждой свой журнал, время и предел — зависание
 снимается за минуты с `::error::… снято по пределу времени`, а не по таймауту задачи. Ни одна проверка не убрана; GPU-AV
 идёт после влития в v2 и на PR по метке (ниже, **gpuav**). Цель — прогон PR за 3–6 мин.
-- **linux**: слои и запреты; сетки в git совпадают с генератором; сборки релиз, Windows, gcc, без debug — разом, все с
+- **linux**: слои и запреты; сетки в git совпадают с генератором; линт ассетов (`docs/assetlint.md`, ~1 мин); сборки релиз, Windows, gcc, без debug — разом, все с
   `-Werror`; эталонные хеши `--sim` у clang `-O2` и gcc и запись 10 000 шагов для Windows — разом. Кешируются
   компиляторы и SDL3.
 - **debug** (параллельно linux): отладочная сборка (clang `-O0`, ASan + UBSan, `-Werror`) и релиз; эталонные хеши
