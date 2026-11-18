@@ -23,18 +23,57 @@ static constexpr u32 CLOUD_BANDS = 8;
 static constexpr u32 CLOUD_UNITS = CLOUD_PHASES * CLOUD_BANDS;
 static constexpr f32 CLOUD_PERIOD = 64.0f / 60.0f;
 
+// Шум — картинка RGBA8 CLOUD_N³ (8 МБ): выборка трилинейная по кругу текстурным блоком, одной инструкцией, а не
+// восемь чтений буфера и смесь в шейдере (18.11). Места набора кадра мира: 22 — запись (cloud_noise.comp), 23 —
+// выборка (сэмплер сканов: трилинейно, с заворотом, vk_world_layout)
+static bool noise_image(CloudGpu &c) {
+    auto ii = vk_info<VkImageCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO);
+    ii.imageType = VK_IMAGE_TYPE_3D;
+    ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ii.extent = {CLOUD_N, CLOUD_N, CLOUD_N};
+    ii.mipLevels = 1;
+    ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    VmaAllocationCreateInfo ci{};
+    ci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+    if (!vk_check(vmaCreateImage(g_vk.vma, &ii, &ci, &c.noise.image, &c.noise.alloc, nullptr), "vmaCreateImage шума облаков"))
+        return false;
+    auto vi = vk_info<VkImageViewCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
+    vi.image = c.noise.image;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_3D;
+    vi.format = ii.format;
+    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (!vk_check(vkCreateImageView(g_vk.device, &vi, nullptr, &c.noise.view), "vkCreateImageView шума облаков")) return false;
+    vk_image_name(c.noise.image, "облака: шум");
+    c.rg_noise = rg_image("облака: шум", VK_IMAGE_ASPECT_COLOR_BIT);
+    rg_bind_image(c.rg_noise, c.noise.image);
+    VkDescriptorImageInfo di{VK_NULL_HANDLE, c.noise.view, VK_IMAGE_LAYOUT_GENERAL};
+    VkWriteDescriptorSet wr[2] = {};
+    for (u32 i = 0; i < 2; ++i) {
+        wr[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        wr[i].dstSet = g_vk.world.set;
+        wr[i].dstBinding = 22 + i;
+        wr[i].descriptorCount = 1;
+        wr[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        wr[i].pImageInfo = &di;
+    }
+    vkUpdateDescriptorSets(g_vk.device, 2, wr, 0, nullptr);
+    return true;
+}
+
 bool vk_clouds_init() {
     CloudGpu &c = g_vk.clouds;
     const VkBufferUsageFlags ssbo = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     // Карта купола — по ступени света, при первом кадре с облаками (vk_clouds_fill): 14…100 МБ
-    if (!vk_create_buffer(c.noise, (VkDeviceSize)CLOUD_N * CLOUD_N * CLOUD_N * 4, ssbo, true) ||
-        !vk_create_buffer(c.shadow, (VkDeviceSize)CLOUD_SH_N * CLOUD_SH_N * 4, ssbo, true) ||
+    if (!noise_image(c) || !vk_create_buffer(c.shadow, (VkDeviceSize)CLOUD_SH_N * CLOUD_SH_N * 4, ssbo, true) ||
         !vk_create_buffer(c.info, 3 * 4 * 16, ssbo, true))
         return false;
-    const char *names[] = {"облака: карта", "облака: шум", "облака: тень", "облака: слоты"};
-    GpuBuffer *bs[] = {&c.map, &c.noise, &c.shadow, &c.info};
-    u8 *rs[] = {&c.rg_map, &c.rg_noise, &c.rg_shadow, &c.rg_info};
-    for (u32 i = 0; i < 4; ++i) {
+    const char *names[] = {"облака: карта", "облака: тень", "облака: слоты"};
+    GpuBuffer *bs[] = {&c.map, &c.shadow, &c.info};
+    u8 *rs[] = {&c.rg_map, &c.rg_shadow, &c.rg_info};
+    for (u32 i = 0; i < 3; ++i) {
         if (bs[i]->buffer) vk_buffer_name(*bs[i], names[i]);
         *rs[i] = rg_buffer(names[i]);
     }
@@ -50,8 +89,10 @@ void vk_clouds_shutdown() {
     VkPipeline ps[] = {c.pipe_noise, c.pipe_map, c.pipe_shadow};
     for (VkPipeline p : ps)
         if (p) vkDestroyPipeline(g_vk.device, p, nullptr);
-    GpuBuffer *bs[] = {&c.map, &c.noise, &c.shadow, &c.info};
+    GpuBuffer *bs[] = {&c.map, &c.shadow, &c.info};
     for (GpuBuffer *b : bs) vk_destroy_buffer(*b);
+    if (c.noise.view) vkDestroyImageView(g_vk.device, c.noise.view, nullptr);
+    if (c.noise.image) vmaDestroyImage(g_vk.vma, c.noise.image, c.noise.alloc);
     c = CloudGpu{};
 }
 
@@ -73,7 +114,6 @@ static void snap_off(const CloudSnap &now, const CloudSnap &s, f32 out[4]) {
 void vk_clouds_fill(FrameGpu &g, const RenderFrame &f) {
     CloudGpu &c = g_vk.clouds;
     g.cl_map = c.map.address;
-    g.cl_noise = c.noise.address;
     g.cl_shadow = c.shadow.address;
     g.cl_info = c.info.address;
     const RenderSky &s = f.sky;
@@ -174,6 +214,7 @@ static VkDeviceAddress g_cl_frame;
 
 static void record_noise(VkCommandBuffer cmd, void *) {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.clouds.pipe_noise);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.layout, 0, 1, &g_vk.world.set, 0, nullptr);
     PushConsts pc{g_cl_frame, 0, 0};
     vkCmdPushConstants(cmd, g_vk.layout, PUSH_STAGES, 0, sizeof pc, &pc);
     vkCmdDispatch(cmd, CLOUD_N / 4, CLOUD_N / 4, CLOUD_N / 4);
@@ -184,6 +225,7 @@ static void record_noise(VkCommandBuffer cmd, void *) {
 static void record_map(VkCommandBuffer cmd, void *) {
     const CloudGpu &c = g_vk.clouds;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, c.pipe_map);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.layout, 0, 1, &g_vk.world.set, 0, nullptr);
     u32 groups = (c.size / 8 + 7) / 8;
     for (u32 i = 0; i < c.job_n; ++i) {
         u32 u = c.job_unit + i, phase = u / CLOUD_BANDS, band = u % CLOUD_BANDS;
@@ -199,6 +241,7 @@ static void record_map(VkCommandBuffer cmd, void *) {
 static void record_shadow(VkCommandBuffer cmd, void *) {
     CloudGpu &c = g_vk.clouds;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, c.pipe_shadow);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.layout, 0, 1, &g_vk.world.set, 0, nullptr);
     u32 n = c.job_sh_full ? CLOUD_SH_PHASES : 1;
     for (u32 i = 0; i < n; ++i) {
         PushConsts pc{g_cl_frame, c.sh_phase, 0};
@@ -214,18 +257,18 @@ void vk_clouds_passes(VkDeviceAddress frame) {
     g_cl_frame = frame;
     if (!c.noise_ready) {
         rg_pass("облака: шум", "облака", record_noise, nullptr);
-        rg_use(c.rg_noise, RG_CS_WRITE);
+        rg_use(c.rg_noise, RG_IMG_CS_WRITE, RG_DISCARD);
         c.noise_ready = true;
     }
     const SkyGpu &s = g_vk.sky;
     RgRes sky[] = {s.rg_trans, s.rg_ms, s.rg_sun, s.rg_moon};
     rg_pass("облака: карта", "облака", record_map, nullptr);
     for (RgRes r : sky) rg_use(r, RG_CS_READ);
-    rg_use(c.rg_noise, RG_CS_READ);
+    rg_use(c.rg_noise, RG_IMG_CS_SAMPLE);
     rg_use(c.rg_map, RG_CS_WRITE);
     rg_use(c.rg_info, RG_CS_WRITE);
     rg_pass("облака: тень", "облака", record_shadow, nullptr);
-    rg_use(c.rg_noise, RG_CS_READ);
+    rg_use(c.rg_noise, RG_IMG_CS_SAMPLE);
     rg_use(c.rg_shadow, RG_CS_WRITE);
 }
 

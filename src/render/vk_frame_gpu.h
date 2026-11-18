@@ -111,7 +111,7 @@ struct FrameGpu {
     f32 prev_delta[4];
     VkDeviceAddress skin_prev, mesh_prev;
     // Облака (vk_clouds.cpp)
-    VkDeviceAddress cl_map, cl_noise, cl_shadow, cl_info;
+    VkDeviceAddress cl_map, cl_pad_addr, cl_shadow, cl_info;  // cl_pad_addr — был шум (теперь картинка)
     u32 cl_on, cl_size, cl_slot_a, cl_slot_b;
     f32 cl_mix, cl_mean_t;
     u32 cl_steps, cl_pad;

@@ -1,11 +1,12 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
-// Шум облаков (docs/clouds.md): куб CLOUD_N³, замкнутый по всем осям, один раз при запуске. В слове 4 байта:
+// Шум облаков (docs/clouds.md): куб CLOUD_N³, замкнутый по всем осям, один раз при запуске, — картинка RGBA8:
 // r — «Перлин–Ворли» (клубы: плавный шум, изъеденный ячеистым), g, b, a — ячеистый шум трёх масштабов
 // (чем дальше, тем мельче): им форма облака объедается по краям. Как в облаках Nubis (Schneider 2015).
 // Поток — воксель
 #include "clouds.glsl"
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+layout(set = 0, binding = 22, rgba8) uniform writeonly image3D u_cloud_noise_w;
 
 uint cn_hash(ivec3 p) {
     uvec3 v = uvec3(p);
@@ -74,5 +75,5 @@ void main() {
     float wf2 = w16 * 0.75 + w32 * 0.25;
     float pw = clamp(cn_remap(pf, wf0 - 1.0, 1.0, 0.0, 1.0), 0.0, 1.0);
     uvec4 q = uvec4(clamp(vec4(pw, wf0, wf1, wf2), 0.0, 1.0) * 255.0 + 0.5);
-    pc.frame.cl_noise.v[(id.z * CLOUD_N + id.y) * CLOUD_N + id.x] = q.x | (q.y << 8) | (q.z << 16) | (q.w << 24);
+    imageStore(u_cloud_noise_w, id, vec4(q) * (1.0 / 255.0));  // k / 255 в RGBA8 — ровно k
 }

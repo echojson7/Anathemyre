@@ -15,9 +15,13 @@
 constexpr f32 GI_HYST = 0.3f;       // доля старого показанного значения в конце круга
 constexpr f32 GI_SNAP_COS = 0.99999f;  // светило сдвинулось с последнего снимка больше ~0.25°
 
-// Ступени «Качества света»: лучей на зонд и зондов за кадр (docs/gi.md, «Ступени»)
+// Ступени «Качества света»: лучей на зонд и зондов за кадр при 60 к/с (docs/gi.md, «Ступени»). Очередь идёт по
+// времени (18.11), как карта облаков: GI_Q_PROBES · GI_REF_FPS зондов в секунду, но не больше GI_Q_PROBES за кадр.
+// Отклик света на смену — тот же, что при 60 к/с, при любой частоте кадров: при 120 к/с кадр считает вдвое меньше
+// зондов, а не обновляет их вдвое чаще, чем нужно глазу; ниже 60 к/с — как раньше
 static const u32 GI_Q_RAYS[RENDER_LIGHT_QUALITIES] = {128, 192, 256, 256};
 static const u32 GI_Q_PROBES[RENDER_LIGHT_QUALITIES] = {768, 1024, 1536, 3072};
+constexpr f32 GI_REF_FPS = 60.0f;
 
 struct GiChunk {
     u32 first, n;
@@ -225,7 +229,11 @@ void vk_gi_fill(FrameGpu &g, const RenderFrame &f, FrameSlot &fs) {
             s.turn[i] = (u8)((k + 1) % GI_K);
             if (s.age[i] < GI_K) ++s.age[i];
         };
-        u32 want = GI_Q_PROBES[q];
+        f32 dt = f.style.dt > 0.0f ? f.style.dt : 0.0f;
+        s.due += dt * (f32)GI_Q_PROBES[q] * GI_REF_FPS;
+        if (s.due > (f32)GI_Q_PROBES[q]) s.due = (f32)GI_Q_PROBES[q];
+        u32 want = (u32)s.due;
+        s.due -= (f32)want;
         for (u32 k = 0; k < want; ++k) {
             u32 i = s.cursor;
             s.cursor = (s.cursor + 1) % GI_PROBES;

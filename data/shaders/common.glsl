@@ -408,9 +408,9 @@ layout(buffer_reference, scalar) buffer FrameData {
     SkinPrev skin_prev;       // прошлое положение вершин людей (на вершину общего буфера, половинками)
     MeshPrevs mesh_prev;      // прошлый экземпляр динамической сетки (по номеру сетки), годен при frame == aa_frame
     // Облака (docs/clouds.md, clouds.glsl, vk_clouds.cpp): карта купола — три слота по cl_size² текселей в два
-    // слова; шум CLOUD_N³; карта тени CLOUD_SH_N²; постоянные слота (4 vec4 на слот)
+    // слова; карта тени CLOUD_SH_N²; постоянные слота (4 vec4 на слот). Шум — картинка (места 22, 23 набора мира)
     CloudWords cl_map;
-    CloudWords cl_noise;
+    uvec2 cl_pad_addr;
     CloudWords cl_shadow;
     Vec4s cl_info;
     uint cl_on, cl_size, cl_slot_a, cl_slot_b;  // в кадре показаны слоты a и b, перетекание cl_mix: 0 — a, 1 — b
