@@ -34,6 +34,11 @@ ivec2 g_origin;  // начало отсчёта узоров: чанк каме�
 #define ORIGIN_CHUNK g_origin
 // Игра: тень солнца пикселя — из своего прохода (sun_vis.comp), отладка считает её в точке ячейки
 #define SUN_VIS_READ (LIGHT_DEBUG == 0u)
+// Земля в игре (docs/perf_arch.md, шаг 3): отражённый свет — только из кеша земли (gcache_light.comp, свой проход).
+// Плитку, где хоть одному пикселю его мало (гладкое, свет текселя не посчитан), освещение отдаёт «земле на пиксель»:
+// путь на пиксель (зонды, ячейки, поле) держал регистры всего конвейера — 168 против 96
+#define GROUND_GAME (TILE_KIND == TILE_GROUND && LIGHT_DEBUG == 0u)
+#define LIGHT_GI_CACHED_ONLY GROUND_GAME
 #define GC_ORIGIN_VAR
 #include "resolve.glsl"
 #include "gcache.glsl"
@@ -147,12 +152,12 @@ vec3 froxel_heat(vec3 c, vec3 rel) {
 // Поверхность для света. Земля: тексель из кеша; у смеси и земли на пиксель — тексель без страницы (той же
 // функцией, что запекание, и через ту же упаковку — картинка та же) или крутой склон на пиксель. Земля и сетки
 // зовут материалы одним surface_uv() в цикле: код слоёв и материалов в конвейере — одна копия
-vec3 shade_hit(Hit h, int phys) {
-    if (h.kind == HIT_SKY) {
-        g_e_local = local_sky_e();
-        g_c_local = local_sky_c();
-        return sky_radiance(normalize(h.rel));
-    }
+vec3 shade_sky(Hit h) {
+    g_e_local = local_sky_e();
+    g_c_local = local_sky_c();
+    return sky_radiance(normalize(h.rel));
+}
+Surface hit_surface(Hit h, int phys) {
     Surface s;
     g_gcl_ok = false;  // свет из кеша — только у пути gc_surface_px
     bool gc = GC_KIND && h.kind == HIT_GCACHE;
@@ -223,6 +228,10 @@ vec3 shade_hit(Hit h, int phys) {
         s = gc_unpack(uvec2(0u));  // вид «земля»: других попаданий нет
         s.pos = h.rel;
     }
+    return s;
+}
+// Свет поверхности s попадания h (после hit_surface: свет из кеша земли g_gcl ставит она)
+vec3 shade_surface(Hit h, Surface s) {
     g_ground = h.kind == HIT_MESH ? 0.0 : 1.0;
     g_moving = h.kind == HIT_MESH && h.dyn ? 1.0 : 0.0;
     vec3 c = light_surface(s);
@@ -238,6 +247,7 @@ vec3 shade_hit(Hit h, int phys) {
     if (pc.frame.gi_view == GI_VIEW_ONLY || pc.frame.gi_view == GI_VIEW_CELLS) c = light_indirect_view(s);
     return pc.frame.froxel_heat != 0u ? froxel_heat(c, s.pos) : c;
 }
+vec3 shade_hit(Hit h, int phys) { return h.kind == HIT_SKY ? shade_sky(h) : shade_surface(h, hit_surface(h, phys)); }
 
 void lamp_tile(uint t) {
     FrameData f = pc.frame;
@@ -313,6 +323,7 @@ Hit tile_hit(uint t, ivec2 px, bool inside, inout uint id, out vec4 mv, out bool
 void tile_bail(uint t, uint tile) {
     if (t == 0u) {
         uint slot = atomicAdd(pc.frame.tiles.cmd[TILE_GROUND_PX].x, 1u);
+        atomicAdd(pc.frame.stats.v[STAT_TILE_BAIL], 1u);
         pc.frame.tiles.list[TILE_GROUND_PX * pc.frame.tile_cap + slot] = tile;
     }
 }
@@ -374,6 +385,12 @@ void main_pixel(uint t, uint tile, ivec2 origin, ivec2 px, bool inside) {
             }
         }
     }
+    // Земля в игре: поверхность (и свет из кеша — его ставит gc_surface_px) — до решения об отдаче плитки
+    Surface sg;
+    if (GROUND_GAME && inside && h.kind == HIT_GCACHE && phys >= 0) {
+        sg = hit_surface(h, phys);
+        if (!light_gi_cached(light_blur(sg.rough))) s_bail = 1u;
+    }
     barrier();
     if (TILE_KIND == TILE_GROUND && s_bail != 0u) {
         tile_bail(t, tile);
@@ -383,7 +400,7 @@ void main_pixel(uint t, uint tile, ivec2 origin, ivec2 px, bool inside) {
     barrier();
     if (inside) {
         g_sun_px = px;
-        vec3 col = pre_exposed(shade_hit(h, phys), g_e_local);
+        vec3 col = pre_exposed(GROUND_GAME ? (h.kind == HIT_SKY ? shade_sky(h) : shade_surface(h, sg)) : shade_hit(h, phys), g_e_local);
         float gain = local_gain(g_e_local);
         s_view[t] = view_value(g_c_local, g_e_local);
         work_taps();

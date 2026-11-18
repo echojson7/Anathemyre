@@ -121,8 +121,8 @@ static void metrics_body(UiForm &f, const DebugInfo &in, DebugState &d) {
         } else {
             pair_row(f, "плитки неба · земли", in.work_tiles[0], in.work_tiles[1]);
             pair_row(f, "плитки сеток · смеси", in.work_tiles[2], in.work_tiles[3]);
-            dbg_count(in.work_tiles[4], t, sizeof t);
-            ui_value(f, "плитки земли на пиксель", t);
+            // Земля на пиксель: от разбора плиток (склоны) и отданные освещением земли (нет страницы, мало света кеша)
+            pair_row(f, "плитки на пиксель · от земли", in.work_tiles[4], in.work_tiles_bail);
             pair_row(f, "пиксели земли · сеток", in.work_px[1], in.work_px[2]);
             pair_row(f, "поверхности земли · сеток", in.work_surf[0], in.work_surf[1]);
             dbg_count(in.work_shadow, t, sizeof t);

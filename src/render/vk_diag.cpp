@@ -276,6 +276,7 @@ bool render_work(RenderWork &out) {
     if (!w.work_valid) return false;
     static_assert(RENDER_TILE_KINDS == TILE_KINDS, "виды плиток");
     for (u32 k = 0; k < TILE_KINDS; ++k) out.tiles[k] = w.work[STAT_TILES + k];
+    out.tiles_bail = w.work[STAT_TILE_BAIL];
     out.px_sky = w.work[STAT_PX_SKY];
     out.px_ground = w.work[STAT_PX_GROUND];
     out.px_mesh = w.work[STAT_PX_MESH];

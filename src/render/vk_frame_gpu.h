@@ -181,7 +181,9 @@ constexpr u32 STAT_AIR_CELLS = 44, STAT_AIR_STEPS = 45, STAT_AIR_TAPS = 46;
 // без места
 constexpr u32 STAT_SM_DYN = 47, STAT_SM_DYN_DRAWS = 48, STAT_SM_DYN_OVER = 49;
 constexpr u32 STAT_LSM_DYN_FACES = 50, STAT_LSM_DYN_DRAWS = 51;
-constexpr u32 STAT_COUNT = 52;
+// Плитки вида «земля», отданные освещением «земле на пиксель» (нет страницы, свет кеша мал; docs/perf_arch.md, шаг 3)
+constexpr u32 STAT_TILE_BAIL = 52;
+constexpr u32 STAT_COUNT = 53;
 // Виды плиток кадра мира (TILE_* в common.glsl): небо, земля из кеша (и небо), сетки (и небо), смесь земли и
 // сеток, земля на пиксель (и небо)
 constexpr u32 TILE_KINDS = 5;

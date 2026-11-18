@@ -485,6 +485,7 @@ int run_window(const Args &a, AppMemory &m) {
                 di.vis_clusters = render_vis_clusters();
                 di.work = work_have;
                 for (u32 i = 0; i < RENDER_TILE_KINDS; ++i) di.work_tiles[i] = work.tiles[i];
+                di.work_tiles_bail = work.tiles_bail;
                 di.work_px[0] = work.px_sky;
                 di.work_px[1] = work.px_ground;
                 di.work_px[2] = work.px_mesh;
@@ -928,7 +929,7 @@ int run_window(const Args &a, AppMemory &m) {
                          "gi_taps %u\nlc_live %u\nlc_new %u\nlc_jobs %u\nlc_rays %u\nlc_over %u\nlc_taps %u\n"
                          "lc_wait %u\ngc_lit %u\nlsm_faces %u\nlsm_draws %u\nlsm_over %u\nlsm_taps %u\n"
                          "air_cells %u\nair_steps %u\nair_taps %u\nsm_dyn %u\nsm_dyn_draws %u\nsm_dyn_over %u\n"
-                         "lsm_dyn_faces %u\nlsm_dyn_draws %u\n",
+                         "lsm_dyn_faces %u\nlsm_dyn_draws %u\ntiles_bail %u\n",
                          work.tiles[0], work.tiles[1], work.tiles[2], work.tiles[3], work.tiles[4], work.px_sky,
                          work.px_ground, work.px_mesh, work.surf_ground, work.surf_mesh, work.shadow_taps, work.gc_used,
                          work.gc_baked, work.gc_over, work.gc_direct, work.skin_verts, work.sm_used, work.sm_new,
@@ -937,7 +938,7 @@ int run_window(const Args &a, AppMemory &m) {
                          work.lc_live, work.lc_new, work.lc_jobs, work.lc_rays, work.lc_over, work.lc_taps, work.lc_wait,
                          work.gc_lit, work.lsm_faces, work.lsm_draws, work.lsm_over, work.lsm_taps,
                          work.air_cells, work.air_steps, work.air_taps, work.sm_dyn, work.sm_dyn_draws, work.sm_dyn_over,
-                         work.lsm_dyn_faces, work.lsm_dyn_draws);
+                         work.lsm_dyn_faces, work.lsm_dyn_draws, work.tiles_bail);
         if (!work_have) log_error("--work: кадр мира не прочитан (мало кадров)");
         if (!work_have || n <= 0 || !platform_write_file(a.work, t, (usize)n)) rc_exit = 1;
     }
