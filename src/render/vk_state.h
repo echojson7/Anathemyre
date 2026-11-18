@@ -251,6 +251,7 @@ struct WorldGpu {
     VkDescriptorSet set = VK_NULL_HANDLE;
     VkPipeline pipe_vis_mesh = VK_NULL_HANDLE, pipe_vis_ground = VK_NULL_HANDLE, pipe_style = VK_NULL_HANDLE;
     VkPipeline pipe_vis_veil = VK_NULL_HANDLE;   // кластеры под мороком: сито пикселей (vis_veil.frag)
+    VkPipeline pipe_vis_alpha = VK_NULL_HANDLE;  // карточки с прозрачным краем: отсечение по альфе карты (vis_alpha.frag)
     VkPipeline pipe_cull_count = VK_NULL_HANDLE, pipe_cull_scan = VK_NULL_HANDLE, pipe_cull_write = VK_NULL_HANDLE;
     VkPipeline pipe_light[TILE_KINDS] = {}, pipe_tiles = VK_NULL_HANDLE, pipe_ground_bake = VK_NULL_HANDLE;
     u32 vis_clusters = 0;  // видимых кластеров в последнем прочитанном кадре
@@ -474,6 +475,7 @@ struct DiagGpu {
 constexpr u32 GEOMETRY_MAX_CLUSTERS = 1u << 18;  // кластеров всех сеток
 constexpr u32 VIS_MAX_CLUSTERS = 1u << 18;       // видимых кластеров за кадр
 constexpr u32 VIS_VEIL_MAX = 4096;               // кластеров под мороком (docs/tat.md): места за списком кадра, VEIL_MAX в cull.glsl
+constexpr u32 VIS_ALPHA_MAX = 16384;             // кластеров карточек с прозрачным краем (docs/hair.md): за списком морока, ALPHA_MAX в cull.glsl
 struct MeshGpu {
     u32 first_vertex, first_index, lod_count, pad;
     f32 sphere[4];  // сфера сетки в её осях
@@ -486,6 +488,7 @@ struct MeshGpu {
 static_assert(sizeof(MeshGpu) == 160, "MeshGpu — как MeshInfo в common.glsl");
 constexpr u32 MESH_DYNAMIC = 1;  // MeshGpu::pad: вершины пишет скиннинг каждый кадр (копии людей)
 constexpr u32 MESH_UV = 2;       // MeshGpu::pad: у вершин есть развёртка (буфер uvs, docs/textures.md)
+constexpr u32 MESH_ALPHA = 4;    // MeshGpu::pad: карточки с прозрачным краем — конвейер vis_alpha (docs/hair.md)
 struct ClusterGpu {
     u32 first_index, tri_count;  // от начала индексов сетки
     f32 sphere[4];
@@ -509,7 +512,7 @@ struct MeshSlot {
 
 // Скиннинг (vk_skin.cpp, docs/people.md «Скиннинг»): данные источников в одном буфере видеопамяти (только
 // растёт, до render_shutdown), работы кадра — в буфере слота. Раскладка SkinJobGpu — SkinJob в skin.comp
-constexpr VkDeviceSize SKIN_DATA_BYTES = 64ull << 20;  // тело и 14 вещей одежды на два скелета — около 40 МБ
+constexpr VkDeviceSize SKIN_DATA_BYTES = 96ull << 20;  // тело, 14 вещей одежды и волосы на два скелета (карточки хвоста — ~10 МБ)
 struct SkinSource {
     u32 mesh = 0, vertex_count = 0, bone_count = 0, morph_count = 0;
     VkDeviceAddress skin = 0, morphs = 0;  // слова весов (2 на вершину) и морфов (3 на вершину на морф)

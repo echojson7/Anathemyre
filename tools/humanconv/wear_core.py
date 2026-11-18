@@ -245,6 +245,39 @@ class Body:
                     x=mix(self.x), z=mix(self.z), dom=dom, nx=n[:, 0], ny=n[:, 1], nz=n[:, 2])
 
 
+def vuv0(pos, T, n, uv):
+    """Кусок VUV0 (docs/mesh.md): uv f16 и касательная (октаэдр 15 + 15 бит, бит 31 — знак битангенса). Касательная —
+    dP/du по треугольникам (Ленгьел); знак — битангенс шейдера cross(N, T)·w смотрит против dP/dv (к верху картинки)"""
+    t = np.zeros_like(pos)
+    b = np.zeros_like(pos)
+    p0, p1, p2 = pos[T[:, 0]], pos[T[:, 1]], pos[T[:, 2]]
+    w0, w1, w2 = uv[T[:, 0]], uv[T[:, 1]], uv[T[:, 2]]
+    e1, e2 = p1 - p0, p2 - p0
+    d1, d2 = w1 - w0, w2 - w0
+    det = d1[:, 0] * d2[:, 1] - d2[:, 0] * d1[:, 1]
+    r = np.where(np.abs(det) > 1e-12, 1.0 / np.where(np.abs(det) > 1e-12, det, 1.0), 0.0)[:, None]
+    sd = (e1 * d2[:, 1:2] - e2 * d1[:, 1:2]) * r
+    td = (e2 * d1[:, 0:1] - e1 * d2[:, 0:1]) * r
+    for k in range(3):
+        np.add.at(t, T[:, k], sd)
+        np.add.at(b, T[:, k], td)
+    t = t - n * (t * n).sum(1, keepdims=True)
+    bad = np.linalg.norm(t, axis=1) < 1e-12
+    t[bad] = np.cross(n[bad], np.array([0.0, 1.0, 0.0]) + 0.0)
+    t[np.linalg.norm(t, axis=1) < 1e-12] = np.array([1.0, 0.0, 0.0])
+    t /= np.linalg.norm(t, axis=1, keepdims=True)
+    w_neg = (np.cross(n, t) * -b).sum(1) < 0.0     # cross(N, T) смотрит по dP/dv — знак −1
+    a = np.abs(t).sum(1, keepdims=True)
+    q = t[:, :2] / a
+    neg = t[:, 2] < 0
+    q[neg] = (1.0 - np.abs(q[neg][:, ::-1])) * np.where(q[neg] >= 0, 1.0, -1.0)
+    e = np.clip(np.rint((q + 1.0) * 0.5 * 32767.0), 0, 32767).astype(np.uint32)
+    tan = e[:, 0] | (e[:, 1] << 15) | (w_neg.astype(np.uint32) << 31)
+    rec = np.zeros(len(pos), dtype=[("u", "<f2"), ("v", "<f2"), ("t", "<u4")])
+    rec["u"], rec["v"], rec["t"] = uv[:, 0], uv[:, 1], tan
+    return rec.tobytes()
+
+
 def box(w, h, d, bevel=0.0, taper=0.0):
     """Коробка w × h × d (x, y, z) с фаской по рёбрам и сужением верха (taper — доля): вершины на грань (жёсткие
     рёбра), z от 0 (у тела) до d. Для пряжек, подсумков, бляшек"""
@@ -578,6 +611,9 @@ class Garment:
         out += H.chunk(b"MRPH", head + rec.tobytes())
         # Вещь: какие области тела скрывает, насколько отодвигает места ношения оружия (у бедра, за спиной)
         out += H.chunk(b"WEAR", struct.pack("<I2f", self.hide, *self.carry))
+        UV = getattr(self, "UV", None)
+        if UV is not None:
+            out += H.chunk(b"VUV0", vuv0(pos, T, n, UV))
         with tempfile.TemporaryDirectory() as tmp:
             raw = os.path.join(tmp, self.name + ".raw.mesh")
             open(raw, "wb").write(out)

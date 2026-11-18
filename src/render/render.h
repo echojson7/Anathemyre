@@ -244,6 +244,9 @@ u32 render_mesh_create(Span<const MeshVertex> vertices, Span<const u32> indices,
 void render_mesh_destroy(u32 mesh);
 // Сетка движется каждый кадр целиком (меч в руках): в страницы теней не идёт до 6б-3, как скин-копии людей
 void render_mesh_moving(u32 mesh);
+// Сетка с прозрачным краем (волосы карточками, docs/hair.md): visibility buffer рисует её конвейером с отсечением
+// по альфе карты цвета её материалов (у материала без карты — сплошь). До копий скиннинга — они берут флаг у источника
+void render_mesh_alpha(u32 mesh);
 
 // Скиннинг (docs/people.md, «Скиннинг»). Источник — сетка с весами одного скелета (render_mesh_create вершин
 // бинд-позы) и её морфы; у каждого человека своя копия вершин и кластеров (render_skinned_create, отдельный

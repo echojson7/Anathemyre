@@ -17,6 +17,10 @@ import wear_core as W
 from wear_core import smoothstep as ss
 
 TAU = 2 * np.pi
+# Атлас прядей (tools/hairtex/strands.py): столбцы поперёк, корень наверху; отступы от краёв столбца и низа
+CARD_COLS = 8
+CARD_PAD = 0.02
+CARD_V0, CARD_V1 = 0.004, 0.985
 HEAD_C = np.array([0.0, 1.715, 0.05])  # середина черепа стенда (оси игры, рост 1.80)
 # Кости, за которыми идут пряди (оба скелета)
 FOLLOW = ("head", "neck_01", "spine_03", "spine_02", "clavicle_l", "clavicle_r",
@@ -205,6 +209,43 @@ def strand_mesh(G, width, thick, out, sides=6, ridge=0.14, twist=0.0, root_cap=T
     return V, T, np.array(ring), np.array(along), np.array(side)
 
 
+def card_mesh(G, width, out, curl=0.22, across=4):
+    """Карточка вдоль направляющей G (n × 3): полоса шириной width (n) поперёк, выгнута наружу (out) на curl доли
+    ширины посередине — объём пряди. Вершины рядами по across поперёк; u — доля поперёк (0..1), v — доля длины
+    (0 — корень, 1 — кончик). Возвращает вершины, грани, номер точки направляющей вершины, u, v"""
+    n = len(G)
+    t = np.zeros_like(G)
+    t[1:-1] = G[2:] - G[:-2]
+    t[0] = G[1] - G[0]
+    t[-1] = G[-1] - G[-2]
+    t /= np.maximum(np.linalg.norm(t, axis=1, keepdims=True), 1e-12)
+    o = out - t * (out * t).sum(1, keepdims=True)
+    o /= np.maximum(np.linalg.norm(o, axis=1, keepdims=True), 1e-12)
+    s = np.cross(t, o)
+    seg = np.linalg.norm(G[1:] - G[:-1], axis=1)
+    v = np.concatenate([[0.0], np.cumsum(seg)])
+    v = v / max(v[-1], 1e-9)
+    x = np.linspace(-1.0, 1.0, across)
+    V = (G[:, None, :] + s[:, None, :] * (0.5 * width[:, None, None] * x[None, :, None])
+         + o[:, None, :] * (curl * width[:, None, None] * (1.0 - x[None, :, None] ** 2) - 0.5 * curl * width[:, None, None]))
+    V = V.reshape(-1, 3)
+    ring = np.repeat(np.arange(n), across)
+    uu = np.tile((x + 1.0) * 0.5, n)
+    vv = np.repeat(v, across)
+    T = []
+    for i in range(n - 1):
+        for k in range(across - 1):
+            a0, a1 = i * across + k, i * across + k + 1
+            b0, b1 = a0 + across, a1 + across
+            T += [[a0, b0, b1], [a0, b1, a1]]
+    T = np.array(T, np.int64)
+    # Обход: нормаль грани — наружу (out)
+    fn = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
+    flip = (fn * o[ring[T[:, 0]]]).sum(1) < 0
+    T[flip] = T[flip][:, ::-1]
+    return V, T, ring, uu, vv
+
+
 def grow(hd, roots, d0, length, step=0.012, gravity=0.35, stiff=0.85, pull=None, flat=0.0, head=0.006,
          body=0.03, curl=None):
     """Направляющие от корней: шаг за шагом направление = жёсткость × прежнее + тяжесть + тяга pull(P) (к месту
@@ -271,6 +312,23 @@ class Hair(W.Garment):
                               m1=np.full(len(V), mat if m1 is None else m1, np.int64),
                               blend=np.zeros(len(V)) + blend, ao=a, G=G))
 
+    def card(self, G, width, mat, col, out=None, curl=0.22, ao=(0.7, 1.0), across=4):
+        """Карточка с атласом прядей (docs/hair.md, «Карточки»): полоса по направляющей G, развёртка — столбец col
+        атласа (CARD_COLS столбцов, корень наверху); затенение вершины — глубже к телу темнее, у корня темнее"""
+        hd = self.hd
+        if out is None:
+            idx, _ = hd.nearest(G)
+            out = hd.Ns[idx]
+        V, T, ring, uu, vv = card_mesh(G, width, out, curl, across)
+        idx, h = hd.nearest(V)
+        depth = np.clip(h / 0.03, 0.0, 1.0)
+        a = (ao[0] + (ao[1] - ao[0]) * (0.4 + 0.6 * depth)) * (0.8 + 0.2 * ss(0.0, 0.2, vv))
+        u0 = (col + CARD_PAD) / CARD_COLS
+        u1 = (col + 1 - CARD_PAD) / CARD_COLS
+        uv = np.stack([u0 + (u1 - u0) * uu, CARD_V0 + (CARD_V1 - CARD_V0) * vv], 1)
+        self.free.append(dict(V=V, T=T, ring=ring, mat=np.full(len(T), mat, np.int64),
+                              m1=np.full(len(V), mat, np.int64), blend=np.zeros(len(V)), ao=a, G=G, uv=uv))
+
     def rigid_free(self, V, T, mat, ao=1.0, anchor=None):
         # Жёсткая деталь на прядях (завязка, бусина): вершины свободные, держатся за ближнюю вершину тела
         self.free.append(dict(V=V, T=T, ring=np.zeros(len(V), np.int64), mat=np.full(len(T), mat, np.int64),
@@ -281,8 +339,8 @@ class Hair(W.Garment):
     def topology(self):
         super().topology()
         hd = self.hd
-        base = len(self.VM)
-        FA, FL, VM, TT, TM, WB = [], [], [], [], [], []
+        base = base0 = len(self.VM)
+        FA, FL, VM, TT, TM, WB, UV = [], [], [], [], [], [], []
         shape = self.body.shape(H.BASE, rest=False)  # пряди заданы в A-позе, их оси — там же
         for it in self.free:
             V, G, ring = it["V"], it["G"], it["ring"]
@@ -302,6 +360,7 @@ class Hair(W.Garment):
             TT.append(it["T"] + base)
             TM.append(it["mat"])
             WB.append((a, gi, ring))
+            UV.append(it.get("uv", np.zeros((len(V), 2))))
             base += len(V)
         if not self.free:
             self.FA = np.zeros(0, np.int64)
@@ -313,6 +372,9 @@ class Hair(W.Garment):
         self.VM = np.concatenate([self.VM] + VM)
         self.Tc = np.concatenate([self.Tc] + TT)
         self.Tm = np.concatenate([self.Tm] + TM)
+        # Развёртка — только у вещей с карточками; у шапки и жгутов нули (их материал карт не читает)
+        if any("uv" in it for it in self.free):
+            self.UV = np.concatenate([np.zeros((base0, 2))] + UV)
 
     def positions(self, shape):
         p = super().positions(shape)
@@ -423,6 +485,27 @@ def frames(G, hd):
         o -= t * (o * t).sum(1, keepdims=True)
     o /= np.linalg.norm(o, axis=1, keepdims=True)
     return t, o, np.cross(t, o)
+
+
+def along(hd, pts, step=0.008, head=0.009, body=0.03):
+    """Направляющая по опорным точкам (сплайн Кэтмелла — Рома) ровным шагом, с запасом над телом (Head.clearance):
+    для прядей, чей путь задан рисунком причёски (чёлка набок, пряди у лица), а не ростом"""
+    Q = np.asarray(pts, np.float64)
+    Q = np.concatenate([Q[:1] * 2 - Q[1:2], Q, Q[-1:] * 2 - Q[-2:-1]])
+    out = []
+    for i in range(1, len(Q) - 2):
+        p0, p1, p2, p3 = Q[i - 1], Q[i], Q[i + 1], Q[i + 2]
+        for t in np.linspace(0.0, 1.0, 16, endpoint=False):
+            out.append(0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t
+                              + (3 * p1 - p0 - 3 * p2 + p3) * t ** 3))
+    out.append(Q[-2])
+    G = resample(np.array(out), step)
+    for _ in range(3):
+        idx, h = hd.nearest(G)
+        c = hd.clearance(idx, head, body)
+        # Не дальше 1.5 см за шаг: рисунок задан у кожи, а ближняя вершина у макушки может дать ложную глубину
+        G = G + hd.Ns[idx] * np.clip(c - h, 0.0, 0.015)[:, None]
+    return G
 
 
 def resample(G, step):

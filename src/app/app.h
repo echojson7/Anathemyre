@@ -59,6 +59,7 @@ struct Args {
     bool cam_play = false;            // --cam-play: камера окна по записанному показу (видео камеры, с --video)
     i32 select = -1;                  // --select место: выбрать человека (и --follow — камера за ним)
     bool follow = false;
+    const char *hair = nullptr;       // --hair <сетка hair_*|beard_*>: у всех людей эта причёска или борода (кадры)
     const char *mech = nullptr;       // --mech pack|stand|walk|show|veil|prone: шагающая машина в одном режиме (кадры и видео)
     bool people_lines = false;        // --people-lines: капсулы шага, путь выбранного и след стоп (отладка, при отрезках)
     bool sides = false;               // --sides: стороны боя и цели (отладка, при отрезках; с --brawl — сами)
