@@ -270,6 +270,11 @@ void render_mesh_moving(u32 mesh) {
     g_vk.meshes[mesh].moving = true;
 }
 
+void render_mesh_alpha(u32 mesh) {
+    if (mesh == 0 || mesh >= RENDER_MAX_MESHES || !g_vk.meshes[mesh].used) return;
+    ((MeshGpu *)g_vk.mesh_table.mapped)[mesh].pad |= MESH_ALPHA;
+}
+
 void render_mesh_destroy(u32 mesh) {
     if (mesh == 0 || mesh >= RENDER_MAX_MESHES || !g_vk.meshes[mesh].used || g_vk.meshes[mesh].dying) return;
     if (g_vk.pending_count >= MAX_PENDING_FREES) {

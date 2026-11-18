@@ -15,6 +15,36 @@ vec3 hair_pigment(uint seed) {
     return mix(c, vec3(0.30, 0.085, 0.03) * (1.0 - 0.65 * mel), red);
 }
 
+// Карточки (docs/hair.md, «Карточки»): атлас прядей — цвет (тон волоска с затенением), нормаль поперёк волосков,
+// маска (R — корень→кончик, G — номер волоска, B — затенение, A — глубина в пряди). Волосок идёт вдоль битангенса
+// (к корню). Блик — наклоном нормали вдоль волоска, у каждого волоска свой сдвиг (extra b): полоса блика рвётся по
+// волоскам, как у настоящих прядей. Седина — доля волосков по номеру
+Surface surf_hair_card(SurfIn i, vec3 pig, float grey, vec3 white, Surface s) {
+    uint tc = i.m.tex & 0xFFu, tn = (i.m.tex >> 8) & 0xFFu, tk = (i.m.tex >> 16) & 0xFFu;
+    vec4 c = tex_grad(tc, i.t.uv, i.t.duv);
+    vec4 k = tk != 0u ? tex_grad(tk, i.t.uv, i.t.duv) : vec4(0.5, 0.5, 1.0, 0.5);
+    vec3 T = i.t.tan.xyz - i.n * dot(i.n, i.t.tan.xyz);
+    T = dot(T, T) > 1e-12 ? normalize(T) : vec3(1.0, 0.0, 0.0);
+    vec3 B = cross(i.n, T) * i.t.tan.w;   // вдоль волоска, к корню
+    vec3 n = i.n;
+    if (tn != 0u) {
+        vec2 xy = tex_grad(tn, i.t.uv, i.t.duv).rg * 2.0 - 1.0;
+        n = normalize(T * xy.x + B * xy.y + i.n * sqrt(max(1.0 - dot(xy, xy), 0.0)));
+    }
+    float id = k.g, tip = k.r;
+    // Свой тон и сдвиг блика у волоска; седые — доля волосков (у седых — меньше пигмента)
+    vec3 col = pig * (0.75 + 0.5 * id);
+    col = mix(col, white * (0.8 + 0.3 * id), step(id, grey) * (1.0 - 0.15 * tip));
+    // Кончики выгорают и светлее (тоньше), к корню — гуще и темнее
+    col = mix(col, col * vec3(1.7, 1.5, 1.3) + vec3(0.01, 0.008, 0.005), i.m.p2.x * tip * tip * 0.6);
+    s.albedo = clamp(col * (0.55 + 0.75 * c.r), vec3(0.0), vec3(1.0));
+    s.ao = mix(0.55, 1.0, k.b) * (1.0 - 0.3 * k.a);
+    s.normal = normalize(n + B * ((id - 0.5) * 2.0 * i.m.p2.y));
+    s.nvar = 0.03;
+    s.rough = i.m.p0.a;
+    return s;
+}
+
 Surface surf_hair(SurfIn i) {
     uint mode = uint(i.m.p2.z + 0.5);
     float grey = float((i.seed >> 16) & 255u) / 255.0;
@@ -27,6 +57,7 @@ Surface surf_hair(SurfIn i) {
     s.metal = 1.0;
     s.nvar = 0.0;
     s.normal = i.n;
+    if (i.t.on && (i.m.tex & 0xFFu) != 0u) return surf_hair_card(i, pig, grey, white, s);
     if (mode == 1u) {
         // Щетина: кожа тона зерна и тёмные точки волосков; мельче пикселя — ровная тень по густоте
         float tone = float(i.seed & 255u) / 255.0;

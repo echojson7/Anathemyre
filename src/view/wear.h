@@ -12,6 +12,7 @@ enum WearKind : u32 {
     WK_BOOTS, WK_HOOD, WK_PAULDRON, WK_GLOVES,
     // Волосы (docs/hair.md): брови у всех, одна причёска, у мужчин борода. Сетки hair_*, beard_* — тоже вещи
     WK_BROWS, WK_HAIR_SHAVED, WK_HAIR_CROP, WK_HAIR_TOPKNOT, WK_HAIR_TAIL, WK_HAIR_BRAID, WK_HAIR_BUN, WK_HAIR_SHAG,
+    WK_HAIR_PONY,   // высокий хвост карточками (концепт пользователя), у женщин вместо хвоста от затылка
     WK_BEARD_STUBBLE, WK_BEARD_SHORT, WK_BEARD_FULL, WK_BEARD_GOATEE, WK_BEARD_LONG, WK_COUNT
 };
 extern const char *const WEAR_NAMES[WK_COUNT];
@@ -23,6 +24,8 @@ struct WearBind {
     i16 at[WK_COUNT];
 };
 void wear_bind(WearBind &b, const ViewAssets &a, const ViewBody &human);
+// --hair <сетка>: у всех людей эта причёска (hair_*) или борода (beard_*) — кадры и проверка; false — нет такой
+bool wear_force_hair(const char *name);
 
 struct Outfit {
     u32 count;

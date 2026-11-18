@@ -18,6 +18,7 @@
 #include "../view/mech.h"
 #include "../view/people.h"
 #include "../view/view.h"
+#include "../view/wear.h"
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -175,6 +176,7 @@ int run_window(const Args &a, AppMemory &m) {
     MechView *mechs = arena_push<MechView>(m.world, 1);
     mech_view_init(*mechs);
     if (a.mech) mech_view_demo(*mechs, a.mech);
+    if (a.hair && !wear_force_hair(a.hair)) log_warn("--hair: нет причёски или бороды %s", a.hair);
     if (a.mech_kind) mech_view_pick(*mechs, a.mech_kind);
     // Кеш эрозии рядом с игрой (docs/startup.md); снимки и запись повтора (--frames, --record) считают землю
     // заново, как --sim и CI

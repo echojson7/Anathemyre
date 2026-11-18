@@ -20,6 +20,8 @@ struct MaterialDesc {
     f32 scan_tile; // сторона плитки скана, м
     f32 scan_tint[3];
     Str maps[MATERIAL_MAPS];  // имена текстур data/textures/<имя>.tex; пусто — карты нет
+    bool cutout;   // прозрачный край по альфе карты цвета (волосы карточками, docs/hair.md): сетка с ним рисуется
+                   // конвейером vis_alpha
 };
 
 struct MaterialTable {

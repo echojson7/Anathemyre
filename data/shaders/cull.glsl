@@ -8,6 +8,7 @@
 const uint MAX_MESHES = 4096u;    // RENDER_MAX_MESHES
 const float LOD_PIXELS = 0.75;    // как в view.cpp
 const uint VEIL_MAX = 4096u;       // VIS_VEIL_MAX: мест списка морока за списком кадра
+const uint ALPHA_MAX = 16384u;     // VIS_ALPHA_MAX: мест списка карточек с прозрачным краем за списком морока
 
 // Сфера относительно камеры задевает пирамиду взгляда (дальней плоскости нет)
 bool sphere_visible(vec3 c, float r) {
@@ -52,8 +53,16 @@ uint cull_instance(uint i, bool with_write, uint first, out uint lod) {
     uvec4 L = m.lods[lod];
     // Морок (docs/tat.md): кластеры машины под мороком рисует свой конвейер (vis_veil) из мест за списком кадра;
     // место в главном списке остаётся пустым вызовом. Место в списке морока — одно прибавление на экземпляр
+    // Карточки с прозрачным краем (волосы, MESH_ALPHA) — так же, свой список за списком морока и конвейер vis_alpha
+    // с отсечением по альфе карты: discard в главном конвейере снял бы ранний тест глубины со всех сеток
     bool veil = with_write && it.material >= 0xFFFFFF00u && (it.material & 0xFFu) < 255u;
-    if (t == 0u) s_cull_vbase = veil ? atomicAdd(f.cull.veil_count, f.cull.count[i] & 0x1FFFFFFFu) : 0u;
+    bool alpha = with_write && !veil && (m.flags & MESH_ALPHA) != 0u;
+    uint special_max = veil ? VEIL_MAX : ALPHA_MAX;
+    uint special_at = veil ? f.vis_max : f.vis_max + VEIL_MAX;
+    if (t == 0u) {
+        uint nv = f.cull.count[i] & 0x1FFFFFFFu;
+        s_cull_vbase = veil ? atomicAdd(f.cull.veil_count, nv) : (alpha ? atomicAdd(f.cull.alpha_count, nv) : 0u);
+    }
     uint n = 0u;
     for (uint base = 0u; base < L.y; base += CULL_GROUP) {
         if (t < 2u) s_cull_mask[t] = 0u;
@@ -80,10 +89,10 @@ uint cull_instance(uint i, bool with_write, uint first, out uint lod) {
                 d.first_index = m.first_index + c.first_index;
                 d.vertex_offset = int(m.first_vertex);
                 d.first_instance = slot;
-                if (veil) {
+                if (veil || alpha) {
                     uint vb = s_cull_vbase;
-                    if (vb + n + below < VEIL_MAX) {
-                        uint vs = f.vis_max + vb + n + below;
+                    if (vb + n + below < special_max) {
+                        uint vs = special_at + vb + n + below;
                         f.vis.v[vs] = uvec2(i, ci);
                         d.first_instance = vs;
                         f.draws.v[vs] = d;

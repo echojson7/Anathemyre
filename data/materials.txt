@@ -678,6 +678,16 @@ material hair_brow hair
     rough 0.45
     extra 0.2 0.003 3 0
 
+# Волосы карточками (docs/hair.md, «Карточки»): атлас прядей (tools/hairtex/strands.py) — цвет (тон волоска и
+# затенение, в альфе покрытие: прозрачный край, cutout), нормаль поперёк волосков, маска (корень→кончик, номер
+# волоска, затенение, глубина). Цвет — от зерна, как у hair; extra a — выгорание, b — сдвиг блика по волоску
+material hair_card hair
+    maps hair_strands_color hair_strands_normal hair_strands_mask -
+    cutout
+    color 0.08 0.05 0.03
+    rough 0.38
+    extra 0.5 0.25 0 0
+
 # Проба текстур (docs/textures.md, tools/texprobe.py): крашеная сталь щита и трубы картами ассета — цвет и
 # затенение, нормаль, кривизна, шероховатость; износ по кривизне открывает сталь, грязь копится в канавках
 material tex_probe_paint baked
