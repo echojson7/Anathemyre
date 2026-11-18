@@ -4,9 +4,10 @@
 # Регистры и scratch — как сейчас, код — с запасом 10 %. Поднимать — только со строкой в docs/decisions.md;
 # опускать — в том же PR, что облегчил шейдер. 18.11: освещение (light_cells) — главный долг, см. docs/perf_arch.md
 #
-# освещение, игра: TILE_KIND (0 небо, 1 земля, 2 сетки, 3 смесь, 4 земля на пиксель), LIGHT_DEBUG 0
+# освещение, игра: TILE_KIND (0 небо, 1 земля, 2 сетки, 3 смесь, 4 земля на пиксель), LIGHT_DEBUG 0; земля —
+# непрямой только из кеша (шаг 3)
 light_cells.comp         0,0      64      0    46
-light_cells.comp         1,0     168      0   109
+light_cells.comp         1,0      96      0    76
 light_cells.comp         2,0     168      0   309
 light_cells.comp         3,0     256      0   556
 light_cells.comp         4,0     168      0   527

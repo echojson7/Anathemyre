@@ -177,6 +177,16 @@ vec3 light_lamps(Surface s, vec3 n, vec3 v, float nv, float a, float a2, vec3 kd
     }
     return c;
 }
+#ifndef LIGHT_GI_CACHED_ONLY
+#define LIGHT_GI_CACHED_ONLY false
+#endif
+// Размытие отражения по шероховатости материала: 0 — гладкое (свет по лучу отражения), 1 — шероховатое (по нормали)
+float light_blur(float rough) { return smoothstep(0.1, 0.75, clamp(rough, 0.02, 1.0)); }
+#ifdef GCACHE_GLSL
+// Отражённый свет пикселя — из кеша земли (после gc_surface_px): свет есть у всех текселей, поверхность шероховатая
+bool light_gi_cached(float blur) { return g_gcl_ok && blur >= 1.0; }
+#endif
+
 // Свет берёт ячейки: не движущаяся сетка, не F3 «без ячеек» (сравнение) и не «ячейки» (там их показывает свой вид)
 bool lc_use() { return g_moving == 0.0 && pc.frame.gi_view != GI_VIEW_PROBES && pc.frame.gi_view != GI_VIEW_CELLS; }
 
@@ -201,10 +211,12 @@ vec3 light_indirect(Surface s, vec3 n, float nv, float a, vec3 rd, float blur, v
                     vec3 fss_ess, vec3 fms_ems, out float lit) {
     // Земля из кеша (docs/gcache.md, «Отражённый свет в кеше»): зонды, ячейки, ближнее затенение и видимость неба —
     // смесь текселей. Только у шероховатого (blur = 1): там отражение берёт свет зондов почти по нормали, и его
-    // заменяет тот же свет текселя; гладкому (вода, мокрое) нужен свет точно по лучу отражения — он на пиксель
+    // заменяет тот же свет текселя; гладкому (вода, мокрое) нужен свет точно по лучу отражения — он на пиксель.
+    // LIGHT_GI_CACHED_ONLY — у конвейера нет пути на пиксель (освещение земли в игре: такие плитки оно отдаёт
+    // «земле на пиксель», docs/perf_arch.md, шаг 3)
     bool cached = false;
 #ifdef GCACHE_GLSL
-    cached = g_gcl_ok && blur >= 1.0;
+    cached = LIGHT_GI_CACHED_ONLY || light_gi_cached(blur);
 #endif
     GiSample g;
     if (cached) {
@@ -323,16 +335,17 @@ vec3 light_surface(Surface s) {
         c += (kd / A_PI + spec) * f.sun_color.rgb * (nl * vis);
     }
 
+    c += light_lamps(s, n, v, nv, a, a2, kd, f0, comp);
     // Небо: рассеянное — освещённость/π по нормали; отражение — небо по направлению отражения, у шероховатого
-    // переходит в свет неба по главному направлению лепестка (Lagarde 2014). Под горизонт отражение не уходит
+    // переходит в свет неба по главному направлению лепестка (Lagarde 2014). Под горизонт отражение не уходит.
+    // После огней, а не до: через их цикл эти числа не живут (у земли — 128 регистров против 96)
     vec3 irr = atmo_ambient(n);
     vec3 r = reflect(-v, n);
     vec3 rd = normalize(mix(n, r, (1.0 - a) * (sqrt(1.0 - a) + a)));
-    float blur = smoothstep(0.1, 0.75, rough);
+    float blur = light_blur(s.rough);
     vec3 env = atmo_ambient(rd);
     // Таблица неба — только у гладкого и со ступени «Средне» (на «Низко» отражение — из гармоник неба)
     if (blur < 1.0 && f.gi_q >= LIGHT_Q_MEDIUM) env = mix(atmo_sky(vec3(rd.x, max(rd.y, 0.0), rd.z)), env, blur);
-    c += light_lamps(s, n, v, nv, a, a2, kd, f0, comp);
     float lit;
     c += light_indirect(s, n, nv, a, rd, blur, irr, env, kd, fss_ess, fms * ems, lit);
     // Свечение: у стекла лампы — цветом её огня при той же яркости (g_glow_*, light_lamps)

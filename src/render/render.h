@@ -392,6 +392,7 @@ u32 render_overflows(RenderOverflow *out, u32 cap);
 constexpr u32 RENDER_TILE_KINDS = 5;  // плитки: небо, земля, сетки, смесь, земля на пиксель
 struct RenderWork {
     u32 tiles[RENDER_TILE_KINDS];
+    u32 tiles_bail;  // плитки земли, отданные освещением «земле на пиксель» (docs/perf_arch.md, шаг 3)
     u32 px_sky, px_ground, px_mesh;  // пиксели по видам
     u32 surf_ground, surf_mesh;      // поверхности: surface() и light_surface() раз на ячейку
     u32 shadow_taps;                // выборки карты горизонта (тень земли, docs/horizon.md)

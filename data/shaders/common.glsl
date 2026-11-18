@@ -109,6 +109,8 @@ const uint STAT_AIR_CELLS = 44u, STAT_AIR_STEPS = 45u, STAT_AIR_TAPS = 46u;
 // Слой подвижных (docs/shadow.md, «Подвижные заслонки»): копий страниц, вызовов кластеров в них, копий без места
 const uint STAT_SM_DYN = 47u, STAT_SM_DYN_DRAWS = 48u, STAT_SM_DYN_OVER = 49u;
 const uint STAT_LSM_DYN_FACES = 50u, STAT_LSM_DYN_DRAWS = 51u;
+// Плитки вида «земля», отданные освещением «земле на пиксель» (нет страницы, свет кеша мал; docs/perf_arch.md, шаг 3)
+const uint STAT_TILE_BAIL = 52u;
 const uint GC_LIGHT_ON = 1u, GC_LIGHT_ALL = 2u;  // gc_lmode: свет в кеше читается; пересчитать все страницы кадра
 // org — точка лучей, м от якоря; ao — половинками ближнее затенение по полю у точки ячейки (x) и оно же,
 // сглаженное как свет (y): его лучи ячейки уже видят, пиксель делит своё на него (light.glsl, lc_ao)
