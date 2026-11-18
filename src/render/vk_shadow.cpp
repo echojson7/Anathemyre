@@ -525,9 +525,10 @@ static void sm_record_dyn_copy(VkCommandBuffer cmd, void *) {
     sm_bind(cmd, g_vk.shadow.pipe_dyn, 1);
     vkCmdDispatchIndirect(cmd, g_vk.shadow.dyn.buffer, 0);
 }
+// Отбор слоя: группа на заслонку × место уровня, поток на кластер (shadow_cull.comp)
 static void sm_record_dyn_cull(VkCommandBuffer cmd, void *) {
     sm_bind(cmd, g_vk.shadow.pipe_cull, 1);
-    vkCmdDispatch(cmd, (g_vk.shadow.dyn_n + 63) / 64, 1, 1);
+    vkCmdDispatch(cmd, g_vk.shadow.dyn_n, SM_SLOTS, 1);
 }
 // Отрисовка новых страниц (dyn — копий слоя подвижных): без картинок, область вывода — окно уровня (SM_WIN·SM_PAGE
 // текселей)
@@ -627,25 +628,25 @@ void vk_shadow_passes() {
     rg_use(s.rg_texels, RG_FS_WRITE);
     vk_skin_vertices_read(RG_VS_READ);
     if (!s.dyn_n) return;
-    // Слой подвижных: копии прочитанных страниц под заслонками, отбор кластеров заслонок, отрисовка в копии
-    rg_pass("тени: подвижные — места", "тени солнца", sm_record_dyn_place, nullptr);
+    // Слой подвижных: свои строки времени в F3 (копии, отбор, отрисовка). Копии прочитанных страниц под заслонками, отбор кластеров заслонок, отрисовка в копии
+    rg_pass("тени: подвижные — места", "тени людей: копии", sm_record_dyn_place, nullptr);
     rg_use(w.rg_inst, RG_CS_READ);
     rg_use(s.rg_table, RG_CS_WRITE);
     rg_use(s.rg_pages, RG_CS_WRITE);
     rg_use(s.rg_dyn, RG_CS_WRITE);
     rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
-    rg_pass("тени: подвижные — копия", "тени солнца", sm_record_dyn_copy, nullptr);
+    rg_pass("тени: подвижные — копия", "тени людей: копии", sm_record_dyn_copy, nullptr);
     rg_use(s.rg_dyn, RG_INDIRECT);
     rg_use(s.rg_dyn, RG_CS_READ);
     rg_use(s.rg_texels, RG_CS_WRITE);
-    rg_pass("тени: подвижные — отбор", "тени солнца", sm_record_dyn_cull, nullptr);
+    rg_pass("тени: подвижные — отбор", "тени людей: отбор", sm_record_dyn_cull, nullptr);
     rg_use(w.rg_inst, RG_CS_READ);
     rg_use(s.rg_dyn, RG_CS_READ);
     rg_use(s.rg_dyn_draws, RG_CS_WRITE);
     rg_use(s.rg_dyn_list, RG_CS_WRITE);
     rg_use(g_vk.diag.rg_stats, RG_CS_WRITE);
     vk_skin_clusters_read();
-    rg_pass("тени: подвижные — отрисовка", "тени солнца", sm_record_dyn_draw, nullptr);
+    rg_pass("тени: подвижные — отрисовка", "тени людей: отрисовка", sm_record_dyn_draw, nullptr);
     rg_use(s.rg_dyn_draws, RG_INDIRECT);
     rg_use(s.rg_dyn_list, RG_VS_READ);
     rg_use(w.rg_inst, RG_VS_READ);
