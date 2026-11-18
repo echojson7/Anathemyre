@@ -24,6 +24,7 @@ struct Args {
     bool validation = false;
     bool gpu_validation = false;  // --gpuav: слои проверки с проверкой на GPU
     const char *gpu_validation_skip = nullptr;  // --gpuav-skip: шейдеры без неё, через запятую
+    u32 pipe_threads = 0;  // --pipe-threads N: потоков сборки конвейеров (0 — по ядрам)
     const char *shot = nullptr;     // --shot файл.bmp: снимок последнего кадра (с --frames)
     const char *work = nullptr;     // --work файл.txt: счётчики работы освещения последнего кадра мира (CI, docs/tiles.md)
     bool cam_set = false;           // --cam yaw pitch dist x z (градусы, метры): камера для снимков

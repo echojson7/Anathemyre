@@ -9,8 +9,19 @@
 // Слои земли в точке p (мир: метры от начала чанка ORIGIN_CHUNK, центр ячейки) с нормалью n: слой по правилам,
 // стык двух лучших по узору, сырость, вода (wdepth > 0 — глубина воды над дном). Зовут ground_surface() на
 // пиксель и запекание кеша земли (gcache.glsl) — правила слоёв одни. Свет не считает
-Surface ground_layers(vec3 p, vec3 n, float cell, float foot, float wdepth) {
-    FrameData f = pc.frame;
+// Слои в точке делятся на три части, чтобы вызов surface() был один на шейдер, даже когда земля и сетки
+// считаются рядом (light_cells, смесь): ground_plan — какие слои и их веса, ground_feed — очередной слой в
+// поверхность, ground_finish — сырость. Слои — один surface() в цикле без развёртки: материалы — самый большой
+// код шейдеров, и каждый вызов — их копия в конвейере (light_cells на AMD Radeon 780M собирался 153 с)
+struct GroundPlan {
+    int lays[3];  // номера в ground_layers: свой слой, на широком стыке — второй, под водой — гладь
+    int nl;
+    bool blend, water;
+    float wa, wb, dampw, wdepth;
+};
+const uint GROUND_SEED = 0x7E77u;
+
+GroundPlan ground_plan(vec3 p, vec3 n, float wdepth) {
     bool water = wdepth > 0.0;
     ivec2 g;
     vec2 fr;
@@ -37,29 +48,59 @@ Surface ground_layers(vec3 p, vec3 n, float cell, float foot, float wdepth) {
     for (int k = 1; k < 5; ++k) if (w[k] > w[a]) a = k;
     int b = a == 0 ? 1 : 0;
     for (int k = 0; k < 5; ++k) if (k != a && w[k] > w[b]) b = k;
-    const uint SEED = 0x7E77u;
     // Пустыня: песок и камень — свои материалы (слои 6 и 7); граница рваная шумом, а не линией маски
     bool dz = desert + mid * 0.5 + fine * 0.25 > 0.5;
     int la = dz && (a == 0 || a == 3) ? (a == 0 ? 6 : 7) : a;
     int lb = dz && (b == 0 || b == 3) ? (b == 0 ? 6 : 7) : b;
-    Surface s = surface(f.ground_layers[la], p, n, cell, foot, SEED);
-    // Широкий стык: кочки травы и камни прорастают сквозь песок, песок затекает между ними
-    if (w[a] - w[b] < 0.7) {
-        Surface sb = surface(f.ground_layers[lb], p, n, cell, foot, SEED);
-        if (w[b] + sb.height * 0.9 > w[a] + s.height * 0.9) s = sb;
-    }
-    // Сырость у воды (docs/light.md, «Мокрое»): вода в порах темнит землю и сглаживает её — блик уже, ярче
-    // (Lagarde 2013: пористое темнеет, гладкое почти нет; шероховатость к ~0.4)
+    bool blend = w[a] - w[b] < 0.7;
+    int lays[3];
+    int nl = 0;
+    lays[nl++] = la;
+    if (blend) lays[nl++] = lb;
+    if (water) lays[nl++] = 5;
     float dampw = wet * (0.6 + 0.4 * fbm_n(p, 16.0, 2, 73u));
-    s.albedo *= 1.0 - dampw * 0.3;
-    s.rough = mix(s.rough, min(s.rough, 0.4), clamp(dampw * 1.2 - 0.2, 0.0, 1.0));
-    if (water) {
-        // Гладь: свой узор и блик; на мелком сквозь неё видно дно
-        Surface sw = surface(f.ground_layers[5], p, n, cell, foot, SEED);
-        float k = 1.0 - exp(-wdepth * 2.5);
-        sw.albedo = mix(s.albedo * 0.6, sw.albedo, k);
-        s = sw;
+    GroundPlan pl;
+    pl.lays = lays;
+    pl.nl = nl;
+    pl.blend = blend;
+    pl.water = water;
+    pl.wa = w[a];
+    pl.wb = w[b];
+    pl.dampw = dampw;  // сырость (ground_finish)
+    pl.wdepth = wdepth;
+    return pl;
+}
+
+// Слой i плана (r — его surface()) в поверхность s
+void ground_feed(GroundPlan g, int i, Surface r, inout Surface s) {
+    if (i == 0) {
+        s = r;
+    } else if (i == 1 && g.blend) {
+        // Широкий стык: кочки травы и камни прорастают сквозь песок, песок затекает между ними
+        if (g.wb + r.height * 0.9 > g.wa + s.height * 0.9) s = r;
+    } else {
+        // Гладь: свой узор и блик; на мелком сквозь неё видно дно (сырое)
+        float k = 1.0 - exp(-g.wdepth * 2.5);
+        r.albedo = mix(s.albedo * (1.0 - g.dampw * 0.3) * 0.6, r.albedo, k);
+        s = r;
     }
+}
+
+// Сырость у воды (docs/light.md, «Мокрое»): вода в порах темнит землю и сглаживает её — блик уже, ярче
+// (Lagarde 2013: пористое темнеет, гладкое почти нет; шероховатость к ~0.4). Под гладью — уже в ground_feed
+void ground_finish(GroundPlan g, inout Surface s) {
+    if (g.water) return;
+    s.albedo *= 1.0 - g.dampw * 0.3;
+    s.rough = mix(s.rough, min(s.rough, 0.4), clamp(g.dampw * 1.2 - 0.2, 0.0, 1.0));
+}
+
+Surface ground_layers(vec3 p, vec3 n, float cell, float foot, float wdepth) {
+    FrameData f = pc.frame;
+    GroundPlan g = ground_plan(p, n, wdepth);
+    Surface s;
+    [[dont_unroll]] for (int i = 0; i < g.nl; ++i)
+        ground_feed(g, i, surface(f.ground_layers[g.lays[i]], p, n, cell, foot, GROUND_SEED), s);
+    ground_finish(g, s);
     return s;
 }
 

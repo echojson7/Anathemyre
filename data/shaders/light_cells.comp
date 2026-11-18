@@ -143,8 +143,8 @@ vec3 froxel_heat(vec3 c, vec3 rel) {
 }
 
 // Поверхность для света. Земля: тексель из кеша; у смеси и земли на пиксель — тексель без страницы (той же
-// функцией, что запекание, и через ту же упаковку — картинка та же) или крутой склон на пиксель. Оба пути
-// считают слои одним ground_eval(): код слоёв и материалов в конвейере — одна копия
+// функцией, что запекание, и через ту же упаковку — картинка та же) или крутой склон на пиксель. Земля и сетки
+// зовут материалы одним surface_uv() в цикле: код слоёв и материалов в конвейере — одна копия
 vec3 shade_hit(Hit h, int phys) {
     if (h.kind == HIT_SKY) {
         g_e_local = local_sky_e();
@@ -164,19 +164,59 @@ vec3 shade_hit(Hit h, int phys) {
             gc_bilinear(h.rel, k, fr);
             s = gc_surface_px(k, t, fr, h.rel, phys);
         }
-    } else if (RESOLVE_GROUND && (gc || !RESOLVE_MESH || h.kind == HIT_GROUND)) {
-        GroundIn g = gc ? ground_texel_in(k, t) : ground_pixel_in(h.rel, normalize(h.n), h.level, h.blend, h.ng);
-        Surface a, b;
-        ground_eval(g, a, b);
-        if (gc) {
-            s = gc_surface(uvec4(gc_pack(a), gc_pack(b)), k, t, h.rel);
+    } else if (RESOLVE_GROUND || RESOLVE_MESH) {
+        // Земля (пиксель или тексель без страницы) или сетка — одним циклом с одним вызовом surface_uv(): смесь
+        // видит оба пути, и два вызова встраивали бы все материалы дважды (сборка конвейера на AMD — минуты)
+        bool gr = RESOLVE_GROUND && (gc || !RESOLVE_MESH || h.kind == HIT_GROUND);
+        GroundIn g;
+        MeshCall mc;
+        if (gr) g = gc ? ground_texel_in(k, t) : ground_pixel_in(h.rel, normalize(h.n), h.level, h.blend, h.ng);
+        else mc = mesh_call_in(h.rel, normalize(h.n), h.m0, h.m1, h.blend, h.ao, h.seed, h.dyn, h.obj, h.obj_n,
+                               h.has_uv, h.uv, h.duv, h.tan);
+        ivec2 saved = ORIGIN_CHUNK;
+        ORIGIN_CHUNK = gr ? g.origin : mesh_origin(mc);
+        Surface sv[2], cur;
+        GroundPlan pl;
+        int v = 0, i = 0;
+        [[dont_unroll]] for (;;) {
+            // Земля: варианты v (у текселя — два следа), в каждом — слои i плана
+            if (gr && i == 0) pl = ground_plan(g.p, g.n, g.wdepth);
+            uint id = mc.mat, seed = mc.seed;
+            vec3 sp = mc.ps, sn = mc.ns;
+            float cell = mc.cell, foot = mc.foot;
+            SurfUv tu = mc.t;
+            if (gr) {
+                id = pc.frame.ground_layers[pl.lays[i]];
+                seed = GROUND_SEED;
+                sp = g.p;
+                sn = g.n;
+                cell = g.cell;
+                foot = g.foot[v];
+                tu.on = false;
+                tu.uv = vec2(0.0);
+                tu.duv = tu.tan = vec4(0.0);
+            }
+            Surface r = surface_uv(id, sp, sn, cell, foot, seed, tu);
+            if (!gr) {
+                cur = r;
+                break;
+            }
+            ground_feed(pl, i, r, cur);
+            if (++i < pl.nl) continue;
+            ground_finish(pl, cur);
+            sv[v] = cur;
+            i = 0;
+            if (++v >= g.nv) break;
+        }
+        ORIGIN_CHUNK = saved;
+        if (!gr) {
+            s = mesh_finish(mc, cur);
+        } else if (gc) {
+            s = gc_surface(uvec4(gc_pack(sv[0]), gc_pack(sv[1])), k, t, h.rel);
         } else {
-            s = a;
+            s = sv[0];
             s.pos = g.p - pc.frame.cam_off;
         }
-    } else if (RESOLVE_MESH) {
-        s = mesh_surface(h.rel, normalize(h.n), h.m0, h.m1, h.blend, h.ao, h.seed, h.dyn, h.obj, h.obj_n, h.has_uv, h.uv, h.duv,
-                         h.tan);
     } else {
         s = gc_unpack(uvec2(0u));  // вид «земля»: других попаданий нет
         s.pos = h.rel;

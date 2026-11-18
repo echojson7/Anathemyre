@@ -26,6 +26,7 @@ static bool parse_u64(const char *s, u64 &out) {
 static void usage() {
     log_info("anathemyre [--seed N] [--novsync] [--validation | --gpuav] [--frames N] [--record файл.rec] [--cells] [--aa off|fxaa|taa] [--nohud]");
     log_info("           [--gpuav-skip a.comp,b.frag]                                 шейдеры без проверки на GPU");
+    log_info("           [--pipe-threads N]                                           потоков сборки конвейеров (1 — по одному)");
     log_info("           [--lights] [--heat]                                          тестовые огни, огни по клеткам froxels");
     log_info("           [--nolamps]                                                  лампы карты не светят (было/стало)");
     log_info("           [--nogcache]                                                 без кеша поверхности земли (сравнение)");
@@ -270,6 +271,12 @@ int main(int argc, char **argv) {
         else if (!strcmp(s, "--validation")) a.validation = true;
         else if (!strcmp(s, "--gpuav")) a.gpu_validation = true;
         else if (!strcmp(s, "--gpuav-skip")) { a.gpu_validation_skip = next; ok = next != nullptr; i++; }
+        else if (!strcmp(s, "--pipe-threads")) {
+            u64 n = 0;
+            ok = parse_u64(next, n) && n >= 1 && n <= 64;
+            a.pipe_threads = (u32)n;
+            i++;
+        }
         else if (!strcmp(s, "--help") || !strcmp(s, "-h")) { usage(); platform_shutdown(); return 0; }
         else ok = false;
         if (!ok) {

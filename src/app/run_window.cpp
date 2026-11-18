@@ -190,6 +190,7 @@ int run_window(const Args &a, AppMemory &m) {
     rc.validation = a.validation && !a.gpu_validation;
     rc.gpu_validation = a.gpu_validation;
     rc.gpu_validation_skip = a.gpu_validation_skip;
+    rc.pipe_threads = a.pipe_threads;
     char shader_dir[1024];
     snprintf(shader_dir, sizeof shader_dir, "%sshaders/", platform_exe_dir());
     rc.shader_dir = shader_dir;
