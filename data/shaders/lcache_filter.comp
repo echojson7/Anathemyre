@@ -7,6 +7,8 @@
 // счётов (lc_conf): первая оценка молодой ячейки тонет в зрелых соседях.
 // Сосед берётся, если его точка лучей в той же плоскости (ступенька, край плиты — нет) и между точками нет заслонки
 // по полю (соседний зал за стеной — нет). Сосед поперёк плоскости — тот же номер или ±1 (пол на границе кубиков).
+// Земля сверху — без проверки плоскости: точки её ячеек на одной сетке высот, а соседний столбец на склоне 30° выше
+// на 0.6 стороны — сглаживание слабело на склонах круче ~8° и пропадало круче ~22° (шаг 6б).
 // Шум лучей уходит в 3–4 раза, а значение остаётся функцией мировых номеров: камера его не меняет
 #include "gi.glsl"
 #include "lcache.glsl"
@@ -23,6 +25,7 @@ void main() {
     if (m.seen != f.lc_frame || m.key != key || (m.state & (LC_LIT | LC_EMPTY)) != LC_LIT) return;
     int k = lc_key_level(key), a = lc_key_axis(key);
     bool ground = (key & LC_GROUND) != 0u;
+    bool ground_up = ground && a == 2;  // земля сверху: слой по высоте один, соседи — та же сетка высот (lc_home_of)
     float s = lc_size(k);
     vec3 N = lc_axis_n(a);
     int i0 = a >> 1, i1 = (i0 + 1) % 3, i2 = (i0 + 2) % 3;
@@ -42,7 +45,7 @@ void main() {
         if (du == 0 && dv == 0) continue;
         int ne = -1;
         float cn = 0.0;
-        for (int q = 0; q < 3 && ne < 0; ++q) {
+        for (int q = 0; q < (ground_up ? 1 : 3) && ne < 0; ++q) {
             ivec3 h = m.home;
             h[i1] += du;
             h[i2] += dv;
@@ -51,7 +54,7 @@ void main() {
         }
         if (ne < 0) continue;
         vec3 o2 = f.lc_meta.v[ne].org;
-        float wp = 1.0 - smoothstep(0.15 * s, 0.4 * s, abs(dot(o2 - m.org, N)));
+        float wp = ground_up ? 1.0 : 1.0 - smoothstep(0.15 * s, 0.4 * s, abs(dot(o2 - m.org, N)));
         if (wp <= 0.0) continue;
         // Заслонка между точками: три выборки поля на отрезке
         bool open = gi_dist(mix(m.org, o2, 0.25), 0, soil) > 0.02 && gi_dist(mix(m.org, o2, 0.5), 0, soil) > 0.02 &&

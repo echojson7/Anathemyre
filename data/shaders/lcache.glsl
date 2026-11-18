@@ -83,6 +83,14 @@ ivec3 lc_home(vec3 pa, int k, int a) {
     u[a >> 1] -= LC_W_OFF;
     return ivec3(floor(u));
 }
+// Номер кубика ячейки: у ячеек самой земли сверху (сторона +y) слой по высоте один — 0. Их точка лучей — на сетке
+// высот в середине столбца (lcache_trace.comp) и от слоя не зависит, а со слоем соседний столбец на склоне лежал в
+// другом слое: сбор его не находил, и свет на склоне шёл ступенями вдоль горизонталей (разбор 18.11, шаг 6б)
+ivec3 lc_home_of(vec3 pa, int k, int a, bool ground) {
+    ivec3 h = lc_home(pa, k, a);
+    if (ground && a == 2) h.y = 0;
+    return h;
+}
 // Центр кубика (м от якоря)
 vec3 lc_center(ivec3 c, int k, int a) {
     vec3 u = vec3(c) + 0.5;
@@ -187,7 +195,7 @@ uint lc_primary(vec3 rel, vec3 n, bool ground) {
     int a2;
     float w2;
     int a = lc_axis_of(n, a2, w2);
-    return lc_key(k, a, lc_home(rel + f.sdf_cam.xyz, k, a), ground);
+    return lc_key(k, a, lc_home_of(rel + f.sdf_cam.xyz, k, a, ground), ground);
 }
 void lc_request(vec3 rel, vec3 n, bool ground) {
     FrameData f = pc.frame;
@@ -199,18 +207,18 @@ void lc_request(vec3 rel, vec3 n, bool ground) {
     float w2;
     int a = lc_axis_of(n, a2, w2);
     bool two = w2 > LC_AXIS2;
-    ivec3 h = lc_home(pa, k, a);
+    ivec3 h = lc_home_of(pa, k, a, ground);
     int e = lc_claim(lc_key(k, a, h, ground), h);
     bool up = k + 1 < LC_LEVELS && (x > float(k) - LC_BAND || (e >= 0 && lc_young(e)));
     if (two) {
-        h = lc_home(pa, k, a2);
+        h = lc_home_of(pa, k, a2, ground);
         lc_claim(lc_key(k, a2, h, ground), h);
     }
     if (up) {
-        h = lc_home(pa, k + 1, a);
+        h = lc_home_of(pa, k + 1, a, ground);
         lc_claim(lc_key(k + 1, a, h, ground), h);
         if (two) {
-            h = lc_home(pa, k + 1, a2);
+            h = lc_home_of(pa, k + 1, a2, ground);
             lc_claim(lc_key(k + 1, a2, h, ground), h);
         }
     }
@@ -251,7 +259,9 @@ LcSh lc_pack(vec3 a0, vec3 ax, vec3 ay, vec3 az) {
 }
 
 // Ячейка e годится точке pa: её точка лучей в плоскости точки (дальше четверти стороны с подъёмом — чужая
-// поверхность: ступенька, край плиты), 0..1
+// поверхность: ступенька, край плиты), 0..1. Земле сверху не нужно (lc_gather_one): точки её ячеек — на той же
+// сетке высот, а сама точка — на земле с деталями (рябь, гребни до ~1 м над сеткой 8 м), и подъём между ними
+// отбрасывал на склонах и гребнях соседей и даже свою ячейку
 float lc_plane_w(int e, vec3 pa, vec3 N, float s) {
     float dz = abs(dot(pc.frame.lc_meta.v[e].org - pa, N) - (0.05 + 0.05 * s));
     return clamp(1.0 - (dz - 0.25 * s) / (0.5 * s), 0.0, 1.0);
@@ -294,13 +304,14 @@ LcG lc_gather_one(vec3 pa, vec3 n, int k, int a, bool ground) {
     if (k >= LC_LEVELS) return r;
     float s = lc_size(k);
     int ax = a >> 1, i1 = (ax + 1) % 3, i2 = (ax + 2) % 3;
-    ivec3 h = lc_home(pa, k, a);
+    ivec3 h = lc_home_of(pa, k, a, ground);
     vec2 f = vec2(pa[i1], pa[i2]) / s - 0.5;
     vec2 b = floor(f), fr = f - b;
     vec3 N = lc_axis_n(a);
+    bool ground_up = ground && a == 2;  // земля сверху: соседи — та же поверхность (lc_home_of, lc_plane_w)
     float ch;
     int eh = lc_lookup_c(lc_key(k, a, h, ground), h, ch);
-    float wh = eh >= 0 ? lc_plane_w(eh, pa, N, s) : 0.0;
+    float wh = eh >= 0 ? (ground_up ? 1.0 : lc_plane_w(eh, pa, N, s)) : 0.0;
     vec3 ih = wh > 0.0 ? lc_irr(eh, n) : vec3(0.0);
     float aoh = wh > 0.0 ? unpackHalf2x16(pc.frame.lc_meta.v[eh].ao).y : 1.0;
     vec3 sum = vec3(0.0);
@@ -314,7 +325,7 @@ LcG lc_gather_one(vec3 pa, vec3 n, int k, int a, bool ground) {
         if (w <= 0.0) continue;
         float ce = ch;
         int e = c == h ? eh : lc_lookup_c(lc_key(k, a, c, ground), c, ce);
-        float we = e >= 0 ? w * (c == h ? wh : lc_plane_w(e, pa, N, s)) : 0.0;
+        float we = e >= 0 ? w * (c == h ? wh : ground_up ? 1.0 : lc_plane_w(e, pa, N, s)) : 0.0;
         if (we > 0.0) {
             float wc = we * ce;
             sum += lc_irr(e, n) * wc;
@@ -413,7 +424,7 @@ vec3 lc_view(vec3 pos, vec3 n, bool ground, out bool ok) {
     float w2;
     int a = lc_axis_of(n, a2, w2);
     vec3 pa = pos + f.sdf_cam.xyz;
-    ivec3 h = lc_home(pa, k, a);
+    ivec3 h = lc_home_of(pa, k, a, ground);
     int e = lc_lookup(lc_key(k, a, h, ground), h);
     if (e < 0) return vec3(0.0);
     ok = true;
