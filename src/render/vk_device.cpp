@@ -200,6 +200,21 @@ static bool create_device() {
     if (nfam > 16) nfam = 16;
     vkGetPhysicalDeviceQueueFamilyProperties(g_vk.gpu, &nfam, fam);
     if (g_vk.queue_family >= nfam || fam[g_vk.queue_family].timestampValidBits == 0) g_vk.timestamp_period = 0;
+    // Подгруппы: отбор и отрисовка теней (shadow_cull.comp, shadow.frag) сводят вызовы и атомики подгруппой. Есть у
+    // всех настольных драйверов Vulkan 1.3; без них шейдеры этих проходов не соберутся — пишем причину сразу
+    {
+        auto sp = vk_info<VkPhysicalDeviceSubgroupProperties>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES);
+        auto p2 = vk_info<VkPhysicalDeviceProperties2>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2);
+        p2.pNext = &sp;
+        vkGetPhysicalDeviceProperties2(g_vk.gpu, &p2);
+        const VkSubgroupFeatureFlags ops = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_VOTE_BIT |
+                                           VK_SUBGROUP_FEATURE_ARITHMETIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT |
+                                           VK_SUBGROUP_FEATURE_SHUFFLE_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_RELATIVE_BIT;
+        const VkShaderStageFlags st = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        if ((sp.supportedOperations & ops) != ops || (sp.supportedStages & st) != st || sp.subgroupSize > 128)
+            log_error("драйвер «%s»: нет нужных операций подгрупп (есть %#x в стадиях %#x) — тени солнца не соберутся",
+                      g_vk.gpu_name, sp.supportedOperations, sp.supportedStages);
+    }
 
     VmaVulkanFunctions fns{};
     fns.vkGetInstanceProcAddr = vkGetInstanceProcAddr;

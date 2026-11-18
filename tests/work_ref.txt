@@ -18,7 +18,7 @@ sm_used 119
 sm_new 4
 sm_over 0
 sm_miss 0
-sm_draws 286
+sm_draws 31
 sm_taps 1436464
 sm_wait 0
 sdf_taps 991155
@@ -42,7 +42,7 @@ air_cells 74445
 air_steps 2160000
 air_taps 2248988
 sm_dyn 21
-sm_dyn_draws 2431
+sm_dyn_draws 421
 sm_dyn_over 0
 lsm_dyn_faces 48
 lsm_dyn_draws 6273
