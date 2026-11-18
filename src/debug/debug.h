@@ -82,7 +82,7 @@ constexpr f32 STAND_SPEEDS[] = {1.0f, 0.5f, 0.25f, 0.1f};
 enum DebugTab : u32 { DEBUG_TAB_MAIN, DEBUG_TAB_LIGHT, DEBUG_TAB_PEOPLE, DEBUG_TAB_WORLD, DEBUG_TABS };
 
 // Строк проходов GPU и переполнений в панели
-constexpr u32 DEBUG_MAX_PASSES = 32, DEBUG_MAX_OVERFLOWS = 8, DEBUG_MAX_FRAME_PARTS = PROF_MAX_PARTS;
+constexpr u32 DEBUG_MAX_PASSES = 40, DEBUG_MAX_OVERFLOWS = 8, DEBUG_MAX_FRAME_PARTS = PROF_MAX_PARTS;
 // Что панель показывает: числа кадра (раз в секунду) и состояние, которое знает run_window
 struct DebugInfo {
     f64 fps, frame_ms, frame_max_ms, cpu_ms, gpu_ms, step_ms;

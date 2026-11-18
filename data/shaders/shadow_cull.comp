@@ -1,13 +1,20 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
-// Тени солнца (docs/shadow.md): отбор заслонок для новых страниц кадра. Поток на экземпляр: на каждом месте уровня
-// (оба набора), где есть новые страницы, сфера сетки в плоскости карты задевает хоть одну новую → LOD по размеру текселя
-// уровня (не по камере: страница одна и та же, когда бы ни нарисовалась) → кластеры, задевающие новые страницы,
-// — в вызовы. Порядок вызовов от запуска к запуску разный, страница — нет: тексель берёт максимум высот.
-// pc.a = 1 — слой подвижных («Подвижные заслонки»): поток на заслонку кадра (люди, машины, оружие — их неподвижные
-// страницы не берут), страницы — копии этого кадра (sm_dyn, shadow_dyn.comp), LOD не тоньше скиненного
-// Биты новых страниц уровня читаются в локальный массив раз на уровень: и дешевле, и lavapipe под GPU-AV падает
-// на чтении буфера во вложенных циклах (docs/shadow.md, «Проверки»)
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_KHR_shader_subgroup_shuffle_relative : require
+// Тени солнца (docs/shadow.md): отбор заслонок для новых страниц кадра. На каждом месте уровня (оба набора), где есть
+// новые страницы, сфера сетки в плоскости карты задевает хоть одну новую → LOD по размеру текселя уровня (не по
+// камере: страница одна и та же, когда бы ни нарисовалась) → кластеры, задевающие новые страницы, — в вызовы.
+// Соседние такие кластеры, чьи индексы идут подряд, — один вызов («Вызовы», docs/shadow.md): у человека на уровне
+// почти все кластеры задевают копии, и вызов на кластер тратил время видеокарты на разбор тысяч мелких вызовов.
+// Порядок вызовов от запуска к запуску разный, страница — нет: тексель берёт максимум высот.
+// pc.a = 0 — неподвижные: поток на экземпляр (почти все без новых страниц и выходят сразу).
+// pc.a = 1 — слой подвижных («Подвижные заслонки»): группа на заслонку кадра × место уровня, поток на кластер —
+// раньше поток на заслонку проходил все уровни и кластеры подряд, и цепочка чтений одного потока стояла весь проход.
+// Страницы — копии этого кадра (sm_dyn, shadow_dyn.comp), LOD не тоньше скиненного.
+// Биты новых страниц уровня читаются в локальный массив: и дешевле, и lavapipe под GPU-AV падает на чтении буфера во
+// вложенных циклах (docs/shadow.md, «Lavapipe и GPU-AV»); барьеров группы нет — группа сводит вызовы подгруппами
 #include "shadow.glsl"
 layout(local_size_x = 64) in;
 
@@ -30,55 +37,165 @@ bool sm_touches_fresh(vec2 w, float r) {
     return false;
 }
 
-void main() {
+// Заслонка кадра: экземпляр, его поворот, начало и сфера от камеры (с запасом позы у подвижных). Только нужные поля:
+// целые Instance и MeshInfo (lods[8] с номером из переменной) уходили в память потока (scratch)
+struct Caster { uint i, mesh, lod_min, lod_count, first_index, first_vertex; float scale, r; vec4 q; vec3 origin, c; };
+
+bool caster_get(uint gid, bool dyn, out Caster cs) {
     FrameData f = pc.frame;
-    bool dyn = pc.a != 0u;
-    uint gid = gl_GlobalInvocationID.x;
-    if (gid >= (dyn ? f.sm_dyn_n : f.instance_count)) return;
-    uint i = dyn ? f.sm_dyn_inst.v[gid] : gid;
-    Instance it = f.vis_instances.v[i];
-    if (it.mesh == 0u || it.mesh >= MAX_MESHES) return;
-    MeshInfo m = f.meshes.v[it.mesh];
-    if (m.lod_count == 0u || (!dyn && (m.flags & MESH_DYNAMIC) != 0u)) return;
+    if (gid >= (dyn ? f.sm_dyn_n : f.instance_count)) return false;
+    cs.i = dyn ? f.sm_dyn_inst.v[gid] : gid;
+    Instance it = f.vis_instances.v[cs.i];
+    if (it.mesh == 0u || it.mesh >= MAX_MESHES) return false;
+    cs.mesh = it.mesh;
+    MeshInfos ms = f.meshes;
+    cs.lod_count = ms.v[it.mesh].lod_count;
+    if (cs.lod_count == 0u || (!dyn && (ms.v[it.mesh].flags & MESH_DYNAMIC) != 0u)) return false;
     // Карточки волос — без тени: в проходе тени нет альфы, полосы легли бы сплошными пятнами (docs/hair.md)
-    if ((m.flags & MESH_ALPHA) != 0u) return;
-    vec4 q = inst_quat(it);
-    vec3 origin = rel_to_camera(ivec2(it.cx, it.cz), vec3(it.x, it.y, it.z));
-    vec3 c = origin + quat_rotate(q, m.sphere.xyz * it.scale);
+    if ((ms.v[it.mesh].flags & MESH_ALPHA) != 0u) return false;
+    cs.first_index = ms.v[it.mesh].first_index;
+    cs.first_vertex = ms.v[it.mesh].first_vertex;
+    vec4 sph = ms.v[it.mesh].sphere;
+    cs.scale = it.scale;
+    cs.q = inst_quat(it);
+    cs.origin = rel_to_camera(ivec2(it.cx, it.cz), vec3(it.x, it.y, it.z));
+    cs.c = cs.origin + quat_rotate(cs.q, sph.xyz * it.scale);
     // Подвижным — запас позы, как у мест слоя (shadow_dyn.comp) и скиннинга: поза бывает шире бинд-позы
-    float r = m.sphere.w * it.scale * (dyn ? 1.05 : 1.0) + (dyn ? 0.1 : 0.0);
-    SmDraws draws = dyn ? f.sm_dyn_draws : f.sm_draws;
-    SmList list = dyn ? f.sm_dyn_list : f.sm_list;
-    uint cap = dyn ? f.sm_dyn_draw_cap : f.sm_draw_cap;
+    cs.r = sph.w * it.scale * (dyn ? 1.05 : 1.0) + (dyn ? 0.1 : 0.0);
     // У человека скинены вершины LOD lod_min и грубее (vk_skin.cpp): тоньше брать нельзя; у прочих lod_min — 0
-    uint lod_min = min(it.lod_min, m.lod_count - 1u);
-    uint want = 0u;
+    cs.lod_min = min(it.lod_min, cs.lod_count - 1u);
+    return true;
+}
+
+// Место уровня k: есть новые страницы и заслонка их задевает (биты уровня — в g_bits) → LOD заслонки на уровне
+bool caster_level(Caster cs, int k, bool dyn, out uvec4 L) {
+    FrameData f = pc.frame;
+    L = uvec4(0u);
+    if ((dyn ? f.sm_dyn.fresh[k] : f.sm_req.fresh[k]) == 0u) return false;
+    float t = sm_texel(k);
+    if (cs.r < SM_MIN_TEXELS * t) return false;
+    for (int w = 0; w < 32; ++w) g_bits[w] = dyn ? f.sm_dyn.bits[k * 32 + w] : f.sm_req.bits[k * 32 + w];
+    g_base = f.sm_base[k];
+    if (!sm_touches_fresh(sm_window(cs.c, k), cs.r / t + 1.0)) return false;
+    MeshInfos ms = f.meshes;
+    uint lod = cs.lod_min;
+    while (lod + 1u < cs.lod_count && uintBitsToFloat(ms.v[cs.mesh].lods[lod + 1u].z) * cs.scale <= LOD_TEXELS * t) lod++;
+    L = ms.v[cs.mesh].lods[lod];
+    return true;
+}
+
+// Кластер задевает новую страницу места k
+bool cluster_hits(Caster cs, Cluster cl, int k) {
+    float t = sm_texel(k);
+    return sm_touches_fresh(sm_window(cs.origin + quat_rotate(cs.q, cl.sphere.xyz * cs.scale), k), cl.sphere.w * cs.scale / t + 1.0);
+}
+
+// Вызов: индексы [first, end) сетки от первого кластера ci, место k — в слот
+void put_draw(SmDraws draws, SmList list, uint slot, Caster cs, uint ci, int k, uint first, uint end) {
+    list.v[slot] = uvec2(cs.i, ci | uint(k) << 27);
+    SmDrawCmd d;
+    d.index_count = end - first;
+    d.instance_count = 1u;
+    d.first_index = cs.first_index + first;
+    d.vertex_offset = int(cs.first_vertex);
+    d.first_instance = slot;
+    draws.v[slot] = d;
+}
+
+// Неподвижные: поток на экземпляр, кластеры подряд, идущие подряд по индексам — один вызов
+void cull_static() {
+    FrameData f = pc.frame;
+    Caster cs;
+    if (!caster_get(gl_GlobalInvocationID.x, false, cs)) return;
+    SmDraws draws = f.sm_draws;
+    SmList list = f.sm_list;
+    uint made = 0u;
     for (int k = 0; k < SM_SLOTS; ++k) {
-        if ((dyn ? f.sm_dyn.fresh[k] : f.sm_req.fresh[k]) == 0u) continue;
-        float t = sm_texel(k);
-        if (r < SM_MIN_TEXELS * t) continue;
-        for (int w = 0; w < 32; ++w) g_bits[w] = dyn ? f.sm_dyn.bits[k * 32 + w] : f.sm_req.bits[k * 32 + w];
-        g_base = f.sm_base[k];
-        if (!sm_touches_fresh(sm_window(c, k), r / t + 1.0)) continue;
-        uint lod = lod_min;
-        while (lod + 1u < m.lod_count && uintBitsToFloat(m.lods[lod + 1u].z) * it.scale <= LOD_TEXELS * t) lod++;
-        uvec4 L = m.lods[lod];
-        for (uint j = 0u; j < L.y; ++j) {
-            uint ci = L.x + j;
-            Cluster cl = f.clusters.v[ci];
-            if (!sm_touches_fresh(sm_window(origin + quat_rotate(q, cl.sphere.xyz * it.scale), k), cl.sphere.w * it.scale / t + 1.0)) continue;
-            want++;
-            uint slot = atomicAdd(draws.count, 1u);
-            if (slot >= cap) continue;
-            list.v[slot] = uvec2(i, ci | uint(k) << 27);
-            SmDrawCmd d;
-            d.index_count = cl.tri_count * 3u;
-            d.instance_count = 1u;
-            d.first_index = m.first_index + cl.first_index;
-            d.vertex_offset = int(m.first_vertex);
-            d.first_instance = slot;
-            draws.v[slot] = d;
+        uvec4 L;
+        if (!caster_level(cs, k, false, L)) continue;
+        bool open = false;
+        uint run_ci = 0u, run_first = 0u, run_end = 0u;
+        for (uint j = 0u; j <= L.y; ++j) {
+            bool hit = false;
+            uint first = 0u, end = 0u;
+            if (j < L.y) {
+                Cluster cl = f.clusters.v[L.x + j];
+                first = cl.first_index;
+                end = first + cl.tri_count * 3u;
+                hit = cluster_hits(cs, cl, k);
+            }
+            if (hit && open && first == run_end) {
+                run_end = end;
+                continue;
+            }
+            if (open) {
+                made++;
+                uint slot = atomicAdd(draws.count, 1u);
+                if (slot < f.sm_draw_cap) put_draw(draws, list, slot, cs, run_ci, k, run_first, run_end);
+            }
+            open = hit;
+            run_ci = L.x + j;
+            run_first = first;
+            run_end = end;
         }
     }
-    if (want != 0u) atomicAdd(f.stats.v[dyn ? STAT_SM_DYN_DRAWS : STAT_SM_DRAWS], want);
+    if (made != 0u) atomicAdd(f.stats.v[STAT_SM_DRAWS], made);
+}
+
+// Первая дорожка подгруппы выше me, чей бит в b не стоит (иначе — размер подгруппы)
+uint next_clear(uvec4 b, uint me) {
+    for (uint w = (me + 1u) >> 5; w < 4u; ++w) {
+        uint m = ~b[w];
+        if (w == (me + 1u) >> 5) m &= ~0u << ((me + 1u) & 31u);
+        if (m != 0u) return min(w * 32u + uint(findLSB(m)), gl_SubgroupSize);
+    }
+    return gl_SubgroupSize;
+}
+
+// Слой подвижных: группа — заслонка × место уровня (всё до цикла одинаково у всей группы), поток — кластер.
+// Отрезок подряд идущих по индексам задетых кластеров сводится подгруппой: начало отрезка пишет вызов до его конца
+void cull_dyn() {
+    FrameData f = pc.frame;
+    int k = int(gl_WorkGroupID.y);
+    Caster cs;
+    if (!caster_get(gl_WorkGroupID.x, true, cs)) return;
+    if (((f.sm_read >> uint(sm_set_of(k))) & 1u) == 0u) return;  // набор, что строится в фоне, копий не имеет
+    uvec4 L;
+    if (!caster_level(cs, k, true, L)) return;
+    SmDraws draws = f.sm_dyn_draws;
+    SmList list = f.sm_dyn_list;
+    uint lane = gl_SubgroupInvocationID;
+    for (uint j0 = 0u; j0 < L.y; j0 += 64u) {
+        uint j = j0 + gl_LocalInvocationIndex;
+        bool hit = false;
+        uint first = 0u, end = 0u;
+        if (j < L.y) {
+            Cluster cl = f.clusters.v[L.x + j];
+            first = cl.first_index;
+            end = first + cl.tri_count * 3u;
+            hit = cluster_hits(cs, cl, k);
+        }
+        // Продолжение отрезка соседа снизу: он задет (у незадетого конец ~0u) и его индексы кончаются там, где начинаются мои
+        uint prev_end = subgroupShuffleUp(hit ? end : ~0u, 1u);
+        bool cont = hit && lane > 0u && prev_end == first;
+        bool start = hit && !cont;
+        uint last = next_clear(subgroupBallot(cont), lane) - 1u;
+        uint run_end = subgroupShuffle(end, last);
+        uvec4 sb = subgroupBallot(start);
+        uint n = subgroupBallotBitCount(sb);
+        if (n == 0u) continue;
+        uint base = 0u;
+        if (subgroupElect()) {
+            base = atomicAdd(draws.count, n);
+            atomicAdd(f.stats.v[STAT_SM_DYN_DRAWS], n);
+        }
+        base = subgroupBroadcastFirst(base);
+        uint slot = base + subgroupBallotExclusiveBitCount(sb);
+        if (start && slot < f.sm_dyn_draw_cap) put_draw(draws, list, slot, cs, L.x + j, k, first, run_end);
+    }
+}
+
+void main() {
+    if (pc.a == 0u) cull_static();
+    else cull_dyn();
 }
