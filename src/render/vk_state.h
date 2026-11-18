@@ -75,7 +75,8 @@ struct FrameGpu {
     u32 gc_w, gc_pages_n, gc_req_cap, gc_frame;
     i32 gc_tpc0;
     u32 gc_on, gc_lmode, gc_lperiod;
-    u32 gc_lit_min, gc_pad;  // свет страниц, посчитанный раньше этого кадра кеша, устарел (резкая смена света)
+    u32 gc_lit_min;          // свет страниц, посчитанный раньше этого кадра кеша, устарел (резкая смена света)
+    u32 gc_lturn;            // круг пересчёта в этом кадре (≤ gc_lperiod: камера быстро летит — чаще)
     // Карта горизонта земли (vk_horizon.cpp, docs/horizon.md)
     VkDeviceAddress h_map;
     u32 h_on;
@@ -287,6 +288,8 @@ struct GcacheGpu {
     bool lit = false, lit_all = true;
     u32 lit_sig = ~0u;
     u32 lit_min = 0;  // кадр кеша последнего «все страницы заново»: свет старше — устарел у всех страниц, не только прочитанных
+    i32 lit_cx = 0, lit_cz = 0;  // камера прошлого кадра (круг пересчёта — от её хода)
+    f32 lit_x = 0, lit_y = 0, lit_z = 0;
     VkPipeline pipe_scan = VK_NULL_HANDLE, pipe_args = VK_NULL_HANDLE, pipe_bake = VK_NULL_HANDLE,
                pipe_light = VK_NULL_HANDLE;
     u8 rg_table = 0, rg_pages = 0, rg_texels = 0, rg_req = 0, rg_cells = 0, rg_light = 0;

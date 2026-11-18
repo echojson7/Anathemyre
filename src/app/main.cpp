@@ -49,6 +49,7 @@ static void usage() {
     log_info("           --frames N --video префикс                                   каждый кадр → префикс_0000.bmp… (стенд: 1/30 с на кадр)");
     log_info("           --cam-test файл.txt                                          проверка камеры записанным вводом без окна (docs/camera.md)");
     log_info("           --frames N --video префикс --cam-play                        видео камеры: показ записанным вводом");
+    log_info("           --frames N --video префикс --cam … --cam-to yaw pitch расст x z   пролёт камеры от --cam к --cam-to, 1/30 с на кадр");
     log_info("           [--spin град/с]                                              камера поворачивается сама (видео мерцания при повороте)");
     log_info("           [--select место [--follow]] [--go \"кадр место x z y аллюр; …\"] [--people-lines] [--sides]  выбрать, камера за ним, приказы, отладка");
     log_info("           [--mech pack|stand|walk|show|veil|prone] [--mech-follow]     шагающие машины: лежат, стоят, обходят, показ всего по порядку, морок по кругу, лёжка; камера за машиной (docs/vezha.md, docs/tat.md)");
@@ -139,6 +140,14 @@ int main(int argc, char **argv) {
             for (int k = 0; k < 5 && ok; ++k) {
                 const char *v = i + 1 + k < argc ? argv[i + 1 + k] : nullptr;
                 ok = v && parse_f32(Str{v, (u32)strlen(v)}, a.cam[k]);
+            }
+            i += 5;
+        }
+        else if (!strcmp(s, "--cam-to")) {
+            a.cam_to_set = true;
+            for (int k = 0; k < 5 && ok; ++k) {
+                const char *v = i + 1 + k < argc ? argv[i + 1 + k] : nullptr;
+                ok = v && parse_f32(Str{v, (u32)strlen(v)}, a.cam_to[k]);
             }
             i += 5;
         }

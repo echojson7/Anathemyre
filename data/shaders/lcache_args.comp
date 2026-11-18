@@ -1,13 +1,35 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
-// Ячейки света: сколько работ считается в этом кадре (docs/lcache.md). Молодые — до lc_cap_new, на обновление —
-// до lc_cap_ref; не влезшие ждут следующего кадра (счётчик LC_WAIT). Косвенный dispatch лучей: группа на работу
+// Ячейки света: сколько работ считается в этом кадре (docs/lcache.md). Молодые — до lc_cap_new по корзинам очереди
+// по порядку (начала корзин — в bs, lc_job), на обновление — до lc_cap_ref; не влезшие ждут следующего кадра
+// (счётчик LC_WAIT). Косвенный dispatch лучей: группа на работу. Новые в этом кадре идут полным кругом (сразу
+// зрелые), если их круги и молодые влезают в предел кадра — в покое и при обычном ходе камеры; при быстром полёте —
+// по счёту за кадр, свет молодых — от родителя. Срок жизни невидимых на следующий кадр — по заполнению таблицы:
+// при полёте ячейки заявляются быстрее, чем уходят за 4 с, и на 70 % заполнения заявки срывались (разбор 18.11)
 #include "lcache.glsl"
 layout(local_size_x = 1) in;
 
 void main() {
     FrameData f = pc.frame;
-    uint nn = min(f.lc_jobs.new_n, f.lc_snap != 0u ? LC_CAP : f.lc_cap_new);
+    uint nn = 0u;
+    if (f.lc_snap != 0u) {
+        nn = min(f.lc_jobs.new_n, LC_CAP);
+        f.lc_jobs.bs[0] = 0u;
+        for (uint b = 1u; b < LC_QB; ++b) f.lc_jobs.bs[b] = nn;
+    } else {
+        uint nf = 0u, ny = 0u;
+        for (uint b = 0u; b < LC_QB; ++b) {
+            f.lc_jobs.bs[b] = nn;
+            uint c = min(f.lc_jobs.bn[b], LC_QCAP);
+            if (b < uint(LC_LEVELS)) nf += c;
+            else ny += c;
+            nn += min(c, f.lc_cap_new - nn);
+        }
+        f.lc_jobs.full = nf * LC_K + ny <= f.lc_cap_new ? 1u : 0u;
+    }
+    // Срок жизни: до 25 % заполнения — LC_AGE, к 50 % — 16 кадров (корзины по 8 при 60 % уже теряли заявки)
+    float load = float(f.lc_jobs.live_n) / float(LC_CAP);
+    f.lc_jobs.age = uint(mix(float(LC_AGE), 16.0, clamp((load - 0.25) / 0.25, 0.0, 1.0)));
     uint nr = min(f.lc_jobs.ref_n, f.lc_cap_ref);
     f.lc_jobs.cmd = uvec4(nn + nr, 1u, 1u, nn);
     atomicAdd(f.stats.v[STAT_LC_LIVE], f.lc_jobs.live_n);

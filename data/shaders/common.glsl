@@ -96,7 +96,18 @@ layout(buffer_reference, scalar) buffer LcShs { LcSh v[]; };
 layout(buffer_reference, scalar) buffer LcAccs { LcAcc v[]; };
 // Работы кадра: молодых и на обновление (до предела), живых; косвенный dispatch лучей; молодые — с v[0], на
 // обновление — с v[LC_CAP]
-layout(buffer_reference, scalar) buffer LcJobs { uint new_n, ref_n, live_n, pad; uvec4 cmd; uint v[]; };
+// Работы ячеек: счётчики, полный круг новым в этом кадре (full), косвенный dispatch, молодые по корзинам очереди
+// (bn — сколько, bs — начало корзины в номерах работ кадра; lcache_list.comp, lcache_args.comp); age — срок жизни
+// невидимой ячейки на следующий кадр (по заполнению таблицы; не чистится каждый кадр); места: молодые [0, LC_CAP),
+// обновление [LC_CAP, 2·LC_CAP)
+layout(buffer_reference, scalar) buffer LcJobs {
+    uint new_n, ref_n, live_n, full;
+    uvec4 cmd;
+    uint bn[16];
+    uint bs[16];
+    uint age, pad0, pad1, pad2;
+    uint v[];
+};
 
 // Плитки 8×8 кадра мира по видам (docs/tiles.md, light_tiles.comp): небо — пусто; земля — земля из кеша
 // (docs/gcache.md) и, может быть, небо; сетки — сетки и, может быть, небо; смесь — земля и сетки; земля на
@@ -269,7 +280,8 @@ layout(buffer_reference, scalar) buffer FrameData {
     int gc_tpc0;              // текселей уровня 0 на чанк (256 м / cell_min)
     uint gc_on;               // 0 — кеш выключен: вся земля на пиксель (F3, --nogcache)
     uint gc_lmode, gc_lperiod;  // свет в кеше: GC_LIGHT_ON, GC_LIGHT_ALL; страница пересчитывается раз в gc_lperiod кадров
-    uint gc_lit_min, gc_pad;    // свет страницы, посчитанный раньше этого кадра кеша, устарел (снимок, резкая смена света)
+    uint gc_lit_min;            // свет страницы, посчитанный раньше этого кадра кеша, устарел (снимок, резкая смена света)
+    uint gc_lturn;              // круг пересчёта в этом кадре (≤ gc_lperiod: камера быстро летит — чаще)
     // Карта горизонта земли (docs/horizon.md): H_DIRS/2 слов на узел сетки 8 м
     HMap h_map;
     uint h_on;                // 0 — карты нет (земли нет или ещё не собрана): тени земли нет

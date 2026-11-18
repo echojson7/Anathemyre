@@ -4,8 +4,8 @@
 // тексель. Рассеянный отражённый свет земли (зонды и ячейки, ближнее затенение по полю, видимость неба вне окон
 // зондов) от камеры почти не зависит и меняется за доли секунды, поэтому считается не на пиксель каждый кадр, а в
 // тексель кеша: страница без света (только запечена) и с устаревшим (не читалась дольше круга) — сразу, остальные
-// прочитанные кадром — по кругу, раз в gc_lperiod кадров (место в круге — место страницы в мире), все — при GC_LIGHT_ALL
-// (снимок, смена настроек света).
+// прочитанные кадром — по кругу, раз в gc_lturn кадров (8, при быстром полёте камеры — до 2; место в круге — место
+// страницы в мире), все — при GC_LIGHT_ALL (снимок, смена настроек света).
 // Освещение (light_cells.comp → light_indirect) смешивает четыре текселя теми же долями, что поверхность.
 // Те же функции, что и на пиксель: gi_sample, lc_gather, lc_ao, sdf_sky; точка — центр текселя на его высоте
 ivec2 g_origin;
@@ -16,6 +16,7 @@ ivec2 g_origin;
 layout(local_size_x = 8, local_size_y = 8) in;
 
 shared uint s_n, s_taps;  // посчитано текселей, выборок поля (идут в STAT_SDF_TAPS: это работа света)
+shared uint s_young;      // тексель взял молодые ячейки света: страница досчитается в следующем кадре
 
 void main() {
     FrameData f = pc.frame;
@@ -30,13 +31,13 @@ void main() {
     uvec2 key = uvec2(pg.key0, pg.key1);
     int k = gc_key_level(key);
     ivec2 kp = gc_key_page(key);
-    uint per = max(f.gc_lperiod, 1u);
+    uint per = max(f.gc_lperiod, 1u), turn_n = clamp(f.gc_lturn, 1u, per);
     uint turn = uint(kp.x) + 3u * uint(kp.y) + uint(k);
     bool due = pg.lit == 0u || pg.lit < f.gc_lit_min || f.gc_frame - pg.lit > per || (f.gc_lmode & GC_LIGHT_ALL) != 0u ||
-               (turn + f.gc_frame) % per == 0u;
+               (turn + f.gc_frame) % turn_n == 0u;
     if (!due) return;
     uint t = gl_LocalInvocationIndex;
-    if (t == 0u) s_n = s_taps = 0u;
+    if (t == 0u) s_n = s_taps = s_young = 0u;
     barrier();
     ivec2 tx = kp * GC_PAGE + ivec2(gl_LocalInvocationID.xy);
     uint at = phys * 64u + t;
@@ -65,9 +66,12 @@ void main() {
                              packUnorm4x8(vec4(g.cov, vis, ao, g.refl.a)));
     atomicAdd(s_n, 1u);
     if (g_sdf_taps != 0u) atomicAdd(s_taps, g_sdf_taps);
+    if (g_lc_young) s_young = 1u;
     barrier();
     if (t == 0u) {
-        f.gc_pages.v[phys].lit = f.gc_frame;
+        // Молодые ячейки (подлёт, новое место) за круг дозревают: страница с ними не ждёт своего черёда круга, иначе
+        // их первая оценка лежала бы на земле квадратами до gc_lperiod кадров (разбор 18.11)
+        f.gc_pages.v[phys].lit = s_young != 0u ? 0u : f.gc_frame;
         atomicAdd(f.stats.v[STAT_GC_LIT], s_n);
         if (s_taps != 0u) atomicAdd(f.stats.v[STAT_SDF_TAPS], s_taps);
     }

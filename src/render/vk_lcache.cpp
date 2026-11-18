@@ -17,6 +17,8 @@ static const u32 LC_Q_PERIOD[RENDER_LIGHT_QUALITIES] = {16, 12, 8, 6};
 static const u32 LC_Q_NEW[RENDER_LIGHT_QUALITIES] = {512, 768, 1024, 2048};
 static const u32 LC_Q_REF[RENDER_LIGHT_QUALITIES] = {256, 512, 1024, 2048};
 constexpr f32 LC_FAR = 64.0f;  // дальше — свет зондов
+constexpr u32 LC_JOBS_HEAD = 176;   // счётчики, dispatch, корзины очереди, срок жизни (LcJobs, common.glsl)
+constexpr u32 LC_JOBS_CLEAR = 160;  // каждый кадр чистится всё, кроме срока жизни
 
 static VkDeviceAddress g_lc_frame = 0;
 
@@ -28,7 +30,7 @@ bool vk_lcache_init() {
         !vk_create_buffer(s.show, (VkDeviceSize)LC_CAP * 24, ssbo, true) ||
         !vk_create_buffer(s.filt, (VkDeviceSize)LC_CAP * 24, ssbo, true) ||
         !vk_create_buffer(s.acc, (VkDeviceSize)LC_CAP * 48, ssbo, true) ||
-        !vk_create_buffer(s.jobs, 32 + (VkDeviceSize)LC_CAP * 2 * 4, ssbo | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, true))
+        !vk_create_buffer(s.jobs, LC_JOBS_HEAD + (VkDeviceSize)LC_CAP * 2 * 4, ssbo | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, true))
         return false;
     vk_buffer_name(s.keys, "ячейки света: ключи");
     vk_buffer_name(s.meta, "ячейки света: места");
@@ -115,8 +117,9 @@ void vk_lcache_fill(FrameGpu &g, const RenderFrame &f) {
 static void lc_record_clear(VkCommandBuffer cmd, void *) {
     vkCmdFillBuffer(cmd, g_vk.lc.keys.buffer, 0, VK_WHOLE_SIZE, 0);
     vkCmdFillBuffer(cmd, g_vk.lc.meta.buffer, 0, VK_WHOLE_SIZE, 0);
+    vkCmdFillBuffer(cmd, g_vk.lc.jobs.buffer, 0, LC_JOBS_HEAD, 0);  // и срок жизни — с начала
 }
-static void lc_record_jobs_clear(VkCommandBuffer cmd, void *) { vkCmdFillBuffer(cmd, g_vk.lc.jobs.buffer, 0, 32, 0); }
+static void lc_record_jobs_clear(VkCommandBuffer cmd, void *) { vkCmdFillBuffer(cmd, g_vk.lc.jobs.buffer, 0, LC_JOBS_CLEAR, 0); }
 static void lc_bind(VkCommandBuffer cmd, VkPipeline p) {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.layout, 0, 1, &g_vk.world.set, 0, nullptr);
@@ -148,6 +151,7 @@ void vk_lcache_begin(VkDeviceAddress frame) {
     rg_pass("ячейки света: с нуля", "ячейки света", lc_record_clear, nullptr);
     rg_use(s.rg_keys, RG_COPY_WRITE);
     rg_use(s.rg_meta, RG_COPY_WRITE);
+    rg_use(s.rg_jobs, RG_COPY_WRITE);
     s.clear = false;
 }
 
@@ -187,7 +191,7 @@ void vk_lcache_passes() {
     rg_use(s.rg_jobs, RG_INDIRECT);
     rg_use(s.rg_jobs, RG_CS_READ);
     rg_use(s.rg_keys, RG_CS_READ);
-    rg_use(s.rg_meta, RG_CS_READ);
+    rg_use(s.rg_meta, RG_CS_WRITE);  // пишет сглаженное затенение у точки (LcMeta.ao)
     rg_use(s.rg_show, RG_CS_READ);
     rg_use(s.rg_filt, RG_CS_WRITE);
     vk_sdf_reads();

@@ -5,7 +5,8 @@
 // от мирового номера, не от пикселя. Лучи — полусфера над стороной нормали (решётка Фибоначчи, поворот — от
 // мирового номера и номера в круге из LC_K), тот же луч, что у зондов (gi_ray.glsl): в точке попадания солнце с
 // тенью, огни и свет зондов — второй отскок. Свет копится гармониками L1 (свёртка с косинусом уже внутри):
-// показывается средним за круг, молодая ячейка — бегущим средним каждый счёт. Снимок — полный круг за раз
+// показывается средним за круг, молодая ячейка — бегущим средним каждый счёт. Снимок и новая ячейка, когда кадр
+// позволяет (lcache_args.comp), — полный круг за раз
 #include "gi_ray.glsl"
 #include "lcache.glsl"
 layout(local_size_x = 64) in;
@@ -108,11 +109,11 @@ void main() {
     FrameData f = pc.frame;
     uint t = gl_LocalInvocationIndex;
     uint g = gl_WorkGroupID.x;
-    uint nn = f.lc_jobs.cmd.w;
-    uint e = g < nn ? f.lc_jobs.v[g] : f.lc_jobs.v[LC_CAP + g - nn];
+    uint e = lc_job(g);
     LcMeta m = f.lc_meta.v[e];
-    bool snap = f.lc_snap != 0u;
     bool init = (m.state & (LC_INIT | LC_EMPTY)) != 0u;  // заново или была пустой: счёт с нуля
+    // Полный круг за раз: снимок, и новая ячейка, если кадр позволяет (lcache_args.comp) — сразу зрелая
+    bool snap = f.lc_snap != 0u || ((m.state & LC_INIT) != 0u && f.lc_jobs.full != 0u);
     uint turn = init ? 0u : m.state & 3u;
     if (t == 0u) {
         s_o = lc_origin(m.key, m.home);

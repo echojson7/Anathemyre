@@ -13,6 +13,7 @@ constexpr u32 GC_MIN_PAGES = 4096, GC_MAX_PAGES = 1u << 18;  // пул: 4 МБ �
 constexpr u32 GC_MAX_W = 1024;                               // окно уровня: до 1024² страниц
 constexpr u32 GC_LIGHT_BYTES = 16;                           // свет текселя: высота, E/π, доли (gcache_light.comp)
 constexpr u32 GC_LIGHT_PERIOD = 8;                           // страница пересчитывает свет раз в столько кадров
+constexpr f32 GC_LIGHT_MOVE = 2.0f;  // при полёте круг короче: камера проходит за круг не больше, м (не меньше 2 кадров)
 
 bool vk_gcache_init() {
     GcacheGpu &c = g_vk.gcache;
@@ -171,6 +172,20 @@ void vk_gcache_light_fill(FrameGpu &g, const RenderFrame &f) {
     g.gc_lit_min = c.lit_min;
     g.gc_lmode = GC_LIGHT_ON | (c.lit_all ? GC_LIGHT_ALL : 0);
     g.gc_lperiod = GC_LIGHT_PERIOD;
+    // Свет текселя от камеры чуть зависит (окна зондов, уровни ячеек, второй отскок по зондам), и при быстром полёте
+    // страницы, пересчитанные в разные кадры круга, расходились — по освещённому песку шли квадраты страниц (разбор
+    // 18.11). Круг — столько кадров, чтобы камера прошла за него не больше GC_LIGHT_MOVE, но не меньше 2
+    f32 dx = (f32)(g.cam_cx - c.lit_cx) * 256.0f + (g.cam_x - c.lit_x), dy = g.cam_y - c.lit_y,
+        dz = (f32)(g.cam_cz - c.lit_cz) * 256.0f + (g.cam_z - c.lit_z);
+    f32 step = sqrtf(dx * dx + dy * dy + dz * dz);
+    c.lit_cx = g.cam_cx;
+    c.lit_cz = g.cam_cz;
+    c.lit_x = g.cam_x;
+    c.lit_y = g.cam_y;
+    c.lit_z = g.cam_z;
+    u32 turn = GC_LIGHT_PERIOD;
+    if (step * (f32)GC_LIGHT_PERIOD > GC_LIGHT_MOVE) turn = (u32)(GC_LIGHT_MOVE / step);
+    g.gc_lturn = turn < 2 ? 2 : turn > GC_LIGHT_PERIOD ? GC_LIGHT_PERIOD : turn;
     c.lit_all = false;
 }
 

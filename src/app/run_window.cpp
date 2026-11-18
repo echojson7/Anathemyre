@@ -554,6 +554,20 @@ int run_window(const Args &a, AppMemory &m) {
         if (a.spin != 0.0f) cam.yaw += a.spin * (3.14159265f / 180.0f) * (f32)dt;
         // Край экрана — только когда мышь над окном, а не над интерфейсом и не в меню
         bool edge = in.mouse_in && !menu.open && !(hud_on && ui_wants_mouse()) && !a.frames;
+        if (a.cam_to_set && a.cam_set && a.frames > 1) {
+            // Пролёт (--cam-to): камера ровно идёт от --cam к --cam-to за кадры снимка — подлёт к стене для видео
+            // света (docs/lcache.md); скорость — путь на число кадров по 1/30 с
+            const f32 deg = PI_F / 180.0f, k = (f32)frames / (f32)(a.frames - 1);
+            auto at = [&](int i) { return a.cam[i] + (a.cam_to[i] - a.cam[i]) * k; };
+            cam.yaw = at(0) * deg;
+            cam.pitch = at(1) * deg;
+            cam.dist = at(2);
+            cam.pivot = WPos{};
+            cam.pivot.x = at(3);
+            cam.pivot.z = at(4);
+            wpos_rebase(cam.pivot);
+            view_camera_place(cam, w.terrain, &w.coll);
+        }
         if (a.cam_play) {
             // Видео камеры: ввод камеры — записанный показ (cam_test.cpp), кадр — 1/30 с
             f32 t0 = (f32)frames / 30.0f, t1 = (f32)(frames + 1) / 30.0f;
