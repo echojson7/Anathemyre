@@ -18,9 +18,14 @@ import meshread  # noqa: E402
 import bpy  # noqa: E402
 from mathutils import Matrix, Vector  # noqa: E402
 
+_SK, _LN, _BD = (0.52, 0.37, 0.28), (0.33, 0.31, 0.26), (0.17, 0.16, 0.13)
+# Цвет материала у мужчины и у женщины (бельё по полу, data/materials.txt): женщина — фигура с female > 0.5
 COLORS = {
-    "human_skin": (0.52, 0.37, 0.28), "human_linen": (0.55, 0.50, 0.42), "human_band": (0.18, 0.16, 0.14),
-    "human_eye": (0.75, 0.72, 0.68), "human_iris": (0.07, 0.05, 0.04), "human_bra": (0.55, 0.50, 0.42),
+    "human_skin": (_SK, _SK), "human_linen": (_LN, _LN), "human_band": (_BD, _BD),
+    "human_eye": ((0.46, 0.43, 0.39),) * 2, "human_iris": ((0.07, 0.05, 0.04),) * 2,
+    "human_bra": (_SK, _LN), "human_bra_band": (_SK, _BD), "human_boxer": (_LN, _SK), "human_boxer_band": (_BD, _SK),
+    "human_lb": (_LN, _BD), "human_bl": (_BD, _LN), "human_lip": ((0.48, 0.31, 0.23),) * 2,
+    "human_areola": ((0.42, 0.25, 0.18), _LN), "human_nipple": ((0.36, 0.21, 0.15), _LN),
 }
 VIEWS = {  # куда смотрит камера: (сдвиг камеры от середины ряда, высота цели, объектив)
     "front": ((0.0, 0.05, 1.0), 0.92, 50.0), "side": ((1.0, 0.05, 0.0), 0.92, 50.0),
@@ -67,15 +72,17 @@ def main():
             me = bpy.data.meshes.new("m")
             me.from_pydata((p * scale + at).tolist(), [], tri[:, ::-1].tolist())
             me.polygons.foreach_set("use_smooth", [True] * len(tri))
+            sex = 1 if w.get("female", 0.0) > 0.5 else 0
             for name in m.materials:
-                if name not in mats:
+                key = (name, sex)
+                if key not in mats:
                     mt = bpy.data.materials.new(name)
                     mt.use_nodes = True
                     b = mt.node_tree.nodes["Principled BSDF"]
-                    b.inputs["Base Color"].default_value = (*COLORS.get(name, (0.5, 0.2, 0.5)), 1)
+                    b.inputs["Base Color"].default_value = (*COLORS.get(name, ((0.5, 0.2, 0.5),) * 2)[sex], 1)
                     b.inputs["Roughness"].default_value = 0.7
-                    mats[name] = mt
-                me.materials.append(mats[name])
+                    mats[key] = mt
+                me.materials.append(mats[key])
             me.polygons.foreach_set("material_index", m.vert["m0"][tri[:, 0]].astype(int).tolist())
             me.update()
             sc.collection.objects.link(bpy.data.objects.new("o", me))
