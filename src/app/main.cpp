@@ -48,6 +48,7 @@ static void usage() {
     log_info("           [--nohud] [--open menu|keys|ui|debug|light|people|world]  без интерфейса; открыть меню или отладку");
     log_info("           [--stand off|elbow|knee|mixamo|morphN|both|move|nocaps|clip=…|blend=…|w=…|speed=…|t=…,…]  стенд людей (docs/anim.md)");
     log_info("           [--hour H]                                                   час дня в начале (запись повтора его помнит)");
+    log_info("           [--jump F H]                                                 на кадре F час H, как клавишей [ ] (скачок часов)");
     log_info("           [--clock 1|20|120|0]                                         скорость суток с начала, как T (видео ускоренного времени)");
     log_info("           --frames N --timelapse префикс H0 H1                         N кадров суток от H0 до H1 → префикс_0000.bmp…");
     log_info("           --look sun|moon град                                          взгляд по азимуту светила + поворот (с --cam: кадры неба)");
@@ -213,6 +214,13 @@ int main(int argc, char **argv) {
             ok = next && parse_f32(Str{next, (u32)strlen(next)}, a.hour) && a.hour >= 0 && a.hour < 24;
             a.hour_set = true;
             i++;
+        }
+        else if (!strcmp(s, "--jump")) {
+            u32 f = 0;
+            ok = next && i + 2 < argc && parse_u32(Str{next, (u32)strlen(next)}, f) &&
+                 parse_f32(Str{argv[i + 2], (u32)strlen(argv[i + 2])}, a.jump_hour) && a.jump_hour >= 0 && a.jump_hour < 24;
+            a.jump_frame = (i32)f;
+            i += 2;
         }
         else if (!strcmp(s, "--clock")) {
             a.clock = -1;

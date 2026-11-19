@@ -405,8 +405,8 @@ int run_window(const Args &a, AppMemory &m) {
     for (u32 i = 0; i < FP_COUNT; ++i) prof->names[i] = FP_NAMES[i];
     u64 frames = 0, frames_window = 0;
     // Смена света скачком (docs/light.md, «Резкая смена света»): часы прыгнули — кадр как снимок: зонды, ячейки и тени
-    // заново, глаз сразу. cut_tick — тик, на котором скачок уже отработан (пара шагов живёт несколько кадров)
-    u64 cut_tick = ~0ull;
+    // заново, глаз сразу. Скачок ищется на каждом шаге кадра: намерение часов идёт первым шагом, и при двух шагах за
+    // кадр (меньше 60 к/с) пара шагов вида его уже не видит — до 19.11 так на ноутбуке скачок шёл без снимка
     u32 cut_frames = 0;
     u64 last = platform_time_ns(), window_t0 = last;
     int rc_exit = 0;
@@ -622,6 +622,7 @@ int run_window(const Args &a, AppMemory &m) {
             if (h < 0) h += 24.0;
             pending.push_back({0, INTENT_CLOCK_SET, WPos{}, hour_turn(h)});
         }
+        if (a.jump_frame >= 0 && frames == (u64)a.jump_frame) pending.push_back({0, INTENT_CLOCK_SET, WPos{}, hour_turn(a.jump_hour)});
         if (ds.clock_speed) {
             clock_speed = (clock_speed + 1) % ANA_COUNTOF(CLOCK_SPEEDS);
             pending.push_back({0, INTENT_CLOCK_RATE, WPos{}, CLOCK_SPEEDS[clock_speed]});
@@ -668,7 +669,9 @@ int run_window(const Args &a, AppMemory &m) {
         debug_clear_frame(ds);
 
         prof_mark(*prof, platform_time_ns());
+        bool clock_jump = false;
         for (u32 k = 0; k < nsteps; ++k) {
+            const Clock clock0 = w.clock;
             step_its.clear();
             if (k == 0)
                 for (usize i = 0; i < pending.count; ++i) {
@@ -680,6 +683,7 @@ int run_window(const Args &a, AppMemory &m) {
             StepCtx ctx{its, &m.step, &dbg};
             u64 ts = platform_time_ns();
             sim_step(w, ctx);
+            if (clock_jumped(clock0, w.clock)) clock_jump = true;
             stat_add(st_step, (f64)(platform_time_ns() - ts) / 1e6);
             if (a.record) recorder_step(rec, w, its);
             else rewind_after_step(*rewind, w, its);
@@ -714,17 +718,9 @@ int run_window(const Args &a, AppMemory &m) {
         vi.time = (f32)sky_time;
         cloud_time = a.frames ? (f64)frames / 30.0 : cloud_time + dt;
         vi.cloud_time = cloud_time;
-        {
-            const Clock &c0 = vi.prev->clock, &c1 = vi.cur->clock;
-            // Обычный ход — rate тиков за шаг (ускорение тоже ход); скачок — назад или вперёд больше двух минут суток
-            u64 lim = (u64)c1.rate * 2 + c1.day_ticks / 720;
-            bool jump = c1.tick < c0.tick || c1.tick - c0.tick > lim;
-            if (jump && c1.tick != cut_tick && frames >= 2) {
-                cut_tick = c1.tick;
-                cut_frames = 2;
-            }
-        }
+        if (clock_jump && frames >= 2) cut_frames = 2;
         vi.eye_snap = frames < 2 || a.timelapse || a.shot || cut_frames > 0;
+        vi.clock_cut = cut_frames == 2;
         if (cut_frames) --cut_frames;
         vi.tonemap = ds.tonemap;
         vi.local_off = a.local_off || ds.local_off;
