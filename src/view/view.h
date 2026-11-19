@@ -98,6 +98,7 @@ struct ViewInput {
     f32 time = 0.0f;  // время от запуска, с (мерцание звёзд, docs/sky.md); в снимках — номер кадра / 30
     f64 cloud_time = 0.0;  // то же без круга: ветер и смена формы облаков (docs/clouds.md)
     bool eye_snap = true;
+    bool clock_cut = false;  // первый кадр скачка часов: история сглаживания — прошлого часа (docs/light.md)
     u32 tonemap = RENDER_TONEMAP_UE;
     bool local_off = false;  // без местной экспозиции (F3, --nolocal): сравнение было/стало
     bool lsm_off = false;    // тени огней полем расстояний, не картами (F3, --nolsm): сравнение было/стало

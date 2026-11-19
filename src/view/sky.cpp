@@ -109,8 +109,9 @@ bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap)
 
 f64 sky_clock_ticks(const Clock &prev, const Clock &cur, f32 alpha) {
     f64 a = (f64)prev.tick, b = (f64)cur.tick;
-    // Скачок часов (отладка) или первый кадр — без протяжки через полсуток
-    if (cur.tick < prev.tick || cur.tick - prev.tick > (u64)cur.day_ticks / 8) return b;
+    // Скачок часов (отладка) или первый кадр — сразу новый час: протяжка показывала бы промежуточные часы, и снимок
+    // света (кадры скачка) снимал бы их, а не новый час
+    if (clock_jumped(prev, cur)) return b;
     return a + (b - a) * (f64)alpha;
 }
 

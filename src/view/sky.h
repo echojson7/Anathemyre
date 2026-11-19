@@ -79,6 +79,12 @@ struct SkyDesc {
 // Разобрать data/sky.txt поверх значений по умолчанию. false — ошибка, текст в err (с номером строки)
 bool sky_parse(SkyDesc &d, const u8 *text, usize size, char *err, usize err_cap);
 
+// Скачок часов между шагами (отладка: [ ], ползунок, --hour, --jump): назад или вперёд больше двух минут суток
+// за шаг; обычный ход и ускорение (rate тиков за шаг) — не скачок. Один порог для протяжки часов и для снимка света
+inline bool clock_jumped(const Clock &prev, const Clock &cur) {
+    u64 lim = (u64)cur.rate * 2 + cur.day_ticks / 720;
+    return cur.tick < prev.tick || cur.tick - prev.tick > lim;
+}
 // Часы между двумя выписками: тики как f64 (интерполяция по alpha; скачок часов — без протяжки)
 f64 sky_clock_ticks(const Clock &prev, const Clock &cur, f32 alpha);
 // Час дня 0..24 для заголовка окна
