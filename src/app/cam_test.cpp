@@ -1,7 +1,7 @@
 // Проверка камеры без окна (--cam-test файл.txt, docs/camera.md, «Проверка»): записанный ввод (колесо, мышь, Q/E,
 // WASD, захват земли, взгляд снизу) на земле мира при 30, 60 и 150 к/с. Числа: насколько кадр зависит от частоты
-// кадров, рывки (ускорение глаза растёт с частотой кадров — скорость скачет), уход точки из-под курсора, запас над
-// землёй. Мир не трогает: камера — часть вида
+// кадров, рывки (ускорение глаза растёт с частотой кадров — скорость скачет), запас над землёй. Курсор в сценариях
+// стоит в стороне: камера от него не зависит. Мир не трогает: камера — часть вида
 #include "app.h"
 #include "../core/log.h"
 #include "../platform/platform.h"
@@ -33,7 +33,8 @@ void ct_input(CtKind k, f32 t, f32 dt, f32 t_prev, Input &in) {
     };
     switch (k) {
     case CT_WHEEL: {
-        // 12 щелчков вперёд (каждые 0.15 с с 0.2 с), курсор правее и ниже центра; 20 назад с 3 с (каждые 0.1 с)
+        // 12 щелчков вперёд (каждые 0.15 с с 0.2 с), курсор правее и ниже центра (не должен ничего менять); 20 назад
+        // с 3 с (каждые 0.1 с)
         in.mouse_x = CT_W * 0.7f;
         in.mouse_y = CT_H * 0.62f;
         auto notches = [](f32 a, f32 b, f32 t0, f32 every, i32 n) {
@@ -77,7 +78,7 @@ void ct_input(CtKind k, f32 t, f32 dt, f32 t_prev, Input &in) {
 
 }  // namespace
 
-// Показ для видео (--cam-play, docs/camera.md): колесо к курсору, поворот мышью с взглядом вверх, Q, отдаление,
+// Показ для видео (--cam-play, docs/camera.md): колесо, поворот мышью с взглядом вверх, Q, отдаление,
 // захват земли, WASD — 15.5 с. t — середина кадра, t_prev и t_next — его края (щелчки колеса по краям)
 void cam_show_input(f32 t, f32 t_prev, f32 t_next, f32 dt, i32 w, i32 h, Input &in) {
     memset(&in, 0, sizeof in);
@@ -118,20 +119,6 @@ void cam_show_input(f32 t, f32 t_prev, f32 t_next, f32 dt, i32 w, i32 h, Input &
 
 namespace {
 
-// Точка мира → пиксель окна (false — за спиной)
-bool ct_project(const Camera &cam, const WPos &p, f32 &px, f32 &py) {
-    CameraBasis b = view_camera_basis(cam);
-    WPos e = view_eye(cam);
-    Vec2 dxz = wpos_delta_xz(e, p);
-    Vec3 v{dxz.x, p.y - e.y, dxz.y};
-    f32 z = dot(v, b.forward);
-    if (z <= 1e-3f) return false;
-    f32 t = tanf(view_camera_fov(cam) * 0.5f), aspect = (f32)CT_W / (f32)CT_H;
-    px = (dot(v, b.right) / (z * t * aspect) + 1.0f) * 0.5f * CT_W;
-    py = (1.0f - dot(v, b.up) / (z * t)) * 0.5f * CT_H;
-    return true;
-}
-
 struct CtRun {
     Vec3 eye[200];      // глаз каждые 0.1 с, м от глаза в начале
     f32 yaw[200], pitch[200], dist[200];
@@ -139,7 +126,6 @@ struct CtRun {
     f32 dv_max = 0.0f;    // наибольший скачок скорости глаза за кадр, м/с (у гладкого движения падает с ростом к/с)
     f32 dv_t = 0.0f;      // когда
     f32 clear_min = 1e9f; // наименьший запас глаза над землёй, м
-    f32 cursor_err = 0.0f;  // захват земли: наибольший уход взятой точки от курсора, пиксели
 };
 
 void ct_run(CtKind k, f32 dt, const World &w, Camera start, CtRun &r) {
@@ -148,36 +134,13 @@ void ct_run(CtKind k, f32 dt, const World &w, Camera start, CtRun &r) {
     const WPos origin = view_eye(cam);
     const u32 frames = (u32)(CT_SECONDS[k] / dt + 0.5f), per = (u32)(0.1f / dt + 0.5f);
     WPos prev[2];
-    bool grabbed = false;
-    WPos grab_at;
-    f32 gx = 0, gy = 0;
     for (u32 f = 0; f < frames; ++f) {
         f32 t = (f32)(f + 1) * dt;
         Input in;
         // Клавиши и мышь — по середине кадра: их смены на 1/30 с ложатся на края кадров всех трёх частот
         ct_input(k, k == CT_WHEEL ? t : t - dt * 0.5f, dt, (f32)f * dt, in);
-        if (k == CT_WHEEL && !grabbed) {
-            // Колесо к курсору: точка под курсором в начале должна остаться под ним, пока приближаем
-            grabbed = view_screen_to_support(cam, CT_W, CT_H, in.mouse_x, in.mouse_y, w.terrain, &w.coll, grab_at);
-            gx = in.mouse_x;
-            gy = in.mouse_y;
-        }
-        if (k == CT_GRAB && in.mouse_down[MOUSE_MIDDLE] && !grabbed) {
-            grabbed = view_screen_to_support(cam, CT_W, CT_H, in.mouse_x, in.mouse_y, w.terrain, &w.coll, grab_at);
-            gx = in.mouse_x;
-            gy = in.mouse_y;
-        }
         view_camera_control(cam, in, dt, CT_W, CT_H, true, w.terrain, &w.coll);
         WPos e = view_eye(cam);
-        if ((k == CT_GRAB && grabbed && in.mouse_down[MOUSE_MIDDLE]) || (k == CT_WHEEL && grabbed && t < 3.0f)) {
-            gx += in.mouse_dx;
-            gy += in.mouse_dy;
-            f32 px, py;
-            if (ct_project(cam, grab_at, px, py)) {
-                f32 err = sqrtf((px - gx) * (px - gx) + (py - gy) * (py - gy));
-                if (err > r.cursor_err) r.cursor_err = err;
-            }
-        }
         f32 clr = e.y - ground_at(w.terrain, e).height;
         if (clr < r.clear_min) r.clear_min = clr;
         if (f >= 2) {
@@ -228,8 +191,7 @@ int run_cam_test(const Args &a, AppMemory &m) {
         wpos_rebase(start.pivot);
     }
     out("# сценарий: разница 30/150 к/с по ходу и в конце (глаз, м; взгляд, °); скачок скорости глаза за кадр при 60 и "
-        "150 к/с (м/с: у гладкого движения падает с ростом к/с, не падает — рывок) и когда; запас над землёй (м); уход "
-        "точки из-под курсора (px)\n");
+        "150 к/с (м/с: у гладкого движения падает с ростом к/с, не падает — рывок) и когда; запас над землёй (м)\n");
     static const f32 DTS[3] = {1.0f / 30.0f, 1.0f / 60.0f, 1.0f / 150.0f};
     static CtRun runs[3];
     for (u32 k = 0; k < CT_COUNT; ++k) {
@@ -255,10 +217,9 @@ int run_cam_test(const Args &a, AppMemory &m) {
         f32 clr = runs[0].clear_min;
         for (const CtRun &r : runs) clr = r.clear_min < clr ? r.clear_min : clr;
         out("%s\n  к/с: глаз %.3f м (конец %.3f), взгляд %.2f° (конец %.2f°); скачок %.2f / %.2f м/с (%.2f с); запас %.2f м; "
-            "курсор %.1f px; конец: штанга %.1f м, наклон %.1f°\n",
+            "конец: штанга %.1f м, наклон %.1f°\n",
             CT_NAMES[k], (double)de, (double)fe, (double)(da / deg), (double)(fa / deg), (double)runs[1].dv_max,
-            (double)runs[2].dv_max, (double)runs[2].dv_t, (double)clr,
-            (double)runs[2].cursor_err, (double)runs[2].dist[runs[2].samples - 1],
+            (double)runs[2].dv_max, (double)runs[2].dv_t, (double)clr, (double)runs[2].dist[runs[2].samples - 1],
             (double)(runs[2].pitch[runs[2].samples - 1] / deg));
     }
     if (!platform_write_file(a.cam_test, ct_text, ct_len)) {

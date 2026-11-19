@@ -105,8 +105,6 @@ static void tab_controls(UiForm &f, Settings &s, bool &ch) {
     ui_section(f, "КАМЕРА");
     ui_tip(f, "Вблизи вдоль земли, издалека сверху");
     ch |= ui_toggle(f, "Наклон от расстояния", s.cam_tilt_zoom);
-    ui_tip(f, "Колесо приближает к точке под курсором");
-    ch |= ui_toggle(f, "Приближать к курсору", s.cam_zoom_cursor);
     ui_tip(f, "Курсор у края экрана двигает камеру");
     ch |= ui_toggle(f, "Двигать у края экрана", s.cam_edge_pan);
     ui_tip(f, "Скорость движения камеры клавишами");
