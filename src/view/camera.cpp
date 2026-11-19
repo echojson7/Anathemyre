@@ -318,7 +318,6 @@ void view_camera_place(Camera &cam, const Terrain &ground, const Colliders *coll
     cam.rise = cam.exact ? CAM_PIVOT_M : cam_rise_of(cam.dist);
     cam.fov_add = 0.0f;
     cam.yaw_rate = 0.0f;
-    cam.zoom_pan = cam.zoom_pan_v = Vec3{};
     cam.panning = false;
     cam.follow_vel = Vec3{};
     cam.arm = -1.0f;
@@ -357,38 +356,9 @@ static void cam_pitch_frame(Camera &cam) {
     cam.pitch_now = f_clamp(p, cam_pitch_min(cam, cam.dist_now), CAM_PITCH_MAX);
 }
 
-// Колесо к курсору: куда поставить опору, чтобы точка p осталась под пикселем (px, py) при штанге d — с наклоном,
-// высотой опоры и штангой снизу этой длины (кривые). false — луч курсора при новом наклоне не смотрит вниз
-static bool cam_zoom_target(const Camera &cam, i32 width, i32 height, f32 px, f32 py, const WPos &p, f32 d,
-                            const Terrain &ground, WPos &out) {
-    f32 pitch = f_clamp(cam_base(cam, d) + cam.tilt, cam_pitch_min(cam, d), CAM_PITCH_MAX);
-    f32 rise = cam_rise_of(d), arm = cam_worm(d, pitch, rise);
-    Vec3 back = cam_back(cam.yaw, pitch), fwd = -back;
-    Vec3 right = normalize(cross(Vec3{0, 1, 0}, fwd)), up = cross(fwd, right);
-    f32 s, c;
-    sincos_turn(turn_from_rad(view_camera_fov(cam) * 0.5f), &s, &c);
-    f32 t = s / c, aspect = (f32)width / (f32)height;
-    f32 nx = (px / (f32)width) * 2.0f - 1.0f, ny = 1.0f - (py / (f32)height) * 2.0f;
-    Vec3 r = normalize(fwd + right * (nx * t * aspect) + up * (ny * t));
-    if (r.y > -0.02f) return false;
-    // Высота опоры: над точкой, потом над землёй там, где опора встанет (два приближения хватает)
-    out = p;
-    f32 floor_y = p.y;
-    for (u32 i = 0; i < 2; ++i) {
-        f32 eye_y = floor_y + rise + back.y * arm;
-        f32 k = (p.y - eye_y) / r.y;  // от глаза до точки вдоль луча
-        if (k <= 0.0f) return false;
-        out = cam_offset(p, Vec3{-r.x * k - back.x * arm, 0.0f, -r.z * k - back.z * arm});
-        floor_y = ground_at(ground, out).height;
-        if (p.y > floor_y + 0.5f || p.y < floor_y - 3.0f) floor_y = p.y;  // точка на постройке: пол — её высота
-    }
-    return true;
-}
-
-// Точка земли, за которую взяли (Shift + средняя), под точкой экрана (px, py): насколько сдвинуть опору. Луч до
-// плоскости на высоте взятой точки
-static bool cam_grab_step(const Camera &cam, i32 width, i32 height, f32 px, f32 py, Vec3 &step,
-                          bool *clipped = nullptr) {
+// Захват земли (Shift + средняя): где луч из пикселя (px, py) пересекает плоскость на высоте взятой точки, от неё.
+// clipped — луч выше горизонта или пересёк слишком далеко
+static bool cam_grab_step(const Camera &cam, i32 width, i32 height, f32 px, f32 py, Vec3 &step, bool &clipped) {
     WPos eye;
     Vec3 dir;
     if (!view_screen_ray(cam, width, height, px, py, eye, dir)) return false;
@@ -396,7 +366,7 @@ static bool cam_grab_step(const Camera &cam, i32 width, i32 height, f32 px, f32 
     // непрерывным, а не прыгает
     f32 dy = cam.pan_at.y - eye.y, lim = f_max(cam.dist_now, 5.0f) * 12.0f;
     f32 t = dir.y * dy > 1e-6f ? f_min(dy / dir.y, lim) : lim;
-    if (clipped) *clipped = t >= lim;
+    clipped = t >= lim;
     WPos hit = cam_offset(eye, dir * t);
     step = cam_delta(hit, cam.pan_at);
     step.y = 0.0f;
@@ -416,7 +386,6 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt, i32 width, i32 he
             cam.ease = Vec3{};
             cam.vel = Vec3{};
             cam.dolly = 0.0f;
-            cam.zoom_pan = cam.zoom_pan_v = Vec3{};
             cam.free = true;
             cam.follow = false;
         } else {
@@ -533,38 +502,18 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt, i32 width, i32 he
     }
 
     // Колесо — длина штанги (до вида от глаз). Если штангу держит стена, счёт идёт от длины в кадре: то, что
-    // накрутили «в стену», не копится и потом не отбрасывает камеру на максимум. Вперёд — к точке под курсором
-    // (настройка, как в Total War): опора едет к ней так, что точка остаётся под курсором; назад — от центра
+    // накрутили «в стену», не копится и потом не отбрасывает камеру на максимум. Опора стоит: приближаем к центру
+    // экрана, курсор не участвует
     if (in.wheel > 0.5f || in.wheel < -0.5f) {
         f32 d = cam.dist;
         if (cam.arm >= 0.0f && cam.arm < cam.arm_want - 0.05f) d = f_min(d, cam.arm);
         for (f32 w = in.wheel; w > 0.5f; w -= 1.0f) d = d * CAM_ZOOM_STEP < CAM_DIST_SNAP ? 0.0f : d * CAM_ZOOM_STEP;
         for (f32 w = in.wheel; w < -0.5f; w += 1.0f) d = d < CAM_DIST_SNAP ? CAM_DIST_SNAP : d / CAM_ZOOM_STEP;
         d = f_clamp(d, 0.0f, CAM_DIST_MAX);
-        if (d < cam.dist && cam.settings.zoom_cursor && !cam.follow && !cam.exact && width > 0) {
-            // Точка под курсором — та же, пока приближение идёт и курсор стоит (иначе взяли бы уже съехавшую)
-            f32 mx = in.mouse_x - cam.zoom_px, my = in.mouse_y - cam.zoom_py;
-            bool settled = cam.zoom_v == 0.0f && dot(cam.zoom_pan, cam.zoom_pan) == 0.0f;
-            if (!cam.zoom_anchor || settled || mx * mx + my * my > 16.0f) {
-                cam.zoom_anchor =
-                    view_screen_to_support(cam, width, height, in.mouse_x, in.mouse_y, ground, coll, cam.zoom_at);
-                cam.zoom_px = in.mouse_x;
-                cam.zoom_py = in.mouse_y;
-            }
-            WPos to;
-            if (cam.zoom_anchor &&
-                cam_zoom_target(cam, width, height, cam.zoom_px, cam.zoom_py, cam.zoom_at, d, ground, to)) {
-                Vec3 go = cam_delta(cam.pivot, to);
-                go.y = 0.0f;
-                if (length(go) < f_max(cam.dist, 5.0f) * 4.0f) cam.zoom_pan = go;
-            }
-        } else if (d > cam.dist) {
-            cam.zoom_anchor = false;  // назад — от центра: опора стоит
-        }
         cam.dist = d;
     }
     // Штанга — по логарифму (щелчок колеса выглядит одинаково и в 2 м, и в 200 м) пружиной: щелчок трогает камеру
-    // без рывка. Сдвиг опоры к курсору — такой же пружиной: оба идут в ногу, точка остаётся под курсором
+    // без рывка
     {
         Vec3 v{cam.zoom_v, 0.0f, 0.0f};
         Vec3 o = cam_damp(Vec3{logf(cam.dist_now + 0.1f) - logf(cam.dist + 0.1f), 0.0f, 0.0f}, v, CAM_ZOOM_S * ks, dt);
@@ -588,7 +537,6 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt, i32 width, i32 he
     if (cam.follow && (ml > 0.0f || pan)) cam.follow = false;
     if (cam.follow) {
         cam.vel = Vec3{};
-        cam.zoom_pan = cam.zoom_pan_v = Vec3{};
         cam.panning = false;
         return;
     }
@@ -599,38 +547,17 @@ void view_camera_control(Camera &cam, const Input &in, f32 dt, i32 width, i32 he
     }
     Vec3 step = cam_ramp(cam.vel, move * (reach * 0.9f * fast * pace), dt, tm);
     cam.vel.y = step.y = 0.0f;
-    Vec3 left = cam_damp(cam.zoom_pan, cam.zoom_pan_v, CAM_ZOOM_S * ks, dt);
-    step += cam.zoom_pan - left;
-    cam.zoom_pan = left;
-    if (dot(cam.zoom_pan, cam.zoom_pan) < 1e-6f && dot(cam.zoom_pan_v, cam.zoom_pan_v) < 1e-6f)
-        cam.zoom_pan = cam.zoom_pan_v = Vec3{};
     if (pan) {
-        // Тащим землю: точка, за которую взяли, идёт за мышью (курсор спрятан — её место на экране считаем сами).
-        // По умолчанию берём землю в центре экрана: скорость не зависит от того, где стоял курсор (у горизонта
-        // точка под курсором летела бы, у ног ползла). Настройка — взять под курсором
-        if (!cam.panning) {
-            bool at_cursor = cam.settings.grab_cursor;
-            cam.pan_px = at_cursor ? in.mouse_x - in.mouse_dx : (f32)width * 0.5f;
-            cam.pan_py = at_cursor ? in.mouse_y - in.mouse_dy : (f32)height * 0.5f;
-            cam.panning = width > 0 && view_screen_to_support(cam, width, height, cam.pan_px, cam.pan_py, ground, coll,
-                                                              cam.pan_at);
-            cam.zoom_pan = cam.zoom_pan_v = Vec3{};
-            if (!cam.panning) cam.pan_px = -1e9f;  // земли под курсором нет — сдвиг по длине штанги
-        }
-        Vec3 g, g0{};
-        bool ok = cam.pan_px > -1e8f;
-        if (ok && !cam.settings.grab_cursor) {
-            // От центра: каждый кадр земля в центре экрана сдвигается на сдвиг мыши (на высоте взятой точки), место
-            // не копится — сколько бы ни тащили, скорость та же
-            cam.pan_px = (f32)width * 0.5f;
-            cam.pan_py = (f32)height * 0.5f;
-            // Центр выше горизонта (взгляд вверх) — сдвиг по длине штанги
-            bool far = true;
-            ok = cam_grab_step(cam, width, height, cam.pan_px, cam.pan_py, g0, &far) && !far;
-        }
-        cam.pan_px += in.mouse_dx;
-        cam.pan_py += in.mouse_dy;
-        if (ok && cam_grab_step(cam, width, height, cam.pan_px, cam.pan_py, g)) {
+        // Тащим землю от центра экрана: каждый кадр земля в центре сдвигается на сдвиг мыши (на высоте точки, взятой
+        // в центре при нажатии). Курсор не участвует и место не копится: скорость на пиксель одна, сколько ни тащи.
+        // В центре нет земли (взгляд выше горизонта) — сдвиг по длине штанги
+        const f32 cx = (f32)width * 0.5f, cy = (f32)height * 0.5f;
+        if (!cam.panning)
+            cam.pan_sky = !(width > 0 && view_screen_to_support(cam, width, height, cx, cy, ground, coll, cam.pan_at));
+        Vec3 g0, g;
+        bool far0 = true, far = true;
+        if (!cam.pan_sky && cam_grab_step(cam, width, height, cx, cy, g0, far0) && !far0 &&
+            cam_grab_step(cam, width, height, cx + in.mouse_dx, cy + in.mouse_dy, g, far)) {
             g = g - g0;
             f32 gl = length(g), lim = reach * 2.0f;  // за кадр не дальше двух длин штанги (у горизонта)
             step += gl > lim ? g * (lim / gl) : g;
