@@ -241,11 +241,26 @@ void rg_execute(VkCommandBuffer cmd) {
         vk_diag_end(cmd, i);
         if (p.timer && (i + 1 == g_npass || !same(g_pass[i + 1].timer, p.timer))) vk_mark(cmd, p.timer);
     }
-    // Состав кадра сменился (первый кадр, forward, пересчёт таблиц неба, снимок) — в журнал
-    static u32 s_npass = 0, s_barriers = 0;
-    if (g_npass != s_npass || g_barriers != s_barriers) {
-        log_info("граф кадра: проходов %u, барьеров %u", g_npass, g_barriers);
-        s_npass = g_npass;
-        s_barriers = g_barriers;
+    // Состав кадра — в журнал: первый кадр и каждый новый состав, продержавшийся GRAPH_STEADY кадров подряд.
+    // Разовые кадры (пересчёт таблиц неба, снимок зондов, кадры после первого) строк не дают
+    constexpr u32 GRAPH_STEADY = 30;
+    static u32 s_logged_pass = 0, s_logged_bar = 0, s_cand_pass = 0, s_cand_bar = 0, s_held = 0;
+    static bool s_first = true;
+    if (s_first) {
+        log_info("граф кадра (первый): проходов %u, барьеров %u", g_npass, g_barriers);
+        s_logged_pass = g_npass;
+        s_logged_bar = g_barriers;
+        s_first = false;
+    }
+    if (g_npass == s_cand_pass && g_barriers == s_cand_bar) s_held++;
+    else {
+        s_cand_pass = g_npass;
+        s_cand_bar = g_barriers;
+        s_held = 1;
+    }
+    if (s_held == GRAPH_STEADY && (s_cand_pass != s_logged_pass || s_cand_bar != s_logged_bar)) {
+        log_info("граф кадра: проходов %u, барьеров %u", s_cand_pass, s_cand_bar);
+        s_logged_pass = s_cand_pass;
+        s_logged_bar = s_cand_bar;
     }
 }

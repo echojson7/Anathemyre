@@ -92,5 +92,11 @@ inline void prof_roll(FrameProf &p) {
     p.total_sum = p.worst_total = 0;
     p.n = 0;
 }
+// Сбросить текущее окно (итог прошлого и история остаются): прогрев в сводку не идёт
+inline void prof_clear_window(FrameProf &p) {
+    for (u32 i = 0; i < p.nparts; ++i) p.sum[i] = p.max[i] = p.worst[i] = 0;
+    p.total_sum = p.worst_total = 0;
+    p.n = 0;
+}
 // Отметка без части: время до неё уходит в «прочее»
 inline void prof_mark(FrameProf &p, u64 now_ns) { p.mark = now_ns; }

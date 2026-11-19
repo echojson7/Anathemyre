@@ -1,8 +1,10 @@
 // Сборка конвейеров при запуске (docs/startup.md): шейдеры читаются по порядку, а драйвер компилирует
 // конвейеры пачкой в нескольких потоках. Заявки ставят vk_make_compute и vk_make_pipeline (в *_init модулей),
 // vk_pipelines_build собирает все и раскладывает по местам. Конвейеры те же, что при сборке по одному:
-// порядок сборки на кадр не влияет. Кеш конвейеров (vk_pipecache.cpp) общий: драйвер синхронизирует его сам
+// порядок сборки на кадр не влияет. Кеш конвейеров (vk_pipecache.cpp): у каждой заявки свой VkPipelineCache
+// из записи файла по ключу заявки, после сборки данные всех записываются в файл
 #include "vk_state.h"
+#include "../core/hash.h"
 #include "../core/log.h"
 #include "../platform/platform.h"
 #include <atomic>
@@ -23,7 +25,7 @@ static bool name_listed(const char *list, const char *name) {
     return false;
 }
 
-VkShaderModule vk_load_shader(const char *name) {
+VkShaderModule vk_load_shader(const char *name, u64 *code_hash) {
     char path[1024];
     snprintf(path, sizeof path, "%s%s.spv", g_vk.cfg.shader_dir, name);
     // Загрузка при старте: временная память, не игровой цикл
@@ -40,6 +42,7 @@ VkShaderModule vk_load_shader(const char *name) {
         auto ci = vk_info<VkShaderModuleCreateInfo>(VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO);
         ci.codeSize = size;
         ci.pCode = (const u32 *)data;
+        if (code_hash) *code_hash = hash_bytes(data, size);
         // Проверка на GPU — у каждого шейдера, кроме названных в gpu_validation_skip (docs/graph.md, «Проверки»)
         VkValidationFeatureEnableEXT gpuav = VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT;
         auto vf = vk_info<VkValidationFeaturesEXT>(VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT);
@@ -64,6 +67,11 @@ struct PipeJob {
     VkSpecializationMapEntry spec_map[4];
     u8 spec_data[16];
     VkSpecializationInfo spec;
+    u64 key;            // ключ записи в кеше: шейдеры, специализация, состояние (vk_pipecache.cpp)
+    const void *init;   // данные драйвера из кеша (nullptr — нет записи)
+    usize init_size;
+    void *blob;         // данные драйвера после сборки (platform_alloc), для записи кеша
+    usize blob_size;
     u64 ns;  // время сборки
     std::atomic<u64> t_start;  // когда взялась сборка (0 — не бралась): для журнала главного потока
     std::atomic<bool> done;
@@ -77,7 +85,7 @@ static u32 g_pipe_njobs = 0;
 static bool g_pipe_overflow = false;
 static std::atomic<u32> g_pipe_next{0};
 
-static VkPipeline build_graphics(const PipeDesc &d, VkShaderModule vs, VkShaderModule fs) {
+static VkPipeline build_graphics(const PipeDesc &d, VkShaderModule vs, VkShaderModule fs, VkPipelineCache cache) {
     VkPipeline p = VK_NULL_HANDLE;
     {
         VkPipelineShaderStageCreateInfo st[2] = {};
@@ -145,12 +153,12 @@ static VkPipeline build_graphics(const PipeDesc &d, VkShaderModule vs, VkShaderM
         pi.pColorBlendState = &cb;
         pi.pDynamicState = &ds;
         pi.layout = g_vk.layout;
-        vk_check(vkCreateGraphicsPipelines(g_vk.device, g_vk.pipeline_cache, 1, &pi, nullptr, &p), d.vs);
+        vk_check(vkCreateGraphicsPipelines(g_vk.device, cache, 1, &pi, nullptr, &p), d.vs);
     }
     return p;
 }
 
-static VkPipeline build_compute(PipeJob &j) {
+static VkPipeline build_compute(PipeJob &j, VkPipelineCache cache) {
     auto ci = vk_info<VkComputePipelineCreateInfo>(VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO);
     ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -159,7 +167,7 @@ static VkPipeline build_compute(PipeJob &j) {
     ci.stage.pSpecializationInfo = j.has_spec ? &j.spec : nullptr;
     ci.layout = g_vk.layout;
     VkPipeline p = VK_NULL_HANDLE;
-    vk_check(vkCreateComputePipelines(g_vk.device, g_vk.pipeline_cache, 1, &ci, nullptr, &p), j.name);
+    vk_check(vkCreateComputePipelines(g_vk.device, cache, 1, &ci, nullptr, &p), j.name);
     return p;
 }
 
@@ -177,6 +185,11 @@ static PipeJob *job_new(VkPipeline *out, const char *name) {
     j.d = PipeDesc{};
     j.vs = j.fs = j.cs = VK_NULL_HANDLE;
     j.has_spec = false;
+    j.key = hash_str(name);
+    j.init = nullptr;
+    j.init_size = 0;
+    j.blob = nullptr;
+    j.blob_size = 0;
     j.ns = 0;
     j.t_start.store(0, std::memory_order_relaxed);
     j.done.store(false, std::memory_order_relaxed);
@@ -198,8 +211,12 @@ bool vk_make_compute(VkPipeline *out, const char *name, const VkSpecializationIn
         j->spec.pMapEntries = j->spec_map;
         j->spec.pData = j->spec_data;
         j->has_spec = true;
+        j->key = hash_combine(j->key, hash_bytes(spec->pMapEntries, spec->mapEntryCount * sizeof(VkSpecializationMapEntry)));
+        j->key = hash_combine(j->key, hash_bytes(spec->pData, spec->dataSize));
     }
-    j->cs = vk_load_shader(name);
+    u64 code = 0;
+    j->cs = vk_load_shader(name, &code);
+    j->key = hash_combine(j->key, code);
     return j->cs != VK_NULL_HANDLE;
 }
 
@@ -208,9 +225,44 @@ bool vk_make_pipeline(VkPipeline *out, const PipeDesc &d) {
     if (!j) return false;
     j->graphics = true;
     j->d = d;
-    j->vs = vk_load_shader(d.vs);
-    j->fs = vk_load_shader(d.fs);
+    u64 cv = 0, cf = 0;
+    j->vs = vk_load_shader(d.vs, &cv);
+    j->fs = vk_load_shader(d.fs, &cf);
+    // Состояние — по полям (в PipeDesc указатели на имена, их адрес от запуска к запуску другой)
+    const u64 st[] = {(u64)d.topo, (u64)d.blend, (u64)d.depth_write, (u64)d.cull, (u64)d.color, (u64)d.depth_test,
+                      (u64)d.no_attach, (u64)d.depth_only, (u64)d.depth};
+    j->key = hash_combine(hash_combine(hash_combine(j->key, hash_str(d.fs)), hash_combine(cv, cf)), hash_bytes(st, sizeof st));
     return j->vs && j->fs;
+}
+
+// Свой кеш заявки: из записи файла, если есть (драйвер её не принял — пустой). Без открытого файла — без кеша
+static VkPipelineCache job_cache_begin(PipeJob &j) {
+    if (!vk_pipeline_cache_active()) return VK_NULL_HANDLE;
+    auto ci = vk_info<VkPipelineCacheCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO);
+    ci.initialDataSize = j.init_size;
+    ci.pInitialData = j.init;
+    VkPipelineCache c = VK_NULL_HANDLE;
+    if (vkCreatePipelineCache(g_vk.device, &ci, nullptr, &c) == VK_SUCCESS) return c;
+    j.init = nullptr;
+    j.init_size = 0;
+    ci.initialDataSize = 0;
+    ci.pInitialData = nullptr;
+    return vkCreatePipelineCache(g_vk.device, &ci, nullptr, &c) == VK_SUCCESS ? c : VK_NULL_HANDLE;
+}
+
+// Данные кеша заявки после сборки — в blob (для файла), сам кеш больше не нужен
+static void job_cache_end(PipeJob &j, VkPipelineCache c, VkPipeline p) {
+    if (!c) return;
+    usize size = 0;
+    if (p && vkGetPipelineCacheData(g_vk.device, c, &size, nullptr) == VK_SUCCESS && size) {
+        j.blob = platform_alloc(size);
+        if (j.blob && vkGetPipelineCacheData(g_vk.device, c, &size, j.blob) == VK_SUCCESS) j.blob_size = size;
+        else if (j.blob) {
+            platform_free(j.blob);
+            j.blob = nullptr;
+        }
+    }
+    vkDestroyPipelineCache(g_vk.device, c, nullptr);
 }
 
 static void pipe_worker(void *) {
@@ -220,8 +272,10 @@ static void pipe_worker(void *) {
         PipeJob &j = g_pipe_jobs[i];
         u64 t0 = platform_time_ns();
         j.t_start.store(t0, std::memory_order_release);
-        VkPipeline p = j.graphics ? build_graphics(j.d, j.vs, j.fs) : build_compute(j);
+        VkPipelineCache cache = job_cache_begin(j);
+        VkPipeline p = j.graphics ? build_graphics(j.d, j.vs, j.fs, cache) : build_compute(j, cache);
         j.ns = platform_time_ns() - t0;
+        job_cache_end(j, cache, p);
         *j.out = p;
         j.done.store(true, std::memory_order_release);
     }
@@ -268,6 +322,16 @@ bool vk_pipelines_build(u32 *count, u32 *threads, const char **slowest, f64 *slo
     if (want > MAX_PIPE_THREADS) want = MAX_PIPE_THREADS;
     if (want > g_pipe_njobs) want = g_pipe_njobs ? g_pipe_njobs : 1;
     g_pipe_next.store(0, std::memory_order_relaxed);
+    // Ключи кеша: одинаковые заявки (те же шейдеры и состояние) различает номер такой же по порядку
+    u64 base[MAX_PIPE_JOBS];
+    for (u32 i = 0; i < g_pipe_njobs; ++i) {
+        PipeJob &j = g_pipe_jobs[i];
+        base[i] = j.key;
+        u64 same = 0;
+        for (u32 k = 0; k < i; ++k) same += base[k] == base[i];
+        if (same) j.key = hash_combine(base[i], same);
+        j.init = vk_pipeline_cache_find(j.key, &j.init_size);
+    }
     PlatformThread *ts[MAX_PIPE_THREADS] = {};
     u32 started = 0;
     const u64 t_begin = platform_time_ns();
@@ -297,8 +361,33 @@ bool vk_pipelines_build(u32 *count, u32 *threads, const char **slowest, f64 *slo
         if (j.ns < 1000000000ull) continue;
         u32 sv = 0;
         if (j.has_spec && j.spec.dataSize >= sizeof sv) memcpy(&sv, j.spec_data, sizeof sv);
-        if (j.has_spec) log_info("  конвейер %s (вид %u): %.1f с", j.name, sv, (f64)j.ns / 1e9);
-        else log_info("  конвейер %s: %.1f с", j.name, (f64)j.ns / 1e9);
+        // Был в кеше, а собирался долго — драйвер не взял данные (это и надо чинить, а не ждать)
+        const char *miss = j.init ? " — был в кеше, драйвер собрал заново" : "";
+        if (j.has_spec) log_info("  конвейер %s (вид %u): %.1f с%s", j.name, sv, (f64)j.ns / 1e9, miss);
+        else log_info("  конвейер %s: %.1f с%s", j.name, (f64)j.ns / 1e9, miss);
+    }
+    // Кеш на диске: сколько взято из файла, и данные всех собранных — в файл (только конвейеры этой сборки)
+    if (vk_pipeline_cache_active() && g_pipe_njobs) {
+        u64 keys[MAX_PIPE_JOBS];
+        const void *data[MAX_PIPE_JOBS];
+        usize sizes[MAX_PIPE_JOBS];
+        u32 n = 0, hits = 0;
+        for (u32 i = 0; i < g_pipe_njobs; ++i) {
+            const PipeJob &j = g_pipe_jobs[i];
+            hits += j.init != nullptr;
+            if (!j.blob) continue;
+            keys[n] = j.key;
+            data[n] = j.blob;
+            sizes[n++] = j.blob_size;
+        }
+        log_info("кеш конвейеров: взято %u из %u%s", hits, g_pipe_njobs,
+                 hits < g_pipe_njobs ? " (остальные — новые или изменённые шейдеры)" : "");
+        if (ok) vk_pipeline_cache_store(keys, data, sizes, n);
+    }
+    for (u32 i = 0; i < g_pipe_njobs; ++i) {
+        PipeJob &j = g_pipe_jobs[i];
+        if (j.blob) platform_free(j.blob);
+        j.blob = nullptr;
     }
     if (count) *count = g_pipe_njobs;
     if (threads) *threads = started ? started : 1;
