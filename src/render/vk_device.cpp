@@ -408,9 +408,10 @@ bool render_init(const RenderConfig &cfg) {
     if (!vk_geometry_init()) return false;
     if (!vk_pipeline_cache_open()) return false;
     u64 t0 = platform_time_ns();
-    if (!vk_create_pipelines()) return false;
+    bool pipes_ok = vk_create_pipelines();
+    vk_pipeline_cache_close();  // записан сборкой; отладочные конвейеры позже — без кеша
+    if (!pipes_ok) return false;
     f64 pipes_ms = (f64)(platform_time_ns() - t0) / 1e6;
-    vk_pipeline_cache_save();
     log_info("Vulkan: %s, кадр %ux%u, %s, конвейеры за %.0f мс", g_vk.gpu_name, g_vk.extent.width, g_vk.extent.height,
              cfg.vsync ? "vsync" : "без vsync", pipes_ms);
     return true;

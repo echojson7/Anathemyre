@@ -515,7 +515,7 @@ static bool load_body(MeshLoad &L, const char *file, const MeshData &md, u32 mes
     b.morph_count = md.morphs.count;
     for (u32 k = 0; k < md.morphs.count; ++k) b.morph_name[k] = str_hash(md.morphs.names[k]);
     count++;
-    log_info("%s %.*s: скелетов %u, морфов %u", wear ? "одежда" : "тело", (int)nlen, file, b.skin_count, b.morph_count);
+    // Поимённо не в журнал (тридцать строк при каждом запуске): итог — в строке «ассеты»
     return true;
 }
 
@@ -747,7 +747,10 @@ bool app_assets_load(AppMemory &m, MaterialTable &mats, ViewAssets &view) {
     }
     snprintf(dir, sizeof dir, "%sdata/anims", platform_exe_dir());
     if (!platform_list_dir(dir, ".anim", load_clip, &L)) log_warn("нет папки %s: клипов людей нет", dir);
-    log_info("ассеты: материалов %u (видов %u), сеток %u, клипов %u", mats.count, mats.kind_count, view.mesh_count, view.clip_count);
+    u32 morphs = 0;
+    for (u32 i = 0; i < view.body_count; ++i) morphs = view.bodies[i].morph_count > morphs ? view.bodies[i].morph_count : morphs;
+    log_info("ассеты: материалов %u (видов %u), сеток %u, клипов %u, тел %u (морфов до %u), вещей одежды и волос %u",
+             mats.count, mats.kind_count, view.mesh_count, view.clip_count, view.body_count, morphs, view.wear_count);
     return L.failed == 0;
 }
 

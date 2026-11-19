@@ -27,6 +27,8 @@
 static constexpr u32 MAX_STEPS_PER_FRAME = 8;  // больше — мир отстаёт, а не кадр замирает
 static const f32 SPEEDS[] = {0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
 static constexpr u32 SPEED_NORMAL = 3;
+// Кадры прогрева вне сводки раз в секунду: первый и два следующих (метки GPU первого читаются через два кадра)
+static constexpr u64 WARMUP_FRAMES = 3;
 
 // Части кадра (docs/frame_time.md): процессорное время от начала кадра до начала следующего. Части рендера —
 // из render_cpu_times(); «прочее» — остаток (камера, намерения, сбор переполнений и т.п.)
@@ -842,6 +844,19 @@ int run_window(const Args &a, AppMemory &m) {
 
         frames++;
         frames_window++;
+        if (frames == WARMUP_FRAMES) {
+            // Прогрев не в сводку: первый кадр тяжёлый (он — в строке запуска), его метки GPU читаются кадром
+            // позже. Без этого первая секунда показывала «1 к/с» и GPU в секунду (docs/frame_time.md)
+            st_frame = TimeStat{};
+            st_step = TimeStat{};
+            st_cpu = TimeStat{};
+            st_gpu = TimeStat{};
+            prof_clear_window(*prof);
+            for (u32 i = 0; i < RENDER_MAX_PASSES; ++i) pass_sum[i] = 0;
+            pass_frames = 0;
+            frames_window = 0;
+            window_t0 = now;
+        }
         if (now - window_t0 >= 1000000000ull) {
             prof_mark(*prof, platform_time_ns());
             stat_roll(st_frame);

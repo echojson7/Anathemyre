@@ -43,7 +43,7 @@ gcache_scan.comp         -         8      0     1
 gi_blend.comp            -        24      0     4
 gi_trace.comp            -        72      0    44
 glare.comp               -        40      0     8
-ground_bake.comp         -        80      0  1403
+ground_bake.comp         -        80      0    21
 horizon.comp             -        32      0     3
 lamp_cull.comp           -        56      0     4
 lcache_args.comp         -        32      0     2

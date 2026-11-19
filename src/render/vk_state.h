@@ -531,7 +531,6 @@ struct VkState {
     VkQueryPool queries = VK_NULL_HANDLE;
     f64 gpu_ms = 0;
     RenderCpuTimes cpu{};  // части последнего render_frame
-    VkPipelineCache pipeline_cache = VK_NULL_HANDLE;
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     VkFormat format = VK_FORMAT_UNDEFINED;
@@ -639,12 +638,15 @@ void vk_destroy_swapchain();
 bool vk_create_buffer(GpuBuffer &b, VkDeviceSize size, VkBufferUsageFlags usage, bool device_local = false);
 void vk_destroy_buffer(GpuBuffer &b);
 bool vk_create_pipelines();
-// Кеш конвейеров на диске (vk_pipecache.cpp): открыть до создания конвейеров, записать после, закрыть при выходе
+// Кеш конвейеров на диске (vk_pipecache.cpp): открыть до конвейеров запуска, закрыть после. Пока открыт,
+// vk_pipelines_build берёт данные конвейера по ключу и записывает данные всех собранных
 bool vk_pipeline_cache_open();
-void vk_pipeline_cache_save();
+bool vk_pipeline_cache_active();
+const void *vk_pipeline_cache_find(u64 key, usize *size);
+void vk_pipeline_cache_store(const u64 *keys, const void *const *data, const usize *sizes, u32 n);
 void vk_pipeline_cache_close();
-// Шейдер из shader_dir (файл .spv); VK_NULL_HANDLE — нет файла или ошибка
-VkShaderModule vk_load_shader(const char *name);
+// Шейдер из shader_dir (файл .spv); VK_NULL_HANDLE — нет файла или ошибка. code_hash — хеш его байт (ключ кеша)
+VkShaderModule vk_load_shader(const char *name, u64 *code_hash = nullptr);
 // Push-константы общей раскладки — как layout(push_constant) в data/shaders/common.glsl
 struct PushConsts {
     VkDeviceAddress frame;
