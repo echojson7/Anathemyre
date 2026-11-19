@@ -53,6 +53,8 @@ struct Args {
     const char *open = nullptr;     // --open menu|keys|debug|world: открыть меню или вкладку панели (снимки интерфейса)
     bool hour_set = false;          // --hour H: час дня в начале (намерением, запись повтора его помнит)
     f32 hour = 0;
+    i32 jump_frame = -1;            // --jump F H: на кадре F час H, как клавишей [ ] (проверка скачка часов, docs/light.md)
+    f32 jump_hour = 0;
     i32 clock = -1;                 // --clock 1|20|120|0: скорость суток с начала (номер в CLOCK_SPEEDS; −1 — обычная)
     const char *timelapse = nullptr;  // --timelapse префикс H0 H1: каждый кадр — свой час, снимок в префикс_NNNN.bmp
     f32 timelapse_hours[2] = {};

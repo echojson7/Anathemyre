@@ -133,6 +133,7 @@ struct RenderStyle {
     f32 eye_meter[4] = {0.8f, 0.0f, 0.8f, 1.5f};
     f32 dt = 0.0f;         // секунды кадра: привыкание глаза
     bool eye_snap = true;  // глаз привыкает сразу (первый кадр, --timelapse: кадр — свой час)
+    bool clock_cut = false; // первый кадр скачка часов: сглаживание без истории (в ней свет прошлого часа)
     bool glow = true;      // светящиеся детали (стекло ламп, табло) светятся; выкл — вместе с лампами (F3, --nolamps)
     bool lamp_maps = true; // тени огней картами (docs/lamp_shadows.md); выкл — полем расстояний (F3, --nolsm)
     bool shadow_dyn = true; // тени подвижных — людей, машин, оружия (docs/shadow.md); выкл — сравнение (F3, --nodyn)

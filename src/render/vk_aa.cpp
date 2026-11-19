@@ -120,7 +120,8 @@ void vk_aa_fill(FrameGpu &g, const RenderFrame &f) {
     bool jump = f_abs(d[0]) + f_abs(d[1]) + f_abs(d[2]) > AA_JUMP_M;
     // Картинки кадра мира пересоздадутся в этом кадре (новый размер) — истории нет
     bool resized = g_vk.world.extent.width != g_vk.extent.width || g_vk.world.extent.height != g_vk.extent.height;
-    bool hist = a.valid && a.have_prev && !jump && !resized && mode == a.mode && mode == RENDER_AA_TAA;
+    // Скачок часов: история — свет прошлого часа, рамка соседей сводит его не за один кадр (белая пелена в тенях)
+    bool hist = a.valid && a.have_prev && !jump && !resized && !f.style.clock_cut && mode == a.mode && mode == RENDER_AA_TAA;
     a.cur ^= 1u;
     g.aa_mode = mode;
     g.aa_frame = a.frame;
