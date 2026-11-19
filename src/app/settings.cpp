@@ -47,7 +47,9 @@ void settings_load(Settings &s, const char *path) {
         else if (str_eq(k, "cam_smooth") && num) s.cam_smooth = clampf(f, 0.0f, 2.0f);
         else if (str_eq(k, "fov") && num) s.fov_deg = clampf(f, 40.0f, 100.0f);
         else if (str_eq(k, "cam_tilt_zoom") && num) s.cam_tilt_zoom = b;
-        else if (str_eq(k, "cam_zoom_cursor") && num) s.cam_zoom_cursor = b;
+        // Ключ cam_zoom_cursor до 19.11 был включён у всех по умолчанию — не читаем, новое имя
+        else if (str_eq(k, "cam_zoom_to_cursor") && num) s.cam_zoom_cursor = b;
+        else if (str_eq(k, "cam_grab_cursor") && num) s.cam_grab_cursor = b;
         else if (str_eq(k, "cam_edge_pan") && num) s.cam_edge_pan = b;
         else if (str_eq(k, "cam_pan_speed") && num) s.cam_pan_speed = clampf(f, 0.25f, 3.0f);
         else if (str_eq(k, "light_quality") && parse_u32(v, u)) all = u < 4 ? (i32)u : 2;
@@ -78,13 +80,13 @@ bool settings_save(const Settings &s, const char *path) {
                      "fullscreen %d\nvsync %d\n"
                      "ui_scale %.2f\ntext_scale %.2f\nfps %u\n"
                      "mouse_sens %.2f\ninvert_y %d\ninvert_x %d\ncam_smooth %.2f\nfov %.0f\n"
-                     "cam_tilt_zoom %d\ncam_zoom_cursor %d\ncam_edge_pan %d\ncam_pan_speed %.2f\n"
+                     "cam_tilt_zoom %d\ncam_zoom_to_cursor %d\ncam_grab_cursor %d\ncam_edge_pan %d\ncam_pan_speed %.2f\n"
                      "shadow_quality %u\ngi_quality %u\nair_quality %u\naa %u\n"
                      "glare %d\nlens_flare %d\naberration %d\nvignette %d\ngrain %d\n"
                      "debug %d\ndebug_panel %d\ndebug_metrics %d\nlines %d\n",
                      s.fullscreen, s.vsync, (double)s.ui_scale, (double)s.text_scale, s.fps, (double)s.mouse_sens,
                      s.invert_y, s.invert_x, (double)s.cam_smooth, (double)s.fov_deg, s.cam_tilt_zoom, s.cam_zoom_cursor,
-                     s.cam_edge_pan, (double)s.cam_pan_speed, s.shadow_quality, s.gi_quality, s.air_quality,
+                     s.cam_grab_cursor, s.cam_edge_pan, (double)s.cam_pan_speed, s.shadow_quality, s.gi_quality, s.air_quality,
                      s.aa, s.glare, s.lens_flare,
                      s.aberration, s.vignette, s.grain, s.debug, s.debug_panel, s.debug_metrics, s.lines);
     bool ok = n > 0 && platform_write_file(path, t, (usize)n);

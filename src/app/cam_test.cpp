@@ -218,6 +218,9 @@ int run_cam_test(const Args &a, AppMemory &m) {
     World w;
     if (!app_world_create(w, m, a.seed, nullptr)) return 1;
     Camera start;
+    // Колесо и захват земли — к курсору (настройка): уход точки из-под курсора считается для них
+    start.settings.zoom_cursor = true;
+    start.settings.grab_cursor = true;
     const f32 deg = PI_F / 180.0f;
     if (w.start.set) {
         start.yaw = w.start.yaw * deg;

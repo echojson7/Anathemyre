@@ -568,7 +568,8 @@ int run_window(const Args &a, AppMemory &m) {
             vsync_applied = vs;
         }
         cam.settings = CameraSettings{set.mouse_sens,    set.invert_y,       set.fov_deg,      set.invert_x, set.cam_smooth,
-                                      set.cam_tilt_zoom, set.cam_zoom_cursor, set.cam_edge_pan, set.cam_pan_speed};
+                                      set.cam_tilt_zoom, set.cam_zoom_cursor, set.cam_edge_pan, set.cam_pan_speed,
+                                      set.cam_grab_cursor};
         bool pixel = ds.pixel || a.cells;
         unfair_modes(unfair, sizeof unfair, pixel, a.nogcache || ds.gcache_off, a.test_lights || ds.test_lights,
                      a.froxel_heat || ds.froxel_heat, a.validation || a.gpu_validation, vsync_applied,
